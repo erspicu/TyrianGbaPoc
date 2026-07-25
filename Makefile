@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_tech_demo_v8
-TEST_TARGET := tyrian_gba_level1_autotest_v8
+TARGET := tyrian_gba_level1_tech_demo_v9
+TEST_TARGET := tyrian_gba_level1_autotest_v9
 BUILD := build
 RES := res
 
@@ -54,7 +54,10 @@ AUDIO_INPUTS := \
 	$(RES)/weapon_1.wav \
 	$(RES)/enemy_hit.wav \
 	$(RES)/explosion_9.wav \
-	$(RES)/item.wav
+	$(RES)/item.wav \
+	$(RES)/enemy_shot_4.wav \
+	$(RES)/enemy_shot_6.wav \
+	$(RES)/enemy_shot_13.wav
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \

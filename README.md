@@ -14,7 +14,15 @@ The current scope is deliberately narrow:
 - all 1,009 decoded first-level source events
 - 24 audited visual archetypes covering 69 source enemy IDs
 - the complete 128-entry GBA hardware OAM table
-- player shots, enemy shots, collisions, effects and an invincible player
+- PC-synchronised enemy projectiles: all three HDT turret/frequency slots,
+  event-31 slot overrides, weapon spawn offsets, slot rotation, aim,
+  multiposition spreads, velocity, animation and source graphics, split over
+  dedicated red-shot, orange-dart and purple-laser OBJ palettes
+- the first-level boss's original dual weapon-59 aimed ports and weapon-127
+  five-way spread cadence; the boss body movement remains POC-level
+- a 60-entry enemy-shot pool matching OpenTyrian, with spawn/drop/peak
+  telemetry
+- player shots, projectile collisions, effects and an invincible player
 - the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
   155 to player-shot graphic 59, including its repeat rate and vertical speed
 - stable USP Talon neutral/left/right banking poses instead of alternating
@@ -26,8 +34,9 @@ The current scope is deliberately narrow:
   pickup collision and original item sound; v8 removes the GBA-only pickup
   outline and renders cumulative cash at the lower left with Tyrian's original
   TINY_FONT digit sprites, colour treatment and spacing
-- a simplified first-level boss and return to the opening screen
-- complete first-level tracker music and four converted Tyrian sound effects
+- a simplified first-level boss body and return to the opening screen
+- complete first-level tracker music and seven converted Tyrian sound effects,
+  including the original enemy weapon sounds used by this route
 - original Normal-speed fixed-step target (about 34.78 game updates/second)
 
 ## Controls
@@ -49,7 +58,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_tech_demo_v8.gba
+build/tyrian_gba_level1_tech_demo_v9.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

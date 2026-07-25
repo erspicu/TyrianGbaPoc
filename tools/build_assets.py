@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import importlib.util
 import struct
 import wave
@@ -37,6 +38,14 @@ REWARD_SOURCE_SEQUENCES = (
 REWARD_VALUES = (50, 100, 1000)
 REWARD_FRAMES_PER_SEQUENCE = 6
 CASH_DIGIT_SOURCE_IDS = (79, 70, 71, 72, 73, 74, 75, 76, 77, 78)
+ENEMY_PROJECTILE_SOURCE_IDS = (58, 112, 113, 145, 146, 147, 201, 202)
+ENEMY_PROJECTILE_WEAPON_IDS = (2, 3, 4, 59, 62, 78, 115, 116, 125, 126)
+BOSS_PROJECTILE_WEAPON_IDS = (59, 127)
+ENEMY_PROJECTILE_PALETTE_GROUPS = (
+    (10, (112, 113)),       # animated red aimed/spread shot
+    (11, (58, 201, 202)),   # orange dart and diagonal variants
+    (12, (145, 146, 147)),  # purple left/down/right laser variants
+)
 
 
 def load_snes_builder(workspace: Path) -> ModuleType:
@@ -468,6 +477,137 @@ def build_cash_digits(
     )
 
 
+def build_enemy_projectiles(
+    snes: ModuleType,
+    image_root: Path,
+) -> tuple[bytes, bytes, Image.Image, tuple[dict[str, int], ...]]:
+    """Pack the exact PC projectile graphics used by level 1 and its boss.
+
+    The PC blitter anchors every shot at the top-left of its original
+    12-by-up-to-14 canvas. Cropping transparent pixels lets the GBA use its
+    8x8/8x16/16x16 OBJ shapes efficiently; generated offsets restore that
+    original anchor at render time.
+    """
+    source_dir = image_root / "sheets" / "08_player_shots"
+    sources: list[tuple[int, Image.Image, tuple[int, int, int, int]]] = []
+
+    for source_id in ENEMY_PROJECTILE_SOURCE_IDS:
+        source = Image.open(source_dir / f"{source_id:03d}.png").convert("RGBA")
+        if source.width != 12 or source.height > 14:
+            raise ValueError(
+                "unexpected Tyrian projectile source canvas: "
+                f"{source_id} is {source.size}, expected 12x<=14"
+            )
+        bbox = source.getchannel("A").getbbox()
+        if bbox is None:
+            raise ValueError(f"Tyrian projectile {source_id} is transparent")
+        sources.append((source_id, source, bbox))
+
+    source_lookup = {
+        source_id: source
+        for source_id, source, _ in sources
+    }
+    source_palette_banks: dict[int, int] = {}
+    palette_arrays: dict[int, np.ndarray] = {}
+    palette_data = bytearray()
+    for expected_bank, (palette_bank, source_ids) in enumerate(
+        ENEMY_PROJECTILE_PALETTE_GROUPS,
+        start=10,
+    ):
+        if palette_bank != expected_bank:
+            raise ValueError("enemy projectile palette banks must be contiguous")
+        opaque_colours: list[np.ndarray] = []
+        for source_id in source_ids:
+            source = source_lookup[source_id]
+            rgba = np.asarray(source, dtype=np.uint8)
+            opaque = rgba[:, :, 3] >= 80
+            opaque_colours.append(rgba[:, :, :3][opaque])
+            source_palette_banks[source_id] = palette_bank
+        unique_colours = np.unique(
+            np.concatenate(opaque_colours, axis=0),
+            axis=0,
+        )
+        if len(unique_colours) > 15:
+            raise ValueError(
+                f"projectile palette {palette_bank} needs "
+                f"{len(unique_colours)} opaque colours"
+            )
+        colours = snes.adaptive_palette(np.concatenate(opaque_colours, axis=0))
+        palette = [(0, 0, 0)] + colours
+        palette_arrays[palette_bank] = np.asarray(
+            palette[1:],
+            dtype=np.int32,
+        )
+        palette_data.extend(snes.snes_palette_bytes([palette]))
+    if set(source_palette_banks) != set(ENEMY_PROJECTILE_SOURCE_IDS):
+        raise ValueError("enemy projectile palette groups are incomplete")
+
+    tile_data = bytearray()
+    layouts: list[dict[str, int]] = []
+    preview = Image.new(
+        "RGBA",
+        (16 * len(ENEMY_PROJECTILE_SOURCE_IDS), 16),
+        (0, 0, 0, 0),
+    )
+
+    for slot, (source_id, source, bbox) in enumerate(sources):
+        left, top, right, bottom = bbox
+        content_width = right - left
+        content_height = bottom - top
+        width = 8 if content_width <= 8 else 16
+        height = 8 if content_height <= 8 else 16
+        frame = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        frame.alpha_composite(source.crop(bbox), (0, 0))
+        rgba = np.asarray(frame, dtype=np.uint8)
+        opaque = rgba[:, :, 3] >= 80
+        values = np.zeros((height, width), dtype=np.uint8)
+        pixels = rgba[opaque, :3].astype(np.int32)
+        palette_bank = source_palette_banks[source_id]
+        palette_array = palette_arrays[palette_bank]
+        nearest = (
+            ((pixels[:, None, :] - palette_array[None, :, :]) ** 2)
+            .sum(axis=2)
+            .argmin(axis=1)
+            .astype(np.uint8)
+            + 1
+        )
+        values[opaque] = nearest
+        start_tile = len(tile_data) // 32
+        for tile_y in range(height // 8):
+            for tile_x in range(width // 8):
+                tile_data.extend(
+                    encode_gba_4bpp(
+                        values[
+                            tile_y * 8 : tile_y * 8 + 8,
+                            tile_x * 8 : tile_x * 8 + 8,
+                        ]
+                    )
+                )
+        layouts.append({
+            "source_id": source_id,
+            "start_tile": start_tile,
+            "tile_count": (width // 8) * (height // 8),
+            "offset_x": left,
+            "offset_y": top,
+            "width": width,
+            "height": height,
+            "palette_bank": palette_bank,
+        })
+        preview.alpha_composite(source, (slot * 16 + 2, 1))
+
+    if len(tile_data) // 32 != 18:
+        raise ValueError(
+            "level-1 projectile packing changed unexpectedly: "
+            f"{len(tile_data) // 32} tiles instead of 18"
+        )
+    return (
+        bytes(tile_data),
+        bytes(palette_data),
+        preview,
+        tuple(layouts),
+    )
+
+
 def repack_obj_tiles(
     snes_tiles: bytes,
     source_metadata: dict[str, int],
@@ -475,6 +615,8 @@ def repack_obj_tiles(
     reward_tiles: bytes,
     digit_tiles: bytes,
     digit_advances: tuple[int, ...],
+    projectile_tiles: bytes,
+    projectile_layouts: tuple[dict[str, int], ...],
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
     decoded = [
@@ -552,7 +694,20 @@ def repack_obj_tiles(
     output.extend(digit_tiles)
 
     append_asset("PLAYER_SHOT", 2, 2)
-    append_asset("ENEMY_SHOT", 2, 2)
+    projectile_base = len(output) // 32
+    for layout in projectile_layouts:
+        suffix = f"{layout['source_id']:03d}"
+        metadata[f"OBJ_TILE_PROJECTILE_{suffix}"] = (
+            projectile_base + layout["start_tile"]
+        )
+        metadata[f"OBJ_PAL_PROJECTILE_{suffix}"] = layout["palette_bank"]
+        metadata[f"OBJ_PROJECTILE_OFFSET_X_{suffix}"] = layout["offset_x"]
+        metadata[f"OBJ_PROJECTILE_OFFSET_Y_{suffix}"] = layout["offset_y"]
+        metadata[f"OBJ_PROJECTILE_WIDTH_{suffix}"] = layout["width"]
+        metadata[f"OBJ_PROJECTILE_HEIGHT_{suffix}"] = layout["height"]
+    metadata["OBJ_PROJECTILE_SOURCE_COUNT"] = len(projectile_layouts)
+    metadata["OBJ_PROJECTILE_TILE_COUNT"] = len(projectile_tiles) // 32
+    output.extend(projectile_tiles)
     append_asset("BOSS_BAR", 2, 2)
 
     tile_count = len(output) // 32
@@ -750,14 +905,19 @@ def encode_gba_level_events(
     snes: ModuleType,
     events: list[tuple[int, int, int, int, int, int, int, int]],
     hdt_path: Path,
-) -> tuple[bytes, int, int, dict[str, int]]:
-    """Add a source-HDT-derived reward byte to every GBA spawn command.
+) -> tuple[bytes, int, int, dict[str, int | str], list[str]]:
+    """Add source-HDT reward and three-slot weapon data to every GBA spawn.
 
     OpenTyrian normally credits each destroyed enemy's positive ``value``
     directly, and uses ``eenemydie`` only where a physical score item is
     authored.  Level 1 contains no ``eenemydie`` score items, so this hardware
     demo turns only its high-value (50+) enemies into visible pickups while
     retaining the exact 50/100/1000 denominations found in those HDT records.
+
+    The old POC discarded ``tur[3]``/``freq[3]`` and replaced them with one
+    hand-authored downward shot. Preserve all six HDT bytes per spawn and all
+    three frequency bytes from event type 31 so the runtime can execute the PC
+    firing slots without guessing.
     """
     source_enemy_ids: list[int] = []
     original_archetype = nes.enemy_archetype
@@ -780,21 +940,47 @@ def encode_gba_level_events(
     hdt = hdt_path.read_bytes()
     enemy_table = hdt_enemy_table_offset(hdt)
 
-    def enemy_fields(enemy_id: int) -> tuple[int, int, int]:
+    def enemy_fields(
+        enemy_id: int,
+    ) -> tuple[int, int, int, tuple[int, ...], tuple[int, ...]]:
         if not 0 <= enemy_id < 851:
             raise ValueError(f"enemy ID outside tyrian.hdt: {enemy_id}")
         offset = enemy_table + enemy_id * 77
         armor = hdt[offset + 19]
         value = struct.unpack_from("<h", hdt, offset + 73)[0]
         enemy_die = struct.unpack_from("<H", hdt, offset + 75)[0]
-        return armor, value, enemy_die
+        turrets = tuple(hdt[offset + 1 : offset + 4])
+        frequencies = tuple(hdt[offset + 4 : offset + 7])
+        return armor, value, enemy_die, turrets, frequencies
+
+    fire_overrides = [
+        (
+            max(0, min(255, event_data)),
+            max(0, min(255, event_data_2)),
+            max(0, min(255, event_data_3)),
+            event_data_4 & 0xFF,
+        )
+        for (
+            event_time,
+            event_type,
+            event_data,
+            event_data_2,
+            event_data_3,
+            _,
+            _,
+            event_data_4,
+        ) in events
+        if event_time < 4900 and event_type == 31
+    ]
 
     output = bytearray()
     cursor = 0
     spawn_index = 0
+    fire_override_index = 0
     reward_counts = [0, 0, 0, 0]
     explicit_hdt_drops = 0
     adapted_high_value_drops = 0
+    used_weapon_ids: set[int] = set()
     while cursor + 1 < len(encoded):
         delta = encoded[cursor]
         opcode = encoded[cursor + 1]
@@ -809,10 +995,16 @@ def encode_gba_level_events(
             if cursor + 5 > len(encoded):
                 raise ValueError("truncated shared spawn command")
             enemy_id = source_enemy_ids[spawn_index]
-            _, source_value, enemy_die = enemy_fields(enemy_id)
+            (
+                _,
+                source_value,
+                enemy_die,
+                turrets,
+                frequencies,
+            ) = enemy_fields(enemy_id)
             reward_code = 0
             if enemy_die:
-                target_armor, target_value, _ = enemy_fields(enemy_die)
+                target_armor, target_value, _, _, _ = enemy_fields(enemy_die)
                 if target_armor == 0 and target_value != 0:
                     reward_code = reward_code_for_value(target_value)
                     if reward_code:
@@ -823,15 +1015,33 @@ def encode_gba_level_events(
                     adapted_high_value_drops += 1
             output.extend(encoded[cursor + 2 : cursor + 5])
             output.append(reward_code)
+            output.extend(turrets)
+            output.extend(frequencies)
+            used_weapon_ids.update(weapon for weapon in turrets if weapon)
             reward_counts[reward_code] += 1
             spawn_index += 1
             cursor += 5
+            continue
+        if opcode == nes.EVENT_FIRE:
+            if fire_override_index >= len(fire_overrides):
+                raise ValueError("more encoded fire overrides than source records")
+            freq1, freq2, freq3, source_link = fire_overrides[
+                fire_override_index
+            ]
+            encoded_link = encoded[cursor + 2]
+            if encoded_link != source_link:
+                raise ValueError(
+                    "fire override link mismatch: "
+                    f"encoded={encoded_link}, source={source_link}"
+                )
+            output.extend((encoded_link, freq1, freq2, freq3))
+            fire_override_index += 1
+            cursor += 4
             continue
         if opcode in (
             nes.EVENT_MOVE,
             nes.EVENT_ACCEL,
             nes.EVENT_REVERSE,
-            nes.EVENT_FIRE,
         ):
             length = 4
         elif opcode == nes.EVENT_FOREGROUND:
@@ -841,10 +1051,21 @@ def encode_gba_level_events(
         output.extend(encoded[cursor + 2 : cursor + length])
         cursor += length
 
-    if cursor != len(encoded) or spawn_index != spawn_count:
+    if (
+        cursor != len(encoded)
+        or spawn_index != spawn_count
+        or fire_override_index != len(fire_overrides)
+    ):
         raise ValueError(
-            "GBA reward bytecode conversion did not consume its source: "
-            f"cursor={cursor}/{len(encoded)}, spawns={spawn_index}/{spawn_count}"
+            "GBA HDT bytecode conversion did not consume its source: "
+            f"cursor={cursor}/{len(encoded)}, spawns={spawn_index}/{spawn_count}, "
+            f"fire={fire_override_index}/{len(fire_overrides)}"
+        )
+    unsupported = used_weapon_ids.difference(ENEMY_PROJECTILE_WEAPON_IDS)
+    if unsupported:
+        raise ValueError(
+            "first-level enemy weapon has no GBA projectile implementation: "
+            + ",".join(str(value) for value in sorted(unsupported))
         )
     report = {
         "eligible": sum(reward_counts[1:]),
@@ -853,8 +1074,31 @@ def encode_gba_level_events(
         "value_1000": reward_counts[3],
         "explicit_hdt": explicit_hdt_drops,
         "adapted_high_value": adapted_high_value_drops,
+        "weapon_records": ",".join(str(value) for value in sorted(used_weapon_ids)),
+        "fire_override_records": len(fire_overrides),
     }
-    return bytes(output), spawn_count, control_count, report
+    spawn_counts = collections.Counter(source_enemy_ids)
+    audit_lines = [
+        "Tyrian GBA first-level enemy projectile audit",
+        "enemy_id,spawn_count,tur1,tur2,tur3,freq1,freq2,freq3",
+    ]
+    for enemy_id in sorted(spawn_counts):
+        _, _, _, turrets, frequencies = enemy_fields(enemy_id)
+        audit_lines.append(
+            f"{enemy_id},{spawn_counts[enemy_id]},"
+            + ",".join(str(value) for value in (*turrets, *frequencies))
+        )
+    audit_lines.extend((
+        "",
+        "projectile_graphics="
+        + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
+        "enemy_weapon_records="
+        + ",".join(str(value) for value in sorted(used_weapon_ids)),
+        "boss_weapon_records="
+        + ",".join(str(value) for value in BOSS_PROJECTILE_WEAPON_IDS),
+        f"event31_three_slot_records={len(fire_overrides)}",
+    ))
+    return bytes(output), spawn_count, control_count, report, audit_lines
 
 
 def add_background_motion_events(
@@ -878,14 +1122,15 @@ def add_background_motion_events(
             cursor += 2
             continue
         if opcode < 24:
-            length = 6
+            length = 12
         elif opcode in (
             nes.EVENT_MOVE,
             nes.EVENT_ACCEL,
             nes.EVENT_REVERSE,
-            nes.EVENT_FIRE,
         ):
             length = 4
+        elif opcode == nes.EVENT_FIRE:
+            length = 6
         elif opcode == nes.EVENT_FOREGROUND:
             length = 2
         else:
@@ -1021,6 +1266,7 @@ def main() -> None:
         spawn_count,
         control_count,
         reward_report,
+        projectile_audit_lines,
     ) = encode_gba_level_events(
         nes,
         snes,
@@ -1044,6 +1290,10 @@ def main() -> None:
                 f"{reward_report['adapted_high_value']}"
             ),
         )) + "\n",
+        encoding="utf-8",
+    )
+    (output / "enemy_projectile_audit.txt").write_text(
+        "\n".join(projectile_audit_lines) + "\n",
         encoding="utf-8",
     )
 
@@ -1079,10 +1329,19 @@ def main() -> None:
         digit_preview,
         digit_advances,
     ) = build_cash_digits(snes, image_root, data_root / "palette.dat")
+    (
+        projectile_tiles,
+        projectile_palettes,
+        projectile_preview,
+        projectile_layouts,
+    ) = build_enemy_projectiles(snes, image_root)
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
     obj_palette[9 * 32 : 10 * 32] = digit_palette
+    if len(projectile_palettes) != 3 * 32:
+        raise ValueError("enemy projectile palette bank count changed")
+    obj_palette[10 * 32 : 13 * 32] = projectile_palettes
     obj_tiles, obj_metadata = repack_obj_tiles(
         snes_obj_tiles,
         source_metadata,
@@ -1090,6 +1349,8 @@ def main() -> None:
         reward_tiles,
         digit_tiles,
         digit_advances,
+        projectile_tiles,
+        projectile_layouts,
     )
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
@@ -1114,6 +1375,10 @@ def main() -> None:
         (digit_preview.width * 4, digit_preview.height * 4),
         Image.Resampling.NEAREST,
     ).save(preview / "cash_tiny_font_digits.png")
+    projectile_preview.resize(
+        (projectile_preview.width * 6, projectile_preview.height * 6),
+        Image.Resampling.NEAREST,
+    ).save(preview / "enemy_projectiles_pc_source.png")
 
     title_music, title_report = snes.build_tym_tracker_it(
         workspace,
@@ -1134,6 +1399,16 @@ def main() -> None:
         11_025,
         False,
     ))
+    # WeaponType.sound is one-based. These are the three additional effects
+    # used by the exact level-1 enemy/boss weapon records (sound 1 already
+    # exists as weapon_1.wav).
+    for sound_id in (4, 6, 13):
+        sfx.append((
+            f"enemy_shot_{sound_id}",
+            extract_tyrian_sfx_entry(sound_file, sound_id - 1),
+            11_025,
+            False,
+        ))
     for name, pcm, rate, _ in sfx:
         write_signed_pcm_wav(output / f"{name}.wav", pcm, rate)
 
@@ -1198,6 +1473,17 @@ def main() -> None:
         "cash_digit_source_sprites=79,70-78",
         "cash_digit_style=PC hue 2 brightness 4 FULL_SHADE",
         f"cash_digit_tiles={len(digit_tiles) // 32}",
+        "enemy_projectile_source_graphics="
+        + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
+        "enemy_projectile_weapon_records="
+        + str(reward_report["weapon_records"]),
+        "boss_projectile_weapon_records="
+        + ",".join(str(value) for value in BOSS_PROJECTILE_WEAPON_IDS),
+        f"enemy_projectile_tiles={len(projectile_tiles) // 32}",
+        "enemy_projectile_palette_banks=10:red,11:dart,12:laser",
+        "enemy_projectile_anchor=PC top-left canvas via generated crop offsets",
+        "enemy_fire_slots=HDT tur[3]/freq[3] plus event31 three-slot overrides",
+        f"enemy_fire_override_records={reward_report['fire_override_records']}",
         f"player_shot_port={player_shot_report['port_name']}",
         f"player_shot_weapon_record={player_shot_report['weapon_record']}",
         f"player_shot_graphic={player_shot_report['graphic']}",

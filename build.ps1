@@ -9,8 +9,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_tech_demo_v8"
-$testName = "tyrian_gba_level1_autotest_v8"
+$releaseName = "tyrian_gba_level1_tech_demo_v9"
+$testName = "tyrian_gba_level1_autotest_v9"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -172,7 +172,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 92) {
+if ($saveBytes.Length -lt 104) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -211,10 +211,13 @@ $telemetry = [ordered]@{
     max_active_rewards = Read-TelemetryU32 80
     reward_drops = Read-TelemetryU32 84
     final_cash = Read-TelemetryU32 88
+    enemy_shots_spawned = Read-TelemetryU32 92
+    enemy_shot_drops = Read-TelemetryU32 96
+    max_active_enemy_shots = Read-TelemetryU32 100
 }
 
 $telemetryChecks = @(
-    $telemetry.version -eq 3,
+    $telemetry.version -eq 4,
     $telemetry.pass -eq 1,
     $telemetry.final_state -eq 0,
     $telemetry.title_music_active -eq 1,
@@ -227,6 +230,9 @@ $telemetryChecks = @(
     $telemetry.reward_spawns -gt 0,
     $telemetry.reward_pickups -gt 0,
     $telemetry.reward_drops -eq 0,
+    $telemetry.enemy_shots_spawned -gt 0,
+    $telemetry.enemy_shot_drops -eq 0,
+    $telemetry.max_active_enemy_shots -le 60,
     $telemetry.max_hardware_oam -le 128,
     $telemetry.state_transitions -eq 5
 )

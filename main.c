@@ -24,7 +24,7 @@
  */
 #define MAX_ENEMIES 24
 #define MAX_PLAYER_SHOTS 12
-#define MAX_ENEMY_SHOTS 24
+#define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
 #define MAX_REWARDS 16
 #define ENEMY_ARCHETYPES 24
@@ -55,6 +55,14 @@
 #define CASH_COUNTER_X 22
 #define CASH_COUNTER_Y 140
 
+#define PC_SHOT_GRAPHIC_DART 58
+#define PC_SHOT_GRAPHIC_RED 112
+#define PC_SHOT_GRAPHIC_LASER_LEFT 145
+#define PC_SHOT_GRAPHIC_LASER_DOWN 146
+#define PC_SHOT_GRAPHIC_LASER_RIGHT 147
+#define PC_SHOT_GRAPHIC_DART_LEFT 201
+#define PC_SHOT_GRAPHIC_DART_RIGHT 202
+
 _Static_assert(
     EXPLOSION_FRAME_COUNT == OBJ_EXPLOSION_FRAME_COUNT,
     "explosion frame count must match generated OBJ assets"
@@ -83,6 +91,22 @@ _Static_assert(
 _Static_assert(
     OBJ_SCORE_DIGIT_COUNT == 10,
     "cash counter must contain the ten original TINY_FONT digits"
+);
+_Static_assert(
+    OBJ_PROJECTILE_SOURCE_COUNT == 8,
+    "enemy projectile source count must match the PC level-1 set"
+);
+_Static_assert(
+    OBJ_PROJECTILE_TILE_COUNT == 18,
+    "enemy projectile shape packing must remain within OBJ VRAM"
+);
+_Static_assert(
+    OBJ_TILE_PROJECTILE_113 == OBJ_TILE_PROJECTILE_112 + 1,
+    "PC red projectile animation frames must be adjacent"
+);
+_Static_assert(
+    OBJ_PAL_PROJECTILE_112 == OBJ_PAL_PROJECTILE_113,
+    "PC red projectile animation frames must share a palette"
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 
@@ -128,9 +152,11 @@ typedef struct {
     u8 hp;
     u8 phase;
     u8 link;
-    u8 fire_period;
-    u8 fire_timer;
     u8 reward;
+    u8 turret[3];
+    u8 frequency[3];
+    u8 fire_wait[3];
+    u8 multi_pos[3];
 } Enemy;
 
 typedef struct {
@@ -144,8 +170,30 @@ typedef struct {
     s16 x;
     s16 y;
     s8 dx;
-    u8 dy;
+    s8 dy;
+    u8 duration;
+    u8 graphic;
+    u8 animate;
+    u8 animax;
 } EnemyShot;
+
+typedef struct {
+    u8 graphic;
+    s8 bx;
+    s8 by;
+    s8 sx;
+    s8 sy;
+} WeaponShot;
+
+typedef struct {
+    u8 id;
+    u8 first;
+    u8 multi;
+    u8 maximum;
+    u8 aim;
+    u8 animax;
+    u16 sound;
+} WeaponDef;
 
 typedef struct {
     u8 active;
@@ -239,10 +287,44 @@ static const s8 enemy_dy_table[ENEMY_ARCHETYPES] = {
     2, 2, 2, 2, 2, 2, 2, 2,
 };
 
-static const u8 enemy_fire_table[ENEMY_ARCHETYPES] = {
-     0,  0,  0,  0, 18, 18, 10, 10,
-    18, 18,  0,  0, 30,  0,  0,  0,
-     0,  0,  0, 24, 30,  0,  0, 24,
+/*
+ * Exact tyrian.hdt WeaponType entries referenced by first-level enemies and
+ * the 46..65 boss component grid. Field order is graphic, bx, by, sx, sy.
+ * Slot rotation and aim are applied below exactly as JE_drawEnemy does. Every
+ * used position has del=255; acceleration/accelerationx and tx/ty are zero.
+ */
+static const WeaponShot weapon_shots[] = {
+    {PC_SHOT_GRAPHIC_LASER_DOWN,   0,  0,  0, 4}, /* W2 */
+    {PC_SHOT_GRAPHIC_LASER_RIGHT,  0,  0, -3, 3}, /* W3 */
+    {PC_SHOT_GRAPHIC_LASER_LEFT,   0,  0, -3, 3}, /* W4 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 0}, /* W59 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 0}, /* W62 */
+    {PC_SHOT_GRAPHIC_DART,         0,  0,  0, 8}, /* W78 pos 1 */
+    {PC_SHOT_GRAPHIC_DART_LEFT,    0,  0, -2, 7}, /* W78 pos 2 */
+    {PC_SHOT_GRAPHIC_DART_RIGHT,   0,  0,  2, 7}, /* W78 pos 3 */
+    {PC_SHOT_GRAPHIC_RED,         -8, -2,  0, 0}, /* W115 */
+    {PC_SHOT_GRAPHIC_RED,          8, -2,  0, 0}, /* W116 */
+    {PC_SHOT_GRAPHIC_DART,        -8,  0,  0, 6}, /* W125 */
+    {PC_SHOT_GRAPHIC_DART,         8,  0,  0, 6}, /* W126 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 3}, /* W127 pos 1 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0, -1, 2}, /* W127 pos 2 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0,  1, 2}, /* W127 pos 3 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0, -2, 1}, /* W127 pos 4 */
+    {PC_SHOT_GRAPHIC_RED,          0,  0,  2, 1}, /* W127 pos 5 */
+};
+
+static const WeaponDef weapon_defs[] = {
+    {  2,  0, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
+    {  3,  1, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
+    {  4,  2, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
+    { 59,  3, 1, 1, 2, 2, SFX_ENEMY_SHOT_13},
+    { 62,  4, 1, 1, 2, 2, SFX_ENEMY_SHOT_13},
+    { 78,  5, 3, 3, 0, 0, SFX_ENEMY_SHOT_6},
+    {115,  8, 1, 1, 3, 2, SFX_ENEMY_SHOT_13},
+    {116,  9, 1, 1, 3, 2, SFX_ENEMY_SHOT_13},
+    {125, 10, 1, 1, 0, 0, SFX_WEAPON_1},
+    {126, 11, 1, 1, 0, 0, SFX_WEAPON_1},
+    {127, 12, 5, 5, 0, 2, SFX_ENEMY_SHOT_6},
 };
 
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
@@ -278,7 +360,11 @@ static s8 boss_dx;
 static s8 boss_dy;
 static u8 boss_hp;
 static u8 boss_phase;
-static u8 boss_fire_timer;
+static u8 boss_aim_fire_wait;
+static u8 boss_spread_fire_wait;
+static u8 boss_aim_left_pos;
+static u8 boss_aim_right_pos;
+static u8 boss_spread_pos;
 static u8 clear_timer;
 
 static u16 level_tick;
@@ -329,6 +415,9 @@ volatile u32 telemetry_reward_spawns;
 volatile u32 telemetry_reward_pickups;
 volatile u32 telemetry_max_rewards;
 volatile u32 telemetry_reward_drops;
+volatile u32 telemetry_enemy_shots_spawned;
+volatile u32 telemetry_enemy_shot_drops;
+volatile u32 telemetry_max_enemy_shots;
 volatile u32 telemetry_state_transitions;
 
 #ifdef AUTOTEST
@@ -525,6 +614,9 @@ static void enter_level(void)
     telemetry_reward_pickups = 0;
     telemetry_max_rewards = 0;
     telemetry_reward_drops = 0;
+    telemetry_enemy_shots_spawned = 0;
+    telemetry_enemy_shot_drops = 0;
+    telemetry_max_enemy_shots = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = 8;
@@ -642,9 +734,22 @@ static u8 active_enemy_count(void)
     return count;
 }
 
-static void spawn_enemy(u8 x, u8 type, u8 motion, u8 link, u8 reward)
+static void spawn_enemy(
+    u8 x,
+    u8 type,
+    u8 motion,
+    u8 link,
+    u8 reward,
+    u8 turret1,
+    u8 turret2,
+    u8 turret3,
+    u8 frequency1,
+    u8 frequency2,
+    u8 frequency3
+)
 {
     u8 index;
+    u8 slot;
     u8 replace = 0;
     s16 largest_y = -32767;
     s8 velocity;
@@ -681,18 +786,37 @@ static void spawn_enemy(u8 x, u8 type, u8 motion, u8 link, u8 reward)
     enemy->accel_x = 0;
     enemy->accel_y = 0;
     enemy->link = link;
-    enemy->fire_period = enemy_fire_table[type];
-    enemy->fire_timer = enemy->fire_period;
     enemy->reward = reward;
+    enemy->turret[0] = turret1;
+    enemy->turret[1] = turret2;
+    enemy->turret[2] = turret3;
+    enemy->frequency[0] = frequency1;
+    enemy->frequency[1] = frequency2;
+    enemy->frequency[2] = frequency3;
+    for (slot = 0; slot < 3; slot++) {
+        /*
+         * JE_makeEnemy starts every populated turret at 20 ticks even when
+         * its initial frequency is zero; event 31 can enable it later.
+         */
+        enemy->fire_wait[slot] = enemy->turret[slot] ? 20 : 255;
+        enemy->multi_pos[slot] = 0;
+    }
     telemetry_spawn_count++;
 
     index = active_enemy_count();
     if (index > telemetry_max_enemies) telemetry_max_enemies = index;
 }
 
-static void apply_control(u8 opcode, u8 link, u8 value)
+static void apply_control(
+    u8 opcode,
+    u8 link,
+    u8 value,
+    u8 value2,
+    u8 value3
+)
 {
     u8 index;
+    u8 slot;
     s8 x = decode_component(value >> 4);
     s8 y = decode_component(value & 15);
     Enemy *enemy;
@@ -701,8 +825,10 @@ static void apply_control(u8 opcode, u8 link, u8 value)
         enemy = &enemies[index];
         if (!enemy->active || !event_matches(enemy, link)) continue;
         if (opcode == EVENT_FIRE) {
-            enemy->fire_period = value ? (value + 1) >> 1 : 0;
-            enemy->fire_timer = 1;
+            enemy->frequency[0] = value;
+            enemy->frequency[1] = value2;
+            enemy->frequency[2] = value3;
+            for (slot = 0; slot < 3; slot++) enemy->fire_wait[slot] = 1;
         } else if (opcode == EVENT_MOVE) {
             if (x != -99) enemy->dx = x;
             if (y != -99) enemy->dy = y;
@@ -754,21 +880,37 @@ static void process_events(void)
                 opcode,
                 level_events[event_offset + 3],
                 level_events[event_offset + 4],
-                level_events[event_offset + 5]
+                level_events[event_offset + 5],
+                level_events[event_offset + 6],
+                level_events[event_offset + 7],
+                level_events[event_offset + 8],
+                level_events[event_offset + 9],
+                level_events[event_offset + 10],
+                level_events[event_offset + 11]
             );
-            length = 6;
+            length = 12;
         } else if (
             opcode == EVENT_MOVE ||
             opcode == EVENT_ACCEL ||
-            opcode == EVENT_REVERSE ||
-            opcode == EVENT_FIRE
+            opcode == EVENT_REVERSE
         ) {
             apply_control(
                 opcode,
                 level_events[event_offset + 2],
-                level_events[event_offset + 3]
+                level_events[event_offset + 3],
+                0,
+                0
             );
             length = 4;
+        } else if (opcode == EVENT_FIRE) {
+            apply_control(
+                opcode,
+                level_events[event_offset + 2],
+                level_events[event_offset + 3],
+                level_events[event_offset + 4],
+                level_events[event_offset + 5]
+            );
+            length = 6;
         } else if (opcode == EVENT_FOREGROUND) {
             foreground_phase = 1;
             telemetry_control_count++;
@@ -802,9 +944,38 @@ static void spawn_player_shot(void)
     }
 }
 
-static void spawn_enemy_shot(s16 x, s16 y, s8 dx, u8 dy)
+static const WeaponDef *find_weapon_def(u8 id)
 {
     u8 index;
+    for (index = 0; index < sizeof(weapon_defs) / sizeof(weapon_defs[0]); index++) {
+        if (weapon_defs[index].id == id) return &weapon_defs[index];
+    }
+    return 0;
+}
+
+static s8 aim_component(s16 delta, u16 maximum, u8 magnitude)
+{
+    u16 absolute;
+    u16 scaled;
+    if (!maximum) return 0;
+    absolute = delta < 0 ? (u16)-delta : (u16)delta;
+    scaled = (u16)(absolute * magnitude);
+    scaled = (u16)((scaled + maximum / 2) / maximum);
+    return delta < 0 ? -(s8)scaled : (s8)scaled;
+}
+
+static u8 spawn_enemy_shot(
+    s16 x,
+    s16 y,
+    s8 dx,
+    s8 dy,
+    u8 graphic,
+    u8 animax
+)
+{
+    u8 index;
+    u8 scan;
+    u8 active_count;
     for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
         if (!enemy_shots[index].active) {
             enemy_shots[index].active = 1;
@@ -812,9 +983,86 @@ static void spawn_enemy_shot(s16 x, s16 y, s8 dx, u8 dy)
             enemy_shots[index].y = y;
             enemy_shots[index].dx = dx;
             enemy_shots[index].dy = dy;
-            return;
+            enemy_shots[index].duration = 255;
+            enemy_shots[index].graphic = graphic;
+            enemy_shots[index].animate = 0;
+            enemy_shots[index].animax = animax;
+            telemetry_enemy_shots_spawned++;
+            active_count = 0;
+            for (scan = 0; scan < MAX_ENEMY_SHOTS; scan++) {
+                if (enemy_shots[scan].active) active_count++;
+            }
+            if (active_count > telemetry_max_enemy_shots) {
+                telemetry_max_enemy_shots = active_count;
+            }
+            return 1;
         }
     }
+    telemetry_enemy_shot_drops++;
+    return 0;
+}
+
+static void fire_enemy_weapon(
+    s16 origin_x,
+    s16 origin_y,
+    u8 weapon_id,
+    u8 slot,
+    u8 *multi_pos
+)
+{
+    const WeaponDef *weapon = find_weapon_def(weapon_id);
+    const WeaponShot *pattern;
+    s16 delta_x;
+    s16 delta_y;
+    u16 magnitude_x;
+    u16 magnitude_y;
+    u16 maximum;
+    s8 dx;
+    s8 dy;
+    u8 shot_index;
+    u8 position;
+    u8 spawned = 0;
+
+    if (!weapon) return;
+    for (shot_index = 0; shot_index < weapon->multi; shot_index++) {
+        position = (u8)(*multi_pos + 1);
+        if (position > weapon->maximum) position = 1;
+        *multi_pos = position;
+        pattern = &weapon_shots[weapon->first + position - 1];
+
+        if (slot == 2) {
+            dx = -pattern->sy;
+            dy = -pattern->sx;
+        } else if (slot == 1) {
+            dx = pattern->sy;
+            dy = -pattern->sx;
+        } else {
+            dx = pattern->sx;
+            dy = pattern->sy;
+        }
+
+        if (weapon->aim) {
+            delta_x = (player_x + 16) - origin_x;
+            delta_y = (player_y + 14) - origin_y;
+            magnitude_x = delta_x < 0 ? (u16)-delta_x : (u16)delta_x;
+            magnitude_y = delta_y < 0 ? (u16)-delta_y : (u16)delta_y;
+            maximum = magnitude_x > magnitude_y ? magnitude_x : magnitude_y;
+            dx = aim_component(delta_x, maximum, weapon->aim);
+            dy = aim_component(delta_y, maximum, weapon->aim);
+        }
+
+        if (!spawn_enemy_shot(
+                origin_x + pattern->bx,
+                origin_y + pattern->by,
+                dx,
+                dy,
+                pattern->graphic,
+                weapon->animax)) {
+            break;
+        }
+        spawned = 1;
+    }
+    if (spawned) audio_effect(weapon->sound);
 }
 
 static void player_hit(void)
@@ -871,6 +1119,7 @@ static void update_shots(void)
         enemy_shot->x += enemy_shot->dx;
         enemy_shot->y += enemy_shot->dy;
         if (
+            enemy_shot->duration-- == 0 ||
             enemy_shot->x < -16 || enemy_shot->x > 240 ||
             enemy_shot->y > 168
         ) {
@@ -878,10 +1127,15 @@ static void update_shots(void)
             continue;
         }
         if (BOX_OVERLAPS(
-                enemy_shot->x + 4, enemy_shot->y + 4, 8, 8,
+                enemy_shot->x, enemy_shot->y, 8, 8,
                 player_x + 6, player_y + 5, 20, 23)) {
             enemy_shot->active = 0;
             player_hit();
+            continue;
+        }
+        if (enemy_shot->animax &&
+            ++enemy_shot->animate >= enemy_shot->animax) {
+            enemy_shot->animate = 0;
         }
     }
 }
@@ -920,6 +1174,7 @@ static void update_rewards(void)
 static void update_enemies(void)
 {
     u8 index;
+    u8 slot;
     Enemy *enemy;
 
     for (index = 0; index < MAX_ENEMIES; index++) {
@@ -945,12 +1200,27 @@ static void update_enemies(void)
             enemy->active = 0;
             continue;
         }
-        if (enemy->fire_period) {
-            if (enemy->fire_timer) {
-                enemy->fire_timer--;
-            } else {
-                spawn_enemy_shot(enemy->x + 8, enemy->y + 25, 0, 3);
-                enemy->fire_timer = enemy->fire_period;
+        /*
+         * PC order is slot 3 -> 1. A populated turret starts at wait 20,
+         * then reloads from its own frequency after each discharge.
+         */
+        for (slot = 3; slot > 0; slot--) {
+            u8 firing_slot = (u8)(slot - 1);
+            if (!enemy->frequency[firing_slot]) continue;
+            enemy->fire_wait[firing_slot]--;
+            if (
+                enemy->fire_wait[firing_slot] == 0 &&
+                enemy->turret[firing_slot]
+            ) {
+                enemy->fire_wait[firing_slot] =
+                    enemy->frequency[firing_slot];
+                fire_enemy_weapon(
+                    enemy->x,
+                    enemy->y,
+                    enemy->turret[firing_slot],
+                    firing_slot,
+                    &enemy->multi_pos[firing_slot]
+                );
             }
         }
         if (BOX_OVERLAPS(
@@ -1107,7 +1377,15 @@ static void enter_boss(void)
     boss_dy = 1;
     boss_hp = 96;
     boss_phase = 0;
-    boss_fire_timer = 12;
+    /*
+     * PC boss records 52/54 use W59 from slot 2; record 53 uses W127
+     * from slot 1. JE_makeEnemy initializes every populated turret to 20.
+     */
+    boss_aim_fire_wait = 20;
+    boss_spread_fire_wait = 20;
+    boss_aim_left_pos = 0;
+    boss_aim_right_pos = 0;
+    boss_spread_pos = 0;
     game_state = STATE_BOSS;
     telemetry_state_transitions++;
 }
@@ -1130,7 +1408,6 @@ static void finish_boss(void)
 static void update_boss(void)
 {
     u8 index;
-    s8 aim;
     PlayerShot *shot;
 
     update_player();
@@ -1151,15 +1428,25 @@ static void update_boss(void)
             boss_y += boss_dy;
         }
     }
-    if (boss_fire_timer) {
-        boss_fire_timer--;
-    } else {
-        aim = player_x + 16 < boss_x + 32 ? -1 :
-              (player_x > boss_x + 32 ? 1 : 0);
-        spawn_enemy_shot(boss_x + 8, boss_y + 54, -1, 3);
-        spawn_enemy_shot(boss_x + 28, boss_y + 58, aim, 4);
-        spawn_enemy_shot(boss_x + 48, boss_y + 54, 1, 3);
-        boss_fire_timer = boss_hp < 48 ? 8 : 14;
+    if (--boss_aim_fire_wait == 0) {
+        /*
+         * Original component anchors are x=24/72, y=28 inside the
+         * 120x112 PC boss. The POC's 64x64 composite scales those to
+         * x=13/38, y=16.
+         */
+        fire_enemy_weapon(
+            boss_x + 13, boss_y + 16, 59, 1, &boss_aim_left_pos
+        );
+        fire_enemy_weapon(
+            boss_x + 38, boss_y + 16, 59, 1, &boss_aim_right_pos
+        );
+        boss_aim_fire_wait = 10;
+    }
+    if (--boss_spread_fire_wait == 0) {
+        fire_enemy_weapon(
+            boss_x + 26, boss_y + 16, 127, 0, &boss_spread_pos
+        );
+        boss_spread_fire_wait = 60;
     }
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         shot = &player_shots[index];
@@ -1270,6 +1557,122 @@ static void put_sprite(
     put_sprite_with_attr1(x, y, tile, palette, size, priority, 0);
 }
 
+static void put_sprite_shaped(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 palette,
+    u16 shape,
+    u16 size,
+    s16 width,
+    s16 height,
+    u8 priority
+)
+{
+    OBJATTR *object;
+    if (oam_count >= SPRITE_LIMIT) return;
+    if (
+        x <= -width || x >= SCREEN_WIDTH ||
+        y <= -height || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 = (y & 0x00FF) | ATTR0_NORMAL |
+                    ATTR0_COLOR_16 | shape;
+    object->attr1 = (x & 0x01FF) | size;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(priority) |
+                    ATTR2_PALETTE(palette);
+    object->dummy = 0;
+}
+
+static void render_enemy_shot(const EnemyShot *shot, u8 priority)
+{
+    u16 tile;
+    u16 palette;
+    u16 shape;
+    u16 size;
+    s16 offset_x;
+    s16 offset_y;
+    s16 width;
+    s16 height;
+
+    switch (shot->graphic) {
+    case PC_SHOT_GRAPHIC_DART:
+        tile = OBJ_TILE_PROJECTILE_058;
+        palette = OBJ_PAL_PROJECTILE_058;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_058;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_058;
+        width = OBJ_PROJECTILE_WIDTH_058;
+        height = OBJ_PROJECTILE_HEIGHT_058;
+        break;
+    case PC_SHOT_GRAPHIC_RED:
+        tile = OBJ_TILE_PROJECTILE_112 + shot->animate;
+        palette = OBJ_PAL_PROJECTILE_112;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_112;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_112;
+        width = OBJ_PROJECTILE_WIDTH_112;
+        height = OBJ_PROJECTILE_HEIGHT_112;
+        break;
+    case PC_SHOT_GRAPHIC_LASER_LEFT:
+        tile = OBJ_TILE_PROJECTILE_145;
+        palette = OBJ_PAL_PROJECTILE_145;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_145;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_145;
+        width = OBJ_PROJECTILE_WIDTH_145;
+        height = OBJ_PROJECTILE_HEIGHT_145;
+        break;
+    case PC_SHOT_GRAPHIC_LASER_DOWN:
+        tile = OBJ_TILE_PROJECTILE_146;
+        palette = OBJ_PAL_PROJECTILE_146;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_146;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_146;
+        width = OBJ_PROJECTILE_WIDTH_146;
+        height = OBJ_PROJECTILE_HEIGHT_146;
+        break;
+    case PC_SHOT_GRAPHIC_LASER_RIGHT:
+        tile = OBJ_TILE_PROJECTILE_147;
+        palette = OBJ_PAL_PROJECTILE_147;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_147;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_147;
+        width = OBJ_PROJECTILE_WIDTH_147;
+        height = OBJ_PROJECTILE_HEIGHT_147;
+        break;
+    case PC_SHOT_GRAPHIC_DART_LEFT:
+        tile = OBJ_TILE_PROJECTILE_201;
+        palette = OBJ_PAL_PROJECTILE_201;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_201;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_201;
+        width = OBJ_PROJECTILE_WIDTH_201;
+        height = OBJ_PROJECTILE_HEIGHT_201;
+        break;
+    case PC_SHOT_GRAPHIC_DART_RIGHT:
+        tile = OBJ_TILE_PROJECTILE_202;
+        palette = OBJ_PAL_PROJECTILE_202;
+        offset_x = OBJ_PROJECTILE_OFFSET_X_202;
+        offset_y = OBJ_PROJECTILE_OFFSET_Y_202;
+        width = OBJ_PROJECTILE_WIDTH_202;
+        height = OBJ_PROJECTILE_HEIGHT_202;
+        break;
+    default:
+        return;
+    }
+    shape = width == height ? ATTR0_SQUARE :
+            (width > height ? ATTR0_WIDE : ATTR0_TALL);
+    size = width == 16 && height == 16 ? ATTR1_SIZE_16 : ATTR1_SIZE_8;
+    put_sprite_shaped(
+        shot->x + offset_x,
+        shot->y + offset_y,
+        tile,
+        palette,
+        shape,
+        size,
+        width,
+        height,
+        priority
+    );
+}
+
 static void render_cash_counter(void)
 {
     u8 digits[OBJ_SCORE_DIGIT_COUNT];
@@ -1364,11 +1767,7 @@ static void render_game(void)
     }
     for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
         if (enemy_shots[index].active) {
-            put_sprite(
-                enemy_shots[index].x, enemy_shots[index].y,
-                OBJ_TILE_ENEMY_SHOT, OBJ_PAL_ENEMY_SHOT,
-                ATTR1_SIZE_16, object_priority
-            );
+            render_enemy_shot(&enemy_shots[index], object_priority);
         }
     }
     for (index = 0; index < MAX_EFFECTS; index++) {
@@ -1421,6 +1820,9 @@ static void autotest_finish(void)
         telemetry_reward_spawns > 0 &&
         telemetry_reward_pickups > 0 &&
         telemetry_reward_drops == 0 &&
+        telemetry_enemy_shots_spawned > 0 &&
+        telemetry_enemy_shot_drops == 0 &&
+        telemetry_max_enemy_shots <= MAX_ENEMY_SHOTS &&
         bg1_scroll_speed == 2 &&
         bg2_scroll_speed == 4 &&
         bg3_scroll_speed == 6
@@ -1431,7 +1833,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 3;
+    sram[4] = 4;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -1463,6 +1865,9 @@ static void autotest_finish(void)
     sram_write_u32(80, telemetry_max_rewards);
     sram_write_u32(84, telemetry_reward_drops);
     sram_write_u32(88, player_cash);
+    sram_write_u32(92, telemetry_enemy_shots_spawned);
+    sram_write_u32(96, telemetry_enemy_shot_drops);
+    sram_write_u32(100, telemetry_max_enemy_shots);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
