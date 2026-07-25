@@ -183,7 +183,7 @@ OpenTyrian 原有的 file helper boundary：
 這樣後續逐行翻寫時，資料 parser 不需要先全部改成生成式 C array，也不會
 把 GBA storage 細節滲入 game loop。
 
-## v15 原始格式 reader
+## v16 原始格式 reader
 
 `src/opentyrian_data.c/.h` 是 ROMFS 與 gameplay 間的格式層。所有 view 都
 直接指向 cartridge ROM；只有 PIC 的 320×200 解碼輸出與 SHP sprite
@@ -205,7 +205,9 @@ maps          14x300, 14x600, 15x600 bytes
 ```
 
 Event reader 直接解碼原始欄位，不再讀取 8-byte `OTL1` header 或生成式
-event blob。
+event blob。v16 也已移除舊 GBA `level_events.bin` 的產生、連結與
+`event_runtime.inc`；host 端保留的 10,273-byte legacy event 計算只用於
+資源／座標稽核，不是 cartridge runtime input。
 
 ### HDT
 
@@ -334,13 +336,13 @@ SRAM telemetry。
 - 若未來 ROM 超過標準 32 MiB，不能只改 linker；需先減少資料、加入壓縮
   或設計非標準 bank switching，並重新確認實機及 flash cartridge 支援。
 
-## v15 驗證識別
+## v16 驗證識別
 
 ```text
 Release ROM:
-  build/tyrian_gba_level1_source_parity_romfs_v15.gba
-  10,453,364 bytes
-  SHA-256 7c76472255d49cee9da5b5926d3c8d1997806a43cbe37493b4851a8e1fd4b195
+  build/tyrian_gba_level1_source_parity_romfs_v16.gba
+  10,446,824 bytes
+  SHA-256 c683626bd441970fa71a8694ec7800a74f7771dc2e0a4046a67d8a6bf22882f2
 
 ROMFS:
   9,853,080 bytes
@@ -348,6 +350,7 @@ ROMFS:
   manifest CRC32 764b1e68
 ```
 
-Build 保持 legacy 第一關完整 auto-test PASS，並鎖定 Stage 3：
-878 個 source events、869 applied、5 deferred、4 skipped、473/473 event
-spawns、453 slot releases、63,381 enemy motion updates。
+Build 以 telemetry schema 14 同時取得 ROM 內與 host verifier PASS：
+93 項 ROMFS self-test 全通過，並鎖定 Stage 4 authoritative runtime 的
+878 個 source events、473/473 event spawns、168/168 projectile
+spawn/release、0 projectile drop。

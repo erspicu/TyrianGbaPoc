@@ -46,11 +46,6 @@ obj_palette:
 	.incbin "res/obj_palette.bin"
 
 	.balign 4
-	.global level_events
-level_events:
-	.incbin "res/level_events.bin"
-
-	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

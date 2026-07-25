@@ -340,6 +340,7 @@ typedef enum {
     OT_SPAWN_EVENT,
     OT_SPAWN_LAUNCH,
     OT_SPAWN_RANDOM,
+    OT_SPAWN_DEATH,
 } OtSpawnOrigin;
 
 static void ot_record_spawn_attempt(
@@ -356,6 +357,9 @@ static void ot_record_spawn_attempt(
         break;
     case OT_SPAWN_RANDOM:
         state->random_spawn_attempt_count++;
+        break;
+    case OT_SPAWN_DEATH:
+        state->death_spawn_attempt_count++;
         break;
     }
 }
@@ -375,6 +379,9 @@ static void ot_record_spawn_pool_full(
     case OT_SPAWN_RANDOM:
         state->random_spawn_pool_full_count++;
         break;
+    case OT_SPAWN_DEATH:
+        state->death_spawn_pool_full_count++;
+        break;
     }
 }
 
@@ -393,6 +400,9 @@ static void ot_record_spawn_missing(
     case OT_SPAWN_RANDOM:
         state->random_spawn_missing_definition_count++;
         break;
+    case OT_SPAWN_DEATH:
+        state->death_spawn_missing_definition_count++;
+        break;
     }
 }
 
@@ -410,6 +420,9 @@ static void ot_record_spawn_success(
         break;
     case OT_SPAWN_RANDOM:
         state->random_spawn_success_count++;
+        break;
+    case OT_SPAWN_DEATH:
+        state->death_spawn_success_count++;
         break;
     }
 }
@@ -460,6 +473,17 @@ static uint8_t ot_new_enemy(
     }
 
     state->enemy_avail[slot] = avail;
+    if (avail == 2 && state->enemy[slot].scoreitem) {
+        state->score_item_spawn_count++;
+        state->score_item_active_count++;
+        if (
+            state->score_item_active_count >
+            state->score_item_max_active_count
+        ) {
+            state->score_item_max_active_count =
+                state->score_item_active_count;
+        }
+    }
     ot_record_spawn_success(state, origin);
     state->active_enemy_count++;
     if (state->active_enemy_count > state->max_active_enemy_count) {
@@ -978,6 +1002,7 @@ static bool apply_event(
     case 33: { /* Enemy From other Enemies */
         uint16_t enemy_die = (uint16_t)event->eventdat;
 
+        state->death_control_event_count++;
         /*
          * Fixed scope: single-player Normal, SA_NONE, !superTyrian.
          * player[0].lives aliases the initial front-weapon power (1).
@@ -992,6 +1017,7 @@ static bool apply_event(
             if (state->enemy[index].linknum == event->eventdat4) {
                 state->enemy[index].enemydie = enemy_die;
                 state->enemy_control_write_count++;
+                state->death_assignment_count++;
             }
         }
         return true;
@@ -1119,9 +1145,9 @@ static bool apply_event(
 
     default:
         /*
-         * Player/collision/render/audio cases remain owned by the legacy
-         * runtime in stage 2.  Their exact records are counted as deferred;
-         * no approximate source-parity behavior is introduced.
+         * Menu, episode-transition and unsupported special-mode cases remain
+         * outside the first-level proof.  Count their exact source records as
+         * deferred instead of inventing approximate behavior here.
          */
         return false;
     }
@@ -1146,6 +1172,12 @@ static void ot_release_enemy(
 )
 {
     if (state->enemy_avail[enemy_index] == 1) return;
+    if (
+        state->enemy[enemy_index].scoreitem &&
+        state->score_item_active_count > 0
+    ) {
+        state->score_item_active_count--;
+    }
     state->enemy_avail[enemy_index] = 1;
     if (state->active_enemy_count > 0) state->active_enemy_count--;
     state->enemy_release_count++;
@@ -1177,7 +1209,54 @@ static void ot_advance_fixed_acceleration(
     }
 }
 
-static void ot_enemy_fire_slots(
+static OtEnemyShot *ot_allocate_enemy_shot(
+    OtLevelPortState *state
+)
+{
+    uint8_t index;
+
+    for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+        if (!state->enemy_shot[index].active) {
+            OtEnemyShot *shot = &state->enemy_shot[index];
+
+            *shot = (OtEnemyShot){0};
+            shot->active = true;
+            state->enemy_shot_spawn_count++;
+            state->enemy_shot_active_count++;
+            if (
+                state->enemy_shot_active_count >
+                state->enemy_shot_max_active_count
+            ) {
+                state->enemy_shot_max_active_count =
+                    state->enemy_shot_active_count;
+            }
+            return shot;
+        }
+    }
+    state->enemy_shot_drop_count++;
+    return 0;
+}
+
+static void ot_release_enemy_shot(
+    OtLevelPortState *state,
+    OtEnemyShot *shot
+)
+{
+    if (!shot->active) return;
+    shot->active = false;
+    if (state->enemy_shot_active_count > 0) {
+        state->enemy_shot_active_count--;
+    }
+    state->enemy_shot_release_count++;
+}
+
+/*
+ * Direct single-player/Normal translation of JE_drawEnemy()'s three firing
+ * slots.  Returning false preserves the source's "goto draw_enemy_end" when
+ * the 60-entry projectile pool is full, so that enemy also skips its launch
+ * routine for this frame.
+ */
+static bool ot_enemy_fire_slots(
     OtLevelPortState *state,
     OtEnemy *enemy
 )
@@ -1214,12 +1293,24 @@ static void ot_enemy_fire_slots(
                 continue;
             }
             for (projectile = 0; projectile < weapon.multi; projectile++) {
+                OtEnemyShot *shot;
+                uint8_t position;
+                int16_t aim_x;
+                int16_t aim_y;
+                int16_t magnitude;
+
+                shot = ot_allocate_enemy_shot(state);
+                if (shot == 0) return false;
                 if (weapon.sound > 0) {
                     uint32_t sound_slot;
 
                     do {
                         sound_slot = ot_mt_rand(state) % 8u;
                     } while (sound_slot == 3);
+                    if (weapon.sound < 16) {
+                        state->frame_sound_mask |=
+                            (uint16_t)(1u << weapon.sound);
+                    }
                 }
                 if (enemy->aniactive == 2) enemy->aniactive = 1;
                 enemy->eshotmultipos[(uint8_t)slot]++;
@@ -1229,10 +1320,82 @@ static void ot_enemy_fire_slots(
                 ) {
                     enemy->eshotmultipos[(uint8_t)slot] = 1;
                 }
+                position = (uint8_t)(
+                    enemy->eshotmultipos[(uint8_t)slot] - 1
+                );
+                if (position >= 8) {
+                    state->assets_valid = false;
+                    ot_release_enemy_shot(state, shot);
+                    continue;
+                }
+
+                shot->sx = (int16_t)(
+                    enemy->ex + weapon.bx[position] + enemy->mapoffset
+                );
+                shot->sy = (int16_t)(enemy->ey + weapon.by[position]);
+                shot->sdmg = weapon.attack[position];
+                shot->tx = weapon.tx;
+                shot->ty = weapon.ty;
+                shot->duration = weapon.delay[position];
+                shot->animate = 0;
+                shot->animax = weapon.weapani;
+                shot->sgr = weapon.sg[position];
+
+                switch (slot) {
+                case 0:
+                    shot->syc = weapon.acceleration;
+                    shot->sxc = weapon.accelerationx;
+                    shot->sxm = weapon.sx[position];
+                    shot->sym = weapon.sy[position];
+                    break;
+                case 2:
+                    shot->sxc = (int8_t)-weapon.acceleration;
+                    shot->syc = weapon.accelerationx;
+                    shot->sxm = (int16_t)-weapon.sy[position];
+                    shot->sym = (int16_t)-weapon.sx[position];
+                    break;
+                default:
+                    /*
+                     * Keep OpenTyrian's slot-2 assignment exactly, including
+                     * its use of acceleration for both axes.
+                     */
+                    shot->sxc = weapon.acceleration;
+                    shot->syc = (int8_t)-weapon.acceleration;
+                    shot->sxm = weapon.sy[position];
+                    shot->sym = (int16_t)-weapon.sx[position];
+                    break;
+                }
+
+                if (weapon.aim > 0) {
+                    /*
+                     * JE_drawEnemy temporarily subtracts 25 from player.x;
+                     * its later +25 therefore cancels.  state->player_x is
+                     * kept unmodified, leaving the source expression below.
+                     */
+                    aim_x = (int16_t)(
+                        state->player_x - enemy->ex -
+                        enemy->mapoffset - 4
+                    );
+                    aim_y = (int16_t)(state->player_y - enemy->ey);
+                    if (aim_x == 0) aim_x = 1;
+                    if (aim_y == 0) aim_y = 1;
+                    magnitude =
+                        ot_abs_s16(aim_x) > ot_abs_s16(aim_y) ?
+                        ot_abs_s16(aim_x) : ot_abs_s16(aim_y);
+                    shot->sxm = ot_round_ratio(
+                        (int32_t)aim_x * weapon.aim,
+                        magnitude
+                    );
+                    shot->sym = ot_round_ratio(
+                        (int32_t)aim_y * weapon.aim,
+                        magnitude
+                    );
+                }
                 state->enemy_shot_trigger_count++;
             }
         }
     }
+    return true;
 }
 
 static void ot_enemy_launch(
@@ -1328,9 +1491,8 @@ static void ot_enemy_launch(
 /*
  * First translated JE_drawEnemy() slice.  It keeps the source's four
  * 25-entry pools, update order, animation, random/fixed acceleration,
- * bounce, off-screen release, fire cadence and launch lifecycle.  Blitting,
- * collision damage and the concrete 60-shot objects still remain in the
- * presentation runtime.
+ * bounce, off-screen release, fire cadence, concrete 60-shot allocation and
+ * launch lifecycle.  GBA OAM conversion remains a presentation-only adapter.
  */
 static void ot_draw_enemy_pool(
     OtLevelPortState *state,
@@ -1465,7 +1627,7 @@ static void ot_draw_enemy_pool(
             continue;
         }
 
-        ot_enemy_fire_slots(state, enemy);
+        if (!ot_enemy_fire_slots(state, enemy)) continue;
         ot_enemy_launch(state, enemy, pool);
     }
 }
@@ -1505,6 +1667,471 @@ static void ot_advance_enemies(OtLevelPortState *state)
     ot_draw_enemy_pool(state, 50, (int16_t)state->back_move3);
 }
 
+static void ot_add_hit_effect(
+    OtHitEffect *effects,
+    uint8_t *effect_count,
+    int16_t x,
+    int16_t y,
+    bool large,
+    bool ground
+)
+{
+    OtHitEffect *effect;
+
+    if (*effect_count >= OT_HIT_EFFECT_COUNT) return;
+    effect = &effects[*effect_count];
+    effect->x = x;
+    effect->y = y;
+    effect->large = large;
+    effect->ground = ground;
+    (*effect_count)++;
+}
+
+static void ot_spawn_death_enemy(
+    OtLevelPortState *state,
+    uint8_t dead_index,
+    uint16_t enemy_definition_id
+)
+{
+    OtEnemyDefinition definition;
+    uint8_t pool;
+    uint8_t created;
+    OtEnemy *child;
+    const OtEnemy *dead = &state->enemy[dead_index];
+
+    if (
+        enemy_definition_id == 0 ||
+        !ot_level1_enemy_read(enemy_definition_id, &definition)
+    ) {
+        if (enemy_definition_id != 0) {
+            state->death_spawn_attempt_count++;
+            state->death_spawn_missing_definition_count++;
+            state->assets_valid = false;
+        }
+        return;
+    }
+    pool = (uint8_t)(dead_index - dead_index % OT_ENEMY_POOL_SIZE);
+    if (definition.value > 30000) pool = 0;
+    created = ot_new_enemy(
+        state,
+        pool,
+        enemy_definition_id,
+        0,
+        OT_SPAWN_DEATH
+    );
+    if (created == 0) return;
+    child = &state->enemy[created - 1];
+    child->scoreitem = child->evalue != 0;
+    child->ex = dead->ex;
+    child->ey = dead->ey;
+}
+
+static void ot_credit_destroyed_enemy(
+    OtLevelPortState *state,
+    const OtEnemy *enemy,
+    OtShotCollisionResult *result
+)
+{
+    if (enemy->evalue > 1 && enemy->evalue < 10000) {
+        uint32_t value = (uint16_t)enemy->evalue;
+
+        state->direct_cash_awarded += value;
+        result->cash_awarded += value;
+    }
+}
+
+static bool ot_death_link_matches(
+    const OtEnemy *candidate,
+    uint8_t target_link
+)
+{
+    uint8_t candidate_link = candidate->linknum;
+
+    return
+        target_link == 254 ||
+        (
+            target_link != 255 &&
+            (
+                target_link == candidate_link ||
+                (int16_t)target_link - 100 == candidate_link ||
+                (
+                    candidate_link > 40 &&
+                    candidate_link / 20 == target_link / 20 &&
+                    candidate_link <= target_link
+                )
+            )
+        );
+}
+
+static void ot_kill_enemy_group(
+    OtLevelPortState *state,
+    uint8_t hit_index,
+    OtShotCollisionResult *result
+)
+{
+    uint8_t index;
+    uint8_t target_link = state->enemy[hit_index].linknum;
+
+    if (target_link == 0) target_link = 255;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        if (
+            index != hit_index &&
+            !ot_death_link_matches(enemy, target_link)
+        ) {
+            continue;
+        }
+        if (enemy->special) {
+            if (
+                enemy->flagnum == 0 ||
+                enemy->flagnum > OT_GLOBAL_FLAG_COUNT
+            ) {
+                state->assets_valid = false;
+            } else {
+                state->global_flags[enemy->flagnum - 1] = enemy->setto;
+            }
+        }
+        ot_spawn_death_enemy(state, index, enemy->enemydie);
+        ot_credit_destroyed_enemy(state, enemy, result);
+        ot_add_hit_effect(
+            result->effects,
+            &result->effect_count,
+            (int16_t)(enemy->ex + enemy->mapoffset),
+            enemy->ey,
+            enemy->size == 1,
+            enemy->enemyground
+        );
+        /*
+         * OpenTyrian keeps dlevel=-1 components in availability state 2 and
+         * swaps them to their authored damaged graphic.  This is how a
+         * destructible foreground reveals the underlying background without
+         * discarding its fixed remnant.
+         */
+        if (
+            enemy->edlevel == -1 &&
+            target_link == enemy->linknum
+        ) {
+            enemy->edlevel = 0;
+            state->enemy_avail[index] = 2;
+            enemy->egr[0] = enemy->edgr;
+            enemy->ani = 1;
+            enemy->aniactive = 0;
+            enemy->animax = 0;
+            enemy->animin = 1;
+            enemy->edamaged = true;
+            enemy->enemycycle = 1;
+        } else {
+            ot_release_enemy(state, index);
+            state->enemy_kill_count++;
+        }
+        result->kill_count++;
+    }
+}
+
+static void ot_apply_damaged_transition(
+    OtLevelPortState *state,
+    uint8_t hit_index,
+    uint8_t target_link,
+    OtShotCollisionResult *result
+)
+{
+    uint8_t index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+        uint8_t link;
+        bool matches;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        link = enemy->linknum;
+        matches =
+            index == hit_index ||
+            (
+                target_link != 255 &&
+                (
+                    (enemy->edlevel > 0 && link == target_link) ||
+                    (
+                        state->enemy_continual_damage &&
+                        (int16_t)target_link - 100 == link
+                    ) ||
+                    (
+                        link > 40 &&
+                        link / 20 == target_link / 20 &&
+                        link <= target_link
+                    )
+                )
+            );
+        if (!matches) continue;
+
+        enemy->enemycycle = 1;
+        enemy->edamaged = !enemy->edamaged;
+        if (enemy->edani != 0) {
+            enemy->ani = (uint8_t)ot_abs_s8(enemy->edani);
+            enemy->aniactive = 1;
+            enemy->animax = 0;
+            enemy->animin = (uint8_t)enemy->edgr;
+            enemy->enemycycle = (uint8_t)(enemy->animin - 1);
+        } else if (enemy->edgr > 0) {
+            enemy->egr[0] = enemy->edgr;
+            enemy->ani = 1;
+            enemy->aniactive = 0;
+            enemy->animax = 0;
+            enemy->animin = 1;
+        } else {
+            ot_release_enemy(state, index);
+            state->enemy_kill_count++;
+            result->kill_count++;
+        }
+        enemy->aniwhenfire = 0;
+        if (enemy->armorleft > (uint8_t)enemy->edlevel) {
+            enemy->armorleft = (uint8_t)enemy->edlevel;
+        }
+        ot_add_hit_effect(
+            result->effects,
+            &result->effect_count,
+            (int16_t)(enemy->ex + enemy->mapoffset),
+            enemy->ey,
+            enemy->size == 1,
+            enemy->enemyground
+        );
+    }
+}
+
+void ot_level_port_collide_player_shot(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    OtShotCollisionResult *result
+)
+{
+    uint8_t index;
+
+    if (result == 0) return;
+    *result = (OtShotCollisionResult){0};
+    result->remaining_damage = damage;
+    if (state == 0 || damage == 0) return;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+        bool collided;
+        uint16_t armor;
+        uint8_t target_link;
+
+        if (state->enemy_avail[index] != 0) continue;
+        enemy = &state->enemy[index];
+        if (enemy->enemycycle == 0) {
+            collided =
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 25 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 12)
+                ) < 29;
+        } else {
+            collided =
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 13 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 6)
+                ) < 15;
+        }
+        if (!collided) continue;
+
+        result->collided = true;
+        result->hit_count++;
+        state->player_shot_collision_count++;
+        armor = enemy->armorleft;
+        target_link = enemy->linknum;
+        if (target_link == 0) target_link = 255;
+
+        if (armor > result->remaining_damage) {
+            uint8_t damage_before = result->remaining_damage;
+
+            if (enemy->armorleft != 255) {
+                enemy->armorleft =
+                    (uint8_t)(enemy->armorleft - damage_before);
+            }
+            ot_add_hit_effect(
+                result->effects,
+                &result->effect_count,
+                shot_x,
+                shot_y,
+                false,
+                enemy->enemyground
+            );
+            if (
+                (int16_t)armor - damage_before <= enemy->edlevel &&
+                (
+                    (!enemy->edamaged) ^
+                    (enemy->edani < 0)
+                )
+            ) {
+                ot_apply_damaged_transition(
+                    state,
+                    index,
+                    target_link,
+                    result
+                );
+            }
+        } else {
+            ot_kill_enemy_group(state, index, result);
+        }
+
+        if (result->remaining_damage <= armor) {
+            result->remaining_damage = 0;
+            result->consumed = true;
+            return;
+        }
+        result->remaining_damage =
+            (uint8_t)(result->remaining_damage - armor);
+    }
+}
+
+void ot_level_port_collide_player(
+    OtLevelPortState *state,
+    bool player_vulnerable,
+    OtPlayerCollisionResult *result
+)
+{
+    uint8_t index;
+
+    if (result == 0) return;
+    *result = (OtPlayerCollisionResult){0};
+    if (state == 0) return;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        if (
+            ot_abs_s16(
+                (int16_t)(
+                    state->player_x -
+                    (enemy->ex + enemy->mapoffset)
+                )
+            ) >= 12 ||
+            ot_abs_s16(
+                (int16_t)(state->player_y - enemy->ey)
+            ) >= 14
+        ) {
+            continue;
+        }
+        if (enemy->scoreitem) {
+            int16_t value = enemy->evalue;
+
+            if (value == 1) {
+                state->data_cube_pickup_count++;
+            } else if (value == -1) {
+                state->front_weapon_powerup_count++;
+            } else if (value == -2) {
+                state->rear_weapon_powerup_count++;
+            } else if (value > 1 && value < 10000) {
+                result->cash_awarded += (uint16_t)value;
+            } else {
+                state->score_item_unsupported_pickup_count++;
+            }
+            ot_add_hit_effect(
+                result->effects,
+                &result->effect_count,
+                (int16_t)(enemy->ex + enemy->mapoffset),
+                enemy->ey,
+                false,
+                enemy->enemyground
+            );
+            ot_release_enemy(state, index);
+            state->score_item_pickup_count++;
+            result->pickup_count++;
+        } else if (
+            player_vulnerable &&
+            state->enemy_avail[index] == 0 &&
+            enemy->enemyground
+        ) {
+            state->player_enemy_contact_count++;
+            result->contact_count++;
+        }
+    }
+}
+
+void ot_level_port_update_enemy_shots(OtLevelPortState *state)
+{
+    uint8_t index;
+
+    if (state == 0) return;
+    for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+        OtEnemyShot *shot = &state->enemy_shot[index];
+        uint8_t old_duration;
+
+        if (!shot->active) continue;
+        state->enemy_shot_motion_update_count++;
+        shot->sxm = (int16_t)(shot->sxm + shot->sxc);
+        shot->sx = (int16_t)(shot->sx + shot->sxm);
+        if (shot->tx != 0) {
+            if (shot->sx > state->player_x) {
+                if (shot->sxm > -(int16_t)shot->tx) shot->sxm--;
+            } else if (shot->sxm < shot->tx) {
+                shot->sxm++;
+            }
+        }
+        shot->sym = (int16_t)(shot->sym + shot->syc);
+        shot->sy = (int16_t)(shot->sy + shot->sym);
+        if (shot->ty != 0) {
+            if (shot->sy > state->player_y) {
+                if (shot->sym > -(int16_t)shot->ty) shot->sym--;
+            } else if (shot->sym < shot->ty) {
+                shot->sym++;
+            }
+        }
+
+        old_duration = shot->duration;
+        shot->duration--;
+        if (
+            old_duration == 0 ||
+            shot->sy > 190 ||
+            shot->sy <= -14 ||
+            shot->sx > 275 ||
+            shot->sx <= 0
+        ) {
+            ot_release_enemy_shot(state, shot);
+            continue;
+        }
+        if (
+            shot->sx > state->player_x - 11 &&
+            shot->sx < state->player_x + 11 &&
+            shot->sy > state->player_y - 14 &&
+            shot->sy < state->player_y + 14
+        ) {
+            ot_release_enemy_shot(state, shot);
+            state->enemy_shot_player_hit_count++;
+            continue;
+        }
+        if (shot->animax != 0) {
+            shot->animate++;
+            if (shot->animate >= shot->animax) shot->animate = 0;
+        }
+    }
+}
+
+void ot_level_port_clear_projectiles(OtLevelPortState *state)
+{
+    uint8_t index;
+
+    if (state == 0) return;
+    for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+        ot_release_enemy_shot(state, &state->enemy_shot[index]);
+    }
+}
+
 void ot_level_port_advance(
     OtLevelPortState *state,
     uint16_t cur_loc,
@@ -1514,6 +2141,7 @@ void ot_level_port_advance(
 {
     OtEventRecord event;
 
+    state->frame_sound_mask = 0;
     state->cur_loc = cur_loc;
     state->player_x = player_x;
     state->player_y = player_y;

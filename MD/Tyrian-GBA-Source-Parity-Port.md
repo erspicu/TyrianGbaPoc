@@ -19,12 +19,13 @@ OpenTyrian commit
 OpenTyrian C 原始碼逐段直譯。PC 版本不需要另外編譯；原始碼及資料檔
 作為唯讀依據，C# 版只協助理解，不作為第二套混合規則。
 
-Stage 3 已完成 ROMFS 原始格式資料層、100-entry enemy pool、
-`JE_makeEnemy()`、`JE_createNewEventEnemy()`、第一關 enemy-control 事件，
-以及 `JE_drawEnemy()` 的 movement／animation／off-screen release／fire
-cadence／launch 生命週期。畫面、碰撞與死亡仍由 v11 legacy game loop
-執行，所以此版本不能宣稱第一關已完成 source parity；shadow runtime
-的用途是讓每個後續函式都有可量測、可逐步取代的基礎。
+Stage 4 已讓 source runtime 成為第一關本體的唯一 gameplay authority。
+`JE_eventSystem()`、`JE_makeEnemy()`、四組 25-entry pool、
+`JE_drawEnemy()` movement／animation／release／fire、60-entry enemy-shot
+pool、玩家彈碰撞、armor／damaged transition、linked death、`eenemydie`
+子物件、score item 與 cash 均直接使用 ROMFS 的原始 LVL/HDT 資料。
+GBA 端只保留輸入、320×200→240×160 座標轉接、BG/OAM、音訊及效果呈現。
+`curLoc=5400` 後仍切到既有簡化 Boss，尚不能宣稱 Boss source parity。
 
 ## 已鎖定的顯示與操作規格
 
@@ -51,9 +52,9 @@ OpenTyrian 的邏輯 framebuffer 是 320×200；以 4:3 像素比例顯示時，
 
 ## 原始資料讀取
 
-v15 不再產生或嵌入 `opentyrian_level1_events.bin` 與
-`opentyrian_level1_enemies.bin`。`src/opentyrian_data.c` 直接對 ROMFS
-內的 stock 檔案建立唯讀 view：
+v16 不再產生或嵌入 `opentyrian_level1_events.bin`、
+`opentyrian_level1_enemies.bin` 或舊 `level_events.bin`。
+`src/opentyrian_data.c` 直接對 ROMFS 內的 stock 檔案建立唯讀 view：
 
 - `tyrian1.lvl`：第一關 1,009 筆 `JE_EventRecType`、level enemy 清單、
   三層 map lookup 與 map bytes。
@@ -88,7 +89,7 @@ runtime blob。完整欄位稽核在：
 res/opentyrian_level1_source_audit.txt
 ```
 
-## Stage 1 直譯程式
+## Stage 1 直譯程式（歷史里程碑）
 
 `src/opentyrian_level_port.c` 已建立：
 
@@ -99,12 +100,12 @@ res/opentyrian_level1_source_audit.txt
 - `JE_eventSystem()` 中不依賴 SDL 或 entity pool 的第一批 case
 - 原始欄位 signedness 與 8/16-bit 寬度 static assertions
 
-目前已直譯的事件 case 包含背景速度、shape bank、星空開關、敵人總開關、
+Stage 1 當時直譯的事件 case 包含背景速度、shape bank、星空開關、敵人總開關、
 前後景順序、音樂 fade、新曲狀態、關卡結束準備、持續傷害旗標及 Boss
 bar link 等純狀態操作。
 
-尚未直譯完成的 spawn、敵人控制、碰撞及玩家相關 case 不會產生近似
-結果；它們只增加 `deferred_event_count`，仍由 legacy runtime 執行。
+當時尚未直譯的 spawn、敵人控制、碰撞及玩家相關 case 不產生近似結果；
+它們只增加 `deferred_event_count`，並由當時的 legacy runtime 執行。
 
 Shadow runtime 每個 legacy logic tick 都以同一 `curLoc` 讀取原始事件。
 Stage 1 完整 auto-test 在進 Boss 前實際讀取 878 筆原始事件，其中 17 筆
@@ -131,7 +132,7 @@ Stage 1 完整 auto-test 在進 Boss 前實際讀取 878 筆原始事件，其�
 380 control、434 collision、金額、掉落、暫停及回到標題等回歸數字維持
 不變。
 
-## Stage 2 敵人池與事件直譯
+## Stage 2 敵人池與事件直譯（歷史里程碑）
 
 Stage 2 依 `src/varz.h` 建立固定寬度的 `OtEnemy`，逐欄位對應
 `JE_SingleEnemyType`，並保留原始四組各 25 格的 `enemyAvail[100]`。
@@ -178,7 +179,7 @@ applied + deferred + skipped == source event index
 
 Stage 2 使用與 OpenTyrian `src/mtrand.c` 相同的 624-word MT19937 state、
 twist 與 temper 運算。PC 程式在 `main()` 以 `time(NULL)` seed，並會在進入
-關卡前由其他系統消耗亂數；目前 shadow runtime 為可重現 auto-test 使用
+關卡前由其他系統消耗亂數；Stage 2 shadow runtime 為可重現 auto-test 使用
 固定 seed 5489。演算法內及關卡事件的 RNG 呼叫順序已保留，但在整個
 session 初始化也直譯完成前，不能宣稱與某一次 PC 執行具有相同亂數序列。
 
@@ -213,7 +214,7 @@ decode buffer 與 40,000-byte SHP scratch；linker 的 EWRAM heap start 為
 legacy 的 414 spawn、380 control、434 collision、金額、掉落、暫停與
 Boss 回標題等數字仍完全相同，證明新增 shadow 工作沒有改壞現有展示。
 
-## Stage 3 `JE_drawEnemy()` 生命週期
+## Stage 3 `JE_drawEnemy()` 生命週期（歷史里程碑）
 
 v15 依 OpenTyrian `JE_main()` 的呼叫順序逐段直譯：
 
@@ -225,7 +226,7 @@ sky pool 0..24
 top pool 50..74
 ```
 
-目前每個 active slot 已執行：
+該階段每個 active slot 已執行：
 
 - animate cycle、`egr == 999` 消失條件
 - player-seeking random acceleration 與 MT19937 呼叫順序
@@ -264,14 +265,121 @@ POC 規則填入 source-parity context。
 `473 success - 453 release = 20`，等於進 Boss 前 shadow pool 的剩餘 active
 數；Stage 2 的假性 100-slot 飽和已消失。
 
+## Stage 4 authoritative gameplay
+
+v16 刪除 `src/event_runtime.inc`、48-entry legacy enemy pool 及其壓縮
+`level_events.bin`。第一關本體的敵人不再同時跑兩套規則；畫面直接走訪
+`OtLevelPortState.enemy[100]`，戰鬥直接修改同一份 source state。
+
+### 執行順序
+
+每個約 34.78 Hz logic tick 保留 OpenTyrian 的主要 phase boundary：
+
+```text
+原始 event records
+→ ground / ground2 / continual / sky / top enemy pools
+→ 既有玩家彈移動與 source enemy collision
+→ 玩家與 score-item／enemy collision
+→ GBA 玩家輸入、移動及新玩家彈建立
+→ source enemy-shot movement／player collision
+→ GBA presentation
+```
+
+新建立的玩家彈不會在建立當 tick 立刻移動或命中。敵彈瞄準在玩家移動後
+更新，玩家撞機則遵守受擊無敵間隔；這兩點都是直接對照
+`JE_main()`／`JE_playerCollide()` 後修正的時序。
+
+Source gameplay 保持 320×200 座標。`src/source_runtime.inc` 使用 4:5
+縮放及固定 viewport offset 映射至 240×160；敵人 pool 決定 OBJ layer
+priority，主角、子彈、獎賞及爆炸固定在背景之前。這是 presentation
+adapter，不回寫敵人速度或碰撞尺寸。
+
+### 60-entry enemy-shot pool
+
+`OtEnemyShot[60]` 逐欄位保存 OpenTyrian `EnemyShotType`：
+
+- HDT `multi/max/bx/by/sx/sy/attack/delay/sg`
+- 三個 turret slot 的旋轉、acceleration 及 multiposition
+- `aim` 的原始 max-magnitude normalization
+- `tx/ty` tracking、duration、animation 及 source graphic ID
+- source pool-full 時跳過該敵人剩餘 launch routine 的控制流
+- 每次 weapon sound 所需的 MT19937 channel-selection 消耗順序
+
+在 Boss handoff 時，仍在飛行的 source shot 會經同一 release path 清除，
+因此 168 spawn 對應 168 release，沒有隱藏的 active projectile。
+
+### 玩家彈、死亡與獎賞
+
+玩家 Pulse-Cannon 以 HDT weapon 155 的 power-1 damage 進入 source
+collision。已直譯：
+
+- `enemycycle==0` 與一般 enemy 的兩套命中框公式
+- armor 255、普通 armor、`edlevel`／`edani` damaged transition
+- link 254、`link-100` 與 40+ group destruction
+- `dlevel=-1` 的 availability-2 固定殘骸與 `edgr` 切換
+- `special/flagnum/setto`、直接 `evalue` cash
+- `eenemydie` 在原 25-slot group 產生子物件
+- cash item、data cube、front/rear weapon power-up pickup 分流
+
+本回歸路線收取五個實體物件，其中兩個是 data cube、三個合計 175 的
+cash item；沒有落入 unsupported pickup。因本 POC 固定武器且不做右側
+HUD，data cube／weapon power-up 只保存 gameplay counter，不開啟 PC
+訊息視窗。
+
+### v16 固定 seed 驗證
+
+2026-07-26 使用 ARM GCC 16.1.0、mGBA 0.11.0 與 MT19937 seed 5489：
+
+| 項目 | v16 結果 |
+|---|---:|
+| ROM／host verifier | PASS／PASS |
+| Source event index | 878 |
+| Applied／deferred／skipped | 869／5／4 |
+| Event spawn attempts／success／pool full／missing | 473／473／0／0 |
+| Death spawn attempts／success／pool full／missing | 5／5／0／0 |
+| Peak／handoff active source enemies | 39／20 |
+| Enemy motion updates／releases | 52,103／458 |
+| Enemy-control writes／MT19937 calls | 2,444／1,659 |
+| Source shots spawn／release／drop／peak | 168／168／0／8 |
+| Source shot movement／player hits | 8,347／17 |
+| Player-shot hits／enemy contacts／kills | 467／28／137 |
+| Direct cash／pickup cash／final cash | 1,785／175／1,960 |
+| Score-item spawn／pickup／peak | 5／5／2 |
+| Data cubes／unsupported pickup | 2／0 |
+| Peak visible source enemies／peak OAM | 36／48 |
+| Stream／effect／reward drops | 0／0／0 |
+| Missed VBlank／display frames | 13／12,239（約 0.11%） |
+| Runtime errors／ROMFS self-test failures | 0／0 |
+
+13 次 missed VBlank 低於 v16 regression 上限 16，但不是「零成本」：
+完整 tracker mixing、三層串流、100-slot source runtime、碰撞與最高 27
+個同時 effect 在少數 frame 會跨過單一 VBlank。此數字作為 GBA 技術展示
+的效能量測保留，不用降低 logic rate 或刪除音樂掩蓋。
+
+### Stage 4 已知邊界
+
+- `curLoc=5400` 轉入既有簡化 Boss；Boss body、Boss damage lifecycle 及
+  結束事件尚未逐行移植。
+- 24-archetype atlas 完整涵蓋既有第一關主體，但 4912..5384 的大型結構
+  與 Boss component 有 32 個唯一 enemy ID 尚無正確 GBA 圖像，目前使用
+  fallback。Gameplay ID、armor、link 與時機仍是 source 值。
+- 五筆 deferred event 是不影響本展示流程的 type-16 text/audio UI。
+- turret 251..255 magnet／特殊 render opcode 尚只保存 wait/animation
+  狀態；本次測試路線沒有需要其完整玩家物理效果的 discharge。
+- 玩家仍沒有死亡、生命與重生流程；碰撞及 hit cadence 有執行，但技術
+  展示不會中止。
+- MUS metadata 已由 raw loader 讀取，實際 waveform 仍由 Maxmod IT cache
+  播放。
+
 ## ROMFS v1 與原始格式 loader
 
-v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它。
+v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它，
+v16 則讓 LVL/HDT reader 成為 gameplay 唯一資料入口。
 68 個 stock runtime 檔案以原始 bytes 封裝到 9,853,080-byte ROMFS image，
 資料直接留在 cartridge ROM。Loader 只保存 const pointer、size 與 offset，
 不把完整檔案複製到 256 KiB EWRAM。
 
-| Loader | v15 runtime 行為 |
+| Loader | v16 runtime 行為 |
 |---|---|
 | LVL | 直接索引第一關 section、events、enemy IDs、map lookup／bytes |
 | HDT | 直接解碼 80-byte weapon 與 77-byte enemy records |
@@ -282,7 +390,8 @@ v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使�
 開場畫面已實際由 ROMFS `tyrian.pic` picture 4、`palette.dat` palette 8、
 `tyrian.shp` PLANET_SHAPES sprite 146 及 FONT_SHAPES 字元在 GBA 開機時
 解碼。`title_bitmap.bin`、`opentyrian_level1_events.bin` 與
-`opentyrian_level1_enemies.bin` 均不再產生或連結。
+`opentyrian_level1_enemies.bin` 均不再產生或連結；v16 也移除舊
+`level_events.bin`。
 
 MUS 的 song selection 與 LDS 結構來源已改為 raw `music.mus`（title
 index 29、level index 17）；實際 GBA waveform synthesis 仍暫由 Maxmod
@@ -303,20 +412,21 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | `main.c` | GBA 入口、共享狀態及主排程 |
 | `src/gba_platform.inc` | VBlank、音訊及暫停平台層 |
 | `src/level_setup.inc` | 關卡進出與 VRAM 資源設定 |
-| `src/event_runtime.inc` | legacy 簡化事件 runner |
-| `src/entity_runtime.inc` | legacy entity 配置與控制 |
-| `src/combat_runtime.inc` | legacy 戰鬥 |
-| `src/level_update.inc` | legacy 背景、Boss 與 frame orchestration |
+| `src/entity_runtime.inc` | GBA explosion／測試 reward presentation pool |
+| `src/combat_runtime.inc` | GBA 玩家輸入、玩家彈及簡化 Boss projectile adapter |
+| `src/source_runtime.inc` | source 座標、OAM、音效、效果與 telemetry adapter |
+| `src/level_update.inc` | source phase orchestration、背景及簡化 Boss |
 | `src/gba_oam.inc` | OAM primitive 及 projectile presentation |
 | `src/gba_hud.inc` | GBA 保留的最小 HUD |
 | `src/gba_scene.inc` | scene-to-OAM renderer |
 | `src/autotest.inc` | mGBA deterministic regression harness |
 | `src/opentyrian_data.c` | ROMFS MUS/SHP/PIC/HDT/LVL 原始格式 reader |
-| `src/opentyrian_level_port.c` | 新的原始碼直譯 runtime |
+| `src/opentyrian_level_port.c` | 第一關本體 authoritative source runtime |
 
-`.inc` 檔是維持 v11 完全相同行為的過渡分檔，仍由同一 translation unit
-編譯；新的直譯程式使用真正獨立的 `.c/.h` 模組。等共享狀態逐步收進
-source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架構。
+GBA presentation `.inc` 仍由同一 translation unit 編譯；原始事件、敵人、
+projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
+`event_runtime.inc` 與 legacy enemy allocation/control/collision 已刪除，
+只在 position 5400 後保留簡化 Boss adapter。
 
 ## 最小必要修改原則
 
@@ -343,14 +453,15 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 
 ## 下一個直譯階段
 
-1. 建立 source-parity 60-entry projectile pool，把 Stage 3 的 200 個
-   trigger 轉成完整 weapon movement／animation／collision。
-2. 將 source pool 的 presentation 接到 GBA renderer，但不改內部
-   320×200 gameplay 座標與 update order。
-3. 移植玩家射擊、碰撞、死亡、獎賞及 Boss 結束流程，讓
-   `globalFlags`／`enemydie` 進入真實生命週期。
-4. 重新驗證 type-61 分支、death spawn 與 reward lifecycle。
-5. source-parity loop 成為 authoritative 後移除 legacy event/gameplay。
+1. 解出 4912..5384 結構與 46..65／468..473 Boss component 的正確
+   Sprite2 組合，移除 32 個 fallback ID。
+2. 不在 5400 提前切換，逐行移植 event 79 Boss link、component armor、
+   weapon、movement、damage bar 與 level-end path。
+3. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
+   build option。
+4. 完成 turret 251..255 magnet／special effects 與剩餘 pickup gameplay。
+5. 量測 13 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
+   rate、不刪音樂／圖層的前提下優化。
 
 ## 建置
 
@@ -358,10 +469,10 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 .\build.ps1
 ```
 
-目前 ROMFS v15 ROM：
+目前 ROMFS v16 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v15.gba
+build/tyrian_gba_level1_source_parity_romfs_v16.gba
 ```
 
 ROM 與中間產物不納入 Git。

@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_romfs_v15
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v15
+TARGET := tyrian_gba_level1_source_parity_romfs_v16
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v16
 BUILD := build
 RES := res
 
@@ -58,8 +58,7 @@ ASSET_BINARIES := \
 	$(RES)/bg2_map.bin \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
-	$(RES)/obj_palette.bin \
-	$(RES)/level_events.bin
+	$(RES)/obj_palette.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \

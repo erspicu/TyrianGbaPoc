@@ -3,7 +3,13 @@
 static void render_game(void)
 {
     u8 index;
-    u8 object_priority = foreground_phase ? 1 : 0;
+    /*
+     * Player, projectiles, pickups and explosions must remain above every
+     * background.  Source enemy pools choose their own inter-layer priority
+     * below; applying the old global foreground flag hid the player behind
+     * BG2 as soon as source background3_over started at 1.
+     */
+    u8 object_priority = 0;
     u8 old_count = previous_oam_count;
     u8 visible_count;
     oam_count = 0;
@@ -25,22 +31,79 @@ static void render_game(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (player_shots[index].active) {
             put_sprite(
-                player_shots[index].x, player_shots[index].y,
+                source_player_shot_screen_x(&player_shots[index]),
+                source_player_shot_screen_y(&player_shots[index]),
                 OBJ_TILE_PLAYER_SHOT, OBJ_PAL_PLAYER_SHOT,
                 ATTR1_SIZE_16, object_priority
             );
         }
     }
     if (game_state == STATE_PLAY) {
-        for (index = 0; index < MAX_ENEMIES; index++) {
-            if (enemies[index].active) {
+        u8 visible_source_enemies = 0;
+
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            OtEnemy *enemy;
+            s16 screen_x;
+            s16 screen_y;
+
+            if (source_parity_level.enemy_avail[index] == 1) continue;
+            enemy = &source_parity_level.enemy[index];
+            if (enemy->scoreitem) {
+                screen_x = source_score_item_screen_x(enemy);
+                screen_y = source_score_item_screen_y(enemy);
                 put_sprite(
-                    enemies[index].x, enemies[index].y,
-                    enemy_tiles[enemies[index].type],
-                    enemy_palettes[enemies[index].type],
-                    ATTR1_SIZE_32, object_priority
+                    screen_x,
+                    screen_y,
+                    OBJ_TILE_REWARD +
+                        (
+                            source_reward_sequence(enemy) *
+                                REWARD_FRAME_COUNT +
+                            source_reward_frame(enemy)
+                        ) * REWARD_TILES_PER_FRAME,
+                    OBJ_PAL_REWARD,
+                    ATTR1_SIZE_16,
+                    0
+                );
+            } else {
+                u8 known;
+                u8 archetype = source_enemy_visual_archetype(
+                    enemy->enemy_definition_id,
+                    &known
+                );
+                u8 priority =
+                    index >= 50 && index < 75 ? 0 :
+                    (index < 25 ? 1 : 2);
+
+                if (!known) {
+                    source_note_unknown_visual(
+                        enemy->enemy_definition_id
+                    );
+                }
+                screen_x = source_enemy_screen_x(enemy);
+                screen_y = source_enemy_screen_y(enemy);
+                put_sprite(
+                    screen_x,
+                    screen_y,
+                    enemy_tiles[archetype],
+                    enemy_palettes[archetype],
+                    ATTR1_SIZE_32,
+                    priority
                 );
             }
+            if (
+                screen_x > -32 && screen_x < SCREEN_WIDTH &&
+                screen_y > -32 && screen_y < SCREEN_HEIGHT
+            ) {
+                visible_source_enemies++;
+            }
+        }
+        telemetry_source_visible_enemies = visible_source_enemies;
+        if (
+            visible_source_enemies >
+            telemetry_source_max_visible_enemies
+        ) {
+            telemetry_source_max_visible_enemies =
+                visible_source_enemies;
         }
     } else if (game_state == STATE_BOSS) {
         render_boss_bar();
@@ -62,9 +125,32 @@ static void render_game(void)
             );
         }
     }
-    for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
-        if (enemy_shots[index].active) {
-            render_enemy_shot(&enemy_shots[index], object_priority);
+    if (game_state == STATE_PLAY) {
+        for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+            const OtEnemyShot *source_shot =
+                &source_parity_level.enemy_shot[index];
+            EnemyShot presented;
+            u16 graphic;
+
+            if (!source_shot->active) continue;
+            graphic = source_shot->sgr >= 500 ?
+                (u16)(source_shot->sgr - 500) :
+                source_shot->sgr;
+            if (graphic > 255) continue;
+            presented = (EnemyShot){
+                .active = 1,
+                .x = source_enemy_shot_screen_x(source_shot),
+                .y = source_enemy_shot_screen_y(source_shot),
+                .graphic = (u8)graphic,
+                .animate = (u8)source_shot->animate,
+            };
+            render_enemy_shot(&presented, object_priority);
+        }
+    } else {
+        for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
+            if (enemy_shots[index].active) {
+                render_enemy_shot(&enemy_shots[index], object_priority);
+            }
         }
     }
     for (index = 0; index < MAX_EFFECTS; index++) {

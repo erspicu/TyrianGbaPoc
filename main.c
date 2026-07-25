@@ -28,7 +28,6 @@
  * NES/SNES low-detail proofs.  These pools intentionally raise the first
  * level's concurrency while staying under a conservative scanline budget.
  */
-#define MAX_ENEMIES 48
 #define MAX_PLAYER_SHOTS 12
 #define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
@@ -121,15 +120,6 @@ _Static_assert(
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 
-#define EVENT_MOVE 0x80
-#define EVENT_ACCEL 0x81
-#define EVENT_REVERSE 0x82
-#define EVENT_FIRE 0x83
-#define EVENT_FOREGROUND 0x84
-#define EVENT_SCROLL 0x85
-#define EVENT_REWARD 0x86
-#define EVENT_END 0xFF
-
 #define STATE_TITLE 0
 #define STATE_PLAY 1
 #define STATE_BOSS 2
@@ -148,35 +138,13 @@ extern const u8 bg2_map[];
 extern const u8 bg3_map[];
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
-extern const u8 level_events[];
 extern const u8 soundbank[];
 
 typedef struct {
     u8 active;
     s16 x;
     s16 y;
-    s8 dx;
-    s8 dy;
-    s8 fixed_dy;
-    s8 accel_x;
-    s8 accel_y;
-    u8 pool;
-    u8 type;
-    u8 hp;
-    u8 phase;
-    u8 link;
-    u8 reward;
-    u16 kill_value;
-    u8 turret[3];
-    u8 frequency[3];
-    u8 fire_wait[3];
-    u8 multi_pos[3];
-} Enemy;
-
-typedef struct {
-    u8 active;
-    s16 x;
-    s16 y;
+    u8 damage;
 } PlayerShot;
 
 typedef struct {
@@ -227,7 +195,6 @@ typedef struct {
     u16 value;
 } Reward;
 
-static Enemy enemies[MAX_ENEMIES] EWRAM_DATA;
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
 static EnemyShot enemy_shots[MAX_ENEMY_SHOTS] EWRAM_DATA;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
@@ -264,23 +231,6 @@ static const u8 enemy_palettes[ENEMY_ARCHETYPES] = {
     OBJ_PAL_ENEMY_18, OBJ_PAL_ENEMY_19,
     OBJ_PAL_ENEMY_20, OBJ_PAL_ENEMY_21,
     OBJ_PAL_ENEMY_22, OBJ_PAL_ENEMY_23,
-};
-
-/*
- * HDT esize/explosiontype values audited against the representative enemy
- * behind each visual archetype.  Archetype 1 is the only 1x1 source; every
- * other representative uses Tyrian's four-part large explosion.
- */
-static const u8 enemy_large_explosion[ENEMY_ARCHETYPES] = {
-    1, 0, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1,
-};
-
-static const u8 enemy_ground_explosion[ENEMY_ARCHETYPES] = {
-    1, 1, 1, 1, 0, 1, 1, 1,
-    1, 1, 1, 1, 1, 1, 1, 1,
-    0, 0, 0, 0, 0, 1, 0, 0,
 };
 
 /*
@@ -323,9 +273,11 @@ static const WeaponDef weapon_defs[] = {
     {127, 12, 5, 5, 0, 2, SFX_ENEMY_SHOT_6},
 };
 
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
     0, 25, 50, 75, 100, 250,
 };
+#endif
 
 static const u8 reward_frame_delay_table[REWARD_SEQUENCE_COUNT] = {
     2, 2, 2, 5, 5,
@@ -381,8 +333,6 @@ static u8 clear_timer;
 
 static u16 level_tick;
 static u16 level_position;
-static u16 event_offset;
-static u16 event_time;
 static u8 foreground_phase;
 static u32 logic_accumulator;
 static u8 title_pic_pixels[OT_PIC_DECODED_BYTES] EWRAM_BSS;
@@ -457,6 +407,25 @@ volatile u32 telemetry_source_rng_calls;
 volatile u32 telemetry_source_motion_updates;
 volatile u32 telemetry_source_releases;
 volatile u32 telemetry_source_shot_triggers;
+volatile u32 telemetry_source_enemy_shots_spawned;
+volatile u32 telemetry_source_enemy_shot_drops;
+volatile u32 telemetry_source_max_enemy_shots;
+volatile u32 telemetry_source_enemy_shot_updates;
+volatile u32 telemetry_source_enemy_shot_releases;
+volatile u32 telemetry_source_enemy_shot_player_hits;
+volatile u32 telemetry_source_player_shot_hits;
+volatile u32 telemetry_source_enemy_kills;
+volatile u32 telemetry_source_direct_cash;
+volatile u32 telemetry_source_score_item_spawns;
+volatile u32 telemetry_source_score_item_pickups;
+volatile u32 telemetry_source_score_item_max_active;
+volatile u32 telemetry_source_death_spawn_attempts;
+volatile u32 telemetry_source_death_spawn_successes;
+volatile u32 telemetry_source_death_control_events;
+volatile u32 telemetry_source_death_assignments;
+volatile u32 telemetry_source_visible_enemies;
+volatile u32 telemetry_source_max_visible_enemies;
+volatile u32 telemetry_source_unknown_visuals;
 volatile u32 telemetry_source_launch_attempts;
 volatile u32 telemetry_source_launch_successes;
 volatile u32 telemetry_source_random_attempts;
@@ -509,18 +478,22 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V115";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V116";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;
 #endif
 #endif
 
+static s16 source_player_x_from_gba(void);
+static s16 source_player_y_from_gba(void);
+static void source_runtime_reset(void);
+
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"
 #include "src/entity_runtime.inc"
-#include "src/event_runtime.inc"
 #include "src/combat_runtime.inc"
+#include "src/source_runtime.inc"
 #include "src/level_update.inc"
 #include "src/gba_oam.inc"
 #include "src/gba_hud.inc"
@@ -661,6 +634,19 @@ int main(void)
                 }
             }
             telemetry_display_frames++;
+#ifdef AUTOTEST
+            if (
+                autotest_running &&
+                telemetry_display_frames >= 20000 &&
+                game_state != STATE_TITLE
+            ) {
+                /*
+                 * Deterministic deadlock watchdog: commit partial telemetry
+                 * instead of leaving the headless verifier waiting forever.
+                 */
+                autotest_finish();
+            }
+#endif
         }
     }
 }

@@ -4,14 +4,14 @@ This project is an independent Game Boy Advance proof of concept built from
 the original Tyrian data already present in this workspace.  It is not a
 binary conversion of the NES or SNES ROM.
 
-The `opentyrian-source-parity-port` branch is replacing the reconstructed
-gameplay with a line-oriented translation of the OpenTyrian first-level loop.
-Stage 3 reads the original LVL and HDT records directly from cartridge ROMFS,
-then runs the translated event state, `JE_makeEnemy()`, the four 25-entry
-enemy pools, and the movement/release/fire-cadence portion of
-`JE_drawEnemy()` beside the v11 loop as a measured shadow runtime. Collision,
-death and gameplay presentation still use v11, so this milestone does not
-yet claim gameplay parity.
+The `opentyrian-source-parity-port` branch replaces reconstructed gameplay
+with a line-oriented translation of the OpenTyrian first-level loop. Stage 4
+makes that translation authoritative for the first-level body: events, four
+25-entry enemy pools, movement, concrete projectiles, collision, damage,
+linked death, death-spawned pickups and cash all run from stock LVL/HDT data.
+A small GBA adapter maps the unchanged 320x200 gameplay coordinates to BG/OAM
+presentation. The boss after source position 5400 intentionally remains the
+existing simplified POC implementation and is the next major port boundary.
 
 ROMFS v1 embeds 68 stock Tyrian runtime files behind a seekable, stdio-like
 read-only API. Runtime loaders now parse MUS, SHP, PIC, HDT and LVL directly
@@ -21,51 +21,40 @@ event and enemy blobs are no longer linked into the ROM.
 
 The current scope is deliberately narrow:
 
-- Tyrian opening screen and complete opening music
-- Start enters the first level directly
+- Tyrian opening screen and complete opening music; `Start` enters level one
+  directly
 - three independently scrolling Mode-0 background layers (MAP1, MAP2 and MAP3)
-- five original first-level background speed changes, including slow and
-  accelerated parallax sections
-- all 1,009 decoded first-level source events
-- PC `curLoc` event timing driven by effective MAP1 movement, with each spawn
-  retaining its source pool, initial Y, HDT velocity, fixed movement and armor
-- nine destructible 2x2 terrain assemblies locked to their source background
-  scroll, plus native 24-pixel small-tank component spacing and spawn timing
-- 24 audited visual archetypes covering 69 source enemy IDs
-- the complete 128-entry GBA hardware OAM table
-- PC-synchronised enemy projectiles: all three HDT turret/frequency slots,
-  event-31 slot overrides, weapon spawn offsets, slot rotation, aim,
-  multiposition spreads, velocity, animation and source graphics, split over
-  dedicated red-shot, orange-dart and purple-laser OBJ palettes
-- the first-level boss's original dual weapon-59 aimed ports and weapon-127
-  five-way spread cadence; event-79 254-armor PC boss bar geometry and damage
-  flash are also retained, while the boss body movement remains POC-level
-- a 60-entry enemy-shot pool matching OpenTyrian, with spawn/drop/peak
-  telemetry
-- player shots, projectile collisions, effects and an invincible player
-- a 48-entry enemy pool (30 peak on the complete route) with a zero-replacement
-  regression invariant
-- a separate 100-entry source-parity shadow pool, split into the original four
-  25-slot groups, with exact spawn/control/skip/RNG telemetry; Stage 3 now
-  updates and releases these slots instead of deliberately saturating at 100
-- the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
-  155 to player-shot graphic 59, including its repeat rate and vertical speed
-- stable USP Talon neutral/left/right banking poses instead of alternating
-  unrelated poses every logic update
-- original 12-frame small and four-quadrant air/ground enemy explosions,
-  backed by a 48-entry effect pool with drop telemetry; v7 preserves each
-  quadrant's native 12x14 anchor so the centre seam is closed
-- PC-synchronised rewards: every enemy retains its exact positive HDT
-  `evalue` for immediate kill credit, while all 33 first-level event-33
-  `enemydie` overrides run by link at runtime; the 25/50/75/100/250 physical
-  score items use their original coin/gem graphics, pickup collision and item
-  sound, with cumulative cash rendered in Tyrian's lower-left TINY_FONT
-- PC-style pause: `Start` freezes the world, shows the original FONT_SHAPES
-  `PAUSED` label, keeps music playing at half volume, then resumes on `Start`
-- a simplified first-level boss body and return to the opening screen
-- complete first-level tracker music and seven converted Tyrian sound effects,
-  including the original enemy weapon sounds used by this route
-- original Normal-speed fixed-step target (about 34.78 game updates/second)
+- all 1,009 source records remain directly addressable; the demo consumes the
+  exact 878 records before its position-5400 boss handoff (869 applied, five
+  deferred and four conditionally skipped)
+- PC `curLoc` timing and source enemy identity, pool, position, movement,
+  armor, animation, link, turret and death fields
+- the original four 25-slot enemy groups: 473/473 event spawns, five successful
+  death spawns, a peak of 39 active objects and no pool-full loss
+- a concrete 60-entry OpenTyrian projectile pool: 168 source shots, peak eight,
+  8,347 movement updates, 17 player contacts and zero drops
+- source player-shot ordering and collision formulas, armor damage,
+  `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
+  `eenemydie` children
+- five physical pickups collected by the regression route, including two data
+  cubes and three cash items; no unsupported pickup semantics
+- 24 audited GBA visual archetypes selected only at presentation time, without
+  changing source gameplay identity
+- all 128 GBA OAM entries, with a measured peak of 48
+- original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
+  poses, original explosion and reward animation assets, TINY_FONT cash and
+  FONT_SHAPES `PAUSED`
+- a development-stage player with no death/restart flow
+- a simplified boss body and existing boss projectile adapter, followed by a
+  return to the opening screen
+- complete first-level tracker music, seven converted Tyrian sound effects and
+  the original Normal-speed target of about 34.78 logic updates/second
+
+The deterministic v16 route has no stream, effect, reward or projectile-pool
+drops. It records 13 missed VBlanks over 12,239 displayed frames (about 0.11%);
+this remains visible as a measured GBA workload result. The 32 unmapped visual
+IDs are all in the position-4912..5384 structure/boss-component window
+immediately before the simplified boss handoff.
 
 ## Controls
 
@@ -86,7 +75,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v15.gba
+build/tyrian_gba_level1_source_parity_romfs_v16.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

@@ -22,9 +22,11 @@ enum {
     OT_BOTTOM_BANNER_HEIGHT = 16,
     OT_ENEMY_COUNT = 100,
     OT_ENEMY_POOL_SIZE = 25,
+    OT_ENEMY_SHOT_COUNT = 60,
     OT_GLOBAL_FLAG_COUNT = 10,
     OT_NEW_PL_COUNT = 10,
     OT_MT_STATE_COUNT = 624,
+    OT_HIT_EFFECT_COUNT = 16,
 };
 
 /*
@@ -100,6 +102,55 @@ typedef struct {
 } OtEnemy;
 
 /*
+ * Fixed-width counterpart of OpenTyrian's EnemyShotType plus an explicit
+ * active flag.  OpenTyrian stores availability in a parallel 60-entry
+ * boolean array; keeping the flag beside the record is the only GBA_PORT
+ * layout change.
+ */
+typedef struct {
+    bool active;
+    int16_t sx;
+    int16_t sy;
+    int16_t sxm;
+    int16_t sym;
+    int8_t sxc;
+    int8_t syc;
+    uint8_t tx;
+    uint8_t ty;
+    uint16_t sgr;
+    uint8_t sdmg;
+    uint8_t duration;
+    uint16_t animate;
+    uint16_t animax;
+} OtEnemyShot;
+
+typedef struct {
+    int16_t x;
+    int16_t y;
+    bool large;
+    bool ground;
+} OtHitEffect;
+
+typedef struct {
+    bool collided;
+    bool consumed;
+    uint8_t remaining_damage;
+    uint8_t hit_count;
+    uint8_t kill_count;
+    uint8_t effect_count;
+    uint32_t cash_awarded;
+    OtHitEffect effects[OT_HIT_EFFECT_COUNT];
+} OtShotCollisionResult;
+
+typedef struct {
+    uint8_t pickup_count;
+    uint8_t contact_count;
+    uint8_t effect_count;
+    uint32_t cash_awarded;
+    OtHitEffect effects[OT_HIT_EFFECT_COUNT];
+} OtPlayerCollisionResult;
+
+/*
  * State-form MT19937 equivalent of OpenTyrian src/mtrand.c.  Keeping it in
  * the level context makes RNG ownership explicit while preserving its exact
  * 32-bit sequence and call order.
@@ -165,9 +216,11 @@ typedef struct {
 
     OtEnemy enemy[OT_ENEMY_COUNT];
     uint8_t enemy_avail[OT_ENEMY_COUNT];
+    OtEnemyShot enemy_shot[OT_ENEMY_SHOT_COUNT];
     uint8_t global_flags[OT_GLOBAL_FLAG_COUNT];
     uint8_t new_pl[OT_NEW_PL_COUNT];
     OtMt19937 rng;
+    uint16_t frame_sound_mask;
 
     uint32_t applied_event_count;
     uint32_t deferred_event_count;
@@ -183,6 +236,13 @@ typedef struct {
     uint32_t enemy_motion_update_count;
     uint32_t enemy_release_count;
     uint32_t enemy_shot_trigger_count;
+    uint32_t enemy_shot_spawn_count;
+    uint32_t enemy_shot_drop_count;
+    uint32_t enemy_shot_active_count;
+    uint32_t enemy_shot_max_active_count;
+    uint32_t enemy_shot_motion_update_count;
+    uint32_t enemy_shot_release_count;
+    uint32_t enemy_shot_player_hit_count;
     uint32_t enemy_launch_attempt_count;
     uint32_t enemy_launch_success_count;
     uint32_t enemy_launch_pool_full_count;
@@ -191,6 +251,24 @@ typedef struct {
     uint32_t random_spawn_success_count;
     uint32_t random_spawn_pool_full_count;
     uint32_t random_spawn_missing_definition_count;
+    uint32_t death_spawn_attempt_count;
+    uint32_t death_spawn_success_count;
+    uint32_t death_spawn_pool_full_count;
+    uint32_t death_spawn_missing_definition_count;
+    uint32_t player_shot_collision_count;
+    uint32_t player_enemy_contact_count;
+    uint32_t enemy_kill_count;
+    uint32_t direct_cash_awarded;
+    uint32_t score_item_spawn_count;
+    uint32_t score_item_pickup_count;
+    uint32_t score_item_max_active_count;
+    uint32_t score_item_active_count;
+    uint32_t score_item_unsupported_pickup_count;
+    uint32_t data_cube_pickup_count;
+    uint32_t front_weapon_powerup_count;
+    uint32_t rear_weapon_powerup_count;
+    uint32_t death_control_event_count;
+    uint32_t death_assignment_count;
 } OtLevelPortState;
 
 void ot_level_port_init(OtLevelPortState *state);
@@ -200,6 +278,20 @@ void ot_level_port_advance(
     int16_t player_x,
     int16_t player_y
 );
+void ot_level_port_update_enemy_shots(OtLevelPortState *state);
+void ot_level_port_collide_player_shot(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    OtShotCollisionResult *result
+);
+void ot_level_port_collide_player(
+    OtLevelPortState *state,
+    bool player_vulnerable,
+    OtPlayerCollisionResult *result
+);
+void ot_level_port_clear_projectiles(OtLevelPortState *state);
 bool ot_level1_event_read(uint16_t index, OtEventRecord *event);
 bool ot_level1_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy);
 

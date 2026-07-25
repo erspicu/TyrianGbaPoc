@@ -3,7 +3,6 @@
 static void clear_entities(void)
 {
     u16 index;
-    for (index = 0; index < MAX_ENEMIES; index++) enemies[index].active = 0;
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         player_shots[index].active = 0;
     }
@@ -357,11 +356,10 @@ static void enter_level(void)
 #endif
     level_tick = 0;
     level_position = 0;
-    event_offset = 0;
-    event_time = level_events[0];
     foreground_phase = 0;
     logic_accumulator = 0;
     ot_level_port_init(&source_parity_level);
+    source_runtime_reset();
 
     telemetry_display_frames = 0;
     telemetry_logic_updates = 0;
@@ -402,6 +400,25 @@ static void enter_level(void)
     telemetry_source_motion_updates = 0;
     telemetry_source_releases = 0;
     telemetry_source_shot_triggers = 0;
+    telemetry_source_enemy_shots_spawned = 0;
+    telemetry_source_enemy_shot_drops = 0;
+    telemetry_source_max_enemy_shots = 0;
+    telemetry_source_enemy_shot_updates = 0;
+    telemetry_source_enemy_shot_releases = 0;
+    telemetry_source_enemy_shot_player_hits = 0;
+    telemetry_source_player_shot_hits = 0;
+    telemetry_source_enemy_kills = 0;
+    telemetry_source_direct_cash = 0;
+    telemetry_source_score_item_spawns = 0;
+    telemetry_source_score_item_pickups = 0;
+    telemetry_source_score_item_max_active = 0;
+    telemetry_source_death_spawn_attempts = 0;
+    telemetry_source_death_spawn_successes = 0;
+    telemetry_source_death_control_events = 0;
+    telemetry_source_death_assignments = 0;
+    telemetry_source_visible_enemies = 0;
+    telemetry_source_max_visible_enemies = 0;
+    telemetry_source_unknown_visuals = 0;
     telemetry_source_launch_attempts = 0;
     telemetry_source_launch_successes = 0;
     telemetry_source_random_attempts = 0;

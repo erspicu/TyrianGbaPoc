@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_romfs_v15"
-$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v15"
+$releaseName = "tyrian_gba_level1_source_parity_romfs_v16"
+$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v16"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -335,7 +335,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 228) {
+if ($saveBytes.Length -lt 356) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -364,7 +364,7 @@ $telemetry = [ordered]@{
     max_active_enemies = Read-TelemetryU32 40
     max_hardware_oam = Read-TelemetryU32 44
     stream_drops = Read-TelemetryU32 48
-    final_event_offset = Read-TelemetryU32 52
+    final_source_event_index = Read-TelemetryU32 52
     final_level_tick = Read-TelemetryU32 56
     state_transitions = Read-TelemetryU32 60
     max_active_effects = Read-TelemetryU32 64
@@ -408,72 +408,202 @@ $telemetry = [ordered]@{
     source_parity_launch_successes = Read-TelemetryU32 216
     source_parity_random_attempts = Read-TelemetryU32 220
     source_parity_random_successes = Read-TelemetryU32 224
+    source_parity_enemy_shots_spawned = Read-TelemetryU32 228
+    source_parity_enemy_shot_drops = Read-TelemetryU32 232
+    source_parity_max_enemy_shots = Read-TelemetryU32 236
+    source_parity_enemy_shot_updates = Read-TelemetryU32 240
+    source_parity_enemy_shot_releases = Read-TelemetryU32 244
+    source_parity_enemy_shot_player_hits = Read-TelemetryU32 248
+    source_parity_player_shot_hits = Read-TelemetryU32 252
+    source_parity_enemy_kills = Read-TelemetryU32 256
+    source_parity_direct_cash = Read-TelemetryU32 260
+    source_parity_score_item_spawns = Read-TelemetryU32 264
+    source_parity_score_item_pickups = Read-TelemetryU32 268
+    source_parity_score_item_max_active = Read-TelemetryU32 272
+    source_parity_death_spawn_attempts = Read-TelemetryU32 276
+    source_parity_death_spawn_successes = Read-TelemetryU32 280
+    source_parity_death_control_events = Read-TelemetryU32 284
+    source_parity_death_assignments = Read-TelemetryU32 288
+    source_parity_max_visible_enemies = Read-TelemetryU32 292
+    source_parity_unknown_visuals = Read-TelemetryU32 296
+    source_parity_player_contacts = Read-TelemetryU32 300
+    source_parity_unsupported_pickups = Read-TelemetryU32 304
+    source_parity_death_spawn_pool_full = Read-TelemetryU32 308
+    source_parity_death_spawn_missing = Read-TelemetryU32 312
+    source_parity_final_active_enemies = Read-TelemetryU32 316
+    source_parity_final_active_enemy_shots = Read-TelemetryU32 320
+    source_parity_data_cube_pickups = Read-TelemetryU32 324
+    source_parity_front_weapon_powerups = Read-TelemetryU32 328
+    source_parity_rear_weapon_powerups = Read-TelemetryU32 332
+    final_bg1_scroll_speed = Read-TelemetryU32 336
+    final_bg2_scroll_speed = Read-TelemetryU32 340
+    final_bg3_scroll_speed = Read-TelemetryU32 344
+    source_parity_assets_valid = Read-TelemetryU32 348
+    final_game_paused = Read-TelemetryU32 352
 }
 
-$telemetryChecks = @(
-    $telemetry.version -eq 10,
-    $telemetry.pass -eq 1,
-    $telemetry.final_state -eq 0,
-    $telemetry.title_music_active -eq 1,
-    $telemetry.logic_updates -ge 5400,
-    $telemetry.final_level_position -ge 5400,
-    $telemetry.spawn_events -eq 414,
-    $telemetry.control_events -eq 380,
-    $telemetry.missed_vblanks -eq 0,
-    $telemetry.stream_drops -eq 0,
-    $telemetry.effect_drops -eq 0,
-    $telemetry.reward_spawns -gt 0,
-    $telemetry.reward_pickups -gt 0,
-    $telemetry.reward_drops -eq 0,
-    $telemetry.enemy_shots_spawned -gt 0,
-    $telemetry.enemy_shot_drops -eq 0,
-    $telemetry.enemy_pool_replacements -eq 0,
-    $telemetry.direct_kill_cash -gt 0,
-    $telemetry.final_cash -ge $telemetry.direct_kill_cash,
-    $telemetry.reward_control_events -eq 33,
-    $telemetry.reward_assignments -gt 0,
-    $telemetry.pause_toggles -eq 2,
-    $telemetry.paused_display_frames -ge 60,
-    $telemetry.source_parity_events -eq 878,
-    $telemetry.source_parity_events_applied -eq 869,
-    $telemetry.source_parity_events_deferred -eq 5,
-    $telemetry.source_parity_events_skipped -eq 4,
-    (
+$telemetryChecks = [ordered]@{
+    schema_version = $telemetry.version -eq 14
+    rom_reported_pass = $telemetry.pass -eq 1
+    returned_to_title = $telemetry.final_state -eq 0
+    title_music_active = $telemetry.title_music_active -eq 1
+    logic_updates = $telemetry.logic_updates -eq 7093
+    display_frames = $telemetry.display_frames -eq 12239
+    final_level_position = $telemetry.final_level_position -eq 5400
+    final_source_event_index = $telemetry.final_source_event_index -eq 878
+    final_level_tick = $telemetry.final_level_tick -eq 7093
+    spawn_events = $telemetry.spawn_events -eq 478
+    control_events = $telemetry.control_events -eq 2444
+    collisions = $telemetry.collisions -eq 577
+    streamed_map_rows = $telemetry.streamed_map_rows -eq 3590
+    max_active_enemies = $telemetry.max_active_enemies -eq 39
+    max_hardware_oam = $telemetry.max_hardware_oam -eq 48
+    vblank_budget = $telemetry.missed_vblanks -le 16
+    stream_drops = $telemetry.stream_drops -eq 0
+    max_active_effects = $telemetry.max_active_effects -eq 27
+    effect_drops = $telemetry.effect_drops -eq 0
+    reward_spawns = $telemetry.reward_spawns -eq 5
+    reward_pickups = $telemetry.reward_pickups -eq 5
+    max_active_rewards = $telemetry.max_active_rewards -eq 2
+    reward_drops = $telemetry.reward_drops -eq 0
+    all_enemy_shots_spawned = $telemetry.enemy_shots_spawned -eq 234
+    all_enemy_shot_drops = $telemetry.enemy_shot_drops -eq 0
+    all_max_active_enemy_shots = $telemetry.max_active_enemy_shots -eq 8
+    enemy_pool_replacements = $telemetry.enemy_pool_replacements -eq 0
+    direct_kill_cash = $telemetry.direct_kill_cash -eq 1785
+    final_cash = $telemetry.final_cash -eq 1960
+    reward_control_events = $telemetry.reward_control_events -eq 32
+    reward_assignments = $telemetry.reward_assignments -eq 59
+    pause_toggles = $telemetry.pause_toggles -eq 2
+    paused_display_frames = $telemetry.paused_display_frames -eq 60
+    source_events = $telemetry.source_parity_events -eq 878
+    source_events_applied = $telemetry.source_parity_events_applied -eq 869
+    source_events_deferred = $telemetry.source_parity_events_deferred -eq 5
+    source_events_skipped = $telemetry.source_parity_events_skipped -eq 4
+    source_event_accounting = (
         $telemetry.source_parity_events_applied +
         $telemetry.source_parity_events_deferred +
         $telemetry.source_parity_events_skipped
-    ) -eq $telemetry.source_parity_events,
-    $telemetry.source_parity_spawn_attempts -eq 473,
-    (
+    ) -eq $telemetry.source_parity_events
+    source_spawn_attempts = $telemetry.source_parity_spawn_attempts -eq 473
+    source_spawn_accounting = (
         $telemetry.source_parity_spawn_successes +
         $telemetry.source_parity_spawn_pool_full +
         $telemetry.source_parity_spawn_missing
-    ) -eq $telemetry.source_parity_spawn_attempts,
-    $telemetry.source_parity_spawn_successes -eq 473,
-    $telemetry.source_parity_spawn_pool_full -eq 0,
-    $telemetry.source_parity_spawn_missing -eq 0,
-    $telemetry.source_parity_max_enemies -eq 39,
-    $telemetry.source_parity_control_writes -eq 2535,
-    $telemetry.source_parity_rng_calls -eq 2266,
-    $telemetry.source_parity_motion_updates -eq 63381,
-    $telemetry.source_parity_releases -eq 453,
-    $telemetry.source_parity_shot_triggers -eq 200,
-    $telemetry.source_parity_launch_attempts -eq 0,
-    $telemetry.source_parity_launch_successes -eq 0,
-    $telemetry.source_parity_random_attempts -eq 0,
-    $telemetry.source_parity_random_successes -eq 0,
-    $telemetry.romfs_entries -eq $romfsAudit.entry_count,
-    $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes,
-    $telemetry.romfs_payload_bytes -eq $romfsAudit.payload_bytes,
-    $telemetry.romfs_self_test_checks -eq $romfsExpectedSelfTestChecks,
-    $telemetry.romfs_self_test_failures -eq 0,
-    $telemetry.romfs_manifest_crc32 -eq $romfsManifestCrc32,
-    $telemetry.max_active_enemy_shots -le 60,
-    $telemetry.max_hardware_oam -le 128,
-    $telemetry.state_transitions -eq 5
+    ) -eq $telemetry.source_parity_spawn_attempts
+    source_spawn_successes = $telemetry.source_parity_spawn_successes -eq 473
+    source_spawn_pool_full = $telemetry.source_parity_spawn_pool_full -eq 0
+    source_spawn_missing = $telemetry.source_parity_spawn_missing -eq 0
+    source_max_enemies = $telemetry.source_parity_max_enemies -eq 39
+    source_control_writes = $telemetry.source_parity_control_writes -eq 2444
+    source_rng_calls = $telemetry.source_parity_rng_calls -eq 1659
+    source_motion_updates = $telemetry.source_parity_motion_updates -eq 52103
+    source_releases = $telemetry.source_parity_releases -eq 458
+    source_shot_triggers = $telemetry.source_parity_shot_triggers -eq 168
+    source_launch_attempts = $telemetry.source_parity_launch_attempts -eq 0
+    source_launch_successes = $telemetry.source_parity_launch_successes -eq 0
+    source_random_attempts = $telemetry.source_parity_random_attempts -eq 0
+    source_random_successes = $telemetry.source_parity_random_successes -eq 0
+    source_enemy_shots_spawned = (
+        $telemetry.source_parity_enemy_shots_spawned -eq 168
+    )
+    source_enemy_shot_drops = $telemetry.source_parity_enemy_shot_drops -eq 0
+    source_max_enemy_shots = $telemetry.source_parity_max_enemy_shots -eq 8
+    source_enemy_shot_updates = (
+        $telemetry.source_parity_enemy_shot_updates -eq 8347
+    )
+    source_enemy_shot_releases = (
+        $telemetry.source_parity_enemy_shot_releases -eq 168
+    )
+    source_enemy_shot_player_hits = (
+        $telemetry.source_parity_enemy_shot_player_hits -eq 17
+    )
+    source_player_shot_hits = $telemetry.source_parity_player_shot_hits -eq 467
+    source_player_contacts = $telemetry.source_parity_player_contacts -eq 28
+    source_collision_accounting = (
+        $telemetry.source_parity_player_shot_hits +
+        $telemetry.source_parity_enemy_shot_player_hits +
+        $telemetry.source_parity_player_contacts
+    ) -eq 512
+    legacy_boss_collision_delta = $telemetry.collisions - 512 -eq 65
+    source_enemy_kills = $telemetry.source_parity_enemy_kills -eq 137
+    source_direct_cash = $telemetry.source_parity_direct_cash -eq 1785
+    source_score_item_spawns = (
+        $telemetry.source_parity_score_item_spawns -eq 5
+    )
+    source_score_item_pickups = (
+        $telemetry.source_parity_score_item_pickups -eq 5
+    )
+    source_score_item_max_active = (
+        $telemetry.source_parity_score_item_max_active -eq 2
+    )
+    source_death_spawn_attempts = (
+        $telemetry.source_parity_death_spawn_attempts -eq 5
+    )
+    source_death_spawn_successes = (
+        $telemetry.source_parity_death_spawn_successes -eq 5
+    )
+    source_death_control_events = (
+        $telemetry.source_parity_death_control_events -eq 32
+    )
+    source_death_assignments = (
+        $telemetry.source_parity_death_assignments -eq 59
+    )
+    source_max_visible_enemies = (
+        $telemetry.source_parity_max_visible_enemies -eq 36
+    )
+    source_unknown_visuals = $telemetry.source_parity_unknown_visuals -eq 32
+    source_unsupported_pickups = (
+        $telemetry.source_parity_unsupported_pickups -eq 0
+    )
+    source_death_spawn_pool_full = (
+        $telemetry.source_parity_death_spawn_pool_full -eq 0
+    )
+    source_death_spawn_missing = (
+        $telemetry.source_parity_death_spawn_missing -eq 0
+    )
+    source_final_active_enemies = (
+        $telemetry.source_parity_final_active_enemies -eq 20
+    )
+    source_final_active_enemy_shots = (
+        $telemetry.source_parity_final_active_enemy_shots -eq 0
+    )
+    source_data_cube_pickups = $telemetry.source_parity_data_cube_pickups -eq 2
+    source_front_weapon_powerups = (
+        $telemetry.source_parity_front_weapon_powerups -eq 0
+    )
+    source_rear_weapon_powerups = (
+        $telemetry.source_parity_rear_weapon_powerups -eq 0
+    )
+    final_bg1_scroll_speed = $telemetry.final_bg1_scroll_speed -eq 1
+    final_bg2_scroll_speed = $telemetry.final_bg2_scroll_speed -eq 2
+    final_bg3_scroll_speed = $telemetry.final_bg3_scroll_speed -eq 0
+    source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
+    final_game_paused = $telemetry.final_game_paused -eq 0
+    romfs_entries = $telemetry.romfs_entries -eq $romfsAudit.entry_count
+    romfs_image_bytes = $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes
+    romfs_payload_bytes = (
+        $telemetry.romfs_payload_bytes -eq $romfsAudit.payload_bytes
+    )
+    romfs_self_test_checks = (
+        $telemetry.romfs_self_test_checks -eq $romfsExpectedSelfTestChecks
+    )
+    romfs_self_test_failures = $telemetry.romfs_self_test_failures -eq 0
+    romfs_manifest_crc32 = (
+        $telemetry.romfs_manifest_crc32 -eq $romfsManifestCrc32
+    )
+    state_transitions = $telemetry.state_transitions -eq 5
+}
+$failedTelemetryChecks = @(
+    $telemetryChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
 )
-if ($telemetryChecks -contains $false) {
-    throw "Auto-test SRAM contains a failed invariant"
+if ($failedTelemetryChecks.Count -ne 0) {
+    throw (
+        "Auto-test SRAM failed invariant(s): " +
+        ($failedTelemetryChecks -join ", ")
+    )
 }
 
 $perfElapsed = Start-TestProcess `

@@ -92,8 +92,8 @@ static void advance_backgrounds(void)
 
 static void enter_boss(void)
 {
-    u8 index;
-    for (index = 0; index < MAX_ENEMIES; index++) enemies[index].active = 0;
+    ot_level_port_clear_projectiles(&source_parity_level);
+    source_sync_runtime_telemetry();
     foreground_phase = 0;
     boss_x = 88;
     boss_y = 8;
@@ -183,8 +183,10 @@ static void update_boss(void)
         shot = &player_shots[index];
         if (!shot->active) continue;
         if (BOX_OVERLAPS(
-                shot->x + PLAYER_SHOT_HIT_X,
-                shot->y + PLAYER_SHOT_HIT_Y,
+                source_player_shot_screen_x(shot) +
+                    PLAYER_SHOT_HIT_X,
+                source_player_shot_screen_y(shot) +
+                    PLAYER_SHOT_HIT_Y,
                 PLAYER_SHOT_HIT_WIDTH,
                 PLAYER_SHOT_HIT_HEIGHT,
                 boss_x + 4, boss_y + 4, 56, 56)) {
@@ -210,65 +212,32 @@ static void update_logic(void)
     level_tick++;
     telemetry_logic_updates++;
     /*
-     * Stage 2 runs the exact JE_EventRecType stream, JE_makeEnemy and the
-     * 100-entry source enemy pool in shadow mode.  Rendering, movement,
-     * collision and death still remain with v11 until their source routines
-     * replace the legacy path.
-    */
+     * Stage 4 makes the direct OpenTyrian event/enemy runtime authoritative
+     * for the first-level body.  The GBA player remains a presentation/input
+     * object, so this boundary converts its current screen position back to
+     * the unchanged 320x200 source coordinate system.
+     */
     if (game_state == STATE_PLAY) {
-        /*
-         * The source loop targets the 264x184 PC playfield.  Until its player
-         * object replaces the GBA presentation object, align the two initial
-         * anchors (104,124 GBA -> 100,180 PC) at this adapter boundary.
-         */
         ot_level_port_advance(
             &source_parity_level,
             level_position,
-            (s16)(player_x - 4),
-            (s16)(player_y + 56)
+            source_player_x_from_gba(),
+            source_player_y_from_gba()
         );
-        telemetry_source_events = source_parity_level.event_index;
-        telemetry_source_events_applied =
-            source_parity_level.applied_event_count;
-        telemetry_source_events_deferred =
-            source_parity_level.deferred_event_count;
-        telemetry_source_events_skipped =
-            source_parity_level.skipped_event_count;
-        telemetry_source_spawn_attempts =
-            source_parity_level.spawn_attempt_count;
-        telemetry_source_spawn_successes =
-            source_parity_level.spawn_success_count;
-        telemetry_source_spawn_pool_full =
-            source_parity_level.spawn_pool_full_count;
-        telemetry_source_spawn_missing =
-            source_parity_level.spawn_missing_definition_count;
-        telemetry_source_max_enemies =
-            source_parity_level.max_active_enemy_count;
-        telemetry_source_control_writes =
-            source_parity_level.enemy_control_write_count;
-        telemetry_source_rng_calls =
-            source_parity_level.rng_call_count;
-        telemetry_source_motion_updates =
-            source_parity_level.enemy_motion_update_count;
-        telemetry_source_releases =
-            source_parity_level.enemy_release_count;
-        telemetry_source_shot_triggers =
-            source_parity_level.enemy_shot_trigger_count;
-        telemetry_source_launch_attempts =
-            source_parity_level.enemy_launch_attempt_count;
-        telemetry_source_launch_successes =
-            source_parity_level.enemy_launch_success_count;
-        telemetry_source_random_attempts =
-            source_parity_level.random_spawn_attempt_count;
-        telemetry_source_random_successes =
-            source_parity_level.random_spawn_success_count;
+        source_apply_background_state();
+        source_play_frame_weapon_sounds();
+        source_sync_runtime_telemetry();
     }
-    if (game_state == STATE_PLAY) process_events();
     advance_backgrounds();
 
     if (game_state == STATE_PLAY) {
         level_position += bg1_step;
-        update_player();
+        /*
+         * OpenTyrian advances and collides existing player shots before
+         * JE_mainGamePlayerFunctions moves the ship and creates new shots.
+         * Keeping that phase boundary prevents a newly fired shot from
+         * travelling and damaging an enemy in its creation tick.
+         */
         update_shots();
         /*
          * Advance existing explosions before collision handling so a newly
@@ -282,8 +251,9 @@ static void update_logic(void)
         if (level_tick == 2) spawn_reward(112, 70, 1);
 #endif
         update_rewards();
-        update_enemies();
-        collide_player_shots();
+        source_process_player_collisions();
+        update_player();
+        source_update_enemy_projectiles();
         if ((pad_pressed & (KEY_SELECT | KEY_L)) ||
             level_position >= LEVEL_BOSS_TICK) {
             enter_boss();

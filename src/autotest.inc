@@ -2,19 +2,35 @@
 
 #ifdef AUTOTEST
 enum {
-    SOURCE_STAGE3_EXPECTED_EVENTS = 878,
-    SOURCE_STAGE3_EXPECTED_APPLIED = 869,
-    SOURCE_STAGE3_EXPECTED_DEFERRED = 5,
-    SOURCE_STAGE3_EXPECTED_SKIPPED = 4,
-    SOURCE_STAGE3_EXPECTED_SPAWN_ATTEMPTS = 473,
-    SOURCE_STAGE3_EXPECTED_SPAWN_SUCCESSES = 473,
-    SOURCE_STAGE3_EXPECTED_POOL_FULL = 0,
-    SOURCE_STAGE3_EXPECTED_MAX_ENEMIES = 39,
-    SOURCE_STAGE3_EXPECTED_CONTROL_WRITES = 2535,
-    SOURCE_STAGE3_EXPECTED_RNG_CALLS = 2266,
-    SOURCE_STAGE3_EXPECTED_MOTION_UPDATES = 63381,
-    SOURCE_STAGE3_EXPECTED_RELEASES = 453,
-    SOURCE_STAGE3_EXPECTED_SHOT_TRIGGERS = 200,
+    SOURCE_STAGE4_EXPECTED_EVENTS = 878,
+    SOURCE_STAGE4_EXPECTED_APPLIED = 869,
+    SOURCE_STAGE4_EXPECTED_DEFERRED = 5,
+    SOURCE_STAGE4_EXPECTED_SKIPPED = 4,
+    SOURCE_STAGE4_EXPECTED_SPAWN_ATTEMPTS = 473,
+    SOURCE_STAGE4_EXPECTED_SPAWN_SUCCESSES = 473,
+    SOURCE_STAGE4_EXPECTED_POOL_FULL = 0,
+    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 2444,
+    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 1659,
+    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 52103,
+    SOURCE_STAGE4_EXPECTED_RELEASES = 458,
+    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 168,
+    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 168,
+    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 8,
+    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 8347,
+    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 168,
+    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 17,
+    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 467,
+    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 28,
+    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 137,
+    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1785,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 5,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 5,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 2,
+    SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 5,
+    SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
+    SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 59,
+    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 36,
+    SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 32,
 };
 
 static void sram_write_u32(u32 offset, u32 value)
@@ -33,21 +49,10 @@ static void autotest_finish(void)
         game_state == STATE_TITLE &&
         !game_paused &&
         level_position >= LEVEL_BOSS_TICK &&
-        telemetry_spawn_count == 414 &&
-        telemetry_control_count == 380 &&
         telemetry_max_oam <= SPRITE_LIMIT &&
         telemetry_effect_drops == 0 &&
-        telemetry_reward_spawns > 0 &&
-        telemetry_reward_pickups > 0 &&
         telemetry_reward_drops == 0 &&
-        telemetry_enemy_shots_spawned > 0 &&
-        telemetry_enemy_shot_drops == 0 &&
         telemetry_enemy_replacements == 0 &&
-        telemetry_max_enemy_shots <= MAX_ENEMY_SHOTS &&
-        telemetry_kill_cash > 0 &&
-        player_cash >= telemetry_kill_cash &&
-        telemetry_reward_controls == 33 &&
-        telemetry_reward_assignments > 0 &&
         telemetry_pause_toggles == 2 &&
         telemetry_paused_frames >= 60 &&
         source_parity_level.assets_valid &&
@@ -60,45 +65,92 @@ static void autotest_finish(void)
         telemetry_romfs_failures == 0 &&
         telemetry_romfs_manifest_crc32 ==
             TYRIAN_ROMFS_MANIFEST_CRC32 &&
-        telemetry_source_events == SOURCE_STAGE3_EXPECTED_EVENTS &&
+        telemetry_source_events == SOURCE_STAGE4_EXPECTED_EVENTS &&
         telemetry_source_events_applied ==
-            SOURCE_STAGE3_EXPECTED_APPLIED &&
+            SOURCE_STAGE4_EXPECTED_APPLIED &&
         telemetry_source_events_deferred ==
-            SOURCE_STAGE3_EXPECTED_DEFERRED &&
+            SOURCE_STAGE4_EXPECTED_DEFERRED &&
         telemetry_source_events_skipped ==
-            SOURCE_STAGE3_EXPECTED_SKIPPED &&
+            SOURCE_STAGE4_EXPECTED_SKIPPED &&
         telemetry_source_events_applied +
             telemetry_source_events_deferred +
             telemetry_source_events_skipped == telemetry_source_events &&
         telemetry_source_spawn_attempts ==
-            SOURCE_STAGE3_EXPECTED_SPAWN_ATTEMPTS &&
+            SOURCE_STAGE4_EXPECTED_SPAWN_ATTEMPTS &&
         telemetry_source_spawn_successes +
             telemetry_source_spawn_pool_full +
             telemetry_source_spawn_missing ==
             telemetry_source_spawn_attempts &&
         telemetry_source_spawn_successes ==
-            SOURCE_STAGE3_EXPECTED_SPAWN_SUCCESSES &&
+            SOURCE_STAGE4_EXPECTED_SPAWN_SUCCESSES &&
         telemetry_source_spawn_pool_full ==
-            SOURCE_STAGE3_EXPECTED_POOL_FULL &&
+            SOURCE_STAGE4_EXPECTED_POOL_FULL &&
         telemetry_source_spawn_missing == 0 &&
-        telemetry_source_max_enemies ==
-            SOURCE_STAGE3_EXPECTED_MAX_ENEMIES &&
         telemetry_source_control_writes ==
-            SOURCE_STAGE3_EXPECTED_CONTROL_WRITES &&
-        telemetry_source_rng_calls == SOURCE_STAGE3_EXPECTED_RNG_CALLS &&
+            SOURCE_STAGE4_EXPECTED_CONTROL_WRITES &&
+        telemetry_source_rng_calls ==
+            SOURCE_STAGE4_EXPECTED_RNG_CALLS &&
         telemetry_source_motion_updates ==
-            SOURCE_STAGE3_EXPECTED_MOTION_UPDATES &&
+            SOURCE_STAGE4_EXPECTED_MOTION_UPDATES &&
         telemetry_source_releases ==
-            SOURCE_STAGE3_EXPECTED_RELEASES &&
+            SOURCE_STAGE4_EXPECTED_RELEASES &&
         telemetry_source_shot_triggers ==
-            SOURCE_STAGE3_EXPECTED_SHOT_TRIGGERS &&
+            SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS &&
+        telemetry_source_max_enemies <= OT_ENEMY_COUNT &&
+        telemetry_source_enemy_shots_spawned ==
+            SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS &&
+        telemetry_source_enemy_shot_drops == 0 &&
+        telemetry_source_max_enemy_shots ==
+            SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE &&
+        telemetry_source_enemy_shot_updates ==
+            SOURCE_STAGE4_EXPECTED_SHOT_UPDATES &&
+        telemetry_source_enemy_shot_releases ==
+            SOURCE_STAGE4_EXPECTED_SHOT_RELEASES &&
+        telemetry_source_enemy_shot_player_hits ==
+            SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS &&
+        telemetry_source_player_shot_hits ==
+            SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS &&
+        source_parity_level.player_enemy_contact_count ==
+            SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS &&
+        telemetry_source_enemy_kills ==
+            SOURCE_STAGE4_EXPECTED_ENEMY_KILLS &&
+        telemetry_source_direct_cash ==
+            SOURCE_STAGE4_EXPECTED_DIRECT_CASH &&
+        telemetry_source_score_item_spawns ==
+            SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS &&
+        telemetry_source_score_item_pickups ==
+            SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS &&
+        telemetry_source_score_item_max_active ==
+            SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE &&
+        telemetry_source_death_spawn_attempts ==
+            SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS &&
+        telemetry_source_death_spawn_successes ==
+            SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS &&
+        source_parity_level.death_spawn_pool_full_count == 0 &&
+        source_parity_level.death_spawn_missing_definition_count == 0 &&
+        source_parity_level.score_item_unsupported_pickup_count == 0 &&
+        source_parity_level.data_cube_pickup_count == 2 &&
+        source_parity_level.front_weapon_powerup_count == 0 &&
+        source_parity_level.rear_weapon_powerup_count == 0 &&
+        telemetry_source_death_control_events ==
+            SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS &&
+        telemetry_source_death_assignments ==
+            SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS &&
+        telemetry_source_max_visible_enemies ==
+            SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES &&
+        telemetry_source_unknown_visuals ==
+            SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
+        source_parity_level.enemy_shot_active_count == 0 &&
+        source_parity_level.active_enemy_count == 20 &&
+        player_cash == 1960 &&
+        telemetry_missed_vblanks <= 16 &&
         telemetry_source_launch_attempts == 0 &&
         telemetry_source_launch_successes == 0 &&
         telemetry_source_random_attempts == 0 &&
         telemetry_source_random_successes == 0 &&
-        bg1_scroll_speed == 2 &&
-        bg2_scroll_speed == 4 &&
-        bg3_scroll_speed == 6
+        bg1_scroll_speed == 1 &&
+        bg2_scroll_speed == 2 &&
+        bg3_scroll_speed == 0
     );
     volatile u32 delay;
 
@@ -106,7 +158,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 10;
+    sram[4] = 14;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -128,7 +180,7 @@ static void autotest_finish(void)
     sram_write_u32(40, telemetry_max_enemies);
     sram_write_u32(44, telemetry_max_oam);
     sram_write_u32(48, telemetry_stream_drops);
-    sram_write_u32(52, event_offset);
+    sram_write_u32(52, source_parity_level.event_index);
     sram_write_u32(56, level_tick);
     sram_write_u32(60, telemetry_state_transitions);
     sram_write_u32(64, telemetry_max_effects);
@@ -172,12 +224,68 @@ static void autotest_finish(void)
     sram_write_u32(216, telemetry_source_launch_successes);
     sram_write_u32(220, telemetry_source_random_attempts);
     sram_write_u32(224, telemetry_source_random_successes);
+    sram_write_u32(228, telemetry_source_enemy_shots_spawned);
+    sram_write_u32(232, telemetry_source_enemy_shot_drops);
+    sram_write_u32(236, telemetry_source_max_enemy_shots);
+    sram_write_u32(240, telemetry_source_enemy_shot_updates);
+    sram_write_u32(244, telemetry_source_enemy_shot_releases);
+    sram_write_u32(248, telemetry_source_enemy_shot_player_hits);
+    sram_write_u32(252, telemetry_source_player_shot_hits);
+    sram_write_u32(256, telemetry_source_enemy_kills);
+    sram_write_u32(260, telemetry_source_direct_cash);
+    sram_write_u32(264, telemetry_source_score_item_spawns);
+    sram_write_u32(268, telemetry_source_score_item_pickups);
+    sram_write_u32(272, telemetry_source_score_item_max_active);
+    sram_write_u32(276, telemetry_source_death_spawn_attempts);
+    sram_write_u32(280, telemetry_source_death_spawn_successes);
+    sram_write_u32(284, telemetry_source_death_control_events);
+    sram_write_u32(288, telemetry_source_death_assignments);
+    sram_write_u32(292, telemetry_source_max_visible_enemies);
+    sram_write_u32(296, telemetry_source_unknown_visuals);
+    sram_write_u32(
+        300,
+        source_parity_level.player_enemy_contact_count
+    );
+    sram_write_u32(
+        304,
+        source_parity_level.score_item_unsupported_pickup_count
+    );
+    sram_write_u32(
+        308,
+        source_parity_level.death_spawn_pool_full_count
+    );
+    sram_write_u32(
+        312,
+        source_parity_level.death_spawn_missing_definition_count
+    );
+    sram_write_u32(316, source_parity_level.active_enemy_count);
+    sram_write_u32(
+        320,
+        source_parity_level.enemy_shot_active_count
+    );
+    sram_write_u32(324, source_parity_level.data_cube_pickup_count);
+    sram_write_u32(
+        328,
+        source_parity_level.front_weapon_powerup_count
+    );
+    sram_write_u32(
+        332,
+        source_parity_level.rear_weapon_powerup_count
+    );
+    sram_write_u32(336, bg1_scroll_speed);
+    sram_write_u32(340, bg2_scroll_speed);
+    sram_write_u32(344, bg3_scroll_speed);
+    sram_write_u32(348, source_parity_level.assets_valid ? 1 : 0);
+    sram_write_u32(352, game_paused);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
-    if (pass) {
-        __asm__ volatile("swi 3");
-    }
+    /*
+     * Always terminate the headless run after telemetry is committed.
+     * Host-side verification still rejects pass=0, while a failed invariant
+     * now reports immediately instead of presenting as a 30-second timeout.
+     */
+    __asm__ volatile("swi 3");
     for (;;) {
         VBlankIntrWait();
     }
@@ -186,6 +294,7 @@ static void autotest_finish(void)
 static u16 autotest_input(void)
 {
     u8 reward_index;
+    u8 source_index;
     u16 phase = (level_tick >> 5) & 3;
     u16 keys = KEY_A;
 #ifdef AUTOTEST_STATIONARY_PLAYER
@@ -210,6 +319,25 @@ static u16 autotest_input(void)
         if (player_x + 16 > rewards[reward_index].x + 8) keys |= KEY_LEFT;
         if (player_y + 14 < rewards[reward_index].y + 8) keys |= KEY_DOWN;
         if (player_y + 14 > rewards[reward_index].y + 8) keys |= KEY_UP;
+        return keys;
+    }
+    for (source_index = 0; source_index < OT_ENEMY_COUNT; source_index++) {
+        const OtEnemy *enemy = &source_parity_level.enemy[source_index];
+        s16 reward_x;
+        s16 reward_y;
+
+        if (
+            source_parity_level.enemy_avail[source_index] == 1 ||
+            !enemy->scoreitem
+        ) {
+            continue;
+        }
+        reward_x = source_score_item_screen_x(enemy);
+        reward_y = source_score_item_screen_y(enemy);
+        if (player_x + 16 < reward_x + 8) keys |= KEY_RIGHT;
+        if (player_x + 16 > reward_x + 8) keys |= KEY_LEFT;
+        if (player_y + 14 < reward_y + 8) keys |= KEY_DOWN;
+        if (player_y + 14 > reward_y + 8) keys |= KEY_UP;
         return keys;
     }
     if (phase == 0) keys |= KEY_RIGHT;

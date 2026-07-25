@@ -6,8 +6,10 @@ static void spawn_player_shot(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (!player_shots[index].active) {
             player_shots[index].active = 1;
-            player_shots[index].x = player_x + PLAYER_SHOT_X_OFFSET;
-            player_shots[index].y = player_y + PLAYER_SHOT_Y_OFFSET;
+            player_shots[index].x = source_player_x_from_gba();
+            player_shots[index].y = source_player_y_from_gba();
+            /* Pulse-Cannon power 1, HDT weapon 155 attack[0]. */
+            player_shots[index].damage = 2;
             audio_effect(SFX_WEAPON_1);
             return;
         }
@@ -181,8 +183,9 @@ static void update_shots(void)
         player_shot = &player_shots[index];
         if (!player_shot->active) continue;
         player_shot->y -= PLAYER_SHOT_SPEED;
-        if (player_shot->y < -16) player_shot->active = 0;
+        if (player_shot->y < 0) player_shot->active = 0;
     }
+    if (game_state != STATE_BOSS) return;
     for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
         enemy_shot = &enemy_shots[index];
         if (!enemy_shot->active) continue;
@@ -241,113 +244,6 @@ static void update_rewards(void)
             if (active_reward_count) active_reward_count--;
             telemetry_reward_pickups++;
             audio_effect(SFX_ITEM);
-        }
-    }
-}
-
-static void update_enemies(void)
-{
-    u8 index;
-    u8 slot;
-    s8 scroll_step;
-    Enemy *enemy;
-
-    for (index = 0; index < MAX_ENEMIES; index++) {
-        enemy = &enemies[index];
-        if (!enemy->active) continue;
-        enemy->phase++;
-        if ((enemy->phase & 7) == 0) {
-            if (enemy->accel_x > 0 && enemy->dx < 3) enemy->dx++;
-            if (enemy->accel_x < 0 && enemy->dx > -3) enemy->dx--;
-            if (enemy->accel_y > 0 && enemy->dy < 5) enemy->dy++;
-            if (enemy->accel_y < 0 && enemy->dy > -3) enemy->dy--;
-        }
-        enemy->x += enemy->dx;
-        scroll_step = 0;
-        if (enemy->pool == 1 || enemy->pool == 3) {
-            scroll_step = bg1_step;
-        } else if (enemy->pool == 2) {
-            scroll_step = bg3_step;
-        }
-        enemy->y += enemy->dy + enemy->fixed_dy + scroll_step;
-        /*
-         * PC defaults its bounce window to +/-10000.  The old GBA clamp at
-         * x=0/208 made formations reverse at the viewport edge and could
-         * pin components in place.  Keep the PC lifetime bounds instead.
-         */
-        if (
-            enemy->x < -80 || enemy->x > 320 ||
-            enemy->y < -112 || enemy->y > 190
-        ) {
-            enemy->active = 0;
-            continue;
-        }
-        /*
-         * PC order is slot 3 -> 1. A populated turret starts at wait 20,
-         * then reloads from its own frequency after each discharge.
-         */
-        for (slot = 3; slot > 0; slot--) {
-            u8 firing_slot = (u8)(slot - 1);
-            if (!enemy->frequency[firing_slot]) continue;
-            enemy->fire_wait[firing_slot]--;
-            if (
-                enemy->fire_wait[firing_slot] == 0 &&
-                enemy->turret[firing_slot]
-            ) {
-                enemy->fire_wait[firing_slot] =
-                    enemy->frequency[firing_slot];
-                fire_enemy_weapon(
-                    enemy->x,
-                    enemy->y,
-                    enemy->turret[firing_slot],
-                    firing_slot,
-                    &enemy->multi_pos[firing_slot]
-                );
-            }
-        }
-        if (BOX_OVERLAPS(
-                enemy->x + 4, enemy->y + 4, 24, 24,
-                player_x + 6, player_y + 5, 20, 23)) {
-            enemy->active = 0;
-            spawn_enemy_effect(enemy);
-            player_hit();
-        }
-    }
-}
-
-static void collide_player_shots(void)
-{
-    u8 enemy_index;
-    u8 shot_index;
-    Enemy *enemy;
-    PlayerShot *shot;
-
-    for (shot_index = 0; shot_index < MAX_PLAYER_SHOTS; shot_index++) {
-        shot = &player_shots[shot_index];
-        if (!shot->active) continue;
-        for (enemy_index = 0; enemy_index < MAX_ENEMIES; enemy_index++) {
-            enemy = &enemies[enemy_index];
-            if (!enemy->active) continue;
-            if (BOX_OVERLAPS(
-                    shot->x + PLAYER_SHOT_HIT_X,
-                    shot->y + PLAYER_SHOT_HIT_Y,
-                    PLAYER_SHOT_HIT_WIDTH,
-                    PLAYER_SHOT_HIT_HEIGHT,
-                    enemy->x + 3, enemy->y + 3, 26, 26)) {
-                shot->active = 0;
-                telemetry_collision_count++;
-                audio_effect(SFX_ENEMY_HIT);
-                if (enemy->hp) enemy->hp--;
-                if (!enemy->hp) {
-                    spawn_enemy_reward(enemy);
-                    player_cash += enemy->kill_value;
-                    telemetry_kill_cash += enemy->kill_value;
-                    enemy->active = 0;
-                    spawn_enemy_effect(enemy);
-                    audio_effect(SFX_EXPLOSION_9);
-                }
-                break;
-            }
         }
     }
 }

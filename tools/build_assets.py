@@ -1044,7 +1044,7 @@ def write_meta_header(
         f"#define BG1_ROWS {bg1_rows}u",
         f"#define BG2_ROWS {bg2_rows}u",
         f"#define BG3_ROWS {bg3_rows}u",
-        f"#define LEVEL_EVENT_BYTES {event_bytes}u",
+        f"#define LEGACY_LEVEL_EVENT_AUDIT_BYTES {event_bytes}u",
         f"#define LEVEL_BOSS_TICK {boss_tick}u",
         f"#define LEVEL_END_TICK {end_tick}u",
         "#define ORIGINAL_LOGIC_NUMERATOR 1193182ul",
@@ -1843,7 +1843,6 @@ def main() -> None:
             data_root / "tyrian.hdt",
         )
     )
-    (output / "level_events.bin").write_bytes(level_events)
     (output / "reward_drop_audit.txt").write_text(
         "\n".join((
             "policy=PC evalue direct cash plus event33 physical score items",
@@ -2096,7 +2095,7 @@ def main() -> None:
         f"level_event_spawn_records={spawn_count}",
         f"level_event_control_records={control_count}",
         f"level_background_control_records={background_control_count}",
-        f"level_event_bytes={len(level_events)}",
+        f"legacy_level_event_audit_bytes={len(level_events)}",
         "level_event_clock=PC curLoc / MAP1 effective scroll",
         "spawn_coordinate_mode=PC initial Y + HDT motion + source pool scroll",
         (
