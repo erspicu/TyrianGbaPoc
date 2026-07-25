@@ -31,13 +31,17 @@ EXPLOSION_SOURCE_SEQUENCES = (
 )
 EXPLOSION_FRAMES_PER_SEQUENCE = 12
 REWARD_SOURCE_SEQUENCES = (
-    tuple(range(26, 32)),          # HDT 392: 50-credit spinning coin
-    (32, 33, 34, 35, 36, 35),     # HDT 394: 100-credit silver coin
-    (39, 41, 43, 45, 47, 49),     # HDT 397: 1000-credit 2x2 pickup
+    (7, 9, 11),    # HDT 391: 25-credit coin, PC six-frame cycle sampled 2:1
+    (26, 28, 30),  # HDT 392: 50-credit coin, PC six-frame cycle sampled 2:1
+    (20, 22, 24),  # HDT 393: 75-credit coin, PC six-frame cycle sampled 2:1
+    (32, 34, 36),  # HDT 394: 100-credit gem, PC 16-frame ping-pong keyframes
+    (14, 16, 18),  # HDT 395: 250-credit gem, PC 16-frame ping-pong keyframes
 )
-REWARD_VALUES = (50, 100, 1000)
-REWARD_FRAMES_PER_SEQUENCE = 6
+REWARD_VALUES = (25, 50, 75, 100, 250)
+REWARD_FRAMES_PER_SEQUENCE = 3
 CASH_DIGIT_SOURCE_IDS = (79, 70, 71, 72, 73, 74, 75, 76, 77, 78)
+PAUSE_TEXT = "PAUSED"
+PAUSE_TEXT_SOURCE_IDS = (15, 0, 20, 18, 4, 3)
 ENEMY_PROJECTILE_SOURCE_IDS = (58, 112, 113, 145, 146, 147, 201, 202)
 ENEMY_PROJECTILE_WEAPON_IDS = (2, 3, 4, 59, 62, 78, 115, 116, 125, 126)
 BOSS_PROJECTILE_WEAPON_IDS = (59, 127)
@@ -370,23 +374,17 @@ def build_reward_animation(
         if len(sequence) != REWARD_FRAMES_PER_SEQUENCE:
             raise ValueError("reward animation sequence has an invalid length")
         for frame_index, source_id in enumerate(sequence):
-            if sequence_index == 2:
-                source = snes.fit_sprite(
-                    compose_sprite_2x2(source_dir, source_id),
-                    (16, 16),
+            source = Image.open(
+                source_dir / f"{source_id:03d}.png"
+            ).convert("RGBA")
+            if source.width != 12 or source.height > 14:
+                raise ValueError(
+                    "unexpected Tyrian reward source canvas: "
+                    f"{source_id} is {source.size}, expected 12x<=14"
                 )
-            else:
-                source = Image.open(
-                    source_dir / f"{source_id:03d}.png"
-                ).convert("RGBA")
-                if source.width != 12 or source.height > 14:
-                    raise ValueError(
-                        "unexpected Tyrian reward source canvas: "
-                        f"{source_id} is {source.size}, expected 12x<=14"
-                    )
-                source = preserve_sprite_canvas(
-                    snes, source, (16, 16), (2, 1)
-                )
+            source = preserve_sprite_canvas(
+                snes, source, (16, 16), (2, 1)
+            )
             # Keep the PC sprite's alpha edge and colours intact.  The older
             # GBA conversion added a pale one-pixel readability outline here,
             # which produced a ring that does not exist in Tyrian.
@@ -539,6 +537,79 @@ def build_cash_digits(
     )
 
 
+def build_pause_text(
+    snes: ModuleType,
+    image_root: Path,
+    palette_file: Path,
+) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
+    """Recreate JE_dString(PAUSED, FONT_SHAPES) at GBA display scale."""
+    source_dir = image_root / "sprites" / "00_font"
+    tyrian_palette = load_tyrian_palette(palette_file)
+    font_colour_indices = {
+        tyrian_palette[index]: index
+        for index in range(0x10, 0x20)
+    }
+    frames: list[Image.Image] = []
+    advances: list[int] = []
+
+    for character, source_id in zip(
+        PAUSE_TEXT,
+        PAUSE_TEXT_SOURCE_IDS,
+        strict=True,
+    ):
+        source = Image.open(source_dir / f"{source_id:03d}.png").convert("RGBA")
+        if source.height != 15 or source.width not in (11, 12):
+            raise ValueError(
+                "unexpected Tyrian FONT_SHAPES pause glyph canvas: "
+                f"{character}/{source_id} is {source.size}"
+            )
+        advances.append(((source.width + 1) * 3 + 2) // 4)
+        rgba = np.asarray(source, dtype=np.uint8)
+        transformed = np.zeros_like(rgba)
+        for y, x in np.argwhere(rgba[:, :, 3] >= 80):
+            colour = tuple(int(component) for component in rgba[y, x, :3])
+            if colour not in font_colour_indices:
+                raise ValueError(
+                    "unexpected Tyrian FONT_SHAPES pause glyph colour: "
+                    f"{character}/{source_id} contains {colour}"
+                )
+            source_index = font_colour_indices[colour]
+            output_index = 0xF0 + ((source_index & 0x0F) - 3)
+            transformed[y, x, :3] = tyrian_palette[output_index]
+            transformed[y, x, 3] = 255
+
+        # PC 320x200 -> GBA 240x160.  The 11/12x15 FONT_SHAPES glyphs
+        # therefore become 8x12 and fit one 8x16 tall OBJ each.
+        foreground = Image.fromarray(transformed, "RGBA").resize(
+            (8, 12),
+            Image.Resampling.NEAREST,
+        )
+        shadow = Image.new("RGBA", (8, 16), (0, 0, 0, 0))
+        shadow_mask = foreground.getchannel("A")
+        shadow_shape = Image.new("RGBA", foreground.size, (8, 8, 8, 255))
+        shadow_shape.putalpha(shadow_mask)
+        shadow.alpha_composite(shadow_shape, (1, 2))
+        shadow.alpha_composite(foreground, (0, 0))
+        frames.append(shadow)
+
+    tile_data, palette = quantize_sprite_frames(snes, frames)
+    preview = Image.new(
+        "RGBA",
+        (sum(advances), 16),
+        (0, 0, 0, 0),
+    )
+    preview_x = 0
+    for frame, advance in zip(frames, advances, strict=True):
+        preview.alpha_composite(frame, (preview_x, 0))
+        preview_x += advance
+    return (
+        tile_data,
+        palette,
+        preview,
+        tuple(advances),
+    )
+
+
 def build_enemy_projectiles(
     snes: ModuleType,
     image_root: Path,
@@ -677,6 +748,8 @@ def repack_obj_tiles(
     reward_tiles: bytes,
     digit_tiles: bytes,
     digit_advances: tuple[int, ...],
+    pause_tiles: bytes,
+    pause_advances: tuple[int, ...],
     projectile_tiles: bytes,
     projectile_layouts: tuple[dict[str, int], ...],
     boss_bar_tiles: bytes,
@@ -755,6 +828,17 @@ def repack_obj_tiles(
     for digit, advance in enumerate(digit_advances):
         metadata[f"OBJ_SCORE_DIGIT_ADVANCE_{digit}"] = advance
     output.extend(digit_tiles)
+
+    if len(pause_tiles) != len(PAUSE_TEXT) * 2 * 32:
+        raise ValueError("GBA PAUSED text must contain two tiles per glyph")
+    if len(pause_advances) != len(PAUSE_TEXT):
+        raise ValueError("GBA PAUSED text advance count changed")
+    metadata["OBJ_TILE_PAUSE_TEXT"] = len(output) // 32
+    metadata["OBJ_PAL_PAUSE_TEXT"] = 14
+    metadata["OBJ_PAUSE_GLYPH_COUNT"] = len(PAUSE_TEXT)
+    for index, advance in enumerate(pause_advances):
+        metadata[f"OBJ_PAUSE_ADVANCE_{index}"] = advance
+    output.extend(pause_tiles)
 
     append_asset("PLAYER_SHOT", 2, 2)
     projectile_base = len(output) // 32
@@ -958,13 +1042,10 @@ def hdt_enemy_table_offset(data: bytes) -> int:
 
 
 def reward_code_for_value(value: int) -> int:
-    if 1000 <= value < 10000:
-        return 3
-    if 100 <= value < 1000:
-        return 2
-    if 50 <= value < 100:
-        return 1
-    return 0
+    try:
+        return REWARD_VALUES.index(value) + 1
+    except ValueError:
+        return 0
 
 
 def encode_gba_level_events(
@@ -973,13 +1054,12 @@ def encode_gba_level_events(
     events: list[tuple[int, int, int, int, int, int, int, int]],
     hdt_path: Path,
 ) -> tuple[bytes, int, int, dict[str, int | str], list[str]]:
-    """Add source-HDT reward and three-slot weapon data to every GBA spawn.
+    """Add source-HDT cash, reward and three-slot weapon data to GBA spawns.
 
-    OpenTyrian normally credits each destroyed enemy's positive ``value``
-    directly, and uses ``eenemydie`` only where a physical score item is
-    authored.  Level 1 contains no ``eenemydie`` score items, so this hardware
-    demo turns only its high-value (50+) enemies into visible pickups while
-    retaining the exact 50/100/1000 denominations found in those HDT records.
+    OpenTyrian credits each destroyed enemy's positive ``value`` directly,
+    and uses ``eenemydie`` only where a separate physical score item is
+    authored. Preserve both fields independently. First-level event type 33
+    overrides ``eenemydie`` dynamically and is merged in a later pass.
 
     The old POC discarded ``tur[3]``/``freq[3]`` and replaced them with one
     hand-authored downward shot. Preserve all six HDT bytes per spawn and all
@@ -1153,9 +1233,10 @@ def encode_gba_level_events(
     cursor = 0
     spawn_index = 0
     fire_override_index = 0
-    reward_counts = [0, 0, 0, 0]
+    reward_counts = [0] * (len(REWARD_VALUES) + 1)
     explicit_hdt_drops = 0
-    adapted_high_value_drops = 0
+    direct_value_records = 0
+    direct_value_authored_total = 0
     used_weapon_ids: set[int] = set()
     while cursor + 1 < len(encoded):
         delta = encoded[cursor]
@@ -1182,6 +1263,12 @@ def encode_gba_level_events(
             ) = enemy_fields(enemy_id)
             spec = spawn_specs[spawn_index]
             reward_code = 0
+            kill_value = (
+                source_value if 0 < source_value < 10000 else 0
+            )
+            if kill_value:
+                direct_value_records += 1
+                direct_value_authored_total += kill_value
             if enemy_die:
                 target_armor, target_value, _, _, _, _, _ = enemy_fields(
                     enemy_die
@@ -1190,12 +1277,8 @@ def encode_gba_level_events(
                     reward_code = reward_code_for_value(target_value)
                     if reward_code:
                         explicit_hdt_drops += 1
-            if not reward_code:
-                reward_code = reward_code_for_value(source_value)
-                if reward_code:
-                    adapted_high_value_drops += 1
             output.extend(struct.pack(
-                "<hhBbbbBBB",
+                "<hhBbbbBBBH",
                 spec["x"],
                 spec["y"],
                 spec["pool"],
@@ -1205,6 +1288,7 @@ def encode_gba_level_events(
                 source_armor if source_armor else 255,
                 spec["link"],
                 reward_code,
+                kill_value,
             ))
             output.extend(turrets)
             output.extend(frequencies)
@@ -1260,11 +1344,14 @@ def encode_gba_level_events(
         )
     report = {
         "eligible": sum(reward_counts[1:]),
-        "value_50": reward_counts[1],
-        "value_100": reward_counts[2],
-        "value_1000": reward_counts[3],
+        "value_25": reward_counts[1],
+        "value_50": reward_counts[2],
+        "value_75": reward_counts[3],
+        "value_100": reward_counts[4],
+        "value_250": reward_counts[5],
         "explicit_hdt": explicit_hdt_drops,
-        "adapted_high_value": adapted_high_value_drops,
+        "direct_value_records": direct_value_records,
+        "direct_value_authored_total": direct_value_authored_total,
         "weapon_records": ",".join(str(value) for value in sorted(used_weapon_ids)),
         "fire_override_records": len(fire_overrides),
         "world_spawn_records": len(spawn_specs),
@@ -1307,12 +1394,29 @@ def add_background_motion_events(
     nes: ModuleType,
     encoded: bytes,
     source_events: list[tuple[int, int, int, int, int, int, int, int]],
-) -> tuple[bytes, int]:
-    """Merge the original three-layer speed changes into shared bytecode."""
+    hdt_path: Path,
+) -> tuple[bytes, int, dict[str, int | str]]:
+    """Merge PC layer motion and dynamic ``enemydie`` controls in source order."""
     event_scroll = 0x85
-    records: list[tuple[int, int, bytes]] = []
+    event_reward = 0x86
+    records: list[tuple[int, int, int, int, bytes]] = []
     cursor = 0
     absolute_time = 0
+    encoded_record_index = 0
+
+    source_record_orders: list[tuple[int, int, int]] = []
+    for source_index, source_event in enumerate(source_events):
+        event_time, event_type = source_event[:2]
+        if event_time >= 4900:
+            break
+        if event_type in nes.LEVEL_SPAWN_TYPES:
+            repeat = 4 if event_type == 12 else 1
+            source_record_orders.extend(
+                (event_time, source_index, sub_order)
+                for sub_order in range(repeat)
+            )
+        elif event_type in nes.LEVEL_CONTROL_TYPES:
+            source_record_orders.append((event_time, source_index, 0))
 
     while cursor + 1 < len(encoded):
         delta = encoded[cursor]
@@ -1323,8 +1427,18 @@ def add_background_motion_events(
         if opcode == nes.EVENT_WAIT:
             cursor += 2
             continue
+        if encoded_record_index >= len(source_record_orders):
+            raise ValueError("encoded event stream has extra source records")
+        source_time, source_index, sub_order = source_record_orders[
+            encoded_record_index
+        ]
+        if source_time != absolute_time:
+            raise ValueError(
+                "encoded/source event time mismatch: "
+                f"{absolute_time} != {source_time}"
+            )
         if opcode < 24:
-            length = 19
+            length = 21
         elif opcode in (
             nes.EVENT_MOVE,
             nes.EVENT_ACCEL,
@@ -1338,12 +1452,43 @@ def add_background_motion_events(
         else:
             raise ValueError(f"unknown shared level opcode 0x{opcode:02X}")
         records.append(
-            (absolute_time, opcode, encoded[cursor + 2 : cursor + length])
+            (
+                absolute_time,
+                source_index,
+                sub_order,
+                opcode,
+                encoded[cursor + 2 : cursor + length],
+            )
         )
+        encoded_record_index += 1
         cursor += length
+    if encoded_record_index != len(source_record_orders):
+        raise ValueError(
+            "encoded event stream is missing source records: "
+            f"{encoded_record_index} != {len(source_record_orders)}"
+        )
 
-    motion_records: list[tuple[int, int, bytes]] = []
-    for (
+    hdt = hdt_path.read_bytes()
+    enemy_table = hdt_enemy_table_offset(hdt)
+
+    def reward_target(enemy_id: int) -> tuple[int, int, int]:
+        if not 0 <= enemy_id < 851:
+            raise ValueError(f"event 33 target outside tyrian.hdt: {enemy_id}")
+        offset = enemy_table + enemy_id * 77
+        armor = hdt[offset + 19]
+        value = struct.unpack_from("<h", hdt, offset + 73)[0]
+        code = reward_code_for_value(value) if armor == 0 else 0
+        return code, armor, value
+
+    motion_records: list[tuple[int, int, int, int, bytes]] = []
+    reward_records: list[tuple[int, int, int, int, bytes]] = []
+    reward_target_counts: collections.Counter[int] = collections.Counter()
+    cash_reward_records = 0
+    reward_audit_lines = [
+        "Tyrian GBA first-level dynamic reward audit",
+        "event_time,link,target_enemy_id,target_armor,target_value,reward_code",
+    ]
+    for source_index, (
         event_time,
         event_type,
         event_data,
@@ -1351,8 +1496,8 @@ def add_background_motion_events(
         event_data_3,
         _,
         _,
-        _,
-    ) in source_events:
+        event_data_4,
+    ) in enumerate(source_events):
         if event_time >= 4900:
             break
         if event_type in (2, 30):
@@ -1366,18 +1511,37 @@ def add_background_motion_events(
             speeds = (1, 1, 1)
             delays = (3, 2)
         else:
-            continue
-        motion_records.append(
-            (event_time, event_scroll, bytes((*speeds, *delays)))
-        )
+            speeds = None
+        if speeds is not None:
+            motion_records.append((
+                event_time,
+                source_index,
+                0,
+                event_scroll,
+                bytes((*speeds, *delays)),
+            ))
+        if event_type == 33:
+            code, armor, value = reward_target(event_data)
+            reward_records.append((
+                event_time,
+                source_index,
+                0,
+                event_reward,
+                bytes((event_data_4 & 0xFF, code)),
+            ))
+            reward_target_counts[value] += 1
+            if code:
+                cash_reward_records += 1
+            reward_audit_lines.append(
+                f"{event_time},{event_data_4},{event_data},"
+                f"{armor},{value},{code}"
+            )
 
-    # Motion records sort before gameplay records at an identical timestamp,
-    # matching OpenTyrian's event-before-background update order.
-    merged = motion_records + records
-    merged.sort(key=lambda record: record[0])
+    merged = motion_records + reward_records + records
+    merged.sort(key=lambda record: (record[0], record[1], record[2]))
     output = bytearray()
     time_cursor = 0
-    for event_time, opcode, payload in merged:
+    for event_time, _, _, opcode, payload in merged:
         delta = event_time - time_cursor
         while delta > 254:
             output.extend((254, nes.EVENT_WAIT))
@@ -1387,7 +1551,18 @@ def add_background_motion_events(
         output.extend(payload)
         time_cursor = event_time
     output.extend((0, nes.EVENT_END))
-    return bytes(output), len(motion_records)
+    reward_report: dict[str, int | str] = {
+        "dynamic_records": len(reward_records),
+        "dynamic_cash_records": cash_reward_records,
+        "dynamic_non_cash_records": len(reward_records) - cash_reward_records,
+        "dynamic_value_25": reward_target_counts[25],
+        "dynamic_value_50": reward_target_counts[50],
+        "dynamic_value_75": reward_target_counts[75],
+        "dynamic_value_100": reward_target_counts[100],
+        "dynamic_value_250": reward_target_counts[250],
+        "audit": "\n".join(reward_audit_lines) + "\n",
+    }
+    return bytes(output), len(motion_records), reward_report
 
 
 def main() -> None:
@@ -1475,23 +1650,58 @@ def main() -> None:
         source_events,
         data_root / "tyrian.hdt",
     )
-    level_events, background_control_count = add_background_motion_events(
-        nes, shared_level_events, source_events
+    level_events, background_control_count, dynamic_reward_report = (
+        add_background_motion_events(
+            nes,
+            shared_level_events,
+            source_events,
+            data_root / "tyrian.hdt",
+        )
     )
     (output / "level_events.bin").write_bytes(level_events)
     (output / "reward_drop_audit.txt").write_text(
         "\n".join((
-            "policy=first-level HDT value >= 50, preserving 50/100/1000 tiers",
-            f"eligible_spawn_records={reward_report['eligible']}",
-            f"value_50_records={reward_report['value_50']}",
-            f"value_100_records={reward_report['value_100']}",
-            f"value_1000_records={reward_report['value_1000']}",
+            "policy=PC evalue direct cash plus event33 physical score items",
+            f"static_eenemydie_reward_records={reward_report['eligible']}",
+            f"direct_value_spawn_records={reward_report['direct_value_records']}",
+            (
+                "direct_value_authored_total="
+                f"{reward_report['direct_value_authored_total']}"
+            ),
+            f"static_value_25_records={reward_report['value_25']}",
+            f"static_value_50_records={reward_report['value_50']}",
+            f"static_value_75_records={reward_report['value_75']}",
+            f"static_value_100_records={reward_report['value_100']}",
+            f"static_value_250_records={reward_report['value_250']}",
             f"explicit_eenemydie_records={reward_report['explicit_hdt']}",
             (
-                "adapted_high_value_records="
-                f"{reward_report['adapted_high_value']}"
+                "dynamic_event33_records="
+                f"{dynamic_reward_report['dynamic_records']}"
+            ),
+            (
+                "dynamic_cash_reward_records="
+                f"{dynamic_reward_report['dynamic_cash_records']}"
+            ),
+            (
+                "dynamic_non_cash_target_records="
+                f"{dynamic_reward_report['dynamic_non_cash_records']}"
+            ),
+            f"dynamic_value_25_records={dynamic_reward_report['dynamic_value_25']}",
+            f"dynamic_value_50_records={dynamic_reward_report['dynamic_value_50']}",
+            f"dynamic_value_75_records={dynamic_reward_report['dynamic_value_75']}",
+            (
+                "dynamic_value_100_records="
+                f"{dynamic_reward_report['dynamic_value_100']}"
+            ),
+            (
+                "dynamic_value_250_records="
+                f"{dynamic_reward_report['dynamic_value_250']}"
             ),
         )) + "\n",
+        encoding="utf-8",
+    )
+    (output / "reward_event33_audit.csv").write_text(
+        str(dynamic_reward_report["audit"]),
         encoding="utf-8",
     )
     (output / "enemy_projectile_audit.txt").write_text(
@@ -1532,6 +1742,12 @@ def main() -> None:
         digit_advances,
     ) = build_cash_digits(snes, image_root, data_root / "palette.dat")
     (
+        pause_tiles,
+        pause_palette,
+        pause_preview,
+        pause_advances,
+    ) = build_pause_text(snes, image_root, data_root / "palette.dat")
+    (
         projectile_tiles,
         projectile_palettes,
         projectile_preview,
@@ -1551,6 +1767,7 @@ def main() -> None:
         raise ValueError("enemy projectile palette bank count changed")
     obj_palette[10 * 32 : 13 * 32] = projectile_palettes
     obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
+    obj_palette[14 * 32 : 15 * 32] = pause_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
         snes_obj_tiles,
         source_metadata,
@@ -1558,6 +1775,8 @@ def main() -> None:
         reward_tiles,
         digit_tiles,
         digit_advances,
+        pause_tiles,
+        pause_advances,
         projectile_tiles,
         projectile_layouts,
         boss_bar_tiles,
@@ -1584,11 +1803,15 @@ def main() -> None:
     reward_preview.resize(
         (reward_preview.width * 4, reward_preview.height * 4),
         Image.Resampling.NEAREST,
-    ).save(preview / "reward_coins_50_100_1000.png")
+    ).save(preview / "reward_coins_25_50_75_100_250.png")
     digit_preview.resize(
         (digit_preview.width * 4, digit_preview.height * 4),
         Image.Resampling.NEAREST,
     ).save(preview / "cash_tiny_font_digits.png")
+    pause_preview.resize(
+        (pause_preview.width * 8, pause_preview.height * 8),
+        Image.Resampling.NEAREST,
+    ).save(preview / "paused_font_shapes.png")
     projectile_preview.resize(
         (projectile_preview.width * 6, projectile_preview.height * 6),
         Image.Resampling.NEAREST,
@@ -1678,14 +1901,52 @@ def main() -> None:
             "small_tank_component_records="
             f"{reward_report['tank_component_records']}"
         ),
-        f"reward_eligible_spawn_records={reward_report['eligible']}",
-        f"reward_value_50_records={reward_report['value_50']}",
-        f"reward_value_100_records={reward_report['value_100']}",
-        f"reward_value_1000_records={reward_report['value_1000']}",
+        f"reward_static_spawn_records={reward_report['eligible']}",
+        (
+            "reward_direct_value_spawn_records="
+            f"{reward_report['direct_value_records']}"
+        ),
+        (
+            "reward_direct_value_authored_total="
+            f"{reward_report['direct_value_authored_total']}"
+        ),
+        f"reward_static_value_25_records={reward_report['value_25']}",
+        f"reward_static_value_50_records={reward_report['value_50']}",
+        f"reward_static_value_75_records={reward_report['value_75']}",
+        f"reward_static_value_100_records={reward_report['value_100']}",
+        f"reward_static_value_250_records={reward_report['value_250']}",
         f"reward_explicit_eenemydie_records={reward_report['explicit_hdt']}",
         (
-            "reward_adapted_high_value_records="
-            f"{reward_report['adapted_high_value']}"
+            "reward_dynamic_event33_records="
+            f"{dynamic_reward_report['dynamic_records']}"
+        ),
+        (
+            "reward_dynamic_cash_records="
+            f"{dynamic_reward_report['dynamic_cash_records']}"
+        ),
+        (
+            "reward_dynamic_non_cash_records="
+            f"{dynamic_reward_report['dynamic_non_cash_records']}"
+        ),
+        (
+            "reward_dynamic_value_25_records="
+            f"{dynamic_reward_report['dynamic_value_25']}"
+        ),
+        (
+            "reward_dynamic_value_50_records="
+            f"{dynamic_reward_report['dynamic_value_50']}"
+        ),
+        (
+            "reward_dynamic_value_75_records="
+            f"{dynamic_reward_report['dynamic_value_75']}"
+        ),
+        (
+            "reward_dynamic_value_100_records="
+            f"{dynamic_reward_report['dynamic_value_100']}"
+        ),
+        (
+            "reward_dynamic_value_250_records="
+            f"{dynamic_reward_report['dynamic_value_250']}"
         ),
         f"obj_tiles={len(obj_tiles) // 32}",
         "obj_enemy_archetypes=24",
@@ -1701,14 +1962,21 @@ def main() -> None:
         "explosion_anchor_mode=native_top_left",
         "explosion_quadrant_stride=12x14",
         f"explosion_animation_tiles={len(explosion_tiles) // 32}",
-        "reward_sources_50=26-31",
-        "reward_sources_100=32-36",
-        "reward_sources_1000=HDT397 2x2 bases 39,41,43,45,47,49",
+        "reward_sources_25=HDT391 keyframes 7,9,11",
+        "reward_sources_50=HDT392 keyframes 26,28,30",
+        "reward_sources_75=HDT393 keyframes 20,22,24",
+        "reward_sources_100=HDT394 keyframes 32,34,36",
+        "reward_sources_250=HDT395 keyframes 14,16,18",
         "reward_sprite_outline=none",
         f"reward_animation_tiles={len(reward_tiles) // 32}",
         "cash_digit_source_sprites=79,70-78",
         "cash_digit_style=PC hue 2 brightness 4 FULL_SHADE",
         f"cash_digit_tiles={len(digit_tiles) // 32}",
+        "pause_text=PAUSED",
+        "pause_text_source=JE_dString FONT_SHAPES hue15 brightness-3",
+        "pause_text_source_sprites=15,0,20,18,4,3",
+        "pause_text_scale=PC 320x200 to GBA 240x160 (8x12 in 8x16 OBJ)",
+        f"pause_text_tiles={len(pause_tiles) // 32}",
         "enemy_projectile_source_graphics="
         + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
         "enemy_projectile_weapon_records="

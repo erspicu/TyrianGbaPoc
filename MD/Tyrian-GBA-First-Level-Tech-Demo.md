@@ -22,17 +22,17 @@ Tyrian 開場畫面
 正式 ROM：
 
 ```text
-repo/TyrianGbaPoc/build/tyrian_gba_level1_tech_demo_v10.gba
+repo/TyrianGbaPoc/build/tyrian_gba_level1_tech_demo_v11.gba
 ```
 
 SHA-256：
 
 ```text
-ba415f7a3595411f9b2f7ce81b45c395fc0b343627320c9e0d4bcb4b3113d8e2
+d8f5b344eed2cc986b2abd48b0abad41f6fc185d6a657a50d62fe716ad81fb53
 ```
 
-ROM 大小為 654,348 bytes（639.01 KiB，約 0.624 MiB），只使用標準
-32 MiB GBA ROM 視窗的 1.9501%。本次容量完全不是限制。
+ROM 大小為 655,976 bytes（640.60 KiB，約 0.626 MiB），只使用標準
+32 MiB GBA ROM 視窗的 1.9550%。本次容量完全不是限制。
 
 ## 原始資料來源與轉換
 
@@ -65,9 +65,9 @@ repo/TyrianGbaPoc/tools/build_assets.py
 | 三層完整關卡 map | 324,800 bytes |
 | 背景與 OBJ palette | 1,024 bytes |
 | OBJ atlas | 32,640 bytes |
-| 關卡事件 bytecode | 9,313 bytes |
+| 關卡事件 bytecode | 10,273 bytes |
 | 兩首音樂及七組音效 soundbank | 122,660 bytes |
-| 主要資源合計 | 616,389 bytes |
+| 主要資源合計 | 617,349 bytes |
 
 ## GBA 畫面架構
 
@@ -101,7 +101,8 @@ OBJ atlas 包含：
 - 主角機的中立與側傾姿態
 - 24 種經稽核的敵機視覺 archetype
 - 64×64 Boss
-- 主角彈、八張 PC 原始敵彈圖、爆炸、三種獎賞、金額數字與 Boss 血條
+- 主角彈、八張 PC 原始敵彈圖、爆炸、五種獎賞、金額數字、PAUSED 字樣
+  與 Boss 血條
 
 69 個原始敵人 ID 都能對應，未知 ID 與錯誤 sprite bank 都是 0；其中
 290 次生成可使用精確來源圖像，其餘 ID 使用相近 archetype。這仍是目前
@@ -213,6 +214,57 @@ armor 為 254，因此 v10 Boss 不再由手寫 96 HP 開始。血條也不再�
 
 ![Boss 雙追蹤與五向扇形彈](../build/boss_projectiles_pc_sync.png)
 
+### v11 擊破金額、動態獎賞與暫停同步
+
+舊版只有轉換器自行挑出的 19 筆 `HDT value >= 50` 敵人會生成實體
+50／100／1,000 獎賞；這不是 PC 的規則，而且漏掉兩條原始流程：
+
+1. OpenTyrian 擊破敵人時，若該敵人的 `0 < evalue < 10000`，會立即把
+   `evalue` 加到左下金額，不要求生成或拾取物件。
+2. 第一關有 33 筆 event type 33，會依 `linknum` 動態改寫仍在場敵人的
+   `enemydie`。死亡時再建立該 HDT 物件；armor=0 的 391–395 正是
+   25／50／75／100／250 分的可拾取金幣或寶石。
+
+v11 在每筆 spawn bytecode 加入原始 Normal 難度 `evalue`，並新增
+`EVENT_REWARD` opcode。33 筆 type 33 全部保留執行順序；26 筆對應金額
+獎賞，另外七筆資料方塊、武器或特殊模式物件目前只保留「清除金額掉落」
+語意，尚未把非金額道具系統加入這個 POC。轉換結果為：
+
+| 項目 | 數量 |
+|---|---:|
+| 第一關 spawn | 414 |
+| 帶直接擊破金額的 spawn | 367 |
+| 這 367 筆原始配置值合計 | 11,356 |
+| type 33 動態 `enemydie` 控制 | 33 |
+| 其中金額獎賞控制 | 26 |
+| 完整 auto-test 實際取得掉落設定的敵人 | 44 |
+
+實體獎賞不再使用價值區間猜測，而是精確比對 HDT 391–395。為容納五種
+原圖，六幀與十六幀 PC 動畫各抽取三個關鍵幀；25／50／75 每兩個 logic
+tick 換幀，100／250 每五個 tick 換幀，維持接近各自原始循環長度。
+獎賞 pool 由 16 提高為 32。完整測試實際擊破直接結算 396，拾取一枚
+25 分獎賞後最後為 421，沒有 reward pool drop。
+
+![25／50／75／100／250 原始獎賞](../build/preview/reward_coins_25_50_75_100_250.png)
+
+![v11 實機事件掉落](../build/reward_capture_v11.png)
+
+遊戲中也加入 `Start` 暫停／再按一次繼續。行為依
+OpenTyrian `JE_pauseGame()`：
+
+- 關卡時鐘、事件、背景、敵我物件、碰撞與效果完全停止。
+- tracker 不停止，module volume 從 896 降到 448；繼續時恢復 896。
+- 使用 PC `JE_dString(..., FONT_SHAPES)` 的 P/A/U/S/E/D sprites
+  15、0、20、18、4、3。
+- 前景依 hue 15、brightness -3 產生淡橙至黃白漸層，帶右下暗影；
+  PC `(120,90)` 按 320×200→240×160 映射到 GBA `(90,72)`。
+
+自動測試在遊戲中暫停 60 個 display frame；前後 logic tick 沒有趕幀，
+暫停／繼續 toggle 均為一次。以下是 mGBA 真正 framebuffer，不是資源
+預覽：
+
+![v11 PC 字型與色盤 PAUSED](../build/pause_capture_v11.png)
+
 ### 主角飛機持續閃爍修正
 
 舊程式將 `09_player_ships` 的 graphic 233 與 235 誤當成兩張循環動畫，
@@ -280,22 +332,25 @@ framebuffer；中央沒有額外水平或垂直間隔：
 
 OpenTyrian 的正常擊破流程會把敵人的正 `evalue` 直接加入金額；只有
 HDT `eenemydie` 指向「armor=0 且 value != 0」的另一筆敵人物件時，
-才會在死亡位置建立可拾取的實體獎賞。第一關 414 筆生成記錄中沒有任何
-這類 `eenemydie`，因此 v7 依技術展示需求，把原始 HDT `value >= 50`
-的高價值敵人改成實體掉落，沒有對所有敵人套用隨機機率：
+才會在死亡位置建立可拾取的實體獎賞。第一關的 spawn HDT 本身沒有
+靜態 `eenemydie`，但 33 筆 event type 33 會在遊戲進行中依 link 動態
+指定；v11 已保留這條原始路徑：
 
-| 掉落金額 | 第一關符合記錄 | 原始圖像 |
-|---:|---:|---|
-| 50 | 11 | HDT 392，`11_coins_cubes` graphics 26–31 |
-| 100 | 2 | HDT 394，graphics 32–36 的往返動畫 |
-| 1,000 | 6 | HDT 397，六組 2×2 圖塊組合後縮入 16×16 OBJ |
+| HDT | 掉落金額 | 第一關 type 33 記錄 | 原始圖像 |
+|---:|---:|---:|---|
+| 391 | 25 | 15 | graphics 7–12 |
+| 392 | 50 | 3 | graphics 26–31 |
+| 393 | 75 | 4 | graphics 20–25 |
+| 394 | 100 | 3 | graphics 32–36 往返 |
+| 395 | 250 | 1 | graphics 14–18 往返 |
 
-共 19 筆事件帶有 reward byte。獎賞使用 16-entry pool、以原版
-`ymove=1` 下落、每兩個 logic tick 推進動畫；與主角碰撞後累加金額、
-播放原始 `S_ITEM`。
+其餘七筆 type 33 目標是資料方塊、武器或特殊模式物件，不會被錯當成
+金額。實體獎賞使用 32-entry pool、向畫面下方移動；與主角碰撞後累加
+精確金額並播放原始 `S_ITEM`。普通敵人則在被玩家子彈擊破時直接加入
+自己的精確 `evalue`，不再要求掉出物件。
 
-v8 移除先前為提高辨識度而自行添加的 1 px 淡色輪廓；50、100 與
-1,000 獎賞現在保留 `11_coins_cubes` 原圖的透明邊緣與色彩，不再出現
+v8 移除先前為提高辨識度而自行添加的 1 px 淡色輪廓；v11 的五種獎賞
+都保留 `11_coins_cubes` 原圖的透明邊緣與色彩，不再出現
 原版沒有的特殊色環。
 
 累計金額也改回 PC 原版 `JE_inGameDisplays()` 的表現方式：
@@ -307,14 +362,12 @@ v8 移除先前為提高辨識度而自行添加的 1 px 淡色輪廓；50、100
 - PC 的 `(30,175)`／320×200 座標按比例映射到 GBA 的 `(22,140)`／
   240×160 左下角。
 
-![50／100／1000 原始獎賞動畫](../build/preview/reward_coins_50_100_1000.png)
+![25／50／75／100／250 原始獎賞動畫](../build/preview/reward_coins_25_50_75_100_250.png)
 
 ![原版 TINY_FONT 金額數字](../build/preview/cash_tiny_font_digits.png)
 
-專用測試 ROM 將累計金額設為 12,345 並生成 50 金幣後，由 mGBA 擷取的
-實際 framebuffer：
-
-![v8 原版金額與無外圈金幣](../build/reward_cash_pc_style_v8.png)
+完整 auto-test 不注入測試金幣；它從真正 event 33 敵人打出並拾取一枚
+25 分獎賞，同時驗證直接擊破結算與實體拾取兩條路徑。
 
 ## 第一關事件與 game loop
 
@@ -322,13 +375,14 @@ v8 移除先前為提高辨識度而自行添加的 1 px 淡色輪廓；50、100
 
 - 414 個敵機生成命令
 - 347 個移動、加速、反轉、射擊或前景控制命令
+- 33 個動態 `enemydie`／reward 控制命令
 - 時間差與結束標記
 
 同時敵機池由初版的 16 架、舊版的 24 架提升為 48 架。精確 armor 與
-地景捲動恢復後，完整壓力測試最高同時存在 26 個敵物件；24-entry
+地景捲動恢復後，完整壓力測試最高同時存在 30 個敵物件；24-entry
 pool 確實曾替換兩個仍存活元件，48-entry 版則為 0 replacement。
 其餘 pool 為 12 發主角彈、
-60 發敵彈、48 個效果與 16 個可拾取獎賞。
+60 發敵彈、48 個效果與 32 個可拾取獎賞。
 
 目前敵人的連結控制、速度、加速度、PC 三砲位射擊、出界回收、主角彈命中、
 敵彈命中、敵機碰撞與 Boss 碰撞都會執行。個別敵人的複雜 PC AI 與逐張
@@ -390,6 +444,9 @@ Tyrian TYM
 Maxmod 使用約 15.768 kHz 的 GBA stereo mixer 模式、16 個 mixer channel，
 module 與 effects volume 都設為 896/1024。
 
+暫停時依 PC `JE_pauseGame()` 只把 module volume 降為 448/1024；音樂
+時間軸繼續播放，遊戲世界則完全凍結。再按 `Start` 後恢復 896/1024。
+
 開發中發現一個重要的初始化順序問題：若先呼叫 `mmInitDefault()` 才掛
 VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 尚未初始化，會往位址 0 寫入。現在順序改為先安裝並開啟 VBlank IRQ，
@@ -408,26 +465,30 @@ VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 | Auto-test | PASS |
 | Logic updates | 7,092 |
 | Final PC `curLoc` | 5,400 |
-| Display frames | 12,178 |
-| VBlank IRQ | 12,180 |
+| Display frames | 12,238 |
+| VBlank IRQ | 12,240 |
 | Missed VBlank | 0 |
 | Spawn events | 414 |
-| Control events | 347 |
-| Collision events | 543 |
+| Control events | 380（含 33 筆 reward control） |
+| Collision events | 434 |
 | Streamed map rows | 4,126 |
 | Map stream drops | 0 |
-| Peak active enemies | 26 / 48 |
+| Peak active enemies | 30 / 48 |
 | Enemy pool replacements | 0 |
-| Peak OAM/Sprite | 35 / 128（完整硬體上限） |
-| Peak active effects | 20 / 48 |
+| Peak OAM/Sprite | 41 / 128（完整硬體上限） |
+| Peak active effects | 24 / 48 |
 | Dropped explosion components | 0 |
-| Spawned reward items | 6 |
-| Picked-up reward items | 3 |
-| Peak active rewards | 5 / 16 |
+| Reward control events | 33 |
+| Enemies assigned a money drop | 44 |
+| Spawned reward items | 1 |
+| Picked-up reward items | 1 |
+| Peak active rewards | 1 / 32 |
 | Dropped reward items | 0 |
-| Final cash | 150 |
-| Spawned enemy projectiles | 181 |
-| Peak active enemy projectiles | 8 / 60 |
+| Direct kill cash | 396 |
+| Final cash | 421 |
+| Pause toggles / frozen display frames | 2 / 60 |
+| Spawned enemy projectiles | 172 |
+| Peak active enemy projectiles | 12 / 60 |
 | Dropped enemy projectiles | 0 |
 | State transitions | 5 |
 | mGBA memory/runtime errors | 0 |
@@ -460,7 +521,7 @@ org/mgba/src/platform/headless-main.c
 
 ## 操作方式
 
-- `Start`：從開場進第一關
+- `Start`：從開場進第一關；遊戲中暫停／繼續
 - 方向鍵：移動
 - `A` 或 `B`：射擊
 - `Select` 或 `L`：開發用的直接進 Boss
@@ -488,7 +549,7 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
 7. 輸出 `build/verification.txt`。
 
 若 mGBA GUI 正載入要覆寫的同名 ROM，Windows 會鎖住該檔案；重建前請先
-關閉該 ROM 或關閉模擬器。正式交付使用 `_v10.gba` 檔名，避免與先前測試
+關閉該 ROM 或關閉模擬器。正式交付使用 `_v11.gba` 檔名，避免與先前測試
 ROM 混淆。
 
 ## 現階段結論
@@ -497,8 +558,8 @@ ROM 混淆。
 
 - 完整 route 在 48-entry 敵物件 pool 下為 0 replacement、0 missed VBlank。
 - 三層共串流 4,126 列，仍為 0 stream drop。
-- 峰值只使用 128 筆硬體 OAM 中的 35 筆。
-- 181 發 PC 規則敵彈的峰值為 8 / 60，沒有 pool drop。
+- 峰值只使用 128 筆硬體 OAM 中的 41 筆。
+- 172 發 PC 規則敵彈的峰值為 12 / 60，沒有 pool drop。
 - ROM 只佔 32 MiB 空間約 1.95%。
 - 三層背景、完整 tracker 音樂及基本碰撞可同時運作。
 

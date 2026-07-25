@@ -28,7 +28,7 @@ The current scope is deliberately narrow:
 - a 60-entry enemy-shot pool matching OpenTyrian, with spawn/drop/peak
   telemetry
 - player shots, projectile collisions, effects and an invincible player
-- a 48-entry enemy pool (26 peak on the complete route) with a zero-replacement
+- a 48-entry enemy pool (30 peak on the complete route) with a zero-replacement
   regression invariant
 - the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
   155 to player-shot graphic 59, including its repeat rate and vertical speed
@@ -37,10 +37,13 @@ The current scope is deliberately narrow:
 - original 12-frame small and four-quadrant air/ground enemy explosions,
   backed by a 48-entry effect pool with drop telemetry; v7 preserves each
   quadrant's native 12x14 anchor so the centre seam is closed
-- HDT-derived 50/100/1000 reward drops using the original coin/gem sheet,
-  pickup collision and original item sound; v8 removes the GBA-only pickup
-  outline and renders cumulative cash at the lower left with Tyrian's original
-  TINY_FONT digit sprites, colour treatment and spacing
+- PC-synchronised rewards: every enemy retains its exact positive HDT
+  `evalue` for immediate kill credit, while all 33 first-level event-33
+  `enemydie` overrides run by link at runtime; the 25/50/75/100/250 physical
+  score items use their original coin/gem graphics, pickup collision and item
+  sound, with cumulative cash rendered in Tyrian's lower-left TINY_FONT
+- PC-style pause: `Start` freezes the world, shows the original FONT_SHAPES
+  `PAUSED` label, keeps music playing at half volume, then resumes on `Start`
 - a simplified first-level boss body and return to the opening screen
 - complete first-level tracker music and seven converted Tyrian sound effects,
   including the original enemy weapon sounds used by this route
@@ -48,7 +51,7 @@ The current scope is deliberately narrow:
 
 ## Controls
 
-- `Start`: enter the first level
+- `Start`: enter the first level; during play, pause/resume
 - D-pad: move
 - `A` or `B`: fire
 - `Select` or `L`: development shortcut to the boss
@@ -65,7 +68,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_tech_demo_v10.gba
+build/tyrian_gba_level1_tech_demo_v11.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

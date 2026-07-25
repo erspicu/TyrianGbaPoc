@@ -7,7 +7,8 @@
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION_FRAME) || \
-    defined(AUTOTEST_SCREENSHOT_REWARD)
+    defined(AUTOTEST_SCREENSHOT_REWARD) || \
+    defined(AUTOTEST_SCREENSHOT_PAUSE)
 #define AUTOTEST_SCREENSHOT_ENABLED
 #endif
 
@@ -26,7 +27,7 @@
 #define MAX_PLAYER_SHOTS 12
 #define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
-#define MAX_REWARDS 16
+#define MAX_REWARDS 32
 #define ENEMY_ARCHETYPES 24
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
@@ -49,9 +50,9 @@
 #define EXPLOSION_SEQUENCE_GROUND_TOP_RIGHT 6
 #define EXPLOSION_SEQUENCE_GROUND_BOTTOM_LEFT 7
 #define EXPLOSION_SEQUENCE_GROUND_BOTTOM_RIGHT 8
-#define REWARD_FRAME_COUNT 6
+#define REWARD_FRAME_COUNT 3
 #define REWARD_TILES_PER_FRAME 4
-#define REWARD_SEQUENCE_COUNT 3
+#define REWARD_SEQUENCE_COUNT 5
 #define CASH_COUNTER_X 22
 #define CASH_COUNTER_Y 140
 
@@ -93,6 +94,10 @@ _Static_assert(
     "cash counter must contain the ten original TINY_FONT digits"
 );
 _Static_assert(
+    OBJ_PAUSE_GLYPH_COUNT == 6,
+    "pause label must contain the six original PAUSED glyphs"
+);
+_Static_assert(
     OBJ_PROJECTILE_SOURCE_COUNT == 8,
     "enemy projectile source count must match the PC level-1 set"
 );
@@ -116,6 +121,7 @@ _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 #define EVENT_FIRE 0x83
 #define EVENT_FOREGROUND 0x84
 #define EVENT_SCROLL 0x85
+#define EVENT_REWARD 0x86
 #define EVENT_END 0xFF
 
 #define STATE_TITLE 0
@@ -155,6 +161,7 @@ typedef struct {
     u8 phase;
     u8 link;
     u8 reward;
+    u16 kill_value;
     u8 turret[3];
     u8 frequency[3];
     u8 fire_wait[3];
@@ -312,7 +319,11 @@ static const WeaponDef weapon_defs[] = {
 };
 
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
-    0, 50, 100, 1000,
+    0, 25, 50, 75, 100, 250,
+};
+
+static const u8 reward_frame_delay_table[REWARD_SEQUENCE_COUNT] = {
+    2, 2, 2, 5, 5,
 };
 
 static const u8 cash_digit_advances[OBJ_SCORE_DIGIT_COUNT] = {
@@ -328,7 +339,17 @@ static const u8 cash_digit_advances[OBJ_SCORE_DIGIT_COUNT] = {
     OBJ_SCORE_DIGIT_ADVANCE_9,
 };
 
+static const u8 pause_glyph_advances[OBJ_PAUSE_GLYPH_COUNT] = {
+    OBJ_PAUSE_ADVANCE_0,
+    OBJ_PAUSE_ADVANCE_1,
+    OBJ_PAUSE_ADVANCE_2,
+    OBJ_PAUSE_ADVANCE_3,
+    OBJ_PAUSE_ADVANCE_4,
+    OBJ_PAUSE_ADVANCE_5,
+};
+
 static u8 game_state;
+static u8 game_paused;
 static u16 pad_now;
 static u16 pad_pressed;
 static s16 player_x;
@@ -409,6 +430,11 @@ volatile u32 telemetry_enemy_shots_spawned;
 volatile u32 telemetry_enemy_shot_drops;
 volatile u32 telemetry_max_enemy_shots;
 volatile u32 telemetry_enemy_replacements;
+volatile u32 telemetry_kill_cash;
+volatile u32 telemetry_reward_controls;
+volatile u32 telemetry_reward_assignments;
+volatile u32 telemetry_pause_toggles;
+volatile u32 telemetry_paused_frames;
 volatile u32 telemetry_state_transitions;
 
 static const u16 boss_bar_fill_colours[7][3] = {
@@ -530,6 +556,17 @@ static void audio_effect(u16 effect)
     mmEffect(effect);
 }
 
+static void toggle_pause(void)
+{
+    game_paused = !game_paused;
+    /*
+     * OpenTyrian JE_pauseGame() freezes the game world while leaving the
+     * module running at half music volume. Effects retain their normal mix.
+     */
+    mmSetModuleVolume(game_paused ? 448 : 896);
+    telemetry_pause_toggles++;
+}
+
 static void clear_entities(void)
 {
     u16 index;
@@ -578,6 +615,7 @@ static void enter_title(void)
     dmaCopy(title_bitmap, MODE3_FB, SCREEN_WIDTH * SCREEN_HEIGHT * 2);
     REG_DISPCNT = MODE_3 | BG2_ON;
     audio_load_music(MOD_TYRIAN_TITLE_FULL);
+    game_paused = 0;
     game_state = STATE_TITLE;
     telemetry_state_transitions++;
 }
@@ -626,6 +664,7 @@ static void enter_level(void)
     fire_cooldown = 0;
     player_bank = 0;
     player_cash = 0;
+    game_paused = 0;
 #ifdef AUTOTEST_CASH_VISUAL_TEST
     player_cash = 12345;
 #endif
@@ -656,6 +695,11 @@ static void enter_level(void)
     telemetry_enemy_shot_drops = 0;
     telemetry_max_enemy_shots = 0;
     telemetry_enemy_replacements = 0;
+    telemetry_kill_cash = 0;
+    telemetry_reward_controls = 0;
+    telemetry_reward_assignments = 0;
+    telemetry_pause_toggles = 0;
+    telemetry_paused_frames = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = 8;
@@ -784,6 +828,7 @@ static void spawn_enemy(
     u8 hp,
     u8 link,
     u8 reward,
+    u16 kill_value,
     u8 turret1,
     u8 turret2,
     u8 turret3,
@@ -828,6 +873,7 @@ static void spawn_enemy(
     enemy->accel_y = 0;
     enemy->link = link;
     enemy->reward = reward;
+    enemy->kill_value = kill_value;
     enemy->turret[0] = turret1;
     enemy->turret[1] = turret2;
     enemy->turret[2] = turret3;
@@ -890,6 +936,21 @@ static void apply_control(
     telemetry_control_count++;
 }
 
+static void apply_reward_control(u8 link, u8 reward)
+{
+    u8 index;
+    Enemy *enemy;
+
+    for (index = 0; index < MAX_ENEMIES; index++) {
+        enemy = &enemies[index];
+        if (!enemy->active || enemy->link != link) continue;
+        enemy->reward = reward;
+        if (reward) telemetry_reward_assignments++;
+    }
+    telemetry_reward_controls++;
+    telemetry_control_count++;
+}
+
 static void set_background_motion(
     u8 speed1,
     u8 speed2,
@@ -936,14 +997,18 @@ static void process_events(void)
                 level_events[event_offset + 10],
                 level_events[event_offset + 11],
                 level_events[event_offset + 12],
-                level_events[event_offset + 13],
-                level_events[event_offset + 14],
+                (u16)(
+                    (u16)level_events[event_offset + 13] |
+                    ((u16)level_events[event_offset + 14] << 8)
+                ),
                 level_events[event_offset + 15],
                 level_events[event_offset + 16],
                 level_events[event_offset + 17],
-                level_events[event_offset + 18]
+                level_events[event_offset + 18],
+                level_events[event_offset + 19],
+                level_events[event_offset + 20]
             );
-            length = 19;
+            length = 21;
         } else if (
             opcode == EVENT_MOVE ||
             opcode == EVENT_ACCEL ||
@@ -978,6 +1043,12 @@ static void process_events(void)
                 level_events[event_offset + 6]
             );
             length = 7;
+        } else if (opcode == EVENT_REWARD) {
+            apply_reward_control(
+                level_events[event_offset + 2],
+                level_events[event_offset + 3]
+            );
+            length = 4;
         }
         event_offset += length;
         if (event_offset + 1u >= LEVEL_EVENT_BYTES) return;
@@ -1203,7 +1274,11 @@ static void update_rewards(void)
         reward = &rewards[index];
         if (!reward->active) continue;
         reward->phase++;
-        if ((reward->phase & 1) == 0) {
+        if (
+            reward->phase >=
+            reward_frame_delay_table[reward->sequence]
+        ) {
+            reward->phase = 0;
             reward->frame++;
             if (reward->frame >= REWARD_FRAME_COUNT) reward->frame = 0;
         }
@@ -1321,6 +1396,8 @@ static void collide_player_shots(void)
                 if (enemy->hp) enemy->hp--;
                 if (!enemy->hp) {
                     spawn_enemy_reward(enemy);
+                    player_cash += enemy->kill_value;
+                    telemetry_kill_cash += enemy->kill_value;
                     enemy->active = 0;
                     spawn_enemy_effect(enemy);
                     audio_effect(SFX_EXPLOSION_9);
@@ -1787,6 +1864,28 @@ static void render_cash_counter(void)
     }
 }
 
+static void render_pause_text(void)
+{
+    u8 index;
+    s16 x = 90;
+
+    /*
+     * PC JE_pauseGame draws FONT_SHAPES at (120,90) on 320x200.  Scale that
+     * anchor to (90,72); generated 8x12 glyphs retain the original hue-15,
+     * brightness -3 JE_dString palette.
+     */
+    for (index = 0; index < OBJ_PAUSE_GLYPH_COUNT; index++) {
+        put_sprite_shaped(
+            x, 72,
+            OBJ_TILE_PAUSE_TEXT + index * 2,
+            OBJ_PAL_PAUSE_TEXT,
+            ATTR0_TALL, ATTR1_SIZE_8,
+            8, 16, 0
+        );
+        x += pause_glyph_advances[index];
+    }
+}
+
 static void render_boss_bar(void)
 {
     u8 index;
@@ -1844,6 +1943,14 @@ static void render_game(void)
     u8 visible_count;
     oam_count = 0;
 
+    if (
+        game_paused
+#ifdef AUTOTEST_SCREENSHOT_REWARD
+        && !autotest_screenshot_delay
+#endif
+    ) {
+        render_pause_text();
+    }
     put_sprite_with_attr1(
         player_x, player_y,
         player_bank ? OBJ_TILE_PLAYER_1 : OBJ_TILE_PLAYER_0,
@@ -1937,9 +2044,10 @@ static void autotest_finish(void)
     volatile u8 *sram = (volatile u8 *)0x0E000000;
     u8 pass = (
         game_state == STATE_TITLE &&
+        !game_paused &&
         level_position >= LEVEL_BOSS_TICK &&
         telemetry_spawn_count == 414 &&
-        telemetry_control_count == 347 &&
+        telemetry_control_count == 380 &&
         telemetry_max_oam <= SPRITE_LIMIT &&
         telemetry_effect_drops == 0 &&
         telemetry_reward_spawns > 0 &&
@@ -1949,6 +2057,12 @@ static void autotest_finish(void)
         telemetry_enemy_shot_drops == 0 &&
         telemetry_enemy_replacements == 0 &&
         telemetry_max_enemy_shots <= MAX_ENEMY_SHOTS &&
+        telemetry_kill_cash > 0 &&
+        player_cash >= telemetry_kill_cash &&
+        telemetry_reward_controls == 33 &&
+        telemetry_reward_assignments > 0 &&
+        telemetry_pause_toggles == 2 &&
+        telemetry_paused_frames >= 60 &&
         bg1_scroll_speed == 2 &&
         bg2_scroll_speed == 4 &&
         bg3_scroll_speed == 6
@@ -1959,7 +2073,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 5;
+    sram[4] = 6;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -1996,6 +2110,11 @@ static void autotest_finish(void)
     sram_write_u32(100, telemetry_max_enemy_shots);
     sram_write_u32(104, level_position);
     sram_write_u32(108, telemetry_enemy_replacements);
+    sram_write_u32(112, telemetry_kill_cash);
+    sram_write_u32(116, telemetry_reward_controls);
+    sram_write_u32(120, telemetry_reward_assignments);
+    sram_write_u32(124, telemetry_pause_toggles);
+    sram_write_u32(128, telemetry_paused_frames);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
@@ -2009,6 +2128,7 @@ static void autotest_finish(void)
 
 static u16 autotest_input(void)
 {
+    u8 reward_index;
     u16 phase = (level_tick >> 5) & 3;
     u16 keys = KEY_A;
 #ifdef AUTOTEST_STATIONARY_PLAYER
@@ -2021,6 +2141,18 @@ static u16 autotest_input(void)
     if (game_state == STATE_BOSS) {
         if (player_x + 16 < boss_x + 32) keys |= KEY_RIGHT;
         if (player_x + 16 > boss_x + 32) keys |= KEY_LEFT;
+        return keys;
+    }
+    /*
+     * Follow the first authored score item long enough to exercise the
+     * physical pickup path. The release build has no attraction or assist.
+     */
+    for (reward_index = 0; reward_index < MAX_REWARDS; reward_index++) {
+        if (!rewards[reward_index].active) continue;
+        if (player_x + 16 < rewards[reward_index].x + 8) keys |= KEY_RIGHT;
+        if (player_x + 16 > rewards[reward_index].x + 8) keys |= KEY_LEFT;
+        if (player_y + 14 < rewards[reward_index].y + 8) keys |= KEY_DOWN;
+        if (player_y + 14 > rewards[reward_index].y + 8) keys |= KEY_UP;
         return keys;
     }
     if (phase == 0) keys |= KEY_RIGHT;
@@ -2106,6 +2238,12 @@ int main(void)
         } else if (game_state != STATE_TITLE) {
             pad_now = autotest_input();
             pad_pressed = 0;
+            if (
+                telemetry_display_frames == 120 ||
+                telemetry_display_frames == 180
+            ) {
+                pad_pressed = KEY_START;
+            }
         }
 #endif
 
@@ -2117,43 +2255,59 @@ int main(void)
 #endif
             }
         } else {
-            logic_accumulator += ORIGINAL_LOGIC_NUMERATOR;
-            if (logic_accumulator >= ORIGINAL_LOGIC_DENOMINATOR) {
-                logic_accumulator -= ORIGINAL_LOGIC_DENOMINATOR;
-                update_logic();
-                if (game_state != STATE_TITLE) {
-                    render_game();
+            if (
+                (game_state == STATE_PLAY || game_state == STATE_BOSS) &&
+                (pad_pressed & KEY_START)
+            ) {
+                toggle_pause();
+            }
+            if (game_paused) {
+                telemetry_paused_frames++;
+                render_game();
+#ifdef AUTOTEST_SCREENSHOT_PAUSE
+                if (!autotest_screenshot_delay) {
+                    autotest_screenshot_delay = 2;
+                }
+#endif
+            } else {
+                logic_accumulator += ORIGINAL_LOGIC_NUMERATOR;
+                if (logic_accumulator >= ORIGINAL_LOGIC_DENOMINATOR) {
+                    logic_accumulator -= ORIGINAL_LOGIC_DENOMINATOR;
+                    update_logic();
+                    if (game_state != STATE_TITLE) {
+                        render_game();
 #ifdef AUTOTEST_SCREENSHOT_TICK
-                    if (
-                        !autotest_screenshot_delay &&
-                        game_state != STATE_TITLE &&
-                        level_tick >= AUTOTEST_SCREENSHOT_TICK
-                    ) {
-                        autotest_screenshot_delay = 3;
-                    }
+                        if (
+                            !autotest_screenshot_delay &&
+                            game_state != STATE_TITLE &&
+                            level_tick >= AUTOTEST_SCREENSHOT_TICK
+                        ) {
+                            autotest_screenshot_delay = 3;
+                        }
 #endif
 #if defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION_FRAME)
-                    if (
-                        !autotest_screenshot_delay &&
-                        autotest_explosion_visible()
-                    ) {
-                        autotest_screenshot_delay = 3;
-                    }
+                        if (
+                            !autotest_screenshot_delay &&
+                            autotest_explosion_visible()
+                        ) {
+                            autotest_screenshot_delay = 3;
+                        }
 #endif
 #ifdef AUTOTEST_SCREENSHOT_REWARD
-                    if (
-                        !autotest_screenshot_delay &&
-                        autotest_reward_visible()
-                    ) {
-                        /*
-                         * The first VBlank commits OAM; the second lets mGBA
-                         * finish one rasterized frame before taking the
-                         * final framebuffer screenshot.
-                         */
-                        autotest_screenshot_delay = 2;
-                    }
+                        if (
+                            !autotest_screenshot_delay &&
+                            autotest_reward_visible()
+                        ) {
+                            /*
+                             * The first VBlank commits OAM; the second lets
+                             * mGBA finish a rasterized frame before capture.
+                             */
+                            game_paused = 1;
+                            autotest_screenshot_delay = 2;
+                        }
 #endif
+                    }
                 }
             }
             telemetry_display_frames++;

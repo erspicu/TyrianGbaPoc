@@ -9,8 +9,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_tech_demo_v10"
-$testName = "tyrian_gba_level1_autotest_v10"
+$releaseName = "tyrian_gba_level1_tech_demo_v11"
+$testName = "tyrian_gba_level1_autotest_v11"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -172,7 +172,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 112) {
+if ($saveBytes.Length -lt 132) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -216,17 +216,22 @@ $telemetry = [ordered]@{
     max_active_enemy_shots = Read-TelemetryU32 100
     final_level_position = Read-TelemetryU32 104
     enemy_pool_replacements = Read-TelemetryU32 108
+    direct_kill_cash = Read-TelemetryU32 112
+    reward_control_events = Read-TelemetryU32 116
+    reward_assignments = Read-TelemetryU32 120
+    pause_toggles = Read-TelemetryU32 124
+    paused_display_frames = Read-TelemetryU32 128
 }
 
 $telemetryChecks = @(
-    $telemetry.version -eq 5,
+    $telemetry.version -eq 6,
     $telemetry.pass -eq 1,
     $telemetry.final_state -eq 0,
     $telemetry.title_music_active -eq 1,
     $telemetry.logic_updates -ge 5400,
     $telemetry.final_level_position -ge 5400,
     $telemetry.spawn_events -eq 414,
-    $telemetry.control_events -eq 347,
+    $telemetry.control_events -eq 380,
     $telemetry.missed_vblanks -eq 0,
     $telemetry.stream_drops -eq 0,
     $telemetry.effect_drops -eq 0,
@@ -236,6 +241,12 @@ $telemetryChecks = @(
     $telemetry.enemy_shots_spawned -gt 0,
     $telemetry.enemy_shot_drops -eq 0,
     $telemetry.enemy_pool_replacements -eq 0,
+    $telemetry.direct_kill_cash -gt 0,
+    $telemetry.final_cash -ge $telemetry.direct_kill_cash,
+    $telemetry.reward_control_events -eq 33,
+    $telemetry.reward_assignments -gt 0,
+    $telemetry.pause_toggles -eq 2,
+    $telemetry.paused_display_frames -ge 60,
     $telemetry.max_active_enemy_shots -le 60,
     $telemetry.max_hardware_oam -le 128,
     $telemetry.state_transitions -eq 5
