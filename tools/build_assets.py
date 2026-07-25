@@ -148,6 +148,11 @@ def bitmap_555(image: Image.Image) -> bytes:
     return words.tobytes()
 
 
+def gba_colour(rgb: tuple[int, int, int]) -> int:
+    red, green, blue = rgb
+    return (red >> 3) | ((green >> 3) << 5) | ((blue >> 3) << 10)
+
+
 def preserve_sprite_canvas(
     snes: ModuleType,
     image: Image.Image,
@@ -407,6 +412,63 @@ def load_tyrian_palette(path: Path) -> list[tuple[int, int, int]]:
     return palette
 
 
+def build_boss_bar_assets(
+    snes: ModuleType,
+    palette_file: Path,
+) -> tuple[bytes, bytes, Image.Image, tuple[tuple[int, int, int], ...]]:
+    """Build the PC 51x6 boss-bar shading as reusable 8x8 OBJ segments.
+
+    OpenTyrian's JE_barX uses palette 115 for the fixed dark backing and
+    palette 118..124 for the damage-flash fill.  Four tiles are enough for a
+    full backing segment, a full fill segment, and the two four-pixel fill
+    halves used to keep the scaled GBA bar centred.
+    """
+    tyrian_palette = load_tyrian_palette(palette_file)
+    palette = [
+        (0, 0, 0),
+        tyrian_palette[114],
+        tyrian_palette[115],
+        tyrian_palette[116],
+        tyrian_palette[117],
+        tyrian_palette[118],
+        tyrian_palette[119],
+    ]
+    palette.extend([(0, 0, 0)] * (16 - len(palette)))
+
+    def segment(top: int, middle: int, bottom: int, x1: int, x2: int) -> bytes:
+        values = np.zeros((8, 8), dtype=np.uint8)
+        values[0, x1:x2] = top
+        values[1:5, x1:x2] = middle
+        values[5, x1:x2] = bottom
+        return encode_gba_4bpp(values)
+
+    tiles = b"".join((
+        segment(3, 2, 1, 0, 8),
+        segment(6, 5, 4, 0, 8),
+        segment(6, 5, 4, 0, 4),
+        segment(6, 5, 4, 4, 8),
+    ))
+
+    preview = Image.new("RGBA", (48, 8), (0, 0, 0, 0))
+    pixels = preview.load()
+    for x in range(40):
+        for y, colour_index in enumerate((3, 2, 2, 2, 2, 1)):
+            pixels[x + 4, y + 1] = (*palette[colour_index], 255)
+    for x in range(38):
+        for y, colour_index in enumerate((6, 5, 5, 5, 5, 4)):
+            pixels[x + 5, y + 1] = (*palette[colour_index], 255)
+
+    flash_colours = tuple(
+        (
+            gba_colour(tyrian_palette[117 + flash]),
+            gba_colour(tyrian_palette[118 + flash]),
+            gba_colour(tyrian_palette[119 + flash]),
+        )
+        for flash in range(7)
+    )
+    return tiles, snes.snes_palette_bytes([palette]), preview, flash_colours
+
+
 def build_cash_digits(
     snes: ModuleType,
     image_root: Path,
@@ -617,6 +679,7 @@ def repack_obj_tiles(
     digit_advances: tuple[int, ...],
     projectile_tiles: bytes,
     projectile_layouts: tuple[dict[str, int], ...],
+    boss_bar_tiles: bytes,
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
     decoded = [
@@ -708,7 +771,11 @@ def repack_obj_tiles(
     metadata["OBJ_PROJECTILE_SOURCE_COUNT"] = len(projectile_layouts)
     metadata["OBJ_PROJECTILE_TILE_COUNT"] = len(projectile_tiles) // 32
     output.extend(projectile_tiles)
-    append_asset("BOSS_BAR", 2, 2)
+    if len(boss_bar_tiles) != 4 * 32:
+        raise ValueError("PC-style boss bar must occupy exactly four OBJ tiles")
+    metadata["OBJ_TILE_BOSS_BAR"] = len(output) // 32
+    metadata["OBJ_PAL_BOSS_BAR"] = 13
+    output.extend(boss_bar_tiles)
 
     tile_count = len(output) // 32
     if tile_count > 1024:
@@ -920,6 +987,7 @@ def encode_gba_level_events(
     firing slots without guessing.
     """
     source_enemy_ids: list[int] = []
+    spawn_specs: list[dict[str, int]] = []
     original_archetype = nes.enemy_archetype
 
     def mapped_archetype(enemy_id: int) -> int:
@@ -940,9 +1008,107 @@ def encode_gba_level_events(
     hdt = hdt_path.read_bytes()
     enemy_table = hdt_enemy_table_offset(hdt)
 
+    def scaled_x(value: int) -> int:
+        return max(4, min(236, (value * 4 + 2) // 5))
+
+    for (
+        event_time,
+        event_type,
+        event_data,
+        event_data_2,
+        event_data_3,
+        event_data_5,
+        event_data_6,
+        event_data_4,
+    ) in events:
+        if event_time >= 4900:
+            break
+        if event_type not in nes.LEVEL_SPAWN_TYPES:
+            continue
+
+        pool = {
+            6: 1,
+            7: 2,
+            10: 3,
+            15: 0,
+            17: 1,
+            18: 0,
+            23: 2,
+            32: 2,
+            49: 1,
+            50: 0,
+            51: 2,
+            52: 3,
+            56: 3,
+        }.get(event_type, 0)
+        fixed_move = event_data_6
+
+        if event_type == 12:
+            pool = {
+                0: 1,
+                1: 1,
+                2: 0,
+                3: 2,
+                4: 3,
+            }.get(event_data_6, 1)
+            fixed_move = 0
+            base_x = scaled_x(event_data_2)
+            for enemy_offset, x_add, y_add in (
+                (0, 0, 0),
+                (1, 24, 0),
+                (2, 0, -28),
+                (3, 24, -28),
+            ):
+                spawn_specs.append({
+                    "enemy_id": event_data + enemy_offset,
+                    "x": base_x + x_add,
+                    "y": -28 + event_data_5 + y_add,
+                    "pool": pool,
+                    "y_speed": event_data_3,
+                    "fixed_move": fixed_move,
+                    "link": event_data_4,
+                })
+            continue
+
+        x = scaled_x(event_data_2)
+        # IDs 6/7/8/9 and 13/14 are authored as 24-pixel left/right halves
+        # of the first-level small tanks.  Scaling each centre independently
+        # compressed the pair to 19 pixels and visibly split both tank rows.
+        if event_data in (7, 9, 14):
+            x = scaled_x(event_data_2 - 24) + 24
+
+        if event_type in (17, 18):
+            y = 190 + event_data_5
+        elif event_type == 23:
+            y = 180 + event_data_5
+        elif event_type in (32, 56):
+            y = 190
+        else:
+            y = -28 + event_data_5
+        spawn_specs.append({
+            "enemy_id": event_data,
+            "x": x,
+            "y": y,
+            "pool": pool,
+            "y_speed": event_data_3,
+            "fixed_move": fixed_move,
+            "link": event_data_4,
+        })
+
+    if [spec["enemy_id"] for spec in spawn_specs] != source_enemy_ids:
+        raise ValueError("GBA world-coordinate spawn expansion changed source order")
+
     def enemy_fields(
         enemy_id: int,
-    ) -> tuple[int, int, int, tuple[int, ...], tuple[int, ...]]:
+    ) -> tuple[
+        int,
+        int,
+        int,
+        tuple[int, ...],
+        tuple[int, ...],
+        int,
+        int,
+    ]:
         if not 0 <= enemy_id < 851:
             raise ValueError(f"enemy ID outside tyrian.hdt: {enemy_id}")
         offset = enemy_table + enemy_id * 77
@@ -951,7 +1117,17 @@ def encode_gba_level_events(
         enemy_die = struct.unpack_from("<H", hdt, offset + 75)[0]
         turrets = tuple(hdt[offset + 1 : offset + 4])
         frequencies = tuple(hdt[offset + 4 : offset + 7])
-        return armor, value, enemy_die, turrets, frequencies
+        x_move = struct.unpack_from("<b", hdt, offset + 7)[0]
+        y_move = struct.unpack_from("<b", hdt, offset + 8)[0]
+        return (
+            armor,
+            value,
+            enemy_die,
+            turrets,
+            frequencies,
+            x_move,
+            y_move,
+        )
 
     fire_overrides = [
         (
@@ -996,15 +1172,20 @@ def encode_gba_level_events(
                 raise ValueError("truncated shared spawn command")
             enemy_id = source_enemy_ids[spawn_index]
             (
-                _,
+                source_armor,
                 source_value,
                 enemy_die,
                 turrets,
                 frequencies,
+                x_move,
+                y_move,
             ) = enemy_fields(enemy_id)
+            spec = spawn_specs[spawn_index]
             reward_code = 0
             if enemy_die:
-                target_armor, target_value, _, _, _ = enemy_fields(enemy_die)
+                target_armor, target_value, _, _, _, _, _ = enemy_fields(
+                    enemy_die
+                )
                 if target_armor == 0 and target_value != 0:
                     reward_code = reward_code_for_value(target_value)
                     if reward_code:
@@ -1013,8 +1194,18 @@ def encode_gba_level_events(
                 reward_code = reward_code_for_value(source_value)
                 if reward_code:
                     adapted_high_value_drops += 1
-            output.extend(encoded[cursor + 2 : cursor + 5])
-            output.append(reward_code)
+            output.extend(struct.pack(
+                "<hhBbbbBBB",
+                spec["x"],
+                spec["y"],
+                spec["pool"],
+                x_move,
+                max(-128, min(127, y_move + spec["y_speed"])),
+                spec["fixed_move"],
+                source_armor if source_armor else 255,
+                spec["link"],
+                reward_code,
+            ))
             output.extend(turrets)
             output.extend(frequencies)
             used_weapon_ids.update(weapon for weapon in turrets if weapon)
@@ -1076,6 +1267,17 @@ def encode_gba_level_events(
         "adapted_high_value": adapted_high_value_drops,
         "weapon_records": ",".join(str(value) for value in sorted(used_weapon_ids)),
         "fire_override_records": len(fire_overrides),
+        "world_spawn_records": len(spawn_specs),
+        "destructible_assemblies": sum(
+            1
+            for event in events
+            if event[0] < 4900 and event[1] == 12
+        ),
+        "tank_component_records": sum(
+            1
+            for spec in spawn_specs
+            if spec["enemy_id"] in (6, 7, 8, 9, 13, 14)
+        ),
     }
     spawn_counts = collections.Counter(source_enemy_ids)
     audit_lines = [
@@ -1083,7 +1285,7 @@ def encode_gba_level_events(
         "enemy_id,spawn_count,tur1,tur2,tur3,freq1,freq2,freq3",
     ]
     for enemy_id in sorted(spawn_counts):
-        _, _, _, turrets, frequencies = enemy_fields(enemy_id)
+        _, _, _, turrets, frequencies, _, _ = enemy_fields(enemy_id)
         audit_lines.append(
             f"{enemy_id},{spawn_counts[enemy_id]},"
             + ",".join(str(value) for value in (*turrets, *frequencies))
@@ -1122,7 +1324,7 @@ def add_background_motion_events(
             cursor += 2
             continue
         if opcode < 24:
-            length = 12
+            length = 19
         elif opcode in (
             nes.EVENT_MOVE,
             nes.EVENT_ACCEL,
@@ -1335,6 +1537,12 @@ def main() -> None:
         projectile_preview,
         projectile_layouts,
     ) = build_enemy_projectiles(snes, image_root)
+    (
+        boss_bar_tiles,
+        boss_bar_palette,
+        boss_bar_preview,
+        boss_bar_flash_colours,
+    ) = build_boss_bar_assets(snes, data_root / "palette.dat")
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
@@ -1342,6 +1550,7 @@ def main() -> None:
     if len(projectile_palettes) != 3 * 32:
         raise ValueError("enemy projectile palette bank count changed")
     obj_palette[10 * 32 : 13 * 32] = projectile_palettes
+    obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
         snes_obj_tiles,
         source_metadata,
@@ -1351,7 +1560,12 @@ def main() -> None:
         digit_advances,
         projectile_tiles,
         projectile_layouts,
+        boss_bar_tiles,
     )
+    for flash, (bottom, middle, top) in enumerate(boss_bar_flash_colours):
+        obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
+        obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
+        obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
@@ -1379,6 +1593,10 @@ def main() -> None:
         (projectile_preview.width * 6, projectile_preview.height * 6),
         Image.Resampling.NEAREST,
     ).save(preview / "enemy_projectiles_pc_source.png")
+    boss_bar_preview.resize(
+        (boss_bar_preview.width * 6, boss_bar_preview.height * 6),
+        Image.Resampling.NEAREST,
+    ).save(preview / "boss_bar_pc_style.png")
 
     title_music, title_report = snes.build_tym_tracker_it(
         workspace,
@@ -1446,6 +1664,20 @@ def main() -> None:
         f"level_event_control_records={control_count}",
         f"level_background_control_records={background_control_count}",
         f"level_event_bytes={len(level_events)}",
+        "level_event_clock=PC curLoc / MAP1 effective scroll",
+        "spawn_coordinate_mode=PC initial Y + HDT motion + source pool scroll",
+        (
+            "spawn_world_coordinate_records="
+            f"{reward_report['world_spawn_records']}"
+        ),
+        (
+            "destructible_2x2_assemblies="
+            f"{reward_report['destructible_assemblies']}"
+        ),
+        (
+            "small_tank_component_records="
+            f"{reward_report['tank_component_records']}"
+        ),
         f"reward_eligible_spawn_records={reward_report['eligible']}",
         f"reward_value_50_records={reward_report['value_50']}",
         f"reward_value_100_records={reward_report['value_100']}",
@@ -1457,6 +1689,10 @@ def main() -> None:
         ),
         f"obj_tiles={len(obj_tiles) // 32}",
         "obj_enemy_archetypes=24",
+        "boss_bar_source=OpenTyrian event79/draw_boss_bar",
+        "boss_bar_pc_geometry=single x155 y7 width51 height6 armor254",
+        "boss_bar_gba_geometry=single x96..135 y6..11 centered fill",
+        "boss_bar_damage_flash=PC palette indices 117..125",
         f"explosion_animation_sequences={len(EXPLOSION_SOURCE_SEQUENCES)}",
         f"explosion_frames_per_sequence={EXPLOSION_FRAMES_PER_SEQUENCE}",
         "explosion_small_sources=122-133",

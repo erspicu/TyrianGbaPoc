@@ -12,6 +12,10 @@ The current scope is deliberately narrow:
 - five original first-level background speed changes, including slow and
   accelerated parallax sections
 - all 1,009 decoded first-level source events
+- PC `curLoc` event timing driven by effective MAP1 movement, with each spawn
+  retaining its source pool, initial Y, HDT velocity, fixed movement and armor
+- nine destructible 2x2 terrain assemblies locked to their source background
+  scroll, plus native 24-pixel small-tank component spacing and spawn timing
 - 24 audited visual archetypes covering 69 source enemy IDs
 - the complete 128-entry GBA hardware OAM table
 - PC-synchronised enemy projectiles: all three HDT turret/frequency slots,
@@ -19,10 +23,13 @@ The current scope is deliberately narrow:
   multiposition spreads, velocity, animation and source graphics, split over
   dedicated red-shot, orange-dart and purple-laser OBJ palettes
 - the first-level boss's original dual weapon-59 aimed ports and weapon-127
-  five-way spread cadence; the boss body movement remains POC-level
+  five-way spread cadence; event-79 254-armor PC boss bar geometry and damage
+  flash are also retained, while the boss body movement remains POC-level
 - a 60-entry enemy-shot pool matching OpenTyrian, with spawn/drop/peak
   telemetry
 - player shots, projectile collisions, effects and an invincible player
+- a 48-entry enemy pool (26 peak on the complete route) with a zero-replacement
+  regression invariant
 - the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
   155 to player-shot graphic 59, including its repeat rate and vertical speed
 - stable USP Talon neutral/left/right banking poses instead of alternating
@@ -58,7 +65,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_tech_demo_v9.gba
+build/tyrian_gba_level1_tech_demo_v10.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

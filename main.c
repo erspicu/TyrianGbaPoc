@@ -22,7 +22,7 @@
  * NES/SNES low-detail proofs.  These pools intentionally raise the first
  * level's concurrency while staying under a conservative scanline budget.
  */
-#define MAX_ENEMIES 24
+#define MAX_ENEMIES 48
 #define MAX_PLAYER_SHOTS 12
 #define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
@@ -146,8 +146,10 @@ typedef struct {
     s16 y;
     s8 dx;
     s8 dy;
+    s8 fixed_dy;
     s8 accel_x;
     s8 accel_y;
+    u8 pool;
     u8 type;
     u8 hp;
     u8 phase;
@@ -252,12 +254,6 @@ static const u8 enemy_palettes[ENEMY_ARCHETYPES] = {
     OBJ_PAL_ENEMY_22, OBJ_PAL_ENEMY_23,
 };
 
-static const u8 enemy_hp_table[ENEMY_ARCHETYPES] = {
-    2, 1, 3, 2, 4, 2, 2, 2,
-    2, 3, 3, 3, 4, 4, 3, 3,
-    4, 5, 5, 4, 5, 6, 6, 5,
-};
-
 /*
  * HDT esize/explosiontype values audited against the representative enemy
  * behind each visual archetype.  Archetype 1 is the only 1x1 source; every
@@ -273,18 +269,6 @@ static const u8 enemy_ground_explosion[ENEMY_ARCHETYPES] = {
     1, 1, 1, 1, 0, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1,
     0, 0, 0, 0, 0, 1, 0, 0,
-};
-
-static const s8 enemy_dx_table[ENEMY_ARCHETYPES] = {
-     1, -1,  1,  1,  1,  0,  2, -2,
-     2,  0,  0,  0,  0,  0,  0,  0,
-     0,  0,  0,  0,  0,  0,  0,  0,
-};
-
-static const s8 enemy_dy_table[ENEMY_ARCHETYPES] = {
-    2, 2, 3, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2,
-    2, 2, 2, 2, 2, 2, 2, 2,
 };
 
 /*
@@ -360,6 +344,8 @@ static s8 boss_dx;
 static s8 boss_dy;
 static u8 boss_hp;
 static u8 boss_phase;
+static u8 boss_bar_flash;
+static u8 boss_bar_palette_dirty;
 static u8 boss_aim_fire_wait;
 static u8 boss_spread_fire_wait;
 static u8 boss_aim_left_pos;
@@ -368,6 +354,7 @@ static u8 boss_spread_pos;
 static u8 clear_timer;
 
 static u16 level_tick;
+static u16 level_position;
 static u16 event_offset;
 static u16 event_time;
 static u8 foreground_phase;
@@ -383,6 +370,9 @@ static u8 bg1_scroll_delay;
 static u8 bg2_scroll_delay;
 static u8 bg1_scroll_delay_max;
 static u8 bg2_scroll_delay_max;
+static u8 bg1_step;
+static u8 bg2_step;
+static u8 bg3_step;
 static u8 bg1_row_pending;
 static u8 bg2_row_pending;
 static u8 bg3_row_pending;
@@ -418,7 +408,46 @@ volatile u32 telemetry_reward_drops;
 volatile u32 telemetry_enemy_shots_spawned;
 volatile u32 telemetry_enemy_shot_drops;
 volatile u32 telemetry_max_enemy_shots;
+volatile u32 telemetry_enemy_replacements;
 volatile u32 telemetry_state_transitions;
+
+static const u16 boss_bar_fill_colours[7][3] = {
+    {
+        BOSS_BAR_FLASH_0_BOTTOM,
+        BOSS_BAR_FLASH_0_MIDDLE,
+        BOSS_BAR_FLASH_0_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_1_BOTTOM,
+        BOSS_BAR_FLASH_1_MIDDLE,
+        BOSS_BAR_FLASH_1_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_2_BOTTOM,
+        BOSS_BAR_FLASH_2_MIDDLE,
+        BOSS_BAR_FLASH_2_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_3_BOTTOM,
+        BOSS_BAR_FLASH_3_MIDDLE,
+        BOSS_BAR_FLASH_3_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_4_BOTTOM,
+        BOSS_BAR_FLASH_4_MIDDLE,
+        BOSS_BAR_FLASH_4_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_5_BOTTOM,
+        BOSS_BAR_FLASH_5_MIDDLE,
+        BOSS_BAR_FLASH_5_TOP,
+    },
+    {
+        BOSS_BAR_FLASH_6_BOTTOM,
+        BOSS_BAR_FLASH_6_MIDDLE,
+        BOSS_BAR_FLASH_6_TOP,
+    },
+};
 
 #ifdef AUTOTEST
 static u8 autotest_running;
@@ -450,6 +479,8 @@ static void hide_all_sprites(void)
 
 static void commit_vblank_work(void)
 {
+    volatile u16 *boss_palette =
+        (volatile u16 *)SPRITE_PALETTE + OBJ_PAL_BOSS_BAR * 16;
     if (bg1_row_pending) {
         dmaCopy(bg1_row_source, bg1_row_target, MAP_ROW_BYTES);
         bg1_row_pending = 0;
@@ -476,6 +507,12 @@ static void commit_vblank_work(void)
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;
+    }
+    if (boss_bar_palette_dirty) {
+        boss_palette[4] = boss_bar_fill_colours[boss_bar_flash][0];
+        boss_palette[5] = boss_bar_fill_colours[boss_bar_flash][1];
+        boss_palette[6] = boss_bar_fill_colours[boss_bar_flash][2];
+        boss_bar_palette_dirty = 0;
     }
 }
 
@@ -593,6 +630,7 @@ static void enter_level(void)
     player_cash = 12345;
 #endif
     level_tick = 0;
+    level_position = 0;
     event_offset = 0;
     event_time = level_events[0];
     foreground_phase = 0;
@@ -617,6 +655,7 @@ static void enter_level(void)
     telemetry_enemy_shots_spawned = 0;
     telemetry_enemy_shot_drops = 0;
     telemetry_max_enemy_shots = 0;
+    telemetry_enemy_replacements = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = 8;
@@ -735,9 +774,14 @@ static u8 active_enemy_count(void)
 }
 
 static void spawn_enemy(
-    u8 x,
+    s16 x,
+    s16 y,
     u8 type,
-    u8 motion,
+    u8 pool,
+    s8 dx,
+    s8 dy,
+    s8 fixed_dy,
+    u8 hp,
     u8 link,
     u8 reward,
     u8 turret1,
@@ -751,14 +795,15 @@ static void spawn_enemy(
     u8 index;
     u8 slot;
     u8 replace = 0;
+    u8 found_free = 0;
     s16 largest_y = -32767;
-    s8 velocity;
     Enemy *enemy;
 
     if (type >= ENEMY_ARCHETYPES) type = 0;
     for (index = 0; index < MAX_ENEMIES; index++) {
         if (!enemies[index].active) {
             replace = index;
+            found_free = 1;
             break;
         }
         if (enemies[index].y > largest_y) {
@@ -766,23 +811,19 @@ static void spawn_enemy(
             replace = index;
         }
     }
+    if (!found_free) telemetry_enemy_replacements++;
 
     enemy = &enemies[replace];
     enemy->active = 1;
-    enemy->x = x > 208 ? 208 : x;
-    enemy->y = (motion & 8) ? -30 : -8;
+    enemy->x = x;
+    enemy->y = y;
     enemy->type = type;
-    enemy->hp = enemy_hp_table[type];
+    enemy->pool = pool;
+    enemy->hp = hp;
     enemy->phase = (u8)(x + level_tick);
-    enemy->dx = enemy_dx_table[type];
-    if ((enemy->x >= 120 && enemy->dx > 0) ||
-        (enemy->x < 120 && enemy->dx < 0)) {
-        enemy->dx = -enemy->dx;
-    }
-    velocity = enemy_dy_table[type] + (s8)((motion >> 4) - 7);
-    if (velocity < -3) velocity = -3;
-    if (velocity > 5) velocity = 5;
-    enemy->dy = velocity;
+    enemy->dx = dx;
+    enemy->dy = dy;
+    enemy->fixed_dy = fixed_dy;
     enemy->accel_x = 0;
     enemy->accel_y = 0;
     enemy->link = link;
@@ -870,25 +911,39 @@ static void process_events(void)
 {
     u8 opcode;
     u8 length;
-    while (event_offset + 1u < LEVEL_EVENT_BYTES && event_time <= level_tick) {
+    while (
+        event_offset + 1u < LEVEL_EVENT_BYTES &&
+        event_time <= level_position
+    ) {
         opcode = level_events[event_offset + 1];
         if (opcode == EVENT_END) return;
         length = 2;
         if (opcode < ENEMY_ARCHETYPES) {
             spawn_enemy(
-                level_events[event_offset + 2],
+                (s16)(
+                    (u16)level_events[event_offset + 2] |
+                    ((u16)level_events[event_offset + 3] << 8)
+                ),
+                (s16)(
+                    (u16)level_events[event_offset + 4] |
+                    ((u16)level_events[event_offset + 5] << 8)
+                ),
                 opcode,
-                level_events[event_offset + 3],
-                level_events[event_offset + 4],
-                level_events[event_offset + 5],
                 level_events[event_offset + 6],
-                level_events[event_offset + 7],
-                level_events[event_offset + 8],
-                level_events[event_offset + 9],
+                (s8)level_events[event_offset + 7],
+                (s8)level_events[event_offset + 8],
+                (s8)level_events[event_offset + 9],
                 level_events[event_offset + 10],
-                level_events[event_offset + 11]
+                level_events[event_offset + 11],
+                level_events[event_offset + 12],
+                level_events[event_offset + 13],
+                level_events[event_offset + 14],
+                level_events[event_offset + 15],
+                level_events[event_offset + 16],
+                level_events[event_offset + 17],
+                level_events[event_offset + 18]
             );
-            length = 12;
+            length = 19;
         } else if (
             opcode == EVENT_MOVE ||
             opcode == EVENT_ACCEL ||
@@ -1175,6 +1230,7 @@ static void update_enemies(void)
 {
     u8 index;
     u8 slot;
+    s8 scroll_step;
     Enemy *enemy;
 
     for (index = 0; index < MAX_ENEMIES; index++) {
@@ -1188,15 +1244,22 @@ static void update_enemies(void)
             if (enemy->accel_y < 0 && enemy->dy > -3) enemy->dy--;
         }
         enemy->x += enemy->dx;
-        enemy->y += enemy->dy;
-        if (enemy->x < 0) {
-            enemy->x = 0;
-            enemy->dx = -enemy->dx;
-        } else if (enemy->x > 208) {
-            enemy->x = 208;
-            enemy->dx = -enemy->dx;
+        scroll_step = 0;
+        if (enemy->pool == 1 || enemy->pool == 3) {
+            scroll_step = bg1_step;
+        } else if (enemy->pool == 2) {
+            scroll_step = bg3_step;
         }
-        if (enemy->y < -40 || enemy->y > 168) {
+        enemy->y += enemy->dy + enemy->fixed_dy + scroll_step;
+        /*
+         * PC defaults its bounce window to +/-10000.  The old GBA clamp at
+         * x=0/208 made formations reverse at the viewport edge and could
+         * pin components in place.  Keep the PC lifetime bounds instead.
+         */
+        if (
+            enemy->x < -80 || enemy->x > 320 ||
+            enemy->y < -112 || enemy->y > 190
+        ) {
             enemy->active = 0;
             continue;
         }
@@ -1310,6 +1373,9 @@ static void advance_backgrounds(void)
     u16 new_row;
     u8 move1 = 0;
     u8 move2 = 0;
+    bg1_step = 0;
+    bg2_step = 0;
+    bg3_step = 0;
 
     if (bg1_scroll_delay > 1) {
         bg1_scroll_delay--;
@@ -1320,7 +1386,9 @@ static void advance_backgrounds(void)
     old_row = bg1_scroll_pixel >> 3;
     if (bg1_scroll_pixel >= move1) {
         bg1_scroll_pixel -= move1;
+        bg1_step = move1;
     } else {
+        bg1_step = (u8)bg1_scroll_pixel;
         bg1_scroll_pixel = 0;
     }
     new_row = bg1_scroll_pixel >> 3;
@@ -1340,7 +1408,9 @@ static void advance_backgrounds(void)
     old_row = bg2_scroll_pixel >> 3;
     if (bg2_scroll_pixel >= move2) {
         bg2_scroll_pixel -= move2;
+        bg2_step = move2;
     } else {
+        bg2_step = (u8)bg2_scroll_pixel;
         bg2_scroll_pixel = 0;
     }
     new_row = bg2_scroll_pixel >> 3;
@@ -1354,7 +1424,9 @@ static void advance_backgrounds(void)
     old_row = bg3_scroll_pixel >> 3;
     if (bg3_scroll_pixel >= bg3_scroll_speed) {
         bg3_scroll_pixel -= bg3_scroll_speed;
+        bg3_step = bg3_scroll_speed;
     } else {
+        bg3_step = (u8)bg3_scroll_pixel;
         bg3_scroll_pixel = 0;
     }
     new_row = bg3_scroll_pixel >> 3;
@@ -1375,8 +1447,11 @@ static void enter_boss(void)
     boss_y = 8;
     boss_dx = 1;
     boss_dy = 1;
-    boss_hp = 96;
+    /* PC event 79 links this bar to boss components whose armor is 254. */
+    boss_hp = 254;
     boss_phase = 0;
+    boss_bar_flash = 0;
+    boss_bar_palette_dirty = 1;
     /*
      * PC boss records 52/54 use W59 from slot 2; record 53 uses W127
      * from slot 1. JE_makeEnemy initializes every populated turret to 20.
@@ -1416,6 +1491,10 @@ static void update_boss(void)
     update_rewards();
 
     boss_phase++;
+    if (boss_bar_flash) {
+        boss_bar_flash--;
+        boss_bar_palette_dirty = 1;
+    }
     boss_x += boss_dx;
     if (boss_x < 4 || boss_x > 172) {
         boss_dx = -boss_dx;
@@ -1458,7 +1537,11 @@ static void update_boss(void)
                 PLAYER_SHOT_HIT_HEIGHT,
                 boss_x + 4, boss_y + 4, 56, 56)) {
             shot->active = 0;
-            if (boss_hp) boss_hp--;
+            if (boss_hp) {
+                boss_hp--;
+                boss_bar_flash = 6;
+                boss_bar_palette_dirty = 1;
+            }
             telemetry_collision_count++;
             audio_effect(SFX_ENEMY_HIT);
         }
@@ -1474,9 +1557,11 @@ static void update_logic(void)
 {
     level_tick++;
     telemetry_logic_updates++;
+    if (game_state == STATE_PLAY) process_events();
     advance_backgrounds();
 
     if (game_state == STATE_PLAY) {
+        level_position += bg1_step;
         update_player();
         update_shots();
         /*
@@ -1493,9 +1578,8 @@ static void update_logic(void)
         update_rewards();
         update_enemies();
         collide_player_shots();
-        process_events();
         if ((pad_pressed & (KEY_SELECT | KEY_L)) ||
-            level_tick >= LEVEL_BOSS_TICK) {
+            level_position >= LEVEL_BOSS_TICK) {
             enter_boss();
         }
     } else if (game_state == STATE_BOSS) {
@@ -1703,10 +1787,58 @@ static void render_cash_counter(void)
     }
 }
 
+static void render_boss_bar(void)
+{
+    u8 index;
+    u8 full_segments;
+    u8 pc_width;
+    u8 gba_width;
+    s16 fill_x;
+
+    /*
+     * PC draw_boss_bar(): one bar is centred at x=155, y=7 and uses a
+     * 51x6 backing.  Scale its 320x200 HUD position to 240x160, retaining
+     * four-pixel fill precision with the generated half-segment tile.
+     *
+     * Draw fill first because lower OAM indices win same-priority OBJ ties.
+     */
+    pc_width = (u8)(
+        boss_hp / 10u +
+        (boss_hp + 5u) / 10u +
+        1u
+    );
+    gba_width = (u8)((pc_width * 3u + 2u) / 4u);
+    gba_width = (u8)((gba_width + 3u) & ~3u);
+    if (gba_width > 40) gba_width = 40;
+    if (gba_width < 4) gba_width = 4;
+    fill_x = 116 - gba_width / 2;
+    full_segments = gba_width >> 3;
+    for (index = 0; index < full_segments; index++) {
+        put_sprite(
+            fill_x + ((u16)index << 3), 6,
+            OBJ_TILE_BOSS_BAR + 1, OBJ_PAL_BOSS_BAR,
+            ATTR1_SIZE_8, 0
+        );
+    }
+    if (gba_width & 4) {
+        put_sprite(
+            fill_x + ((u16)full_segments << 3), 6,
+            OBJ_TILE_BOSS_BAR + 2, OBJ_PAL_BOSS_BAR,
+            ATTR1_SIZE_8, 0
+        );
+    }
+    for (index = 0; index < 5; index++) {
+        put_sprite(
+            96 + ((u16)index << 3), 6,
+            OBJ_TILE_BOSS_BAR, OBJ_PAL_BOSS_BAR,
+            ATTR1_SIZE_8, 0
+        );
+    }
+}
+
 static void render_game(void)
 {
     u8 index;
-    u8 bars;
     u8 object_priority = foreground_phase ? 1 : 0;
     u8 old_count = previous_oam_count;
     u8 visible_count;
@@ -1739,18 +1871,11 @@ static void render_game(void)
             }
         }
     } else if (game_state == STATE_BOSS) {
+        render_boss_bar();
         put_sprite(
             boss_x, boss_y, OBJ_TILE_BOSS_0, OBJ_PAL_BOSS_0,
             ATTR1_SIZE_64, object_priority
         );
-        bars = (boss_hp + 11) / 12;
-        for (index = 0; index < bars; index++) {
-            put_sprite(
-                4 + ((u16)index << 4), 2,
-                OBJ_TILE_BOSS_BAR, OBJ_PAL_BOSS_BAR,
-                ATTR1_SIZE_16, 0
-            );
-        }
     }
     for (index = 0; index < MAX_REWARDS; index++) {
         if (rewards[index].active) {
@@ -1812,7 +1937,7 @@ static void autotest_finish(void)
     volatile u8 *sram = (volatile u8 *)0x0E000000;
     u8 pass = (
         game_state == STATE_TITLE &&
-        telemetry_logic_updates >= LEVEL_BOSS_TICK &&
+        level_position >= LEVEL_BOSS_TICK &&
         telemetry_spawn_count == 414 &&
         telemetry_control_count == 347 &&
         telemetry_max_oam <= SPRITE_LIMIT &&
@@ -1822,6 +1947,7 @@ static void autotest_finish(void)
         telemetry_reward_drops == 0 &&
         telemetry_enemy_shots_spawned > 0 &&
         telemetry_enemy_shot_drops == 0 &&
+        telemetry_enemy_replacements == 0 &&
         telemetry_max_enemy_shots <= MAX_ENEMY_SHOTS &&
         bg1_scroll_speed == 2 &&
         bg2_scroll_speed == 4 &&
@@ -1833,7 +1959,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 4;
+    sram[4] = 5;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -1868,6 +1994,8 @@ static void autotest_finish(void)
     sram_write_u32(92, telemetry_enemy_shots_spawned);
     sram_write_u32(96, telemetry_enemy_shot_drops);
     sram_write_u32(100, telemetry_max_enemy_shots);
+    sram_write_u32(104, level_position);
+    sram_write_u32(108, telemetry_enemy_replacements);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }

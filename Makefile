@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_tech_demo_v9
-TEST_TARGET := tyrian_gba_level1_autotest_v9
+TARGET := tyrian_gba_level1_tech_demo_v10
+TEST_TARGET := tyrian_gba_level1_autotest_v10
 BUILD := build
 RES := res
 
