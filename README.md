@@ -23,7 +23,9 @@ The current scope is deliberately narrow:
   backed by a 48-entry effect pool with drop telemetry; v7 preserves each
   quadrant's native 12x14 anchor so the centre seam is closed
 - HDT-derived 50/100/1000 reward drops using the original coin/gem sheet,
-  pickup collision, cash counter and original item sound
+  pickup collision and original item sound; v8 removes the GBA-only pickup
+  outline and renders cumulative cash at the lower left with Tyrian's original
+  TINY_FONT digit sprites, colour treatment and spacing
 - a simplified first-level boss and return to the opening screen
 - complete first-level tracker music and four converted Tyrian sound effects
 - original Normal-speed fixed-step target (about 34.78 game updates/second)
@@ -47,7 +49,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_tech_demo_v7.gba
+build/tyrian_gba_level1_tech_demo_v8.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

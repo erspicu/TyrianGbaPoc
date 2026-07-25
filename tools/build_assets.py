@@ -36,6 +36,7 @@ REWARD_SOURCE_SEQUENCES = (
 )
 REWARD_VALUES = (50, 100, 1000)
 REWARD_FRAMES_PER_SEQUENCE = 6
+CASH_DIGIT_SOURCE_IDS = (79, 70, 71, 72, 73, 74, 75, 76, 77, 78)
 
 
 def load_snes_builder(workspace: Path) -> ModuleType:
@@ -227,27 +228,6 @@ def quantize_sprite_frames(
     return bytes(tile_data), snes.snes_palette_bytes([palette])
 
 
-def add_sprite_outline(
-    image: Image.Image,
-    colour: tuple[int, int, int] = (255, 240, 144),
-) -> Image.Image:
-    """Add a one-pixel readability outline without moving source pixels."""
-    rgba = np.asarray(image.convert("RGBA"), dtype=np.uint8).copy()
-    opaque = rgba[:, :, 3] >= 80
-    padded = np.pad(opaque, 1)
-    expanded = np.zeros_like(opaque)
-    for offset_y in range(3):
-        for offset_x in range(3):
-            expanded |= padded[
-                offset_y : offset_y + opaque.shape[0],
-                offset_x : offset_x + opaque.shape[1],
-            ]
-    outline = expanded & ~opaque
-    rgba[outline, :3] = colour
-    rgba[outline, 3] = 255
-    return Image.fromarray(rgba, "RGBA")
-
-
 def build_explosion_animation(
     snes: ModuleType,
     image_root: Path,
@@ -361,7 +341,7 @@ def build_reward_animation(
     snes: ModuleType,
     image_root: Path,
 ) -> tuple[bytes, bytes, Image.Image]:
-    """Build three original spriteSheet11 coin animations for rewards."""
+    """Build unmodified spriteSheet11 coin animations for rewards."""
     source_dir = image_root / "sheets" / "11_coins_cubes"
     frames: list[Image.Image] = []
     preview = Image.new(
@@ -393,7 +373,10 @@ def build_reward_animation(
                 source = preserve_sprite_canvas(
                     snes, source, (16, 16), (2, 1)
                 )
-            frame = add_sprite_outline(source)
+            # Keep the PC sprite's alpha edge and colours intact.  The older
+            # GBA conversion added a pale one-pixel readability outline here,
+            # which produced a ring that does not exist in Tyrian.
+            frame = source
             frames.append(frame)
             preview.alpha_composite(
                 frame,
@@ -403,47 +386,73 @@ def build_reward_animation(
     return tile_data, palette, preview
 
 
-DIGIT_PATTERNS = (
-    ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
-    ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
-    ("01110", "10001", "00001", "00010", "00100", "01000", "11111"),
-    ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
-    ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
-    ("11111", "10000", "10000", "11110", "00001", "00001", "11110"),
-    ("01110", "10000", "10000", "11110", "10001", "10001", "01110"),
-    ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
-    ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
-    ("01110", "10001", "10001", "01111", "00001", "00001", "01110"),
-)
+def load_tyrian_palette(path: Path) -> list[tuple[int, int, int]]:
+    """Load the first 256-colour Tyrian palette and expand VGA 6-bit RGB."""
+    data = path.read_bytes()
+    if len(data) < 256 * 3:
+        raise ValueError(f"Tyrian palette is truncated: {path}")
+    palette: list[tuple[int, int, int]] = []
+    for index in range(256):
+        components = data[index * 3 : index * 3 + 3]
+        palette.append(tuple((value << 2) | (value >> 4) for value in components))
+    return palette
 
 
-def build_score_digits(snes: ModuleType) -> tuple[bytes, bytes, Image.Image]:
-    """Build compact outlined 8x8 digits for the reward counter."""
-    tile_data = bytearray()
+def build_cash_digits(
+    snes: ModuleType,
+    image_root: Path,
+    palette_file: Path,
+) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
+    """Recreate PC JE_textShade cash digits from TINY_FONT sprites 79/70-78."""
+    source_dir = image_root / "sprites" / "02_tinyfont"
+    tyrian_palette = load_tyrian_palette(palette_file)
+
+    # JE_inGameDisplays uses hue 2, brightness 4 and FULL_SHADE.  The tiny
+    # glyphs contain palette low nibbles 3 and 7, so the visible pixels become
+    # PC palette entries 0x27 and 0x2B.  FULL_SHADE adds four black copies at
+    # x +/- 1 and y +/- 1 before drawing the coloured glyph.
+    source_slots = {
+        tyrian_palette[3]: 2,
+        tyrian_palette[7]: 3,
+    }
     palette = [
-        (0, 0, 0),
-        (8, 16, 28),
-        (255, 232, 88),
+        (0, 0, 0),       # OBJ colour 0: transparent
+        (0, 0, 0),       # FULL_SHADE outline
+        tyrian_palette[0x27],
+        tyrian_palette[0x2B],
     ]
+    tile_data = bytearray()
     preview = Image.new("RGBA", (80, 8), (0, 0, 0, 0))
     preview_pixels = preview.load()
-    for digit, pattern in enumerate(DIGIT_PATTERNS):
+    advances: list[int] = []
+
+    for digit, source_id in enumerate(CASH_DIGIT_SOURCE_IDS):
+        source = Image.open(source_dir / f"{source_id:03d}.png").convert("RGBA")
+        if source.height != 6 or source.width + 2 > 8:
+            raise ValueError(
+                "unexpected Tyrian TINY_FONT digit canvas: "
+                f"sprite {source_id} is {source.size}"
+            )
+        advances.append(source.width + 1)
+
+        rgba = np.asarray(source, dtype=np.uint8)
+        opaque_points = [
+            (x + 1, y + 1)
+            for y, x in np.argwhere(rgba[:, :, 3] >= 80)
+        ]
         values = np.zeros((8, 8), dtype=np.uint8)
-        points = {
-            (x + 1, y)
-            for y, row in enumerate(pattern)
-            for x, value in enumerate(row)
-            if value == "1"
-        }
-        for x, y in points:
-            for offset_y in (-1, 0, 1):
-                for offset_x in (-1, 0, 1):
-                    outline_x = x + offset_x
-                    outline_y = y + offset_y
-                    if 0 <= outline_x < 8 and 0 <= outline_y < 8:
-                        values[outline_y, outline_x] = 1
-        for x, y in points:
-            values[y, x] = 2
+        for x, y in opaque_points:
+            for offset_x, offset_y in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                values[y + offset_y, x + offset_x] = 1
+        for x, y in opaque_points:
+            colour = tuple(int(value) for value in rgba[y - 1, x - 1, :3])
+            if colour not in source_slots:
+                raise ValueError(
+                    "unexpected Tyrian TINY_FONT digit colour: "
+                    f"sprite {source_id} contains {colour}"
+                )
+            values[y, x] = source_slots[colour]
+
         tile_data.extend(encode_gba_4bpp(values))
         for y in range(8):
             for x in range(8):
@@ -455,6 +464,7 @@ def build_score_digits(snes: ModuleType) -> tuple[bytes, bytes, Image.Image]:
         bytes(tile_data),
         snes.snes_palette_bytes([palette]),
         preview,
+        tuple(advances),
     )
 
 
@@ -464,6 +474,7 @@ def repack_obj_tiles(
     explosion_tiles: bytes,
     reward_tiles: bytes,
     digit_tiles: bytes,
+    digit_advances: tuple[int, ...],
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
     decoded = [
@@ -530,9 +541,14 @@ def repack_obj_tiles(
     output.extend(reward_tiles)
 
     if len(digit_tiles) != 10 * 32:
-        raise ValueError("GBA score digit bank must contain ten 8x8 tiles")
+        raise ValueError("GBA cash digit bank must contain ten 8x8 tiles")
+    if len(digit_advances) != 10:
+        raise ValueError("GBA cash digit bank must contain ten advances")
     metadata["OBJ_TILE_SCORE_DIGITS"] = len(output) // 32
     metadata["OBJ_PAL_SCORE_DIGITS"] = 9
+    metadata["OBJ_SCORE_DIGIT_COUNT"] = len(digit_advances)
+    for digit, advance in enumerate(digit_advances):
+        metadata[f"OBJ_SCORE_DIGIT_ADVANCE_{digit}"] = advance
     output.extend(digit_tiles)
 
     append_asset("PLAYER_SHOT", 2, 2)
@@ -1057,7 +1073,12 @@ def main() -> None:
     reward_tiles, reward_palette, reward_preview = build_reward_animation(
         snes, image_root
     )
-    digit_tiles, digit_palette, digit_preview = build_score_digits(snes)
+    (
+        digit_tiles,
+        digit_palette,
+        digit_preview,
+        digit_advances,
+    ) = build_cash_digits(snes, image_root, data_root / "palette.dat")
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
@@ -1068,6 +1089,7 @@ def main() -> None:
         explosion_tiles,
         reward_tiles,
         digit_tiles,
+        digit_advances,
     )
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
@@ -1091,7 +1113,7 @@ def main() -> None:
     digit_preview.resize(
         (digit_preview.width * 4, digit_preview.height * 4),
         Image.Resampling.NEAREST,
-    ).save(preview / "reward_score_digits.png")
+    ).save(preview / "cash_tiny_font_digits.png")
 
     title_music, title_report = snes.build_tym_tracker_it(
         workspace,
@@ -1171,8 +1193,11 @@ def main() -> None:
         "reward_sources_50=26-31",
         "reward_sources_100=32-36",
         "reward_sources_1000=HDT397 2x2 bases 39,41,43,45,47,49",
+        "reward_sprite_outline=none",
         f"reward_animation_tiles={len(reward_tiles) // 32}",
-        f"reward_digit_tiles={len(digit_tiles) // 32}",
+        "cash_digit_source_sprites=79,70-78",
+        "cash_digit_style=PC hue 2 brightness 4 FULL_SHADE",
+        f"cash_digit_tiles={len(digit_tiles) // 32}",
         f"player_shot_port={player_shot_report['port_name']}",
         f"player_shot_weapon_record={player_shot_report['weapon_record']}",
         f"player_shot_graphic={player_shot_report['graphic']}",

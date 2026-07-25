@@ -52,6 +52,8 @@
 #define REWARD_FRAME_COUNT 6
 #define REWARD_TILES_PER_FRAME 4
 #define REWARD_SEQUENCE_COUNT 3
+#define CASH_COUNTER_X 22
+#define CASH_COUNTER_Y 140
 
 _Static_assert(
     EXPLOSION_FRAME_COUNT == OBJ_EXPLOSION_FRAME_COUNT,
@@ -77,6 +79,10 @@ _Static_assert(
 _Static_assert(
     REWARD_SEQUENCE_COUNT == OBJ_REWARD_SEQUENCE_COUNT,
     "reward sequence count must match generated OBJ assets"
+);
+_Static_assert(
+    OBJ_SCORE_DIGIT_COUNT == 10,
+    "cash counter must contain the ten original TINY_FONT digits"
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 
@@ -241,6 +247,19 @@ static const u8 enemy_fire_table[ENEMY_ARCHETYPES] = {
 
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
     0, 50, 100, 1000,
+};
+
+static const u8 cash_digit_advances[OBJ_SCORE_DIGIT_COUNT] = {
+    OBJ_SCORE_DIGIT_ADVANCE_0,
+    OBJ_SCORE_DIGIT_ADVANCE_1,
+    OBJ_SCORE_DIGIT_ADVANCE_2,
+    OBJ_SCORE_DIGIT_ADVANCE_3,
+    OBJ_SCORE_DIGIT_ADVANCE_4,
+    OBJ_SCORE_DIGIT_ADVANCE_5,
+    OBJ_SCORE_DIGIT_ADVANCE_6,
+    OBJ_SCORE_DIGIT_ADVANCE_7,
+    OBJ_SCORE_DIGIT_ADVANCE_8,
+    OBJ_SCORE_DIGIT_ADVANCE_9,
 };
 
 static u8 game_state;
@@ -481,6 +500,9 @@ static void enter_level(void)
     fire_cooldown = 0;
     player_bank = 0;
     player_cash = 0;
+#ifdef AUTOTEST_CASH_VISUAL_TEST
+    player_cash = 12345;
+#endif
     level_tick = 0;
     event_offset = 0;
     event_time = level_events[0];
@@ -1250,32 +1272,31 @@ static void put_sprite(
 
 static void render_cash_counter(void)
 {
-    u8 index;
+    u8 digits[OBJ_SCORE_DIGIT_COUNT];
+    u8 count = 0;
     u8 digit;
-    u8 started = 0;
-    u8 frame = (level_tick >> 1) % REWARD_FRAME_COUNT;
-    u32 value = player_cash > 99999 ? 99999 : player_cash;
-    u32 divisor = 10000;
+    u32 value = player_cash;
+    s16 x = CASH_COUNTER_X;
 
-    put_sprite(
-        176, 0,
-        OBJ_TILE_REWARD +
-            (
-                (REWARD_SEQUENCE_COUNT - 1) * REWARD_FRAME_COUNT + frame
-            ) * REWARD_TILES_PER_FRAME,
-        OBJ_PAL_REWARD, ATTR1_SIZE_16, 0
-    );
-    for (index = 0; index < 5; index++) {
-        digit = (value / divisor) % 10;
-        if (digit || started || index == 4) {
-            put_sprite(
-                192 + ((u16)index << 3), 4,
-                OBJ_TILE_SCORE_DIGITS + digit,
-                OBJ_PAL_SCORE_DIGITS, ATTR1_SIZE_8, 0
-            );
-            started = 1;
-        }
-        divisor /= 10;
+    /*
+     * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
+     * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  The GBA
+     * position is the proportional 240x160 equivalent.  There is no pickup
+     * icon and no five-digit cap in the original display.
+     */
+    do {
+        digits[count++] = value % 10;
+        value /= 10;
+    } while (value && count < sizeof(digits));
+
+    while (count) {
+        digit = digits[--count];
+        put_sprite(
+            x, CASH_COUNTER_Y,
+            OBJ_TILE_SCORE_DIGITS + digit,
+            OBJ_PAL_SCORE_DIGITS, ATTR1_SIZE_8, 0
+        );
+        x += cash_digit_advances[digit];
     }
 }
 
