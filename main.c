@@ -3,7 +3,9 @@
 
 #include "res/asset_meta.h"
 #include "res/soundbank.h"
+#include "res/tyrian_romfs_meta.h"
 #include "src/opentyrian_level_port.h"
+#include "src/opentyrian_rom_io.h"
 
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
@@ -449,6 +451,12 @@ volatile u32 telemetry_source_max_enemies;
 volatile u32 telemetry_source_control_writes;
 volatile u32 telemetry_source_rng_calls;
 volatile u32 telemetry_state_transitions;
+volatile u32 telemetry_romfs_entries;
+volatile u32 telemetry_romfs_image_bytes;
+volatile u32 telemetry_romfs_payload_bytes;
+volatile u32 telemetry_romfs_checks;
+volatile u32 telemetry_romfs_failures;
+volatile u32 telemetry_romfs_manifest_crc32;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -510,10 +518,26 @@ static u8 autotest_screenshot_delay;
 int main(void)
 {
     u32 current_vblank;
+    uint32_t romfs_passed_checks = 0;
+    uint32_t romfs_failed_checks = 0;
+    const OtRomFs *mounted_romfs;
 
     irqInit();
     irqSet(IRQ_VBLANK, vblank_handler);
     irqEnable(IRQ_VBLANK);
+    ot_rom_io_self_test(&romfs_passed_checks, &romfs_failed_checks);
+    mounted_romfs = ot_rom_io_filesystem();
+    telemetry_romfs_entries =
+        mounted_romfs != 0 ? mounted_romfs->entry_count : 0;
+    telemetry_romfs_image_bytes =
+        mounted_romfs != 0 ? mounted_romfs->image_size : 0;
+    telemetry_romfs_payload_bytes =
+        mounted_romfs != 0 ? mounted_romfs->payload_bytes : 0;
+    telemetry_romfs_checks =
+        romfs_passed_checks + romfs_failed_checks;
+    telemetry_romfs_failures = romfs_failed_checks;
+    telemetry_romfs_manifest_crc32 =
+        mounted_romfs != 0 ? mounted_romfs->manifest_crc32 : 0;
     /*
      * Maxmod's GBA initializer waits across two display frames while its
      * VBlank routine primes the double-buffer write position.  The IRQ must

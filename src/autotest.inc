@@ -47,6 +47,15 @@ static void autotest_finish(void)
         telemetry_pause_toggles == 2 &&
         telemetry_paused_frames >= 60 &&
         source_parity_level.assets_valid &&
+        telemetry_romfs_entries == TYRIAN_ROMFS_ENTRY_COUNT &&
+        telemetry_romfs_image_bytes == TYRIAN_ROMFS_IMAGE_BYTES &&
+        telemetry_romfs_payload_bytes == TYRIAN_ROMFS_PAYLOAD_BYTES &&
+        telemetry_romfs_checks ==
+            OT_ROM_IO_SELF_TEST_FIXED_CHECKS +
+                11 * TYRIAN_ROMFS_PROBE_COUNT &&
+        telemetry_romfs_failures == 0 &&
+        telemetry_romfs_manifest_crc32 ==
+            TYRIAN_ROMFS_MANIFEST_CRC32 &&
         telemetry_source_events == SOURCE_STAGE2_EXPECTED_EVENTS &&
         telemetry_source_events_applied ==
             SOURCE_STAGE2_EXPECTED_APPLIED &&
@@ -82,7 +91,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 8;
+    sram[4] = 9;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -135,6 +144,12 @@ static void autotest_finish(void)
     sram_write_u32(164, telemetry_source_max_enemies);
     sram_write_u32(168, telemetry_source_control_writes);
     sram_write_u32(172, telemetry_source_rng_calls);
+    sram_write_u32(176, telemetry_romfs_entries);
+    sram_write_u32(180, telemetry_romfs_image_bytes);
+    sram_write_u32(184, telemetry_romfs_payload_bytes);
+    sram_write_u32(188, telemetry_romfs_checks);
+    sram_write_u32(192, telemetry_romfs_failures);
+    sram_write_u32(196, telemetry_romfs_manifest_crc32);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }

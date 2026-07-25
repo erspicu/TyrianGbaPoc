@@ -203,6 +203,23 @@ type-61 分支依初始 flag=0 跳過；這些分支要在死亡流程移植後�
 legacy 的 414 spawn、380 control、434 collision、金額、掉落、暫停與
 Boss 回標題等數字仍完全相同，證明新增 shadow 工作沒有改壞現有展示。
 
+## ROMFS v1 資料層
+
+v14 不改 Stage 2 gameplay 規則，而是加入後續逐行直譯所需的通用資料 I/O。
+68 個 stock runtime 檔案以原始 bytes 封裝到 9,853,080-byte ROMFS image，
+並由 `src/opentyrian_rom_io.c` 提供 `fopen`／`fread`／`fseek` 型態的唯讀
+介面。資料直接留在 cartridge ROM，不占用 256 KiB EWRAM。
+
+這取代「每移植一種 parser 就另外產生一套 C array」的做法；episode、
+SHP、PIC、MUS、SND、HDT 及 LVL loader 可以保留 PC 版的 read order 與
+offset 計算，只在既有 file helper boundary 改接 ROM backend。格式、路徑
+規則、API、容量與擴充方式詳見
+[Tyrian-GBA-ROMFS.md](Tyrian-GBA-ROMFS.md)。
+
+2026-07-26 mGBA auto-test 驗證 82 項 ROMFS mount、lookup、read、seek、
+typed little-endian read、EOF、path normalization、read-only mode 及
+8-handle pool 檢查全部通過；Stage 2 原有 telemetry 也維持不變。
+
 ## 分檔
 
 原本 2,186 行的 `main.c` 已降至約 580 行。現有程式依責任分為：
@@ -266,10 +283,10 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 .\build.ps1
 ```
 
-目前 Stage 2 ROM：
+目前 ROMFS v14 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_stage2_v13.gba
+build/tyrian_gba_level1_source_parity_romfs_v14.gba
 ```
 
 ROM 與中間產物不納入 Git。

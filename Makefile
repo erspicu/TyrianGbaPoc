@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_stage2_v13
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_stage2_v13
+TARGET := tyrian_gba_level1_source_parity_romfs_v14
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v14
 BUILD := build
 RES := res
 
@@ -25,6 +25,17 @@ LINKFLAGS := $(ARCH) -specs=gba.specs -Wl,--gc-sections \
 	-L$(LIBGBA)/lib -L$(MAXMOD)/lib
 
 ASSET_STAMP := $(RES)/assets.stamp
+VFS_SOURCE_ROOT := ../../org/AprCSTyrian/Build/data
+VFS_MANIFEST := vfs/manifest.json
+VFS_IMAGE := $(RES)/tyrian_romfs.bin
+VFS_META := $(RES)/tyrian_romfs_meta.h
+VFS_AUDIT := $(RES)/tyrian_romfs_audit.json
+VFS_OUTPUTS := $(VFS_IMAGE) $(VFS_META) $(VFS_AUDIT)
+VFS_INPUTS := \
+	tools/build_romfs.py \
+	$(VFS_MANIFEST) \
+	$(wildcard $(VFS_SOURCE_ROOT)/*)
+
 ASSET_INPUTS := \
 	tools/build_assets.py \
 	../../org/TyrianSnesPoc/tools/build_assets.py \
@@ -67,7 +78,9 @@ AUDIO_INPUTS := \
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
 	$(BUILD)/gba_heap.o \
-	$(BUILD)/opentyrian_level_port.o
+	$(BUILD)/opentyrian_level_port.o \
+	$(BUILD)/romfs.o \
+	$(BUILD)/opentyrian_rom_io.o
 
 MAIN_INCLUDES := $(wildcard src/*.inc)
 
@@ -77,9 +90,9 @@ all: $(BUILD)/$(TARGET).gba
 
 autotest: $(BUILD)/$(TEST_TARGET).gba
 
-assets: $(RES)/soundbank.bin $(RES)/soundbank.h
+assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
-$(BUILD) $(BUILD)/preview:
+$(BUILD) $(BUILD)/preview $(RES):
 	mkdir -p $@
 
 $(ASSET_STAMP): $(ASSET_INPUTS) | $(BUILD)/preview
@@ -96,12 +109,22 @@ $(RES)/soundbank.bin: $(ASSET_STAMP) $(AUDIO_INPUTS) | $(BUILD)
 
 $(RES)/soundbank.h: $(RES)/soundbank.bin
 
+$(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
+	$(PYTHON) tools/build_romfs.py \
+		--manifest "$(VFS_MANIFEST)" \
+		--source-root "$(VFS_SOURCE_ROOT)" \
+		--output "$(VFS_IMAGE)" \
+		--meta-header "$(VFS_META)" \
+		--audit "$(VFS_AUDIT)"
+
 $(BUILD)/main_release.o: main.c $(MAIN_INCLUDES) \
-		src/opentyrian_level_port.h $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
+		src/opentyrian_level_port.h src/opentyrian_rom_io.h \
+		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/main_test.o: main.c $(MAIN_INCLUDES) \
-		src/opentyrian_level_port.h $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
+		src/opentyrian_level_port.h src/opentyrian_rom_io.h \
+		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
@@ -111,7 +134,15 @@ $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
 		src/opentyrian_level_port.h $(RES)/asset_meta.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD)/assets.o: assets.s $(ASSET_BINARIES) $(RES)/soundbank.bin | $(BUILD)
+$(BUILD)/romfs.o: src/romfs.c src/romfs.h | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/opentyrian_rom_io.o: src/opentyrian_rom_io.c \
+		src/opentyrian_rom_io.h src/romfs.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/assets.o: assets.s $(ASSET_BINARIES) \
+		$(RES)/soundbank.bin $(VFS_IMAGE) | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 $(BUILD)/$(TARGET).elf: $(BUILD)/main_release.o $(COMMON_OBJECTS)
@@ -139,6 +170,9 @@ clean:
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_level_port.o \
 		$(BUILD)/opentyrian_level_port.d \
+		$(BUILD)/romfs.o $(BUILD)/romfs.d \
+		$(BUILD)/opentyrian_rom_io.o \
+		$(BUILD)/opentyrian_rom_io.d \
 		$(BUILD)/assets.o \
 		$(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).gba \
 		$(BUILD)/$(TARGET).map \
@@ -146,9 +180,13 @@ clean:
 		$(BUILD)/$(TEST_TARGET).map
 
 distclean: clean
-	rm -f $(ASSET_STAMP) $(RES)/soundbank.bin $(RES)/soundbank.h
+	rm -f \
+		$(ASSET_STAMP) $(RES)/soundbank.bin $(RES)/soundbank.h \
+		$(VFS_OUTPUTS)
 
 -include $(BUILD)/main_release.d
 -include $(BUILD)/main_test.d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_level_port.d
+-include $(BUILD)/romfs.d
+-include $(BUILD)/opentyrian_rom_io.d

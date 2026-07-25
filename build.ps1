@@ -9,8 +9,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_stage2_v13"
-$testName = "tyrian_gba_level1_source_parity_autotest_stage2_v13"
+$releaseName = "tyrian_gba_level1_source_parity_romfs_v14"
+$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v14"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -19,6 +19,8 @@ $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
+$romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
+$romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
 $python = (Get-Command python -ErrorAction Stop).Source
 
 foreach ($required in @(
@@ -49,6 +51,36 @@ make -j2 PYTHON="__PYTHON__" all autotest
 & $bash -lc $buildCommand
 if ($LASTEXITCODE -ne 0) {
     throw "GBA ROM build failed with exit code $LASTEXITCODE"
+}
+
+foreach ($romfsOutput in @($romfsImagePath, $romfsAuditPath)) {
+    if (-not (Test-Path -LiteralPath $romfsOutput)) {
+        throw "ROMFS build output is missing: $romfsOutput"
+    }
+}
+$romfsAudit = Get-Content -LiteralPath $romfsAuditPath -Raw |
+    ConvertFrom-Json
+$romfsImageBytes = (Get-Item -LiteralPath $romfsImagePath).Length
+$romfsImageSha256 = (
+    Get-FileHash -LiteralPath $romfsImagePath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+$romfsManifestCrc32 = [Convert]::ToUInt32(
+    $romfsAudit.manifest_crc32,
+    16
+)
+$romfsExpectedSelfTestChecks = 38 + 11 * $romfsAudit.probe_count
+if (
+    $romfsAudit.magic -ne "TYRVFS1" -or
+    $romfsAudit.format_version -ne 1 -or
+    $romfsAudit.entry_count -le 0 -or
+    $romfsAudit.files.Count -ne $romfsAudit.entry_count -or
+    $romfsAudit.probe_count -le 0 -or
+    $romfsAudit.probes.Count -ne $romfsAudit.probe_count -or
+    $romfsImageBytes -ne $romfsAudit.image_bytes -or
+    $romfsAudit.payload_bytes -gt $romfsAudit.image_bytes -or
+    $romfsImageSha256 -ne $romfsAudit.image_sha256
+) {
+    throw "ROMFS audit metadata does not match its packed image"
 }
 
 function Test-GbaRom {
@@ -172,7 +204,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 176) {
+if ($saveBytes.Length -lt 200) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -232,10 +264,16 @@ $telemetry = [ordered]@{
     source_parity_max_enemies = Read-TelemetryU32 164
     source_parity_control_writes = Read-TelemetryU32 168
     source_parity_rng_calls = Read-TelemetryU32 172
+    romfs_entries = Read-TelemetryU32 176
+    romfs_image_bytes = Read-TelemetryU32 180
+    romfs_payload_bytes = Read-TelemetryU32 184
+    romfs_self_test_checks = Read-TelemetryU32 188
+    romfs_self_test_failures = Read-TelemetryU32 192
+    romfs_manifest_crc32 = Read-TelemetryU32 196
 }
 
 $telemetryChecks = @(
-    $telemetry.version -eq 8,
+    $telemetry.version -eq 9,
     $telemetry.pass -eq 1,
     $telemetry.final_state -eq 0,
     $telemetry.title_music_active -eq 1,
@@ -279,6 +317,12 @@ $telemetryChecks = @(
     $telemetry.source_parity_max_enemies -eq 100,
     $telemetry.source_parity_control_writes -eq 3586,
     $telemetry.source_parity_rng_calls -eq 30,
+    $telemetry.romfs_entries -eq $romfsAudit.entry_count,
+    $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes,
+    $telemetry.romfs_payload_bytes -eq $romfsAudit.payload_bytes,
+    $telemetry.romfs_self_test_checks -eq $romfsExpectedSelfTestChecks,
+    $telemetry.romfs_self_test_failures -eq 0,
+    $telemetry.romfs_manifest_crc32 -eq $romfsManifestCrc32,
     $telemetry.max_active_enemy_shots -le 60,
     $telemetry.max_hardware_oam -le 128,
     $telemetry.state_transitions -eq 5
@@ -321,6 +365,15 @@ foreach ($info in @($releaseInfo, $testInfo)) {
     }
 }
 $verification.Add("soundbank_bytes=$soundbankBytes")
+$verification.Add("romfs_files=$($romfsAudit.entry_count)")
+$verification.Add("romfs_probes=$($romfsAudit.probe_count)")
+$verification.Add("romfs_payload_bytes=$($romfsAudit.payload_bytes)")
+$verification.Add("romfs_image_bytes=$($romfsAudit.image_bytes)")
+$verification.Add("romfs_overhead_bytes=$($romfsAudit.overhead_bytes)")
+$verification.Add("romfs_manifest_crc32=$($romfsAudit.manifest_crc32)")
+$verification.Add("romfs_metadata_crc32=$($romfsAudit.metadata_crc32)")
+$verification.Add("romfs_payload_crc32=$($romfsAudit.payload_crc32)")
+$verification.Add("romfs_image_sha256=$romfsImageSha256")
 $verification.Add("autotest_host_elapsed_ms=$testElapsed")
 $verification.Add("autotest_runtime_error_count=$($runtimeErrors.Count)")
 foreach ($entry in $telemetry.GetEnumerator()) {

@@ -69,3 +69,10 @@ opentyrian_level1_enemies:
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"
+
+	.balign 4
+	.global tyrian_romfs
+tyrian_romfs:
+	.incbin "res/tyrian_romfs.bin"
+	.global tyrian_romfs_end
+tyrian_romfs_end:

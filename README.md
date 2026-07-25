@@ -12,6 +12,11 @@ HDT enemy dependency set, then runs the translated event state,
 a measured shadow runtime.  Movement, collision and rendering still use v11,
 so this milestone does not yet claim gameplay parity.
 
+ROMFS v1 now also embeds 68 stock Tyrian runtime files behind a seekable,
+stdio-like read-only API.  The 9.85 MB image remains memory-mapped in cartridge
+ROM instead of consuming WRAM, giving later line-by-line ports a common loader
+for music, sound, shapes, text and level data.
+
 The current scope is deliberately narrow:
 
 - Tyrian opening screen and complete opening music
@@ -78,7 +83,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_stage2_v13.gba
+build/tyrian_gba_level1_source_parity_romfs_v14.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -86,11 +91,12 @@ under mGBA, reads its SRAM telemetry, and writes `build/verification.txt`.
 
 The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
 are under `res`, previews and ROMs under `build`, and the reproducible source
-asset conversion is `tools/build_assets.py`.
+asset conversions are `tools/build_assets.py` and `tools/build_romfs.py`.
 
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [Cartridge ROMFS format and porting API](MD/Tyrian-GBA-ROMFS.md)
 - [First-level technical demo](MD/Tyrian-GBA-First-Level-Tech-Demo.md)
 - [GBA toolchain and runtime setup](MD/Tyrian-GBA-Toolchain-Setup.md)
 - [Game Boy/GBC and GBA audio research](MD/Tyrian-Audio-Lab-GameBoy-GBA.md)
