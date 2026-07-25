@@ -1597,18 +1597,17 @@ def add_background_motion_events(
     return bytes(output), len(motion_records), reward_report
 
 
-def build_opentyrian_level1_source_data(
+def audit_opentyrian_level1_source_data(
     nes: ModuleType,
     events: list[tuple[int, int, int, int, int, int, int, int]],
     hdt_path: Path,
 ) -> tuple[bytes, bytes, dict[str, int | str], list[str]]:
-    """Pack the unmodified first-level records needed by the direct C port.
+    """Audit the unmodified first-level records used by the direct C port.
 
-    This is deliberately separate from ``level_events.bin``.  That older
-    bytecode is the v11 visual proof's simplified runtime format.  The
-    source-parity port consumes the original JE_EventRecType field values and
-    exact 77-byte JE_EnemyDat records instead of reverse engineering the
-    simplified stream.
+    The returned byte strings exist only long enough to produce deterministic
+    hashes and human-readable dependency reports.  v15 no longer writes or
+    embeds them: the source-parity runtime reads the same records directly
+    from ROMFS tyrian1.lvl and tyrian.hdt.
     """
     event_record_bytes = 11
     packed_events = bytearray(b"OTL1")
@@ -1754,7 +1753,6 @@ def main() -> None:
         )
 
     title = build_title(nes, image_root)
-    (output / "title_bitmap.bin").write_bytes(bitmap_555(title))
     title.save(preview / "title_gba.png")
 
     lookups, maps, source_events = nes.parse_first_level(data_root / "tyrian1.lvl")
@@ -1763,13 +1761,14 @@ def main() -> None:
         source_level_enemies,
         source_parity_report,
         source_parity_audit,
-    ) = build_opentyrian_level1_source_data(
+    ) = audit_opentyrian_level1_source_data(
         nes,
         source_events,
         data_root / "tyrian.hdt",
     )
-    (output / "opentyrian_level1_events.bin").write_bytes(source_level_events)
-    (output / "opentyrian_level1_enemies.bin").write_bytes(source_level_enemies)
+    # Audit-only compatibility values.  Runtime source data is read directly
+    # from the stock LVL/HDT files in cartridge ROMFS.
+    del source_level_events, source_level_enemies
     (output / "opentyrian_level1_source_audit.txt").write_text(
         "\n".join(source_parity_audit) + "\n",
         encoding="utf-8",
@@ -1971,27 +1970,6 @@ def main() -> None:
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
-    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_COUNT"] = int(
-        source_parity_report["event_count"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_RECORD_BYTES"] = int(
-        source_parity_report["event_record_bytes"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_BYTES"] = int(
-        source_parity_report["event_bytes"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_EVENTS_BEFORE_LEGACY_CUTOFF"] = int(
-        source_parity_report["event_before_legacy_cutoff"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_COUNT"] = int(
-        source_parity_report["enemy_count"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_RECORD_BYTES"] = int(
-        source_parity_report["enemy_record_bytes"]
-    )
-    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_BYTES"] = int(
-        source_parity_report["enemy_bytes"]
-    )
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(

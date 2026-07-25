@@ -19,11 +19,12 @@ OpenTyrian commit
 OpenTyrian C 原始碼逐段直譯。PC 版本不需要另外編譯；原始碼及資料檔
 作為唯讀依據，C# 版只協助理解，不作為第二套混合規則。
 
-Stage 2 已完成可編譯的直譯資料層、100-entry enemy pool、
-`JE_makeEnemy()`、`JE_createNewEventEnemy()` 及第一關 enemy-control
-事件。畫面上仍由 v11 legacy game loop 執行，所以此版本不能宣稱第一關
-已完成 source parity；shadow runtime 的用途是讓每個後續函式都有可量測、
-可逐步取代的基礎。
+Stage 3 已完成 ROMFS 原始格式資料層、100-entry enemy pool、
+`JE_makeEnemy()`、`JE_createNewEventEnemy()`、第一關 enemy-control 事件，
+以及 `JE_drawEnemy()` 的 movement／animation／off-screen release／fire
+cadence／launch 生命週期。畫面、碰撞與死亡仍由 v11 legacy game loop
+執行，所以此版本不能宣稱第一關已完成 source parity；shadow runtime
+的用途是讓每個後續函式都有可量測、可逐步取代的基礎。
 
 ## 已鎖定的顯示與操作規格
 
@@ -48,32 +49,40 @@ OpenTyrian 的邏輯 framebuffer 是 320×200；以 4:3 像素比例顯示時，
 不移植 ESC 設定介面、遊戲內設定選單、商店、裝備選擇、關卡選擇、
 存讀檔及第一關以外的 episode 流程。
 
-## 原始資料匯出
+## 原始資料讀取
 
-`tools/build_assets.py` 現在同時產生兩套事件資料：
+v15 不再產生或嵌入 `opentyrian_level1_events.bin` 與
+`opentyrian_level1_enemies.bin`。`src/opentyrian_data.c` 直接對 ROMFS
+內的 stock 檔案建立唯讀 view：
 
-1. `level_events.bin`：既有 v11 POC 的簡化 bytecode，只供回歸基準使用。
-2. `opentyrian_level1_events.bin`：完整原始 `JE_EventRecType`，供直譯
-   game loop 使用。
+- `tyrian1.lvl`：第一關 1,009 筆 `JE_EventRecType`、level enemy 清單、
+  三層 map lookup 與 map bytes。
+- `tyrian.hdt`：完整 781 筆 weapon 與 851 筆 enemy definition。
 
-原始事件檔具有 8-byte header，後接 1,009 筆 11-byte little-endian
-record；欄位順序與 `src/varz.h` 一致：
+第一關事件仍是 11-byte little-endian record；欄位順序與
+`src/varz.h` 一致：
 
 ```text
 eventtime, eventtype, eventdat, eventdat2,
 eventdat3, eventdat5, eventdat6, eventdat4
 ```
 
-Stage 1 匯出結果：
+已驗證的 ROMFS 定位：
 
-| 資料 | 數量 | Bytes | SHA-256 |
-|---|---:|---:|---|
-| 原始第一關 events | 1,009 | 11,107 | `a1e458e2aedfe26c2a3f27349575980bb41d2de16abdde6700bcaf676faea833` |
-| 第一關 HDT enemy dependency closure | 110 | 8,698 | `5c5959fdc2e46a376dd0dda03b5f4e680badb3cfd66ae60760953cf93811f971` |
+| 資料 | Runtime 定位 |
+|---|---:|
+| `tyrian1.lvl` level count | 37 |
+| 第一關 `lvlFileNum`／offset index | 9／16 |
+| 第一關 section | 221,628..255,121 |
+| Level enemy IDs／events | 7／1,009 |
+| `tyrian.hdt` item data start | 16,465 |
+| HDT weapon table start | 16,479 |
+| HDT enemy table start | 88,130 |
+| HDT enemy table | 851 × 77 bytes，結尾恰為檔案 EOF |
 
-Enemy closure 從第一關 spawn 與 type 33 目標開始，繼續追蹤
-`elaunchtype` 與 `eenemydie`，每筆保存未修改的 77-byte
-`JE_EnemyDat`。完整欄位稽核輸出在：
+`tools/build_assets.py` 仍會在 host 端計算第一關 110 筆 transitive enemy
+dependency closure，僅用於稽核 `elaunchtype` 與 `eenemydie`；不再輸出
+runtime blob。完整欄位稽核在：
 
 ```text
 res/opentyrian_level1_source_audit.txt
@@ -173,17 +182,16 @@ twist 與 temper 運算。PC 程式在 `main()` 以 `time(NULL)` seed，並會�
 固定 seed 5489。演算法內及關卡事件的 RNG 呼叫順序已保留，但在整個
 session 初始化也直譯完成前，不能宣稱與某一次 PC 執行具有相同亂數序列。
 
-### Shadow 限制
+### Stage 2 歷史限制
 
-`JE_drawEnemy()` 的 movement/off-screen release、碰撞、死亡與 death-spawn
-尚未接管。因此 source pool 只會增加、不會釋放，完整 shadow 路徑會填滿
-100 格；後續 373 次 pool-full 是此階段預期且有 assert 的量測結果，不是
-最終遊戲行為。同理，特殊敵人死亡尚未寫入 `globalFlags`，所以目前四筆
-type-61 分支依初始 flag=0 跳過；這些分支要在死亡流程移植後重新驗證。
+Stage 2 尚未執行 movement/off-screen release，因此 source pool 只增不減，
+會填滿 100 格並產生 373 次 pool-full。這是舊版里程碑的鎖定數字；Stage 3
+已由實際 slot release 取代，不應再把飽和結果當成預期行為。
 
-15,928-byte source context 放在 GBA EWRAM BSS，不會把整塊零初始化資料
-複製進 cartridge；ARM7 執行時仍只使用約 19.58 KiB EWRAM，距離 256 KiB
-硬體上限很遠。
+Stage 2 的 source context 為 15,928 bytes。v15 另加入 64,000-byte PIC
+decode buffer 與 40,000-byte SHP scratch；linker 的 EWRAM heap start 為
+`0x0201e4c0`，共使用 124,096 bytes，仍保留 138,048 bytes
+（約 134.81 KiB）。這些都是 `.sbss`，不增加 cartridge 內的零資料。
 
 ## Stage 2 驗證
 
@@ -205,22 +213,86 @@ type-61 分支依初始 flag=0 跳過；這些分支要在死亡流程移植後�
 legacy 的 414 spawn、380 control、434 collision、金額、掉落、暫停與
 Boss 回標題等數字仍完全相同，證明新增 shadow 工作沒有改壞現有展示。
 
-## ROMFS v1 資料層
+## Stage 3 `JE_drawEnemy()` 生命週期
 
-v14 不改 Stage 2 gameplay 規則，而是加入後續逐行直譯所需的通用資料 I/O。
+v15 依 OpenTyrian `JE_main()` 的呼叫順序逐段直譯：
+
+```text
+ground pool 25..49
+ground2 pool 75..99
+continual enemy check
+sky pool 0..24
+top pool 50..74
+```
+
+目前每個 active slot 已執行：
+
+- animate cycle、`egr == 999` 消失條件
+- player-seeking random acceleration 與 MT19937 呼叫順序
+- `excc`／`eycc` fixed acceleration、reverse 與 wait
+- `fixedmovey`、X/Y movement、bounce、score-item 邊界修正
+- `-80..340`／`-112..190` off-screen release
+- 三個 `tur[]`／`freq[]` fire wait 與 HDT weapon multiposition cadence
+- `elaunchfreq`／`elaunchtype` 子敵人配置、位置、aim 及 link 繼承
+- `levelEnemy[]` continual spawn 路徑
+
+第一關在 event index 3、`curLoc=0` 立即執行 type 13，關閉 continual
+enemy，因此這條路徑在本關量測為 0；本身仍完整保留。進 Boss 前也沒有
+任何 active definition 觸發 enemy launch，所以 launch count 為 0。
+
+Stage 3 尚未建立 shadow runtime 自己的 60-entry projectile objects；
+目前只保留 weapon read、fire wait、multiposition、animation activation、
+sound RNG 與 trigger count。251..255 magnet／特殊 render opcode、實際
+projectile movement/collision、敵人受傷死亡、`enemydie`、reward 與
+`globalFlags` 仍是下一階段。這些缺口都有明確 adapter boundary，沒有用
+POC 規則填入 source-parity context。
+
+### Stage 3 固定 seed 驗證
+
+| 項目 | v15 結果 |
+|---|---:|
+| Source event index | 878 |
+| Applied／deferred／skipped | 869／5／4 |
+| Event spawn attempts／success／pool full／missing | 473／473／0／0 |
+| Peak source enemies | 39／100 |
+| Motion updates／off-screen releases | 63,381／453 |
+| HDT weapon shot triggers | 200 |
+| Enemy-control field writes | 2,535 |
+| MT19937 calls | 2,266 |
+| Missed VBlank／runtime errors | 0／0 |
+
+`473 success - 453 release = 20`，等於進 Boss 前 shadow pool 的剩餘 active
+數；Stage 2 的假性 100-slot 飽和已消失。
+
+## ROMFS v1 與原始格式 loader
+
+v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它。
 68 個 stock runtime 檔案以原始 bytes 封裝到 9,853,080-byte ROMFS image，
-並由 `src/opentyrian_rom_io.c` 提供 `fopen`／`fread`／`fseek` 型態的唯讀
-介面。資料直接留在 cartridge ROM，不占用 256 KiB EWRAM。
+資料直接留在 cartridge ROM。Loader 只保存 const pointer、size 與 offset，
+不把完整檔案複製到 256 KiB EWRAM。
 
-這取代「每移植一種 parser 就另外產生一套 C array」的做法；episode、
-SHP、PIC、MUS、SND、HDT 及 LVL loader 可以保留 PC 版的 read order 與
-offset 計算，只在既有 file helper boundary 改接 ROM backend。格式、路徑
-規則、API、容量與擴充方式詳見
+| Loader | v15 runtime 行為 |
+|---|---|
+| LVL | 直接索引第一關 section、events、enemy IDs、map lookup／bytes |
+| HDT | 直接解碼 80-byte weapon 與 77-byte enemy records |
+| PIC | 驗證 13-entry offset table、RLE 320×200 與尾端 `0x0c` |
+| SHP | 驗證 12 sections、前七組 Sprite records、後五組 compact views，並依 shape-table ID 開 `newsh*.shp` |
+| MUS | 驗證 41 首 LDS、46-byte patch、9-channel positions 與 pattern words |
+
+開場畫面已實際由 ROMFS `tyrian.pic` picture 4、`palette.dat` palette 8、
+`tyrian.shp` PLANET_SHAPES sprite 146 及 FONT_SHAPES 字元在 GBA 開機時
+解碼。`title_bitmap.bin`、`opentyrian_level1_events.bin` 與
+`opentyrian_level1_enemies.bin` 均不再產生或連結。
+
+MUS 的 song selection 與 LDS 結構來源已改為 raw `music.mus`（title
+index 29、level index 17）；實際 GBA waveform synthesis 仍暫由 Maxmod
+IT cache 擔任，待 LDS/OPL mixer 直譯後再移除該 presentation adapter。
+格式、路徑、API、容量與擴充方式詳見
 [Tyrian-GBA-ROMFS.md](Tyrian-GBA-ROMFS.md)。
 
-2026-07-26 mGBA auto-test 驗證 82 項 ROMFS mount、lookup、read、seek、
+2026-07-26 mGBA auto-test 驗證 93 項 ROMFS mount、lookup、read、seek、
 typed little-endian read、EOF、path normalization、read-only mode 及
-8-handle pool 檢查全部通過；Stage 2 原有 telemetry 也維持不變。
+8-handle pool 檢查全部通過；probe 已包含 LVL、HDT、MUS、SHP、PIC。
 
 ## 分檔
 
@@ -239,6 +311,7 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | `src/gba_hud.inc` | GBA 保留的最小 HUD |
 | `src/gba_scene.inc` | scene-to-OAM renderer |
 | `src/autotest.inc` | mGBA deterministic regression harness |
+| `src/opentyrian_data.c` | ROMFS MUS/SHP/PIC/HDT/LVL 原始格式 reader |
 | `src/opentyrian_level_port.c` | 新的原始碼直譯 runtime |
 
 `.inc` 檔是維持 v11 完全相同行為的過渡分檔，仍由同一 translation unit
@@ -270,13 +343,13 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 
 ## 下一個直譯階段
 
-1. 移植 `JE_drawEnemy()` 的 movement、acceleration、animation、turret、
-   launch 與 off-screen slot release。
+1. 建立 source-parity 60-entry projectile pool，把 Stage 3 的 200 個
+   trigger 轉成完整 weapon movement／animation／collision。
 2. 將 source pool 的 presentation 接到 GBA renderer，但不改內部
    320×200 gameplay 座標與 update order。
 3. 移植玩家射擊、碰撞、死亡、獎賞及 Boss 結束流程，讓
    `globalFlags`／`enemydie` 進入真實生命週期。
-4. 重新驗證 type-61 分支與 pool reuse，取消 Stage 2 的飽和預期。
+4. 重新驗證 type-61 分支、death spawn 與 reward lifecycle。
 5. source-parity loop 成為 authoritative 後移除 legacy event/gameplay。
 
 ## 建置
@@ -285,10 +358,10 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 .\build.ps1
 ```
 
-目前 ROMFS v14 ROM：
+目前 ROMFS v15 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v14.gba
+build/tyrian_gba_level1_source_parity_romfs_v15.gba
 ```
 
 ROM 與中間產物不納入 Git。

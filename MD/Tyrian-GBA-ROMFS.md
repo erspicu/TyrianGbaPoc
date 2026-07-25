@@ -15,10 +15,10 @@ cartridge ROM 的 memory-mapped 位址。
 | 原始 payload | 9,849,648 bytes |
 | ROMFS image | 9,853,080 bytes |
 | 索引、路徑與 alignment overhead | 3,432 bytes |
-| 完整 release ROM | 10,540,304 bytes |
-| 32 MiB ROM 使用率 | 31.4126% |
-| 尚餘標準 ROM 空間 | 23,014,128 bytes（約 21.95 MiB） |
-| 開機 ROMFS 自我檢查 | 82／82 PASS |
+| 完整 release ROM | 10,453,364 bytes |
+| 32 MiB ROM 使用率 | 31.1535% |
+| 尚餘標準 ROM 空間 | 23,101,068 bytes（約 22.03 MiB） |
+| 開機 ROMFS 自我檢查 | 93／93 PASS |
 | Missed VBlank／runtime errors | 0／0 |
 
 封裝內容包含 stock 遊戲所需的 MUS、SND、SHP、PIC、HDT、CDT、LVL、
@@ -51,6 +51,11 @@ org/AprCSTyrian/Build/data
             ▼                           ▼
        src/romfs.c          src/opentyrian_rom_io.c
     mount/stat/direct view    fopen/fread/fseek adapter
+            │                           │
+            └─────────────┬─────────────┘
+                          ▼
+               src/opentyrian_data.c
+               MUS/SHP/PIC/HDT/LVL
 ```
 
 ROMFS 不會在開機時複製 9.85 MB 資料。GBA 的 cartridge address space
@@ -178,6 +183,77 @@ OpenTyrian 原有的 file helper boundary：
 這樣後續逐行翻寫時，資料 parser 不需要先全部改成生成式 C array，也不會
 把 GBA storage 細節滲入 game loop。
 
+## v15 原始格式 reader
+
+`src/opentyrian_data.c/.h` 是 ROMFS 與 gameplay 間的格式層。所有 view 都
+直接指向 cartridge ROM；只有 PIC 的 320×200 解碼輸出與 SHP sprite
+scratch 需要 EWRAM。
+
+### LVL
+
+`tyrian1.lvl` 開頭為 level count 與 signed 32-bit offset table。原作第一關
+使用 `lvlFileNum=9`，所以 map section 是 offset index 16；下一個 map
+section 是 index 18，不是相鄰的 index 17：
+
+```text
+section       221628 .. 255121
+map/shape     Z / Z
+levelEnemy    7 x u16
+events        1009 x 11 bytes
+mapSh         3 x 128 x u16
+maps          14x300, 14x600, 15x600 bytes
+```
+
+Event reader 直接解碼原始欄位，不再讀取 8-byte `OTL1` header 或生成式
+event blob。
+
+### HDT
+
+Reader 依 `JE_loadItemDat()` 的固定 record layout 從 offset 16,465 開始，
+跳過七個 item count，weapon table 從 16,479 開始；enemy table 位於
+88,130，共 851×77 bytes，結尾必須恰好等於 `tyrian.hdt` EOF。
+
+目前提供完整第一關會用到的 80-byte `JE_WeaponType` 與 77-byte
+`JE_EnemyDat` decoder；不再對 110 筆 dependency closure 做 runtime
+binary search。
+
+### PIC 與 palette
+
+`tyrian.pic` 有 13 個 signed 32-bit offsets。每張圖是 Tyrian PCX-style
+RLE，解碼後必須恰為 320×200 indexed pixels；stock member 另有一個
+OpenTyrian 原 loader 會忽略的尾端 `0x0c`。`palette.dat` 驗證為
+23×256×3 VGA 6-bit RGB。
+
+開場已由 picture 4／palette 8 即時轉成 GBA Mode 3，原本的 76,800-byte
+`title_bitmap.bin` 已移除。
+
+### SHP
+
+`tyrian.shp` 驗證 12-entry section table。前七個 section 依
+`load_sprites()` 解析 populated、width、height、encoded size；後五個保持
+compact Sprite2 zero-copy view。Shape-table ID 依 OpenTyrian
+`shapeFile[34]` 對映成 `newsh*.shp`。
+
+開場 logo 實際使用 PLANET_SHAPES sprite 146，兩行文字使用
+FONT_SHAPES；兩者都在 GBA 開機時由 raw SHP command stream 解碼。
+
+### MUS
+
+`music.mus` 驗證 41-entry song offset table及每首 LDS：
+
+```text
+mode/speed/tempo/pattern length
+9 channel delays + rhythm register
+numpatch x 46-byte patch
+numposi x 9 x (u16 pattern offset + u8 transpose)
+u16 unused digital-sound count
+u16 pattern words
+```
+
+Title 選 song index 29，第一關選 index 17。Song loader 已完全從 ROMFS
+取得結構；Maxmod IT 仍只是 GBA waveform synthesis cache，並非 song
+metadata 的權威來源。下一步是移植 LDS/OPL mixer 後移除這兩個 cache。
+
 ## 封裝與擴充
 
 選檔規則在 `vfs/manifest.json`：
@@ -189,7 +265,13 @@ OpenTyrian 原有的 file helper boundary：
   "alignment": 4,
   "include": ["music.mus", "tyrian?.lvl", "newsh*.shp"],
   "exclude": [],
-  "probes": ["tyrian1.lvl", "tyrian.hdt"]
+  "probes": [
+    "tyrian1.lvl",
+    "tyrian.hdt",
+    "music.mus",
+    "tyrian.shp",
+    "tyrian.pic"
+  ]
 }
 ```
 
@@ -225,12 +307,13 @@ bounds、alignment、path normalization、hash 及 index ordering。每個 entry
 也保存自己的 CRC32。
 
 為避免開機掃過將近 10 MB 而延長時間，GBA 不會每次計算整包 payload
-CRC；目前會執行 82 項自我測試，並抽查四個主要檔案：
+CRC；目前會執行 93 項自我測試，並抽查五個主要檔案：
 
 - `tyrian1.lvl`
 - `tyrian.hdt`
 - `music.mus`
 - `tyrian.shp`
+- `tyrian.pic`
 
 必要時 loader 可對即將使用的單檔呼叫 `ot_romfs_verify_file()`。Host 端
 `Build.ps1` 則會比對完整 ROMFS image SHA-256、audit metadata 與 mGBA
@@ -244,19 +327,20 @@ SRAM telemetry。
   且避免解壓 RAM／CPU 成本。接近 32 MiB 時再新增 per-file compressed
   flag，適合圖形或文字；不要破壞 v1 stored entry。
 - v1 不提供 directory enumeration，因為 OpenTyrian 以已知檔名讀取。
-- ROMFS 只解決 storage I/O。`music.mus`、SHP、PIC、LVL 等仍要由對應的
-  原始 parser 解碼，圖形仍要轉成 GBA tile／palette，音樂仍要送入 GBA
-  音訊 backend。
+- ROMFS 與 raw parser 不等於 GBA presentation。開場 PIC/SHP 已做 runtime
+  轉接；第一關三層背景與 OBJ 目前仍使用可重建的 GBA tile cache，音樂
+  waveform 仍送入 Maxmod cache。這些 cache 可以逐項替換，不應把 GBA
+  VRAM／mixer 格式滲回原始 loader。
 - 若未來 ROM 超過標準 32 MiB，不能只改 linker；需先減少資料、加入壓縮
   或設計非標準 bank switching，並重新確認實機及 flash cartridge 支援。
 
-## v14 驗證識別
+## v15 驗證識別
 
 ```text
 Release ROM:
-  build/tyrian_gba_level1_source_parity_romfs_v14.gba
-  10,540,304 bytes
-  SHA-256 628b44c1a7bc7f6832f96c33507abb7151d969c32661dcfba50523f74756e615
+  build/tyrian_gba_level1_source_parity_romfs_v15.gba
+  10,453,364 bytes
+  SHA-256 7c76472255d49cee9da5b5926d3c8d1997806a43cbe37493b4851a8e1fd4b195
 
 ROMFS:
   9,853,080 bytes
@@ -264,5 +348,6 @@ ROMFS:
   manifest CRC32 764b1e68
 ```
 
-Build 仍保持 Stage 2 gameplay telemetry：878 個 source events、
-869 applied、5 deferred、4 skipped，且 legacy 第一關完整 auto-test PASS。
+Build 保持 legacy 第一關完整 auto-test PASS，並鎖定 Stage 3：
+878 個 source events、869 applied、5 deferred、4 skipped、473/473 event
+spawns、453 slot releases、63,381 enemy motion updates。

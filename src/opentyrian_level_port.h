@@ -11,7 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "res/asset_meta.h"
+#include "opentyrian_data.h"
 
 enum {
     OT_LOGICAL_SCREEN_WIDTH = 320,
@@ -26,48 +26,6 @@ enum {
     OT_NEW_PL_COUNT = 10,
     OT_MT_STATE_COUNT = 624,
 };
-
-typedef struct {
-    uint16_t eventtime;
-    uint8_t eventtype;
-    int16_t eventdat;
-    int16_t eventdat2;
-    int8_t eventdat3;
-    int8_t eventdat5;
-    int8_t eventdat6;
-    uint8_t eventdat4;
-} OtEventRecord;
-
-typedef struct {
-    uint8_t ani;
-    uint8_t tur[3];
-    uint8_t freq[3];
-    int8_t xmove;
-    int8_t ymove;
-    int8_t xaccel;
-    int8_t yaccel;
-    int8_t xcaccel;
-    int8_t ycaccel;
-    int16_t startx;
-    int16_t starty;
-    int8_t startxc;
-    int8_t startyc;
-    uint8_t armor;
-    uint8_t esize;
-    uint16_t egraphic[20];
-    uint8_t explosiontype;
-    uint8_t animate;
-    uint8_t shapebank;
-    int8_t xrev;
-    int8_t yrev;
-    uint16_t dgr;
-    int8_t dlevel;
-    int8_t dani;
-    uint8_t elaunchfreq;
-    uint16_t elaunchtype;
-    int16_t value;
-    uint16_t eenemydie;
-} OtEnemyDefinition;
 
 /*
  * Direct fixed-width counterpart of OpenTyrian's JE_SingleEnemyType.
@@ -185,6 +143,8 @@ typedef struct {
     uint16_t map_x3;
     uint16_t total_enemy;
     uint8_t last_created_slot;
+    int16_t player_x;
+    int16_t player_y;
 
     bool star_active;
     bool enemies_active;
@@ -220,10 +180,26 @@ typedef struct {
     uint32_t max_active_enemy_count;
     uint32_t enemy_control_write_count;
     uint32_t rng_call_count;
+    uint32_t enemy_motion_update_count;
+    uint32_t enemy_release_count;
+    uint32_t enemy_shot_trigger_count;
+    uint32_t enemy_launch_attempt_count;
+    uint32_t enemy_launch_success_count;
+    uint32_t enemy_launch_pool_full_count;
+    uint32_t enemy_launch_missing_definition_count;
+    uint32_t random_spawn_attempt_count;
+    uint32_t random_spawn_success_count;
+    uint32_t random_spawn_pool_full_count;
+    uint32_t random_spawn_missing_definition_count;
 } OtLevelPortState;
 
 void ot_level_port_init(OtLevelPortState *state);
-void ot_level_port_advance(OtLevelPortState *state, uint16_t cur_loc);
+void ot_level_port_advance(
+    OtLevelPortState *state,
+    uint16_t cur_loc,
+    int16_t player_x,
+    int16_t player_y
+);
 bool ot_level1_event_read(uint16_t index, OtEventRecord *event);
 bool ot_level1_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy);
 

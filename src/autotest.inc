@@ -2,15 +2,19 @@
 
 #ifdef AUTOTEST
 enum {
-    SOURCE_STAGE2_EXPECTED_EVENTS = 878,
-    SOURCE_STAGE2_EXPECTED_APPLIED = 869,
-    SOURCE_STAGE2_EXPECTED_DEFERRED = 5,
-    SOURCE_STAGE2_EXPECTED_SKIPPED = 4,
-    SOURCE_STAGE2_EXPECTED_SPAWN_ATTEMPTS = 473,
-    SOURCE_STAGE2_EXPECTED_SPAWN_SUCCESSES = 100,
-    SOURCE_STAGE2_EXPECTED_POOL_FULL = 373,
-    SOURCE_STAGE2_EXPECTED_CONTROL_WRITES = 3586,
-    SOURCE_STAGE2_EXPECTED_RNG_CALLS = 30,
+    SOURCE_STAGE3_EXPECTED_EVENTS = 878,
+    SOURCE_STAGE3_EXPECTED_APPLIED = 869,
+    SOURCE_STAGE3_EXPECTED_DEFERRED = 5,
+    SOURCE_STAGE3_EXPECTED_SKIPPED = 4,
+    SOURCE_STAGE3_EXPECTED_SPAWN_ATTEMPTS = 473,
+    SOURCE_STAGE3_EXPECTED_SPAWN_SUCCESSES = 473,
+    SOURCE_STAGE3_EXPECTED_POOL_FULL = 0,
+    SOURCE_STAGE3_EXPECTED_MAX_ENEMIES = 39,
+    SOURCE_STAGE3_EXPECTED_CONTROL_WRITES = 2535,
+    SOURCE_STAGE3_EXPECTED_RNG_CALLS = 2266,
+    SOURCE_STAGE3_EXPECTED_MOTION_UPDATES = 63381,
+    SOURCE_STAGE3_EXPECTED_RELEASES = 453,
+    SOURCE_STAGE3_EXPECTED_SHOT_TRIGGERS = 200,
 };
 
 static void sram_write_u32(u32 offset, u32 value)
@@ -56,31 +60,42 @@ static void autotest_finish(void)
         telemetry_romfs_failures == 0 &&
         telemetry_romfs_manifest_crc32 ==
             TYRIAN_ROMFS_MANIFEST_CRC32 &&
-        telemetry_source_events == SOURCE_STAGE2_EXPECTED_EVENTS &&
+        telemetry_source_events == SOURCE_STAGE3_EXPECTED_EVENTS &&
         telemetry_source_events_applied ==
-            SOURCE_STAGE2_EXPECTED_APPLIED &&
+            SOURCE_STAGE3_EXPECTED_APPLIED &&
         telemetry_source_events_deferred ==
-            SOURCE_STAGE2_EXPECTED_DEFERRED &&
+            SOURCE_STAGE3_EXPECTED_DEFERRED &&
         telemetry_source_events_skipped ==
-            SOURCE_STAGE2_EXPECTED_SKIPPED &&
+            SOURCE_STAGE3_EXPECTED_SKIPPED &&
         telemetry_source_events_applied +
             telemetry_source_events_deferred +
             telemetry_source_events_skipped == telemetry_source_events &&
         telemetry_source_spawn_attempts ==
-            SOURCE_STAGE2_EXPECTED_SPAWN_ATTEMPTS &&
+            SOURCE_STAGE3_EXPECTED_SPAWN_ATTEMPTS &&
         telemetry_source_spawn_successes +
             telemetry_source_spawn_pool_full +
             telemetry_source_spawn_missing ==
             telemetry_source_spawn_attempts &&
         telemetry_source_spawn_successes ==
-            SOURCE_STAGE2_EXPECTED_SPAWN_SUCCESSES &&
+            SOURCE_STAGE3_EXPECTED_SPAWN_SUCCESSES &&
         telemetry_source_spawn_pool_full ==
-            SOURCE_STAGE2_EXPECTED_POOL_FULL &&
+            SOURCE_STAGE3_EXPECTED_POOL_FULL &&
         telemetry_source_spawn_missing == 0 &&
-        telemetry_source_max_enemies == OT_ENEMY_COUNT &&
+        telemetry_source_max_enemies ==
+            SOURCE_STAGE3_EXPECTED_MAX_ENEMIES &&
         telemetry_source_control_writes ==
-            SOURCE_STAGE2_EXPECTED_CONTROL_WRITES &&
-        telemetry_source_rng_calls == SOURCE_STAGE2_EXPECTED_RNG_CALLS &&
+            SOURCE_STAGE3_EXPECTED_CONTROL_WRITES &&
+        telemetry_source_rng_calls == SOURCE_STAGE3_EXPECTED_RNG_CALLS &&
+        telemetry_source_motion_updates ==
+            SOURCE_STAGE3_EXPECTED_MOTION_UPDATES &&
+        telemetry_source_releases ==
+            SOURCE_STAGE3_EXPECTED_RELEASES &&
+        telemetry_source_shot_triggers ==
+            SOURCE_STAGE3_EXPECTED_SHOT_TRIGGERS &&
+        telemetry_source_launch_attempts == 0 &&
+        telemetry_source_launch_successes == 0 &&
+        telemetry_source_random_attempts == 0 &&
+        telemetry_source_random_successes == 0 &&
         bg1_scroll_speed == 2 &&
         bg2_scroll_speed == 4 &&
         bg3_scroll_speed == 6
@@ -91,7 +106,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 9;
+    sram[4] = 10;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -150,6 +165,13 @@ static void autotest_finish(void)
     sram_write_u32(188, telemetry_romfs_checks);
     sram_write_u32(192, telemetry_romfs_failures);
     sram_write_u32(196, telemetry_romfs_manifest_crc32);
+    sram_write_u32(200, telemetry_source_motion_updates);
+    sram_write_u32(204, telemetry_source_releases);
+    sram_write_u32(208, telemetry_source_shot_triggers);
+    sram_write_u32(212, telemetry_source_launch_attempts);
+    sram_write_u32(216, telemetry_source_launch_successes);
+    sram_write_u32(220, telemetry_source_random_attempts);
+    sram_write_u32(224, telemetry_source_random_successes);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }

@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_romfs_v14"
-$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v14"
+$releaseName = "tyrian_gba_level1_source_parity_romfs_v15"
+$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v15"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -335,7 +335,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 200) {
+if ($saveBytes.Length -lt 228) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -401,10 +401,17 @@ $telemetry = [ordered]@{
     romfs_self_test_checks = Read-TelemetryU32 188
     romfs_self_test_failures = Read-TelemetryU32 192
     romfs_manifest_crc32 = Read-TelemetryU32 196
+    source_parity_motion_updates = Read-TelemetryU32 200
+    source_parity_releases = Read-TelemetryU32 204
+    source_parity_shot_triggers = Read-TelemetryU32 208
+    source_parity_launch_attempts = Read-TelemetryU32 212
+    source_parity_launch_successes = Read-TelemetryU32 216
+    source_parity_random_attempts = Read-TelemetryU32 220
+    source_parity_random_successes = Read-TelemetryU32 224
 }
 
 $telemetryChecks = @(
-    $telemetry.version -eq 9,
+    $telemetry.version -eq 10,
     $telemetry.pass -eq 1,
     $telemetry.final_state -eq 0,
     $telemetry.title_music_active -eq 1,
@@ -442,12 +449,19 @@ $telemetryChecks = @(
         $telemetry.source_parity_spawn_pool_full +
         $telemetry.source_parity_spawn_missing
     ) -eq $telemetry.source_parity_spawn_attempts,
-    $telemetry.source_parity_spawn_successes -eq 100,
-    $telemetry.source_parity_spawn_pool_full -eq 373,
+    $telemetry.source_parity_spawn_successes -eq 473,
+    $telemetry.source_parity_spawn_pool_full -eq 0,
     $telemetry.source_parity_spawn_missing -eq 0,
-    $telemetry.source_parity_max_enemies -eq 100,
-    $telemetry.source_parity_control_writes -eq 3586,
-    $telemetry.source_parity_rng_calls -eq 30,
+    $telemetry.source_parity_max_enemies -eq 39,
+    $telemetry.source_parity_control_writes -eq 2535,
+    $telemetry.source_parity_rng_calls -eq 2266,
+    $telemetry.source_parity_motion_updates -eq 63381,
+    $telemetry.source_parity_releases -eq 453,
+    $telemetry.source_parity_shot_triggers -eq 200,
+    $telemetry.source_parity_launch_attempts -eq 0,
+    $telemetry.source_parity_launch_successes -eq 0,
+    $telemetry.source_parity_random_attempts -eq 0,
+    $telemetry.source_parity_random_successes -eq 0,
     $telemetry.romfs_entries -eq $romfsAudit.entry_count,
     $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes,
     $telemetry.romfs_payload_bytes -eq $romfsAudit.payload_bytes,

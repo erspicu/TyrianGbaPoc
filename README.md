@@ -4,18 +4,20 @@ This project is an independent Game Boy Advance proof of concept built from
 the original Tyrian data already present in this workspace.  It is not a
 binary conversion of the NES or SNES ROM.
 
-The `opentyrian-source-parity-port` branch is now replacing the reconstructed
+The `opentyrian-source-parity-port` branch is replacing the reconstructed
 gameplay with a line-oriented translation of the OpenTyrian first-level loop.
-Stage 2 embeds all original first-level event records and the exact transitive
-HDT enemy dependency set, then runs the translated event state,
-`JE_makeEnemy()` and OpenTyrian's 100-entry enemy pool beside the v11 loop as
-a measured shadow runtime.  Movement, collision and rendering still use v11,
-so this milestone does not yet claim gameplay parity.
+Stage 3 reads the original LVL and HDT records directly from cartridge ROMFS,
+then runs the translated event state, `JE_makeEnemy()`, the four 25-entry
+enemy pools, and the movement/release/fire-cadence portion of
+`JE_drawEnemy()` beside the v11 loop as a measured shadow runtime. Collision,
+death and gameplay presentation still use v11, so this milestone does not
+yet claim gameplay parity.
 
-ROMFS v1 now also embeds 68 stock Tyrian runtime files behind a seekable,
-stdio-like read-only API.  The 9.85 MB image remains memory-mapped in cartridge
-ROM instead of consuming WRAM, giving later line-by-line ports a common loader
-for music, sound, shapes, text and level data.
+ROMFS v1 embeds 68 stock Tyrian runtime files behind a seekable, stdio-like
+read-only API. Runtime loaders now parse MUS, SHP, PIC, HDT and LVL directly
+from the memory-mapped image. The opening screen is built at boot from raw
+`tyrian.pic`, `palette.dat` and `tyrian.shp`; the former generated title,
+event and enemy blobs are no longer linked into the ROM.
 
 The current scope is deliberately narrow:
 
@@ -44,7 +46,8 @@ The current scope is deliberately narrow:
 - a 48-entry enemy pool (30 peak on the complete route) with a zero-replacement
   regression invariant
 - a separate 100-entry source-parity shadow pool, split into the original four
-  25-slot groups, with exact spawn/control/skip/RNG telemetry
+  25-slot groups, with exact spawn/control/skip/RNG telemetry; Stage 3 now
+  updates and releases these slots instead of deliberately saturating at 100
 - the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
   155 to player-shot graphic 59, including its repeat rate and vertical speed
 - stable USP Talon neutral/left/right banking poses instead of alternating
@@ -83,7 +86,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v14.gba
+build/tyrian_gba_level1_source_parity_romfs_v15.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

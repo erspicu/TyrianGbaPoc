@@ -1,0 +1,955 @@
+/*
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * Stock Tyrian data readers over the memory-mapped cartridge ROMFS.
+ */
+#include "opentyrian_data.h"
+
+#include <string.h>
+
+#include "opentyrian_rom_io.h"
+
+enum {
+    OT_HDT_ITEM_COUNT_BYTES = 14,
+    OT_HDT_PORT_COUNT = 43,
+    OT_HDT_PORT_RECORD_BYTES = 82,
+    OT_HDT_SPECIAL_COUNT = 47,
+    OT_HDT_SPECIAL_RECORD_BYTES = 37,
+    OT_HDT_POWER_COUNT = 7,
+    OT_HDT_POWER_RECORD_BYTES = 37,
+    OT_HDT_SHIP_COUNT = 14,
+    OT_HDT_SHIP_RECORD_BYTES = 41,
+    OT_HDT_OPTION_COUNT = 31,
+    OT_HDT_OPTION_RECORD_BYTES = 86,
+    OT_HDT_SHIELD_COUNT = 11,
+    OT_HDT_SHIELD_RECORD_BYTES = 37,
+    OT_LEVEL_MAP_SHAPE_LAYER_BYTES = 128 * 2,
+    OT_LEVEL_MAP_SHAPE_BYTES = 3 * OT_LEVEL_MAP_SHAPE_LAYER_BYTES,
+    OT_LEVEL_MAP1_BYTES = 14 * 300,
+    OT_LEVEL_MAP2_BYTES = 14 * 600,
+    OT_LEVEL_MAP3_BYTES = 15 * 600,
+};
+
+typedef struct {
+    OtRomFsStat lvl;
+    OtRomFsStat hdt;
+    OtRomFsStat pic;
+    OtRomFsStat palette;
+    OtRomFsStat shp;
+    OtRomFsStat mus;
+    const uint8_t *level_enemy_ids;
+    const uint8_t *level_events;
+    const uint8_t *level_map_shapes;
+    const uint8_t *level_maps[3];
+    uint32_t level_map_bytes[3];
+    OtLevel1Info level_info;
+    uint32_t hdt_weapon_table_offset;
+    uint32_t hdt_enemy_table_offset;
+} OtDataState;
+
+static OtDataCatalog catalog;
+static OtDataState data_state;
+static bool initialization_attempted;
+
+static const uint8_t pcx_palette[OT_PIC_COUNT] = {
+    0, 7, 5, 8, 10, 5, 18, 19, 19, 20, 21, 22, 5
+};
+
+/* OpenTyrian src/lvlmast.c, shapeFile[34]. */
+static const char shape_file[34] = {
+    '2', '4', '7', '8', 'A', 'B', 'C', 'D', 'E', 'F',
+    'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+    'Q', 'R', 'S', 'T', 'U', '5', '#', 'V', '0', '@',
+    '3', '^', '5', '9'
+};
+
+_Static_assert(sizeof(uint8_t) == 1, "OpenTyrian byte width changed");
+_Static_assert(sizeof(int8_t) == 1, "OpenTyrian shortint width changed");
+_Static_assert(sizeof(uint16_t) == 2, "OpenTyrian word width changed");
+_Static_assert(sizeof(int16_t) == 2, "OpenTyrian integer width changed");
+_Static_assert(
+    sizeof(pcx_palette) / sizeof(pcx_palette[0]) == OT_PIC_COUNT,
+    "PCX palette lookup count changed"
+);
+
+static uint16_t read_u16(const uint8_t *source)
+{
+    return (uint16_t)source[0] | ((uint16_t)source[1] << 8);
+}
+
+static int16_t read_s16(const uint8_t *source)
+{
+    return (int16_t)read_u16(source);
+}
+
+static uint32_t read_u32(const uint8_t *source)
+{
+    return (uint32_t)source[0] |
+           ((uint32_t)source[1] << 8) |
+           ((uint32_t)source[2] << 16) |
+           ((uint32_t)source[3] << 24);
+}
+
+static int32_t read_s32(const uint8_t *source)
+{
+    return (int32_t)read_u32(source);
+}
+
+static bool span_is_valid(
+    uint32_t file_size,
+    uint32_t offset,
+    uint32_t byte_count
+)
+{
+    return offset <= file_size && byte_count <= file_size - offset;
+}
+
+static bool multiply_is_valid(
+    uint32_t count,
+    uint32_t width,
+    uint32_t *bytes
+)
+{
+    if (count != 0 && width > UINT32_MAX / count) return false;
+    *bytes = count * width;
+    return true;
+}
+
+static bool stat_data_file(const char *name, OtRomFsStat *stat)
+{
+    const OtRomFs *filesystem = ot_rom_io_filesystem();
+    char path[OT_ROMFS_MAX_PATH];
+    size_t length;
+
+    if (filesystem == 0) {
+        if (!ot_rom_io_init()) return false;
+        filesystem = ot_rom_io_filesystem();
+    }
+    if (filesystem == 0 || name == 0 || stat == 0) return false;
+    length = strlen(name);
+    if (length + 6 > sizeof(path)) return false;
+    memcpy(path, "data/", 5);
+    memcpy(path + 5, name, length + 1);
+    return ot_romfs_stat(filesystem, path, stat) == OT_ROMFS_OK;
+}
+
+static bool offset_table_is_valid(
+    const OtRomFsStat *file,
+    uint16_t count
+)
+{
+    uint32_t header_bytes = 2u + (uint32_t)count * 4u;
+    uint32_t previous = header_bytes;
+    uint16_t index;
+
+    if (!span_is_valid(file->size, 0, header_bytes)) return false;
+    for (index = 0; index < count; index++) {
+        int32_t signed_offset =
+            read_s32(file->data + 2u + (uint32_t)index * 4u);
+        uint32_t offset;
+
+        if (signed_offset < 0) return false;
+        offset = (uint32_t)signed_offset;
+        if (offset < previous || offset > file->size) return false;
+        previous = offset;
+    }
+    return true;
+}
+
+static uint32_t table_offset(
+    const OtRomFsStat *file,
+    uint16_t index
+)
+{
+    return read_u32(file->data + 2u + (uint32_t)index * 4u);
+}
+
+static bool parse_lvl(void)
+{
+    const uint8_t *source;
+    uint16_t level_count;
+    uint32_t offset;
+    uint32_t section_end;
+    uint32_t position;
+    uint32_t bytes;
+    uint16_t enemy_count;
+    uint16_t event_count;
+
+    if (!stat_data_file("tyrian1.lvl", &data_state.lvl)) return false;
+    if (!span_is_valid(data_state.lvl.size, 0, 2)) return false;
+    source = data_state.lvl.data;
+    level_count = read_u16(source);
+    if (
+        level_count <= OT_LEVEL1_LVL_OFFSET_INDEX + 2 ||
+        !offset_table_is_valid(&data_state.lvl, level_count)
+    ) {
+        return false;
+    }
+
+    offset = table_offset(&data_state.lvl, OT_LEVEL1_LVL_OFFSET_INDEX);
+    section_end =
+        table_offset(&data_state.lvl, OT_LEVEL1_LVL_OFFSET_INDEX + 2);
+    if (
+        section_end <= offset ||
+        !span_is_valid(data_state.lvl.size, offset, section_end - offset) ||
+        !span_is_valid(section_end, offset, 10)
+    ) {
+        return false;
+    }
+
+    data_state.level_info.map_file = (char)source[offset];
+    data_state.level_info.shape_file = (char)source[offset + 1];
+    data_state.level_info.map_x = read_u16(source + offset + 2);
+    data_state.level_info.map_x2 = read_u16(source + offset + 4);
+    data_state.level_info.map_x3 = read_u16(source + offset + 6);
+    enemy_count = read_u16(source + offset + 8);
+    position = offset + 10;
+    if (
+        !multiply_is_valid(enemy_count, 2, &bytes) ||
+        !span_is_valid(section_end, position, bytes + 2)
+    ) {
+        return false;
+    }
+    data_state.level_enemy_ids = source + position;
+    position += bytes;
+
+    event_count = read_u16(source + position);
+    position += 2;
+    if (
+        event_count != OT_LEVEL1_EXPECTED_EVENT_COUNT ||
+        !multiply_is_valid(
+            event_count,
+            OT_LEVEL1_EVENT_RECORD_BYTES,
+            &bytes
+        ) ||
+        !span_is_valid(section_end, position, bytes)
+    ) {
+        return false;
+    }
+    data_state.level_events = source + position;
+    position += bytes;
+
+    if (!span_is_valid(section_end, position, OT_LEVEL_MAP_SHAPE_BYTES)) {
+        return false;
+    }
+    data_state.level_map_shapes = source + position;
+    position += OT_LEVEL_MAP_SHAPE_BYTES;
+
+    data_state.level_map_bytes[0] = OT_LEVEL_MAP1_BYTES;
+    data_state.level_map_bytes[1] = OT_LEVEL_MAP2_BYTES;
+    data_state.level_map_bytes[2] = OT_LEVEL_MAP3_BYTES;
+    for (uint8_t layer = 0; layer < 3; layer++) {
+        if (
+            !span_is_valid(
+                section_end,
+                position,
+                data_state.level_map_bytes[layer]
+            )
+        ) {
+            return false;
+        }
+        data_state.level_maps[layer] = source + position;
+        position += data_state.level_map_bytes[layer];
+    }
+    if (position != section_end) return false;
+
+    data_state.level_info.enemy_count = enemy_count;
+    data_state.level_info.event_count = event_count;
+    data_state.level_info.section_offset = offset;
+    data_state.level_info.section_bytes = section_end - offset;
+    catalog.lvl_count = level_count;
+    catalog.level1_enemy_count = enemy_count;
+    catalog.level1_event_count = event_count;
+    return true;
+}
+
+static bool parse_hdt(void)
+{
+    int32_t item_offset;
+    uint32_t enemy_offset;
+    uint32_t enemy_bytes;
+
+    if (!stat_data_file("tyrian.hdt", &data_state.hdt)) return false;
+    if (!span_is_valid(data_state.hdt.size, 0, 4)) return false;
+    item_offset = read_s32(data_state.hdt.data);
+    if (
+        item_offset < 0 ||
+        !span_is_valid(
+            data_state.hdt.size,
+            (uint32_t)item_offset,
+            OT_HDT_ITEM_COUNT_BYTES
+        )
+    ) {
+        return false;
+    }
+
+    data_state.hdt_weapon_table_offset =
+        (uint32_t)item_offset + OT_HDT_ITEM_COUNT_BYTES;
+    enemy_offset =
+        data_state.hdt_weapon_table_offset +
+        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES +
+        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES +
+        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
+        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
+        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES +
+        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
+        OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES;
+    enemy_bytes = OT_HDT_ENEMY_COUNT * OT_HDT_ENEMY_RECORD_BYTES;
+    if (
+        !span_is_valid(data_state.hdt.size, enemy_offset, enemy_bytes) ||
+        enemy_offset + enemy_bytes != data_state.hdt.size
+    ) {
+        return false;
+    }
+    data_state.hdt_enemy_table_offset = enemy_offset;
+    catalog.hdt_enemy_table_offset = enemy_offset;
+    return true;
+}
+
+static bool pic_stream_is_valid(const OtDataView *view)
+{
+    uint32_t source_offset = 0;
+    uint32_t output_offset = 0;
+
+    while (output_offset < OT_PIC_DECODED_BYTES) {
+        uint8_t code;
+
+        if (source_offset >= view->size) return false;
+        code = view->data[source_offset++];
+        if ((code & 0xc0u) == 0xc0u) {
+            uint8_t count = code & 0x3fu;
+
+            if (
+                count == 0 ||
+                source_offset >= view->size ||
+                count > OT_PIC_DECODED_BYTES - output_offset
+            ) {
+                return false;
+            }
+            source_offset++;
+            output_offset += count;
+        } else {
+            output_offset++;
+        }
+    }
+    /*
+     * Every stock PIC member carries one trailing 0x0c DOS form-feed byte.
+     * JE_loadPic() stops after 320x200 output pixels and deliberately leaves
+     * that container terminator unread.
+     */
+    return source_offset + 1 == view->size &&
+           view->data[source_offset] == 0x0c;
+}
+
+static bool parse_pic(void)
+{
+    uint16_t count;
+    uint16_t index;
+
+    if (
+        !stat_data_file("tyrian.pic", &data_state.pic) ||
+        !stat_data_file("palette.dat", &data_state.palette) ||
+        !span_is_valid(data_state.pic.size, 0, 2)
+    ) {
+        return false;
+    }
+    count = read_u16(data_state.pic.data);
+    if (
+        count != OT_PIC_COUNT ||
+        !offset_table_is_valid(&data_state.pic, count) ||
+        data_state.palette.size !=
+            OT_PALETTE_COUNT * OT_PALETTE_BYTES
+    ) {
+        return false;
+    }
+    catalog.pic_count = count;
+    for (index = 0; index < count; index++) {
+        OtDataView view;
+        uint32_t start = table_offset(&data_state.pic, index);
+        uint32_t end = index + 1 < count ?
+            table_offset(&data_state.pic, index + 1) :
+            data_state.pic.size;
+
+        if (end <= start) return false;
+        view.data = data_state.pic.data + start;
+        view.size = end - start;
+        if (!pic_stream_is_valid(&view)) return false;
+    }
+    return true;
+}
+
+static bool shp_table_is_valid(
+    uint8_t section,
+    uint16_t *sprite_count
+)
+{
+    uint32_t start = table_offset(&data_state.shp, section);
+    uint32_t end = section + 1 < OT_SHP_SECTION_COUNT ?
+        table_offset(&data_state.shp, section + 1) :
+        data_state.shp.size;
+    uint32_t position = start;
+    uint16_t count;
+    uint16_t index;
+
+    if (!span_is_valid(end, position, 2)) return false;
+    count = read_u16(data_state.shp.data + position);
+    position += 2;
+    if (count > OT_SHP_MAX_SPRITES_PER_TABLE) return false;
+    for (index = 0; index < count; index++) {
+        uint8_t populated;
+
+        if (!span_is_valid(end, position, 1)) return false;
+        populated = data_state.shp.data[position++];
+        if (populated != 0) {
+            uint16_t encoded_bytes;
+
+            if (!span_is_valid(end, position, 6)) return false;
+            encoded_bytes = read_u16(data_state.shp.data + position + 4);
+            position += 6;
+            if (!span_is_valid(end, position, encoded_bytes)) return false;
+            position += encoded_bytes;
+        }
+    }
+    if (position != end) return false;
+    if (sprite_count != 0) *sprite_count = count;
+    return true;
+}
+
+static bool parse_shp(void)
+{
+    uint16_t count;
+    uint8_t section;
+
+    if (
+        !stat_data_file("tyrian.shp", &data_state.shp) ||
+        !span_is_valid(data_state.shp.size, 0, 2)
+    ) {
+        return false;
+    }
+    count = read_u16(data_state.shp.data);
+    if (
+        count != OT_SHP_SECTION_COUNT ||
+        !offset_table_is_valid(&data_state.shp, count)
+    ) {
+        return false;
+    }
+    for (section = 0; section < OT_SHP_TABLE_SECTION_COUNT; section++) {
+        if (!shp_table_is_valid(section, 0)) return false;
+    }
+    for (section = OT_SHP_TABLE_SECTION_COUNT; section < count; section++) {
+        uint32_t start = table_offset(&data_state.shp, section);
+        uint32_t end = section + 1 < count ?
+            table_offset(&data_state.shp, section + 1) :
+            data_state.shp.size;
+
+        if (end <= start) return false;
+    }
+    catalog.shp_section_count = count;
+    return true;
+}
+
+static bool parse_mus_song(
+    uint16_t song_index,
+    OtDataView *view,
+    OtMusSongInfo *info
+)
+{
+    uint32_t start;
+    uint32_t end;
+    uint32_t position;
+    uint32_t patch_bytes;
+    uint32_t position_bytes;
+    uint16_t patch_count;
+    uint16_t position_count;
+    OtMusSongInfo parsed = {0};
+
+    if (song_index >= catalog.mus_song_count) return false;
+    start = table_offset(&data_state.mus, song_index);
+    end = song_index + 1 < catalog.mus_song_count ?
+        table_offset(&data_state.mus, song_index + 1) :
+        data_state.mus.size;
+    if (end <= start || !span_is_valid(end, start, 17)) return false;
+
+    parsed.mode = data_state.mus.data[start];
+    parsed.speed = read_u16(data_state.mus.data + start + 1);
+    parsed.tempo = data_state.mus.data[start + 3];
+    parsed.pattern_length = data_state.mus.data[start + 4];
+    memcpy(
+        parsed.channel_delay,
+        data_state.mus.data + start + 5,
+        OT_MUS_LDS_CHANNEL_COUNT
+    );
+    parsed.rhythm_register = data_state.mus.data[start + 14];
+    patch_count = read_u16(data_state.mus.data + start + 15);
+    position = start + 17;
+    if (
+        parsed.mode > 2 ||
+        !multiply_is_valid(
+            patch_count,
+            OT_MUS_LDS_PATCH_BYTES,
+            &patch_bytes
+        ) ||
+        !span_is_valid(end, position, patch_bytes + 2)
+    ) {
+        return false;
+    }
+    position += patch_bytes;
+    position_count = read_u16(data_state.mus.data + position);
+    position += 2;
+    if (
+        !multiply_is_valid(
+            position_count,
+            OT_MUS_LDS_CHANNEL_COUNT * 3,
+            &position_bytes
+        ) ||
+        !span_is_valid(end, position, position_bytes + 2)
+    ) {
+        return false;
+    }
+    position += position_bytes;
+    /* Two-byte count of unused digital sounds. */
+    position += 2;
+    if (((end - position) & 1u) != 0) return false;
+
+    parsed.patch_count = patch_count;
+    parsed.position_count = position_count;
+    parsed.pattern_word_count = (end - position) / 2;
+    if (view != 0) {
+        view->data = data_state.mus.data + start;
+        view->size = end - start;
+    }
+    if (info != 0) *info = parsed;
+    return true;
+}
+
+static bool parse_mus(void)
+{
+    uint16_t count;
+    uint16_t index;
+
+    if (
+        !stat_data_file("music.mus", &data_state.mus) ||
+        !span_is_valid(data_state.mus.size, 0, 2)
+    ) {
+        return false;
+    }
+    count = read_u16(data_state.mus.data);
+    if (count == 0 || !offset_table_is_valid(&data_state.mus, count)) {
+        return false;
+    }
+    catalog.mus_song_count = count;
+    for (index = 0; index < count; index++) {
+        if (!parse_mus_song(index, 0, 0)) return false;
+    }
+    return true;
+}
+
+bool ot_data_init(void)
+{
+    if (initialization_attempted) return catalog.initialized;
+    initialization_attempted = true;
+    catalog = (OtDataCatalog){0};
+    data_state = (OtDataState){0};
+    catalog.selected_mus_song = UINT16_MAX;
+
+    catalog.lvl_valid = parse_lvl();
+    catalog.hdt_valid = parse_hdt();
+    catalog.pic_valid = parse_pic();
+    catalog.shp_valid = parse_shp();
+    catalog.mus_valid = parse_mus();
+    catalog.raw_bytes_referenced =
+        data_state.lvl.size +
+        data_state.hdt.size +
+        data_state.pic.size +
+        data_state.palette.size +
+        data_state.shp.size +
+        data_state.mus.size;
+    catalog.initialized =
+        catalog.lvl_valid &&
+        catalog.hdt_valid &&
+        catalog.pic_valid &&
+        catalog.shp_valid &&
+        catalog.mus_valid;
+    return catalog.initialized;
+}
+
+const OtDataCatalog *ot_data_catalog(void)
+{
+    if (!initialization_attempted) ot_data_init();
+    return &catalog;
+}
+
+bool ot_data_level1_info(OtLevel1Info *info)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.lvl_valid || info == 0) return false;
+    *info = data_state.level_info;
+    return true;
+}
+
+bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event)
+{
+    const uint8_t *source;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.lvl_valid ||
+        event == 0 ||
+        index >= catalog.level1_event_count
+    ) {
+        return false;
+    }
+    source =
+        data_state.level_events +
+        (uint32_t)index * OT_LEVEL1_EVENT_RECORD_BYTES;
+    event->eventtime = read_u16(source);
+    event->eventtype = source[2];
+    event->eventdat = read_s16(source + 3);
+    event->eventdat2 = read_s16(source + 5);
+    event->eventdat3 = (int8_t)source[7];
+    event->eventdat5 = (int8_t)source[8];
+    event->eventdat6 = (int8_t)source[9];
+    event->eventdat4 = source[10];
+    return true;
+}
+
+bool ot_data_level1_enemy_pool_read(uint16_t index, uint16_t *enemy_id)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.lvl_valid ||
+        enemy_id == 0 ||
+        index >= catalog.level1_enemy_count
+    ) {
+        return false;
+    }
+    *enemy_id = read_u16(data_state.level_enemy_ids + (uint32_t)index * 2);
+    return true;
+}
+
+bool ot_data_level1_map_shape_view(uint8_t layer, OtDataView *view)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.lvl_valid || view == 0 || layer >= 3) return false;
+    view->data =
+        data_state.level_map_shapes +
+        (uint32_t)layer * OT_LEVEL_MAP_SHAPE_LAYER_BYTES;
+    view->size = OT_LEVEL_MAP_SHAPE_LAYER_BYTES;
+    return true;
+}
+
+bool ot_data_level1_map_view(uint8_t layer, OtDataView *view)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.lvl_valid || view == 0 || layer >= 3) return false;
+    view->data = data_state.level_maps[layer];
+    view->size = data_state.level_map_bytes[layer];
+    return true;
+}
+
+bool ot_data_hdt_enemy_read(
+    uint16_t enemy_id,
+    OtEnemyDefinition *enemy
+)
+{
+    const uint8_t *source;
+    uint8_t index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        enemy == 0 ||
+        enemy_id >= OT_HDT_ENEMY_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.hdt.data +
+        data_state.hdt_enemy_table_offset +
+        (uint32_t)enemy_id * OT_HDT_ENEMY_RECORD_BYTES;
+    enemy->ani = source[0];
+    for (index = 0; index < 3; index++) {
+        enemy->tur[index] = source[1 + index];
+        enemy->freq[index] = source[4 + index];
+    }
+    enemy->xmove = (int8_t)source[7];
+    enemy->ymove = (int8_t)source[8];
+    enemy->xaccel = (int8_t)source[9];
+    enemy->yaccel = (int8_t)source[10];
+    enemy->xcaccel = (int8_t)source[11];
+    enemy->ycaccel = (int8_t)source[12];
+    enemy->startx = read_s16(source + 13);
+    enemy->starty = read_s16(source + 15);
+    enemy->startxc = (int8_t)source[17];
+    enemy->startyc = (int8_t)source[18];
+    enemy->armor = source[19];
+    enemy->esize = source[20];
+    for (index = 0; index < 20; index++) {
+        enemy->egraphic[index] = read_u16(source + 21 + index * 2);
+    }
+    enemy->explosiontype = source[61];
+    enemy->animate = source[62];
+    enemy->shapebank = source[63];
+    enemy->xrev = (int8_t)source[64];
+    enemy->yrev = (int8_t)source[65];
+    enemy->dgr = read_u16(source + 66);
+    enemy->dlevel = (int8_t)source[68];
+    enemy->dani = (int8_t)source[69];
+    enemy->elaunchfreq = source[70];
+    enemy->elaunchtype = read_u16(source + 71);
+    enemy->value = read_s16(source + 73);
+    enemy->eenemydie = read_u16(source + 75);
+    return true;
+}
+
+bool ot_data_hdt_weapon_read(
+    uint16_t weapon_id,
+    OtWeaponDefinition *weapon
+)
+{
+    const uint8_t *source;
+    uint8_t index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        weapon == 0 ||
+        weapon_id >= OT_HDT_WEAPON_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.hdt.data +
+        data_state.hdt_weapon_table_offset +
+        (uint32_t)weapon_id * OT_HDT_WEAPON_RECORD_BYTES;
+    weapon->drain = read_u16(source);
+    weapon->shotrepeat = source[2];
+    weapon->multi = source[3];
+    weapon->weapani = read_u16(source + 4);
+    weapon->max = source[6];
+    weapon->tx = source[7];
+    weapon->ty = source[8];
+    weapon->aim = source[9];
+    for (index = 0; index < 8; index++) {
+        weapon->attack[index] = source[10 + index];
+        weapon->delay[index] = source[18 + index];
+        weapon->sx[index] = (int8_t)source[26 + index];
+        weapon->sy[index] = (int8_t)source[34 + index];
+        weapon->bx[index] = (int8_t)source[42 + index];
+        weapon->by[index] = (int8_t)source[50 + index];
+        weapon->sg[index] = read_u16(source + 58 + index * 2);
+    }
+    weapon->acceleration = (int8_t)source[74];
+    weapon->accelerationx = (int8_t)source[75];
+    weapon->circlesize = source[76];
+    weapon->sound = source[77];
+    weapon->trail = source[78];
+    weapon->shipblastfilter = source[79];
+    return true;
+}
+
+bool ot_data_pic_view(uint8_t picture_number, OtDataView *view)
+{
+    uint16_t index;
+    uint32_t start;
+    uint32_t end;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.pic_valid ||
+        view == 0 ||
+        picture_number == 0 ||
+        picture_number > catalog.pic_count
+    ) {
+        return false;
+    }
+    index = (uint16_t)(picture_number - 1);
+    start = table_offset(&data_state.pic, index);
+    end = index + 1 < catalog.pic_count ?
+        table_offset(&data_state.pic, index + 1) :
+        data_state.pic.size;
+    view->data = data_state.pic.data + start;
+    view->size = end - start;
+    return true;
+}
+
+bool ot_data_pic_palette_view(
+    uint8_t picture_number,
+    OtDataView *view
+)
+{
+    uint8_t palette_index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.pic_valid ||
+        view == 0 ||
+        picture_number == 0 ||
+        picture_number > catalog.pic_count
+    ) {
+        return false;
+    }
+    palette_index = pcx_palette[picture_number - 1];
+    if (palette_index >= OT_PALETTE_COUNT) return false;
+    view->data =
+        data_state.palette.data + (uint32_t)palette_index * OT_PALETTE_BYTES;
+    view->size = OT_PALETTE_BYTES;
+    return true;
+}
+
+bool ot_data_pic_decode(
+    uint8_t picture_number,
+    uint8_t *destination,
+    uint32_t destination_bytes
+)
+{
+    OtDataView view;
+    uint32_t source_offset = 0;
+    uint32_t output_offset = 0;
+
+    if (
+        destination == 0 ||
+        destination_bytes < OT_PIC_DECODED_BYTES ||
+        !ot_data_pic_view(picture_number, &view)
+    ) {
+        return false;
+    }
+    while (output_offset < OT_PIC_DECODED_BYTES) {
+        uint8_t code = view.data[source_offset++];
+
+        if ((code & 0xc0u) == 0xc0u) {
+            uint8_t count = code & 0x3fu;
+            uint8_t colour = view.data[source_offset++];
+
+            memset(destination + output_offset, colour, count);
+            output_offset += count;
+        } else {
+            destination[output_offset++] = code;
+        }
+    }
+    return source_offset + 1 == view.size &&
+           view.data[source_offset] == 0x0c;
+}
+
+bool ot_data_shp_section_view(uint8_t section_number, OtDataView *view)
+{
+    uint16_t index;
+    uint32_t start;
+    uint32_t end;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.shp_valid ||
+        view == 0 ||
+        section_number == 0 ||
+        section_number > catalog.shp_section_count
+    ) {
+        return false;
+    }
+    index = (uint16_t)(section_number - 1);
+    start = table_offset(&data_state.shp, index);
+    end = index + 1 < catalog.shp_section_count ?
+        table_offset(&data_state.shp, index + 1) :
+        data_state.shp.size;
+    view->data = data_state.shp.data + start;
+    view->size = end - start;
+    return true;
+}
+
+bool ot_data_shp_sprite_read(
+    uint8_t table,
+    uint16_t sprite_index,
+    OtShpSprite *sprite
+)
+{
+    OtDataView section;
+    uint32_t position = 2;
+    uint16_t count;
+    uint16_t index;
+
+    if (
+        sprite == 0 ||
+        table >= OT_SHP_TABLE_SECTION_COUNT ||
+        !ot_data_shp_section_view((uint8_t)(table + 1), &section)
+    ) {
+        return false;
+    }
+    count = read_u16(section.data);
+    if (sprite_index >= count) return false;
+    for (index = 0; index <= sprite_index; index++) {
+        bool populated = section.data[position++] != 0;
+
+        if (!populated) {
+            if (index == sprite_index) {
+                *sprite = (OtShpSprite){0};
+                return true;
+            }
+        } else {
+            uint16_t width = read_u16(section.data + position);
+            uint16_t height = read_u16(section.data + position + 2);
+            uint16_t encoded_bytes =
+                read_u16(section.data + position + 4);
+
+            position += 6;
+            if (index == sprite_index) {
+                sprite->populated = true;
+                sprite->width = width;
+                sprite->height = height;
+                sprite->encoded.data = section.data + position;
+                sprite->encoded.size = encoded_bytes;
+                return true;
+            }
+            position += encoded_bytes;
+        }
+    }
+    return false;
+}
+
+bool ot_data_comp_shape_bank_view(
+    uint8_t shape_table,
+    OtDataView *view
+)
+{
+    char name[12] = "newsh0.shp";
+    OtRomFsStat stat;
+    char character;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.shp_valid ||
+        view == 0 ||
+        shape_table == 0 ||
+        shape_table > sizeof(shape_file) / sizeof(shape_file[0])
+    ) {
+        return false;
+    }
+    character = shape_file[shape_table - 1];
+    if (character >= 'A' && character <= 'Z') {
+        character = (char)(character + ('a' - 'A'));
+    }
+    name[5] = character;
+    if (!stat_data_file(name, &stat) || stat.size == 0) return false;
+    view->data = stat.data;
+    view->size = stat.size;
+    return true;
+}
+
+bool ot_data_mus_song_read(
+    uint16_t song_index,
+    OtDataView *view,
+    OtMusSongInfo *info
+)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.mus_valid || (view == 0 && info == 0)) return false;
+    return parse_mus_song(song_index, view, info);
+}
+
+bool ot_data_mus_select(uint16_t song_index)
+{
+    OtMusSongInfo info;
+
+    if (!ot_data_mus_song_read(song_index, 0, &info)) return false;
+    catalog.selected_mus_song = song_index;
+    return true;
+}

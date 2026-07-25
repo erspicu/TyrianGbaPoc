@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_romfs_v14
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v14
+TARGET := tyrian_gba_level1_source_parity_romfs_v15
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v15
 BUILD := build
 RES := res
 
@@ -50,7 +50,6 @@ ASSET_INPUTS := \
 	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym
 
 ASSET_BINARIES := \
-	$(RES)/title_bitmap.bin \
 	$(RES)/bg1_tiles.bin \
 	$(RES)/bg2_tiles.bin \
 	$(RES)/bg3_tiles.bin \
@@ -60,9 +59,7 @@ ASSET_BINARIES := \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
 	$(RES)/obj_palette.bin \
-	$(RES)/level_events.bin \
-	$(RES)/opentyrian_level1_events.bin \
-	$(RES)/opentyrian_level1_enemies.bin
+	$(RES)/level_events.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \
@@ -78,6 +75,7 @@ AUDIO_INPUTS := \
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
 	$(BUILD)/gba_heap.o \
+	$(BUILD)/opentyrian_data.o \
 	$(BUILD)/opentyrian_level_port.o \
 	$(BUILD)/romfs.o \
 	$(BUILD)/opentyrian_rom_io.o
@@ -118,20 +116,26 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 		--audit "$(VFS_AUDIT)"
 
 $(BUILD)/main_release.o: main.c $(MAIN_INCLUDES) \
-		src/opentyrian_level_port.h src/opentyrian_rom_io.h \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/main_test.o: main.c $(MAIN_INCLUDES) \
-		src/opentyrian_level_port.h src/opentyrian_rom_io.h \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
+$(BUILD)/opentyrian_data.o: src/opentyrian_data.c \
+		src/opentyrian_data.h src/opentyrian_rom_io.h src/romfs.h | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
 $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
-		src/opentyrian_level_port.h $(RES)/asset_meta.h | $(BUILD)
+		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/romfs.o: src/romfs.c src/romfs.h | $(BUILD)
@@ -168,6 +172,8 @@ clean:
 		$(BUILD)/main_release.o $(BUILD)/main_release.d \
 		$(BUILD)/main_test.o $(BUILD)/main_test.d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
+		$(BUILD)/opentyrian_data.o \
+		$(BUILD)/opentyrian_data.d \
 		$(BUILD)/opentyrian_level_port.o \
 		$(BUILD)/opentyrian_level_port.d \
 		$(BUILD)/romfs.o $(BUILD)/romfs.d \
@@ -187,6 +193,7 @@ distclean: clean
 -include $(BUILD)/main_release.d
 -include $(BUILD)/main_test.d
 -include $(BUILD)/gba_heap.d
+-include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_level_port.d
 -include $(BUILD)/romfs.d
 -include $(BUILD)/opentyrian_rom_io.d

@@ -19,20 +19,21 @@ Tyrian 開場畫面
 沒有關卡選單、武器選單或右側武器資訊欄。主角在技術展示階段沒有死亡流程，
 但保留移動、射擊、敵彈、命中、爆炸、敵機碰撞與 Boss 碰撞等 game loop 要素。
 
-正式 ROM：
+目前 source-parity／ROMFS v15 正式 ROM：
 
 ```text
-repo/TyrianGbaPoc/build/tyrian_gba_level1_tech_demo_v11.gba
+repo/TyrianGbaPoc/build/tyrian_gba_level1_source_parity_romfs_v15.gba
 ```
 
 SHA-256：
 
 ```text
-d8f5b344eed2cc986b2abd48b0abad41f6fc185d6a657a50d62fe716ad81fb53
+7c76472255d49cee9da5b5926d3c8d1997806a43cbe37493b4851a8e1fd4b195
 ```
 
-ROM 大小為 655,976 bytes（640.60 KiB，約 0.626 MiB），只使用標準
-32 MiB GBA ROM 視窗的 1.9550%。本次容量完全不是限制。
+ROM 大小為 10,453,364 bytes（約 9.97 MiB），其中 9,853,080 bytes 是
+68 個 stock Tyrian runtime 檔案的唯讀 ROMFS；使用標準 32 MiB GBA ROM
+視窗的 31.1535%。
 
 ## 原始資料來源與轉換
 
@@ -42,6 +43,10 @@ ROM 大小為 655,976 bytes（640.60 KiB，約 0.626 MiB），只使用標準
 - `org/AprCSTyrian/Build/data/tyrian1.lvl`
 - `org/AprCSTyrian/Build/data/tyrian.hdt`
 - `org/AprCSTyrian/Build/data/tyrian.snd`
+- `org/AprCSTyrian/Build/data/music.mus`
+- `org/AprCSTyrian/Build/data/tyrian.pic`
+- `org/AprCSTyrian/Build/data/tyrian.shp`
+- `org/AprCSTyrian/Build/data/palette.dat`
 - `org/AprCSTyrian/image`
 - `org/TyrianAudioLab/Music/30_tyrian_the_song.tym`
 - `org/TyrianAudioLab/Music/18_tyrian_the_level.tym`
@@ -52,22 +57,23 @@ ROM 大小為 655,976 bytes（640.60 KiB，約 0.626 MiB），只使用標準
 repo/TyrianGbaPoc/tools/build_assets.py
 ```
 
-它沿用已驗證的 Tyrian 解析邏輯，重新輸出 GBA 原生的 packed-nibble
-4bpp tile、GBA tilemap attribute、OBJ 1D atlas、BGR555 palette、事件 bytecode
-及 Maxmod soundbank。
+v15 的 LVL/HDT/PIC/SHP/MUS loader 已改由 `src/opentyrian_data.c` 直接讀
+ROMFS raw bytes。`tools/build_assets.py` 仍負責尚未替換的 GBA
+packed-nibble 4bpp tile cache、OBJ atlas、legacy event bytecode 與 Maxmod
+waveform cache。
 
 目前資源統計：
 
 | 資源 | 大小 |
 |---|---:|
-| Mode 3 開場圖 | 76,800 bytes |
+| Mode 3 開場圖 | 0-byte blob；由 PIC/SHP runtime 解碼 |
 | 三組背景 tile | 49,152 bytes |
 | 三層完整關卡 map | 324,800 bytes |
 | 背景與 OBJ palette | 1,024 bytes |
 | OBJ atlas | 32,640 bytes |
 | 關卡事件 bytecode | 10,273 bytes |
 | 兩首音樂及七組音效 soundbank | 122,660 bytes |
-| 主要資源合計 | 617,349 bytes |
+| Stock Tyrian ROMFS | 9,853,080 bytes |
 
 ## GBA 畫面架構
 
@@ -490,6 +496,10 @@ VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 | Spawned enemy projectiles | 172 |
 | Peak active enemy projectiles | 12 / 60 |
 | Dropped enemy projectiles | 0 |
+| Source-parity event spawns | 473 / 473 success |
+| Source-parity peak enemies | 39 / 100 |
+| Source-parity motion updates / releases | 63,381 / 453 |
+| Source-parity HDT shot triggers | 200 |
 | State transitions | 5 |
 | mGBA memory/runtime errors | 0 |
 
@@ -551,8 +561,8 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
    與 log 時使用 `.\build.ps1 -KeepIntermediates`。
 
 若 mGBA GUI 正載入要覆寫的同名 ROM，Windows 會鎖住該檔案；重建前請先
-關閉該 ROM 或關閉模擬器。正式交付使用 `_v11.gba` 檔名，避免與先前測試
-ROM 混淆。
+關閉該 ROM 或關閉模擬器。正式交付使用 `_romfs_v15.gba` 檔名，避免與
+先前測試 ROM 混淆。
 
 ## 現階段結論
 
@@ -562,7 +572,7 @@ ROM 混淆。
 - 三層共串流 4,126 列，仍為 0 stream drop。
 - 峰值只使用 128 筆硬體 OAM 中的 41 筆。
 - 172 發 PC 規則敵彈的峰值為 12 / 60，沒有 pool drop。
-- ROM 只佔 32 MiB 空間約 1.95%。
+- 含完整 stock ROMFS 後仍只佔 32 MiB 空間 31.1535%。
 - 三層背景、完整 tracker 音樂及基本碰撞可同時運作。
 
 目前限制主要是移植工時與內容對應精度，而不是 GBA CPU 或 ROM 容量。

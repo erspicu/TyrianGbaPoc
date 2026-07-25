@@ -1,11 +1,6 @@
 	.section .rodata
 	.balign 4
 
-	.global title_bitmap
-title_bitmap:
-	.incbin "res/title_bitmap.bin"
-
-	.balign 4
 	.global bg1_tiles
 bg1_tiles:
 	.incbin "res/bg1_tiles.bin"
@@ -54,16 +49,6 @@ obj_palette:
 	.global level_events
 level_events:
 	.incbin "res/level_events.bin"
-
-	.balign 4
-	.global opentyrian_level1_events
-opentyrian_level1_events:
-	.incbin "res/opentyrian_level1_events.bin"
-
-	.balign 4
-	.global opentyrian_level1_enemies
-opentyrian_level1_enemies:
-	.incbin "res/opentyrian_level1_enemies.bin"
 
 	.balign 4
 	.global soundbank

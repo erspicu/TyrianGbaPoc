@@ -1,9 +1,11 @@
 #include <gba.h>
 #include <maxmod.h>
+#include <string.h>
 
 #include "res/asset_meta.h"
 #include "res/soundbank.h"
 #include "res/tyrian_romfs_meta.h"
+#include "src/opentyrian_data.h"
 #include "src/opentyrian_level_port.h"
 #include "src/opentyrian_rom_io.h"
 
@@ -58,6 +60,7 @@
 #define REWARD_SEQUENCE_COUNT 5
 #define CASH_COUNTER_X 22
 #define CASH_COUNTER_Y 140
+#define TITLE_SHP_SCRATCH_PIXELS 40000
 
 #define PC_SHOT_GRAPHIC_DART 58
 #define PC_SHOT_GRAPHIC_RED 112
@@ -136,7 +139,6 @@ _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
      (ay) + (ah) > (by) && (by) + (bh) > (ay))
 
-extern const u8 title_bitmap[];
 extern const u8 bg1_tiles[];
 extern const u8 bg2_tiles[];
 extern const u8 bg3_tiles[];
@@ -383,6 +385,8 @@ static u16 event_offset;
 static u16 event_time;
 static u8 foreground_phase;
 static u32 logic_accumulator;
+static u8 title_pic_pixels[OT_PIC_DECODED_BYTES] EWRAM_BSS;
+static u8 title_shp_pixels[TITLE_SHP_SCRATCH_PIXELS] EWRAM_BSS;
 static OtLevelPortState source_parity_level EWRAM_BSS;
 
 static u16 bg1_scroll_pixel;
@@ -450,6 +454,13 @@ volatile u32 telemetry_source_spawn_missing;
 volatile u32 telemetry_source_max_enemies;
 volatile u32 telemetry_source_control_writes;
 volatile u32 telemetry_source_rng_calls;
+volatile u32 telemetry_source_motion_updates;
+volatile u32 telemetry_source_releases;
+volatile u32 telemetry_source_shot_triggers;
+volatile u32 telemetry_source_launch_attempts;
+volatile u32 telemetry_source_launch_successes;
+volatile u32 telemetry_source_random_attempts;
+volatile u32 telemetry_source_random_successes;
 volatile u32 telemetry_state_transitions;
 volatile u32 telemetry_romfs_entries;
 volatile u32 telemetry_romfs_image_bytes;
@@ -498,7 +509,7 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V114";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V115";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;

@@ -8,14 +8,7 @@
  */
 #include "opentyrian_level_port.h"
 
-extern const uint8_t opentyrian_level1_events[];
-extern const uint8_t opentyrian_level1_enemies[];
-
 enum {
-    OT_SOURCE_HEADER_BYTES = 8,
-    OT_EVENT_RECORD_BYTES = 11,
-    OT_ENEMY_RAW_RECORD_BYTES = 77,
-    OT_ENEMY_RECORD_BYTES = 79,
     OT_MT_M = 397,
     OT_SOURCE_PARITY_TEST_SEED = 5489,
 };
@@ -25,124 +18,24 @@ _Static_assert(sizeof(int8_t) == 1, "OpenTyrian shortint width changed");
 _Static_assert(sizeof(uint16_t) == 2, "OpenTyrian word width changed");
 _Static_assert(sizeof(int16_t) == 2, "OpenTyrian integer width changed");
 _Static_assert(
-    OPENTYRIAN_LEVEL1_EVENT_RECORD_BYTES == OT_EVENT_RECORD_BYTES,
-    "generated OpenTyrian event record width changed"
+    OT_LEVEL1_EVENT_RECORD_BYTES == 11,
+    "OpenTyrian event record width changed"
 );
 _Static_assert(
-    OPENTYRIAN_LEVEL1_ENEMY_RECORD_BYTES == OT_ENEMY_RECORD_BYTES,
-    "generated OpenTyrian enemy record width changed"
+    OT_HDT_ENEMY_RECORD_BYTES == 77,
+    "OpenTyrian enemy record width changed"
 );
 _Static_assert(OT_ENEMY_COUNT == 100, "OpenTyrian enemy pool size changed");
 _Static_assert(OT_ENEMY_POOL_SIZE == 25, "OpenTyrian pool group size changed");
 
-static uint16_t read_u16(const uint8_t *source)
-{
-    return (uint16_t)source[0] | ((uint16_t)source[1] << 8);
-}
-
-static int16_t read_s16(const uint8_t *source)
-{
-    return (int16_t)read_u16(source);
-}
-
-static bool header_matches(
-    const uint8_t *source,
-    char a,
-    char b,
-    char c,
-    char d,
-    uint16_t count,
-    uint8_t record_bytes
-)
-{
-    return source[0] == (uint8_t)a &&
-           source[1] == (uint8_t)b &&
-           source[2] == (uint8_t)c &&
-           source[3] == (uint8_t)d &&
-           read_u16(source + 4) == count &&
-           source[6] == record_bytes;
-}
-
 bool ot_level1_event_read(uint16_t index, OtEventRecord *event)
 {
-    const uint8_t *source;
-
-    if (event == 0 || index >= OPENTYRIAN_LEVEL1_EVENT_COUNT) {
-        return false;
-    }
-    source = opentyrian_level1_events + OT_SOURCE_HEADER_BYTES +
-             (uint32_t)index * OT_EVENT_RECORD_BYTES;
-    event->eventtime = read_u16(source);
-    event->eventtype = source[2];
-    event->eventdat = read_s16(source + 3);
-    event->eventdat2 = read_s16(source + 5);
-    event->eventdat3 = (int8_t)source[7];
-    event->eventdat5 = (int8_t)source[8];
-    event->eventdat6 = (int8_t)source[9];
-    event->eventdat4 = source[10];
-    return true;
+    return ot_data_level1_event_read(index, event);
 }
 
 bool ot_level1_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy)
 {
-    uint16_t low = 0;
-    uint16_t high = OPENTYRIAN_LEVEL1_ENEMY_COUNT;
-
-    if (enemy == 0) return false;
-    while (low < high) {
-        uint16_t middle = (uint16_t)(low + (high - low) / 2);
-        const uint8_t *record =
-            opentyrian_level1_enemies + OT_SOURCE_HEADER_BYTES +
-            (uint32_t)middle * OT_ENEMY_RECORD_BYTES;
-        uint16_t record_id = read_u16(record);
-        const uint8_t *source;
-        uint8_t index;
-
-        if (record_id < enemy_id) {
-            low = (uint16_t)(middle + 1);
-            continue;
-        }
-        if (record_id > enemy_id) {
-            high = middle;
-            continue;
-        }
-
-        source = record + 2;
-        enemy->ani = source[0];
-        for (index = 0; index < 3; index++) {
-            enemy->tur[index] = source[1 + index];
-            enemy->freq[index] = source[4 + index];
-        }
-        enemy->xmove = (int8_t)source[7];
-        enemy->ymove = (int8_t)source[8];
-        enemy->xaccel = (int8_t)source[9];
-        enemy->yaccel = (int8_t)source[10];
-        enemy->xcaccel = (int8_t)source[11];
-        enemy->ycaccel = (int8_t)source[12];
-        enemy->startx = read_s16(source + 13);
-        enemy->starty = read_s16(source + 15);
-        enemy->startxc = (int8_t)source[17];
-        enemy->startyc = (int8_t)source[18];
-        enemy->armor = source[19];
-        enemy->esize = source[20];
-        for (index = 0; index < 20; index++) {
-            enemy->egraphic[index] = read_u16(source + 21 + index * 2);
-        }
-        enemy->explosiontype = source[61];
-        enemy->animate = source[62];
-        enemy->shapebank = source[63];
-        enemy->xrev = (int8_t)source[64];
-        enemy->yrev = (int8_t)source[65];
-        enemy->dgr = read_u16(source + 66);
-        enemy->dlevel = (int8_t)source[68];
-        enemy->dani = (int8_t)source[69];
-        enemy->elaunchfreq = source[70];
-        enemy->elaunchtype = read_u16(source + 71);
-        enemy->value = read_s16(source + 73);
-        enemy->eenemydie = read_u16(source + 75);
-        return true;
-    }
-    return false;
+    return ot_data_hdt_enemy_read(enemy_id, enemy);
 }
 
 /*
@@ -227,6 +120,11 @@ static uint32_t ot_mt_rand(OtLevelPortState *state)
 static int8_t ot_abs_s8(int16_t value)
 {
     return (int8_t)(value < 0 ? -value : value);
+}
+
+static int16_t ot_abs_s16(int16_t value)
+{
+    return (int16_t)(value < 0 ? -value : value);
 }
 
 static bool shape_table_is_loaded(
@@ -438,23 +336,103 @@ static bool ot_make_enemy(
     return true;
 }
 
-static uint8_t ot_create_new_event_enemy(
+typedef enum {
+    OT_SPAWN_EVENT,
+    OT_SPAWN_LAUNCH,
+    OT_SPAWN_RANDOM,
+} OtSpawnOrigin;
+
+static void ot_record_spawn_attempt(
     OtLevelPortState *state,
-    OtEventRecord *event,
-    uint8_t enemy_type_offset,
+    OtSpawnOrigin origin
+)
+{
+    switch (origin) {
+    case OT_SPAWN_EVENT:
+        state->spawn_attempt_count++;
+        break;
+    case OT_SPAWN_LAUNCH:
+        state->enemy_launch_attempt_count++;
+        break;
+    case OT_SPAWN_RANDOM:
+        state->random_spawn_attempt_count++;
+        break;
+    }
+}
+
+static void ot_record_spawn_pool_full(
+    OtLevelPortState *state,
+    OtSpawnOrigin origin
+)
+{
+    switch (origin) {
+    case OT_SPAWN_EVENT:
+        state->spawn_pool_full_count++;
+        break;
+    case OT_SPAWN_LAUNCH:
+        state->enemy_launch_pool_full_count++;
+        break;
+    case OT_SPAWN_RANDOM:
+        state->random_spawn_pool_full_count++;
+        break;
+    }
+}
+
+static void ot_record_spawn_missing(
+    OtLevelPortState *state,
+    OtSpawnOrigin origin
+)
+{
+    switch (origin) {
+    case OT_SPAWN_EVENT:
+        state->spawn_missing_definition_count++;
+        break;
+    case OT_SPAWN_LAUNCH:
+        state->enemy_launch_missing_definition_count++;
+        break;
+    case OT_SPAWN_RANDOM:
+        state->random_spawn_missing_definition_count++;
+        break;
+    }
+}
+
+static void ot_record_spawn_success(
+    OtLevelPortState *state,
+    OtSpawnOrigin origin
+)
+{
+    switch (origin) {
+    case OT_SPAWN_EVENT:
+        state->spawn_success_count++;
+        break;
+    case OT_SPAWN_LAUNCH:
+        state->enemy_launch_success_count++;
+        break;
+    case OT_SPAWN_RANDOM:
+        state->random_spawn_success_count++;
+        break;
+    }
+}
+
+/*
+ * Direct translation of JE_newEnemy()'s 25-slot allocation boundary.  Event,
+ * launched and continual enemies share the source pool but keep separate
+ * telemetry so one path cannot hide pressure in another.
+ */
+static uint8_t ot_new_enemy(
+    OtLevelPortState *state,
     uint8_t enemy_offset,
-    int16_t unique_shape_table
+    uint16_t enemy_definition_id,
+    int16_t unique_shape_table,
+    OtSpawnOrigin origin
 )
 {
     uint8_t index;
-    uint8_t slot = OT_ENEMY_COUNT;
     uint8_t avail;
-    uint16_t enemy_definition_id;
-    OtEnemy *enemy;
+    uint8_t slot = OT_ENEMY_COUNT;
 
-    state->spawn_attempt_count++;
+    ot_record_spawn_attempt(state, origin);
     state->last_created_slot = 0;
-
     for (
         index = enemy_offset;
         index < (uint8_t)(enemy_offset + OT_ENEMY_POOL_SIZE);
@@ -465,34 +443,55 @@ static uint8_t ot_create_new_event_enemy(
             break;
         }
     }
-
     if (slot == OT_ENEMY_COUNT) {
-        state->spawn_pool_full_count++;
+        ot_record_spawn_pool_full(state, origin);
         return 0;
     }
-
-    enemy_definition_id =
-        (uint16_t)(event->eventdat + enemy_type_offset);
-    enemy = &state->enemy[slot];
     if (!ot_make_enemy(
         state,
-        enemy,
+        &state->enemy[slot],
         enemy_definition_id,
         unique_shape_table,
         &avail
     )) {
-        state->spawn_missing_definition_count++;
+        ot_record_spawn_missing(state, origin);
         state->assets_valid = false;
         return 0;
     }
 
     state->enemy_avail[slot] = avail;
-    state->spawn_success_count++;
+    ot_record_spawn_success(state, origin);
     state->active_enemy_count++;
     if (state->active_enemy_count > state->max_active_enemy_count) {
         state->max_active_enemy_count = state->active_enemy_count;
     }
     state->last_created_slot = (uint8_t)(slot + 1);
+    return state->last_created_slot;
+}
+
+static uint8_t ot_create_new_event_enemy(
+    OtLevelPortState *state,
+    OtEventRecord *event,
+    uint8_t enemy_type_offset,
+    uint8_t enemy_offset,
+    int16_t unique_shape_table
+)
+{
+    uint8_t created;
+    uint16_t enemy_definition_id;
+    OtEnemy *enemy;
+
+    enemy_definition_id =
+        (uint16_t)(event->eventdat + enemy_type_offset);
+    created = ot_new_enemy(
+        state,
+        enemy_offset,
+        enemy_definition_id,
+        unique_shape_table,
+        OT_SPAWN_EVENT
+    );
+    if (created == 0) return 0;
+    enemy = &state->enemy[created - 1];
 
     if (event->eventdat2 != -99) {
         switch (enemy_offset) {
@@ -543,7 +542,13 @@ static uint8_t ot_create_new_event_enemy(
 
 void ot_level_port_init(OtLevelPortState *state)
 {
+    const OtDataCatalog *data_catalog;
     OtEnemyDefinition first_spawn_definition;
+    OtWeaponDefinition first_level_weapon;
+    OtLevel1Info level_info;
+    OtDataView data_view;
+    OtShpSprite title_logo;
+    OtMusSongInfo song_info;
     uint8_t index;
 
     *state = (OtLevelPortState){0};
@@ -574,23 +579,37 @@ void ot_level_port_init(OtLevelPortState *state)
     }
     ot_mt_seed(&state->rng, OT_SOURCE_PARITY_TEST_SEED);
 
-    state->assets_valid = header_matches(
-        opentyrian_level1_events,
-        'O', 'T', 'L', '1',
-        OPENTYRIAN_LEVEL1_EVENT_COUNT,
-        OT_EVENT_RECORD_BYTES
-    ) && header_matches(
-        opentyrian_level1_enemies,
-        'O', 'T', 'E', '1',
-        OPENTYRIAN_LEVEL1_ENEMY_COUNT,
-        OT_ENEMY_RECORD_BYTES
-    ) && opentyrian_level1_enemies[7] == OT_ENEMY_RAW_RECORD_BYTES &&
+    state->assets_valid =
+        ot_data_init() &&
+        (data_catalog = ot_data_catalog()) != 0 &&
+        data_catalog->initialized &&
+        ot_data_level1_info(&level_info) &&
+        level_info.map_file == 'Z' &&
+        level_info.shape_file == 'Z' &&
+        level_info.enemy_count == 7 &&
+        level_info.event_count == OT_LEVEL1_EXPECTED_EVENT_COUNT &&
         ot_level1_enemy_read(10, &first_spawn_definition) &&
         first_spawn_definition.ani == 8 &&
         first_spawn_definition.armor == 3 &&
         first_spawn_definition.esize == 1 &&
         first_spawn_definition.shapebank == 1 &&
-        first_spawn_definition.value == 15;
+        first_spawn_definition.value == 15 &&
+        ot_data_hdt_weapon_read(59, &first_level_weapon) &&
+        first_level_weapon.multi == 1 &&
+        ot_data_pic_view(4, &data_view) &&
+        ot_data_pic_palette_view(4, &data_view) &&
+        ot_data_shp_sprite_read(3, 146, &title_logo) &&
+        title_logo.populated &&
+        ot_data_comp_shape_bank_view(1, &data_view) &&
+        ot_data_comp_shape_bank_view(2, &data_view) &&
+        ot_data_comp_shape_bank_view(9, &data_view) &&
+        ot_data_comp_shape_bank_view(20, &data_view) &&
+        ot_data_mus_song_read(17, &data_view, &song_info) &&
+        song_info.patch_count > 0 &&
+        song_info.position_count > 0 &&
+        ot_data_mus_song_read(29, &data_view, &song_info) &&
+        song_info.patch_count > 0 &&
+        song_info.position_count > 0;
 }
 
 static void resolve_new_pl_link(
@@ -1108,13 +1127,398 @@ static bool apply_event(
     }
 }
 
-void ot_level_port_advance(OtLevelPortState *state, uint16_t cur_loc)
+static int16_t ot_round_ratio(
+    int32_t numerator,
+    int16_t denominator
+)
+{
+    if (numerator < 0) {
+        return (int16_t)(
+            -((-numerator + denominator / 2) / denominator)
+        );
+    }
+    return (int16_t)((numerator + denominator / 2) / denominator);
+}
+
+static void ot_release_enemy(
+    OtLevelPortState *state,
+    uint8_t enemy_index
+)
+{
+    if (state->enemy_avail[enemy_index] == 1) return;
+    state->enemy_avail[enemy_index] = 1;
+    if (state->active_enemy_count > 0) state->active_enemy_count--;
+    state->enemy_release_count++;
+}
+
+static void ot_advance_fixed_acceleration(
+    int8_t *current_speed,
+    int8_t *control,
+    int8_t *wait,
+    uint8_t wait_max,
+    int8_t *reverse_speed,
+    int16_t *add
+)
+{
+    if (--(*wait) > 0) return;
+    if (*current_speed == *reverse_speed) {
+        *control = (int8_t)-*control;
+        *reverse_speed = (int8_t)-*reverse_speed;
+        *add = (int16_t)-*add;
+        return;
+    }
+
+    *current_speed = (int8_t)(*current_speed + *add);
+    *wait = (int8_t)wait_max;
+    if (*current_speed == *reverse_speed) {
+        *wait = (int8_t)-*wait;
+        *reverse_speed = (int8_t)-*reverse_speed;
+        *add = (int16_t)-*add;
+    }
+}
+
+static void ot_enemy_fire_slots(
+    OtLevelPortState *state,
+    OtEnemy *enemy
+)
+{
+    int8_t slot;
+
+    for (slot = 2; slot >= 0; slot--) {
+        uint16_t turret;
+
+        if (enemy->freq[(uint8_t)slot] == 0) continue;
+        turret = enemy->tur[(uint8_t)slot];
+        enemy->eshotwait[(uint8_t)slot]--;
+        if (
+            enemy->eshotwait[(uint8_t)slot] != 0 ||
+            turret == 0
+        ) {
+            continue;
+        }
+        enemy->eshotwait[(uint8_t)slot] =
+            enemy->freq[(uint8_t)slot];
+
+        /*
+         * 251..255 are magnet/explosion control opcodes, not HDT weapons.
+         * Their gameplay-side player forces/render effects are deferred, but
+         * the source wait/animation state above is already authoritative.
+         */
+        if (turret >= 251) continue;
+        {
+            OtWeaponDefinition weapon;
+            uint8_t projectile;
+
+            if (!ot_data_hdt_weapon_read(turret, &weapon)) {
+                state->assets_valid = false;
+                continue;
+            }
+            for (projectile = 0; projectile < weapon.multi; projectile++) {
+                if (weapon.sound > 0) {
+                    uint32_t sound_slot;
+
+                    do {
+                        sound_slot = ot_mt_rand(state) % 8u;
+                    } while (sound_slot == 3);
+                }
+                if (enemy->aniactive == 2) enemy->aniactive = 1;
+                enemy->eshotmultipos[(uint8_t)slot]++;
+                if (
+                    enemy->eshotmultipos[(uint8_t)slot] >
+                    weapon.max
+                ) {
+                    enemy->eshotmultipos[(uint8_t)slot] = 1;
+                }
+                state->enemy_shot_trigger_count++;
+            }
+        }
+    }
+}
+
+static void ot_enemy_launch(
+    OtLevelPortState *state,
+    OtEnemy *parent,
+    uint8_t parent_pool
+)
+{
+    uint8_t launch_pool;
+    uint8_t created;
+    OtEnemy *child;
+    OtEnemyDefinition child_definition;
+    int16_t source_x;
+    int16_t source_y;
+    uint32_t sound_slot;
+
+    if (parent->launchfreq == 0) return;
+    parent->launchwait--;
+    if (parent->launchwait != 0) return;
+    parent->launchwait = parent->launchfreq;
+    if (
+        parent->launchspecial != 0 &&
+        (
+            parent->ey > state->player_y + 5 ||
+            parent->ey < state->player_y - 5
+        )
+    ) {
+        return;
+    }
+    if (parent->aniactive == 2) parent->aniactive = 1;
+    if (parent->launchtype == 0) return;
+
+    source_x = parent->ex;
+    source_y = parent->ey;
+    launch_pool =
+        parent_pool == 25 || parent_pool == 75 ? 75 : parent_pool;
+    created = ot_new_enemy(
+        state,
+        launch_pool,
+        parent->launchtype,
+        0,
+        OT_SPAWN_LAUNCH
+    );
+    if (created == 0) return;
+    child = &state->enemy[created - 1];
+    if (!ot_data_hdt_enemy_read(child->enemytype, &child_definition)) {
+        state->assets_valid = false;
+        return;
+    }
+
+    child->ex = source_x;
+    child->ey = (int16_t)(source_y + child_definition.startyc);
+    if (child->size == 0) child->ey -= 7;
+    if (child->launchtype > 0 && child->launchfreq == 0) {
+        if (child->launchtype > 90) {
+            uint16_t radius = (uint16_t)(child->launchtype - 90);
+            child->ex = (int16_t)(
+                child->ex +
+                (int32_t)(ot_mt_rand(state) % (radius * 4u)) -
+                radius * 2
+            );
+        } else {
+            int16_t aim_x =
+                (int16_t)(state->player_x - source_x - 4);
+            int16_t aim_y =
+                (int16_t)(state->player_y - source_y);
+            int16_t magnitude;
+
+            if (aim_x == 0) aim_x = 1;
+            if (aim_y == 0) aim_y = 1;
+            magnitude = ot_abs_s16(aim_x) > ot_abs_s16(aim_y) ?
+                ot_abs_s16(aim_x) : ot_abs_s16(aim_y);
+            child->exc = (int8_t)ot_round_ratio(
+                (int32_t)aim_x * child->launchtype,
+                magnitude
+            );
+            child->eyc = (int8_t)ot_round_ratio(
+                (int32_t)aim_y * child->launchtype,
+                magnitude
+            );
+        }
+    }
+
+    do {
+        sound_slot = ot_mt_rand(state) % 8u;
+    } while (sound_slot == 3);
+    (void)(ot_mt_rand(state) % 3u);
+    if (parent->launchspecial == 1 && parent->linknum < 100) {
+        child->linknum = parent->linknum;
+    }
+}
+
+/*
+ * First translated JE_drawEnemy() slice.  It keeps the source's four
+ * 25-entry pools, update order, animation, random/fixed acceleration,
+ * bounce, off-screen release, fire cadence and launch lifecycle.  Blitting,
+ * collision damage and the concrete 60-shot objects still remain in the
+ * presentation runtime.
+ */
+static void ot_draw_enemy_pool(
+    OtLevelPortState *state,
+    uint8_t pool,
+    int16_t temp_back_move
+)
+{
+    uint8_t index;
+
+    for (index = pool; index < pool + OT_ENEMY_POOL_SIZE; index++) {
+        OtEnemy *enemy;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        state->enemy_motion_update_count++;
+        enemy->mapoffset = 0;
+
+        if (
+            enemy->xaccel != 0 &&
+            (uint32_t)enemy->xaccel - 89u >
+                ot_mt_rand(state) % 11u
+        ) {
+            int16_t player_x = (int16_t)(state->player_x - 25);
+
+            if (player_x > enemy->ex) {
+                if (enemy->exc < (int16_t)enemy->xaccel - 89) {
+                    enemy->exc++;
+                }
+            } else if (
+                enemy->exc >= 0 ||
+                -enemy->exc < (int16_t)enemy->xaccel - 89
+            ) {
+                enemy->exc--;
+            }
+        }
+        if (
+            enemy->yaccel != 0 &&
+            (uint32_t)enemy->yaccel - 89u >
+                ot_mt_rand(state) % 11u
+        ) {
+            if (state->player_y > enemy->ey) {
+                if (enemy->eyc < (int16_t)enemy->yaccel - 89) {
+                    enemy->eyc++;
+                }
+            } else if (
+                enemy->eyc >= 0 ||
+                -enemy->eyc < (int16_t)enemy->yaccel - 89
+            ) {
+                enemy->eyc--;
+            }
+        }
+
+        if (enemy->ex > -29 && enemy->ex < 300) {
+            if (enemy->aniactive == 1) {
+                enemy->enemycycle++;
+                if (enemy->enemycycle == enemy->animax) {
+                    enemy->aniactive = enemy->aniwhenfire;
+                } else if (enemy->enemycycle > enemy->ani) {
+                    enemy->enemycycle = enemy->animin;
+                }
+            }
+            if (
+                enemy->enemycycle == 0 ||
+                enemy->enemycycle > 20
+            ) {
+                state->assets_valid = false;
+                ot_release_enemy(state, index);
+                continue;
+            }
+            if (enemy->egr[enemy->enemycycle - 1] == 999) {
+                ot_release_enemy(state, index);
+                continue;
+            }
+            enemy->filter = 0;
+        }
+
+        if (enemy->excc != 0) {
+            ot_advance_fixed_acceleration(
+                &enemy->exc,
+                &enemy->excc,
+                &enemy->exccw,
+                enemy->exccwmax,
+                &enemy->exrev,
+                &enemy->exccadd
+            );
+        }
+        if (enemy->eycc != 0) {
+            ot_advance_fixed_acceleration(
+                &enemy->eyc,
+                &enemy->eycc,
+                &enemy->eyccw,
+                enemy->eyccwmax,
+                &enemy->eyrev,
+                &enemy->eyccadd
+            );
+        }
+
+        enemy->ey = (int16_t)(enemy->ey + enemy->fixedmovey);
+        enemy->ex = (int16_t)(enemy->ex + enemy->exc);
+        if (enemy->ex < -80 || enemy->ex > 340) {
+            ot_release_enemy(state, index);
+            continue;
+        }
+        enemy->ey = (int16_t)(enemy->ey + enemy->eyc);
+        if (enemy->ey < -112 || enemy->ey > 190) {
+            ot_release_enemy(state, index);
+            continue;
+        }
+
+        if (
+            enemy->ex <= enemy->xminbounce ||
+            enemy->ex >= enemy->xmaxbounce
+        ) {
+            enemy->exc = (int8_t)-enemy->exc;
+        }
+        if (
+            enemy->ey <= enemy->yminbounce ||
+            enemy->ey >= enemy->ymaxbounce
+        ) {
+            enemy->eyc = (int8_t)-enemy->eyc;
+        }
+        if (enemy->scoreitem) {
+            if (enemy->ex < -5) enemy->ex++;
+            if (enemy->ex > 245) enemy->ex--;
+        }
+        enemy->ey = (int16_t)(enemy->ey + temp_back_move);
+        if (enemy->ex <= -24 || enemy->ex >= 296) continue;
+        if (enemy->edamaged) continue;
+        if (enemy->iced != 0) {
+            enemy->iced--;
+            if (enemy->enemyground) enemy->filter = 0x09;
+            continue;
+        }
+
+        ot_enemy_fire_slots(state, enemy);
+        ot_enemy_launch(state, enemy, pool);
+    }
+}
+
+static void ot_spawn_continual_enemy(OtLevelPortState *state)
+{
+    uint16_t enemy_id;
+    uint16_t enemy_index;
+
+    if (!state->enemies_active) return;
+    if (
+        ot_mt_rand(state) % 100u <= state->level_enemy_frequency
+    ) {
+        return;
+    }
+    if (ot_data_catalog()->level1_enemy_count == 0) {
+        state->assets_valid = false;
+        return;
+    }
+    enemy_index = (uint16_t)(
+        ot_mt_rand(state) % ot_data_catalog()->level1_enemy_count
+    );
+    if (!ot_data_level1_enemy_pool_read(enemy_index, &enemy_id)) {
+        state->assets_valid = false;
+        return;
+    }
+    ot_new_enemy(state, 0, enemy_id, 0, OT_SPAWN_RANDOM);
+}
+
+static void ot_advance_enemies(OtLevelPortState *state)
+{
+    /* JE_main() draw/update order: ground, ground2, continual, sky, top. */
+    ot_draw_enemy_pool(state, 25, (int16_t)state->back_move);
+    ot_draw_enemy_pool(state, 75, (int16_t)state->back_move);
+    ot_spawn_continual_enemy(state);
+    ot_draw_enemy_pool(state, 0, 0);
+    ot_draw_enemy_pool(state, 50, (int16_t)state->back_move3);
+}
+
+void ot_level_port_advance(
+    OtLevelPortState *state,
+    uint16_t cur_loc,
+    int16_t player_x,
+    int16_t player_y
+)
 {
     OtEventRecord event;
 
     state->cur_loc = cur_loc;
+    state->player_x = player_x;
+    state->player_y = player_y;
     while (
-        state->event_index < OPENTYRIAN_LEVEL1_EVENT_COUNT &&
+        state->event_index < OT_LEVEL1_EXPECTED_EVENT_COUNT &&
         ot_level1_event_read(state->event_index, &event) &&
         event.eventtime <= state->cur_loc
     ) {
@@ -1129,9 +1533,12 @@ void ot_level_port_advance(OtLevelPortState *state, uint16_t cur_loc)
         state->event_index++;
 
         remaining =
-            (uint16_t)(OPENTYRIAN_LEVEL1_EVENT_COUNT - state->event_index);
+            (uint16_t)(
+                OT_LEVEL1_EXPECTED_EVENT_COUNT - state->event_index
+            );
         if (skip_events > remaining) skip_events = remaining;
         state->event_index = (uint16_t)(state->event_index + skip_events);
         state->skipped_event_count += skip_events;
     }
+    ot_advance_enemies(state);
 }

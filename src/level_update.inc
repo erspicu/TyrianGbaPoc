@@ -214,9 +214,19 @@ static void update_logic(void)
      * 100-entry source enemy pool in shadow mode.  Rendering, movement,
      * collision and death still remain with v11 until their source routines
      * replace the legacy path.
-     */
+    */
     if (game_state == STATE_PLAY) {
-        ot_level_port_advance(&source_parity_level, level_position);
+        /*
+         * The source loop targets the 264x184 PC playfield.  Until its player
+         * object replaces the GBA presentation object, align the two initial
+         * anchors (104,124 GBA -> 100,180 PC) at this adapter boundary.
+         */
+        ot_level_port_advance(
+            &source_parity_level,
+            level_position,
+            (s16)(player_x - 4),
+            (s16)(player_y + 56)
+        );
         telemetry_source_events = source_parity_level.event_index;
         telemetry_source_events_applied =
             source_parity_level.applied_event_count;
@@ -238,6 +248,20 @@ static void update_logic(void)
             source_parity_level.enemy_control_write_count;
         telemetry_source_rng_calls =
             source_parity_level.rng_call_count;
+        telemetry_source_motion_updates =
+            source_parity_level.enemy_motion_update_count;
+        telemetry_source_releases =
+            source_parity_level.enemy_release_count;
+        telemetry_source_shot_triggers =
+            source_parity_level.enemy_shot_trigger_count;
+        telemetry_source_launch_attempts =
+            source_parity_level.enemy_launch_attempt_count;
+        telemetry_source_launch_successes =
+            source_parity_level.enemy_launch_success_count;
+        telemetry_source_random_attempts =
+            source_parity_level.random_spawn_attempt_count;
+        telemetry_source_random_successes =
+            source_parity_level.random_spawn_success_count;
     }
     if (game_state == STATE_PLAY) process_events();
     advance_backgrounds();

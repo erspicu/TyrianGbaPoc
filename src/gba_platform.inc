@@ -64,8 +64,18 @@ static void commit_vblank_work(void)
 
 static void audio_load_music(u16 module)
 {
+    uint16_t source_song =
+        module == MOD_TYRIAN_TITLE_FULL ? 29u : 17u;
+
     mmStop();
     mmEffectCancelAll();
+    /*
+     * The authoritative song selection and LDS structure now come directly
+     * from ROMFS music.mus.  Maxmod remains the temporary GBA synthesis
+     * adapter until the OPL/LDS mixer translation replaces its cached IT
+     * modules.
+     */
+    if (!ot_data_mus_select(source_song)) return;
     mmStart(module, MM_PLAY_LOOP);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
