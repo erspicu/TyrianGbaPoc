@@ -1,3 +1,7 @@
+param(
+    [switch]$KeepIntermediates
+)
+
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -19,6 +23,7 @@ $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
+$backupDir = Join-Path $projectRoot "Backup"
 $romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
 $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
 $python = (Get-Command python -ErrorAction Stop).Source
@@ -165,6 +170,132 @@ function Start-TestProcess {
         throw "Runtime verification exited with code $($process.ExitCode)"
     }
     return $watch.ElapsedMilliseconds
+}
+
+function Invoke-BuildArtifactPolicy {
+    param(
+        [Parameter(Mandatory)]
+        [string]$BuildDirectory,
+        [Parameter(Mandatory)]
+        [string]$ReleaseRom,
+        [Parameter(Mandatory)]
+        [string]$BackupDirectory
+    )
+
+    $comparison = [StringComparison]::OrdinalIgnoreCase
+    $separator = [IO.Path]::DirectorySeparatorChar.ToString()
+    $buildFull = [IO.Path]::GetFullPath($BuildDirectory)
+    $releaseFull = [IO.Path]::GetFullPath($ReleaseRom)
+    $backupFull = [IO.Path]::GetFullPath($BackupDirectory)
+    $buildPrefix = $buildFull
+    $backupPrefix = $backupFull
+    $archived = 0
+    $deduplicated = 0
+    $removedEntries = 0
+
+    if (-not $buildPrefix.EndsWith($separator)) {
+        $buildPrefix += $separator
+    }
+    if (-not $backupPrefix.EndsWith($separator)) {
+        $backupPrefix += $separator
+    }
+    if (
+        -not $releaseFull.StartsWith($buildPrefix, $comparison) -or
+        $backupFull.Equals($buildFull, $comparison) -or
+        $backupFull.StartsWith($buildPrefix, $comparison)
+    ) {
+        throw "Unsafe build artifact paths"
+    }
+    if (-not (Test-Path -LiteralPath $releaseFull -PathType Leaf)) {
+        throw "The verified release ROM is missing before cleanup: $releaseFull"
+    }
+
+    New-Item -ItemType Directory -Path $backupFull -Force | Out-Null
+    foreach (
+        $rom in @(
+            Get-ChildItem -LiteralPath $buildFull `
+                -Recurse -File -Force -Filter "*.gba"
+        )
+    ) {
+        $sourceFull = [IO.Path]::GetFullPath($rom.FullName)
+        if ($sourceFull.Equals($releaseFull, $comparison)) {
+            continue
+        }
+        if (-not $sourceFull.StartsWith($buildPrefix, $comparison)) {
+            throw "Refusing to archive a ROM outside build: $sourceFull"
+        }
+
+        $sourceHash = (
+            Get-FileHash -LiteralPath $sourceFull -Algorithm SHA256
+        ).Hash.ToLowerInvariant()
+        $destination = Join-Path $backupFull $rom.Name
+        if (Test-Path -LiteralPath $destination -PathType Leaf) {
+            $destinationHash = (
+                Get-FileHash -LiteralPath $destination -Algorithm SHA256
+            ).Hash.ToLowerInvariant()
+            if ($sourceHash -eq $destinationHash) {
+                Remove-Item -LiteralPath $sourceFull -Force
+                $deduplicated++
+                continue
+            }
+
+            $stem = [IO.Path]::GetFileNameWithoutExtension($rom.Name)
+            $timestamp = $rom.LastWriteTime.ToString("yyyyMMdd-HHmmss")
+            $suffix = $sourceHash.Substring(0, 8)
+            $candidateIndex = 0
+            do {
+                $candidateTag = if ($candidateIndex -eq 0) {
+                    "$timestamp-$suffix"
+                } else {
+                    "$timestamp-$suffix-$candidateIndex"
+                }
+                $destination = Join-Path $backupFull (
+                    "$stem-$candidateTag.gba"
+                )
+                $candidateIndex++
+            } while (Test-Path -LiteralPath $destination)
+        }
+
+        $destinationFull = [IO.Path]::GetFullPath($destination)
+        if (-not $destinationFull.StartsWith($backupPrefix, $comparison)) {
+            throw "Refusing to archive a ROM outside Backup: $destinationFull"
+        }
+        Move-Item -LiteralPath $sourceFull -Destination $destinationFull
+        $archived++
+    }
+
+    foreach (
+        $entry in @(
+            Get-ChildItem -LiteralPath $buildFull -Force
+        )
+    ) {
+        $entryFull = [IO.Path]::GetFullPath($entry.FullName)
+        if ($entryFull.Equals($releaseFull, $comparison)) {
+            continue
+        }
+        if (-not $entryFull.StartsWith($buildPrefix, $comparison)) {
+            throw "Refusing to clean an entry outside build: $entryFull"
+        }
+        Remove-Item -LiteralPath $entryFull -Recurse -Force
+        $removedEntries++
+    }
+
+    $remaining = @(Get-ChildItem -LiteralPath $buildFull -Force)
+    if (
+        $remaining.Count -ne 1 -or
+        -not [IO.Path]::GetFullPath($remaining[0].FullName).Equals(
+            $releaseFull,
+            $comparison
+        )
+    ) {
+        throw "Build cleanup did not retain exactly the release ROM"
+    }
+
+    return [pscustomobject]@{
+        ArchivedRoms = $archived
+        DeduplicatedRoms = $deduplicated
+        RemovedEntries = $removedEntries
+    }
 }
 
 $releaseInfo = Test-GbaRom `
@@ -382,5 +513,29 @@ foreach ($entry in $telemetry.GetEnumerator()) {
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")
 $verification.Add("release_boot_csv=$($perfLines[1])")
-$verification | Set-Content -LiteralPath $verificationPath -Encoding utf8
-$verification
+$verification.Add(
+    "artifact_policy=" +
+    $(if ($KeepIntermediates) { "keep-intermediates" } else { "release-only" })
+)
+$verificationLines = [string[]]$verification
+$verificationLines |
+    Set-Content -LiteralPath $verificationPath -Encoding utf8
+
+if ($KeepIntermediates) {
+    $artifactResult = [pscustomobject]@{
+        ArchivedRoms = 0
+        DeduplicatedRoms = 0
+        RemovedEntries = 0
+    }
+} else {
+    $artifactResult = Invoke-BuildArtifactPolicy `
+        -BuildDirectory $buildDir `
+        -ReleaseRom $releaseRom `
+        -BackupDirectory $backupDir
+}
+
+$verificationLines
+"artifact_archived_roms=$($artifactResult.ArchivedRoms)"
+"artifact_deduplicated_roms=$($artifactResult.DeduplicatedRoms)"
+"artifact_removed_entries=$($artifactResult.RemovedEntries)"
+"artifact_retained_rom=$releaseRom"

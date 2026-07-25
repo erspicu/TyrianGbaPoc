@@ -87,11 +87,15 @@ build/tyrian_gba_level1_source_parity_romfs_v14.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
-under mGBA, reads its SRAM telemetry, and writes `build/verification.txt`.
+under mGBA, and checks its SRAM telemetry.  After a successful run, historical
+and test ROMs move to `Backup`, rebuildable intermediates are removed, and
+`build` retains only the latest release ROM.  Pass `-KeepIntermediates` when
+debugging requires ELF, map, log, save, preview and verification files.
 
 The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
-are under `res`, previews and ROMs under `build`, and the reproducible source
-asset conversions are `tools/build_assets.py` and `tools/build_romfs.py`.
+are under `res`, the current release ROM is under `build`, historical ROMs are
+under `Backup`, and the reproducible source asset conversions are
+`tools/build_assets.py` and `tools/build_romfs.py`.
 
 ## Documentation
 

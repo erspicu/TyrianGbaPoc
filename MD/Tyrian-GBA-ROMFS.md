@@ -200,7 +200,9 @@ OpenTyrian 原有的 file helper boundary：
 3. 重要格式加入 `probes`，讓 GBA 開機檢查檔案長度、CRC、頭四 bytes 及
    尾四 bytes。
 4. 執行 `.\build.ps1`。
-5. 檢查 `res/tyrian_romfs_audit.json` 與 `build/verification.txt`。
+5. 檢查 console 驗證結果與 `res/tyrian_romfs_audit.json`。需要保存
+   `build/verification.txt` 及除錯產物時改用
+   `.\build.ps1 -KeepIntermediates`。
 
 直接執行封裝器：
 

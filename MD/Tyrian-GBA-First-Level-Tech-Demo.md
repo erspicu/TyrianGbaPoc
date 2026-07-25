@@ -546,7 +546,9 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
 4. 驗證 GBA header、容量與 SHA-256。
 5. 用 mGBA 跑完整第一關並解析 SRAM invariant。
 6. 用 `mgba-perf` 跑正式 ROM 的 600-frame 開場 smoke test。
-7. 輸出 `build/verification.txt`。
+7. 驗證成功後將歷史及測試 ROM 歸檔到 `Backup`，清除可重建產物，只在
+   `build` 保留最新 release ROM。需要保存 `verification.txt`、ELF、map
+   與 log 時使用 `.\build.ps1 -KeepIntermediates`。
 
 若 mGBA GUI 正載入要覆寫的同名 ROM，Windows 會鎖住該檔案；重建前請先
 關閉該 ROM 或關閉模擬器。正式交付使用 `_v11.gba` 檔名，避免與先前測試

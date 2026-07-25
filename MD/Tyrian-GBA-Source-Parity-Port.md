@@ -117,8 +117,10 @@ Stage 1 完整 auto-test 在進 Boss 前實際讀取 878 筆原始事件，其�
 | Missed VBlank | 0 |
 | Runtime errors | 0 |
 
-完整結果位於 `build/verification.txt`。既有 v11 的 414 spawn、380 control、
-434 collision、金額、掉落、暫停及回到標題等回歸數字維持不變。
+該次完整數值記錄於本節。現在預設建置會清除可重建的 verification 檔；
+需要保留時使用 `.\build.ps1 -KeepIntermediates`。既有 v11 的 414 spawn、
+380 control、434 collision、金額、掉落、暫停及回到標題等回歸數字維持
+不變。
 
 ## Stage 2 敵人池與事件直譯
 
