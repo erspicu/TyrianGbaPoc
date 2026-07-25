@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_tech_demo_v11
-TEST_TARGET := tyrian_gba_level1_autotest_v11
+TARGET := tyrian_gba_level1_source_parity_stage1_v12
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_stage1_v12
 BUILD := build
 RES := res
 
@@ -19,7 +19,7 @@ PYTHON ?= python
 ARCH := -mcpu=arm7tdmi -mtune=arm7tdmi -mthumb -mthumb-interwork
 CFLAGS := $(ARCH) -std=gnu17 -O3 -g -Wall -Wextra \
 	-ffunction-sections -fdata-sections \
-	-I$(LIBGBA)/include -I$(MAXMOD)/include
+	-I. -Isrc -I$(LIBGBA)/include -I$(MAXMOD)/include
 ASFLAGS := $(ARCH) -x assembler-with-cpp
 LINKFLAGS := $(ARCH) -specs=gba.specs -Wl,--gc-sections \
 	-L$(LIBGBA)/lib -L$(MAXMOD)/lib
@@ -32,6 +32,9 @@ ASSET_INPUTS := \
 	../../org/AprCSTyrian/Build/data/tyrian1.lvl \
 	../../org/AprCSTyrian/Build/data/tyrian.hdt \
 	../../org/AprCSTyrian/Build/data/tyrian.snd \
+	../../org/opentyrian/src/tyrian2.c \
+	../../org/opentyrian/src/varz.h \
+	../../org/opentyrian/src/episodes.h \
 	../../org/TyrianAudioLab/Music/30_tyrian_the_song.tym \
 	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym
 
@@ -46,7 +49,9 @@ ASSET_BINARIES := \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
 	$(RES)/obj_palette.bin \
-	$(RES)/level_events.bin
+	$(RES)/level_events.bin \
+	$(RES)/opentyrian_level1_events.bin \
+	$(RES)/opentyrian_level1_enemies.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \
@@ -61,7 +66,10 @@ AUDIO_INPUTS := \
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
-	$(BUILD)/gba_heap.o
+	$(BUILD)/gba_heap.o \
+	$(BUILD)/opentyrian_level_port.o
+
+MAIN_INCLUDES := $(wildcard src/*.inc)
 
 .PHONY: all autotest assets clean distclean
 
@@ -88,13 +96,19 @@ $(RES)/soundbank.bin: $(ASSET_STAMP) $(AUDIO_INPUTS) | $(BUILD)
 
 $(RES)/soundbank.h: $(RES)/soundbank.bin
 
-$(BUILD)/main_release.o: main.c $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
+$(BUILD)/main_release.o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_level_port.h $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD)/main_test.o: main.c $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
+$(BUILD)/main_test.o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_level_port.h $(RES)/asset_meta.h $(RES)/soundbank.h | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
+		src/opentyrian_level_port.h $(RES)/asset_meta.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/assets.o: assets.s $(ASSET_BINARIES) $(RES)/soundbank.bin | $(BUILD)
@@ -123,6 +137,8 @@ clean:
 		$(BUILD)/main_release.o $(BUILD)/main_release.d \
 		$(BUILD)/main_test.o $(BUILD)/main_test.d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
+		$(BUILD)/opentyrian_level_port.o \
+		$(BUILD)/opentyrian_level_port.d \
 		$(BUILD)/assets.o \
 		$(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).gba \
 		$(BUILD)/$(TARGET).map \
@@ -135,3 +151,4 @@ distclean: clean
 -include $(BUILD)/main_release.d
 -include $(BUILD)/main_test.d
 -include $(BUILD)/gba_heap.d
+-include $(BUILD)/opentyrian_level_port.d

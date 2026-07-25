@@ -56,6 +56,16 @@ level_events:
 	.incbin "res/level_events.bin"
 
 	.balign 4
+	.global opentyrian_level1_events
+opentyrian_level1_events:
+	.incbin "res/opentyrian_level1_events.bin"
+
+	.balign 4
+	.global opentyrian_level1_enemies
+opentyrian_level1_enemies:
+	.incbin "res/opentyrian_level1_enemies.bin"
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

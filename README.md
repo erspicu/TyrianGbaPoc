@@ -4,6 +4,12 @@ This project is an independent Game Boy Advance proof of concept built from
 the original Tyrian data already present in this workspace.  It is not a
 binary conversion of the NES or SNES ROM.
 
+The `opentyrian-source-parity-port` branch is now replacing the reconstructed
+gameplay with a line-oriented translation of the OpenTyrian first-level loop.
+Stage 1 embeds all original first-level event records and the exact transitive
+HDT enemy dependency set, then runs the translated event state beside the
+v11 loop as a measured shadow runtime.  It does not yet claim gameplay parity.
+
 The current scope is deliberately narrow:
 
 - Tyrian opening screen and complete opening music
@@ -68,7 +74,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_tech_demo_v11.gba
+build/tyrian_gba_level1_source_parity_stage1_v12.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -80,6 +86,7 @@ asset conversion is `tools/build_assets.py`.
 
 ## Documentation
 
+- [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
 - [First-level technical demo](MD/Tyrian-GBA-First-Level-Tech-Demo.md)
 - [GBA toolchain and runtime setup](MD/Tyrian-GBA-Toolchain-Setup.md)
 - [Game Boy/GBC and GBA audio research](MD/Tyrian-Audio-Lab-GameBoy-GBA.md)
@@ -91,6 +98,9 @@ Generated resources in `res/`, build intermediates in `build/`, emulator
 state, and all `.gba` ROM images are intentionally excluded from Git.
 Milestone ROMs are published separately through tagged GitHub Releases only
 after a demonstrable result is ready.
+
+Directly translated OpenTyrian code is licensed under
+`GPL-2.0-or-later`; see [COPYING](COPYING).
 
 The build currently expects this repository at
 `AprTyrianNes/repo/TyrianGbaPoc` alongside the source data and helper projects

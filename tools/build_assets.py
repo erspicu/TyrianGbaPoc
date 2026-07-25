@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import importlib.util
 import struct
 import wave
@@ -50,6 +51,7 @@ ENEMY_PROJECTILE_PALETTE_GROUPS = (
     (11, (58, 201, 202)),   # orange dart and diagonal variants
     (12, (145, 146, 147)),  # purple left/down/right laser variants
 )
+OPENTYRIAN_SOURCE_COMMIT = "1c34d1bddac8c8f2de834229d04b5a729525c944"
 
 
 def load_snes_builder(workspace: Path) -> ModuleType:
@@ -60,6 +62,36 @@ def load_snes_builder(workspace: Path) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def read_git_head(repo: Path) -> str:
+    """Read a local Git HEAD without depending on git.exe being on PATH."""
+    git_dir = repo / ".git"
+    if git_dir.is_file():
+        marker = git_dir.read_text(encoding="utf-8").strip()
+        if not marker.startswith("gitdir: "):
+            raise ValueError(f"unexpected Git worktree marker: {git_dir}")
+        git_dir = (repo / marker[8:]).resolve()
+
+    head = (git_dir / "HEAD").read_text(encoding="ascii").strip()
+    if head.startswith("ref: "):
+        reference = head[5:]
+        loose_ref = git_dir / reference
+        if loose_ref.is_file():
+            head = loose_ref.read_text(encoding="ascii").strip()
+        else:
+            packed = git_dir / "packed-refs"
+            for line in packed.read_text(encoding="ascii").splitlines():
+                if line and not line.startswith(("#", "^")):
+                    commit, name = line.split(" ", 1)
+                    if name == reference:
+                        head = commit
+                        break
+            else:
+                raise ValueError(f"Git reference is missing: {reference}")
+    if len(head) != 40 or any(char not in "0123456789abcdef" for char in head):
+        raise ValueError(f"unexpected Git HEAD value: {head}")
+    return head
 
 
 def encode_gba_4bpp(values: np.ndarray) -> bytes:
@@ -1565,6 +1597,137 @@ def add_background_motion_events(
     return bytes(output), len(motion_records), reward_report
 
 
+def build_opentyrian_level1_source_data(
+    nes: ModuleType,
+    events: list[tuple[int, int, int, int, int, int, int, int]],
+    hdt_path: Path,
+) -> tuple[bytes, bytes, dict[str, int | str], list[str]]:
+    """Pack the unmodified first-level records needed by the direct C port.
+
+    This is deliberately separate from ``level_events.bin``.  That older
+    bytecode is the v11 visual proof's simplified runtime format.  The
+    source-parity port consumes the original JE_EventRecType field values and
+    exact 77-byte JE_EnemyDat records instead of reverse engineering the
+    simplified stream.
+    """
+    event_record_bytes = 11
+    packed_events = bytearray(b"OTL1")
+    packed_events.extend(struct.pack("<HBB", len(events), event_record_bytes, 1))
+    event_audit = [
+        "index,eventtime,eventtype,eventdat,eventdat2,"
+        "eventdat3,eventdat5,eventdat6,eventdat4"
+    ]
+    for index, event in enumerate(events):
+        (
+            event_time,
+            event_type,
+            event_data,
+            event_data_2,
+            event_data_3,
+            event_data_5,
+            event_data_6,
+            event_data_4,
+        ) = event
+        packed_events.extend(struct.pack(
+            "<HBhhbbbB",
+            event_time,
+            event_type,
+            event_data,
+            event_data_2,
+            event_data_3,
+            event_data_5,
+            event_data_6,
+            event_data_4,
+        ))
+        event_audit.append(
+            f"{index},{event_time},{event_type},{event_data},{event_data_2},"
+            f"{event_data_3},{event_data_5},{event_data_6},{event_data_4}"
+        )
+
+    hdt = hdt_path.read_bytes()
+    enemy_table = hdt_enemy_table_offset(hdt)
+    enemy_ids: set[int] = set()
+    for event in events:
+        event_type = event[1]
+        enemy_id = event[2]
+        if event_type in nes.LEVEL_SPAWN_TYPES:
+            if event_type == 12:
+                enemy_ids.update(range(enemy_id, enemy_id + 4))
+            elif event_type not in (49, 50, 51, 52):
+                enemy_ids.add(enemy_id)
+        elif event_type == 33:
+            enemy_ids.add(enemy_id)
+
+    # Follow the two source-level enemy references.  This includes physical
+    # score items, launched enemies and their transitive dependencies.
+    pending = list(enemy_ids)
+    while pending:
+        enemy_id = pending.pop()
+        if not 0 <= enemy_id < 851:
+            raise ValueError(f"first-level enemy dependency outside HDT: {enemy_id}")
+        offset = enemy_table + enemy_id * 77
+        launch_frequency = hdt[offset + 70]
+        launch_type = struct.unpack_from("<H", hdt, offset + 71)[0]
+        enemy_die = struct.unpack_from("<H", hdt, offset + 75)[0]
+        dependencies = (
+            launch_type if launch_frequency else 0,
+            enemy_die,
+        )
+        for dependency in dependencies:
+            if dependency and dependency not in enemy_ids:
+                enemy_ids.add(dependency)
+                pending.append(dependency)
+
+    enemy_record_bytes = 79
+    packed_enemies = bytearray(b"OTE1")
+    packed_enemies.extend(struct.pack(
+        "<HBB", len(enemy_ids), enemy_record_bytes, 77
+    ))
+    enemy_audit = [
+        "enemy_id,ani,tur1,tur2,tur3,freq1,freq2,freq3,armor,esize,"
+        "shapebank,launchfreq,launchtype,value,enemydie"
+    ]
+    for enemy_id in sorted(enemy_ids):
+        offset = enemy_table + enemy_id * 77
+        record = hdt[offset : offset + 77]
+        packed_enemies.extend(struct.pack("<H", enemy_id))
+        packed_enemies.extend(record)
+        enemy_audit.append(
+            f"{enemy_id},{record[0]},"
+            + ",".join(str(value) for value in record[1:7])
+            + f",{record[19]},{record[20]},{record[63]},{record[70]},"
+            + f"{struct.unpack_from('<H', record, 71)[0]},"
+            + f"{struct.unpack_from('<h', record, 73)[0]},"
+            + f"{struct.unpack_from('<H', record, 75)[0]}"
+        )
+
+    report: dict[str, int | str] = {
+        "event_count": len(events),
+        "event_record_bytes": event_record_bytes,
+        "event_bytes": len(packed_events),
+        "event_before_legacy_cutoff": sum(
+            event[0] < 4900 for event in events
+        ),
+        "event_sha256": hashlib.sha256(packed_events).hexdigest(),
+        "enemy_count": len(enemy_ids),
+        "enemy_record_bytes": enemy_record_bytes,
+        "enemy_bytes": len(packed_enemies),
+        "enemy_sha256": hashlib.sha256(packed_enemies).hexdigest(),
+    }
+    audit_lines = [
+        "OpenTyrian source-parity first-level export",
+        f"source_commit={OPENTYRIAN_SOURCE_COMMIT}",
+        *(f"{key}={value}" for key, value in report.items()),
+        "",
+        "[events]",
+        *event_audit,
+        "",
+        "[enemy_dependencies]",
+        *enemy_audit,
+    ]
+    return bytes(packed_events), bytes(packed_enemies), report, audit_lines
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace", type=Path, required=True)
@@ -1582,12 +1745,35 @@ def main() -> None:
     nes = snes.load_nes_asset_module(workspace)
     image_root = workspace / "org" / "AprCSTyrian" / "image"
     data_root = workspace / "org" / "AprCSTyrian" / "Build" / "data"
+    opentyrian_root = workspace / "org" / "opentyrian"
+    source_commit = read_git_head(opentyrian_root)
+    if source_commit != OPENTYRIAN_SOURCE_COMMIT:
+        raise ValueError(
+            "OpenTyrian source revision changed; audit the direct port before "
+            f"updating {OPENTYRIAN_SOURCE_COMMIT} to {source_commit}"
+        )
 
     title = build_title(nes, image_root)
     (output / "title_bitmap.bin").write_bytes(bitmap_555(title))
     title.save(preview / "title_gba.png")
 
     lookups, maps, source_events = nes.parse_first_level(data_root / "tyrian1.lvl")
+    (
+        source_level_events,
+        source_level_enemies,
+        source_parity_report,
+        source_parity_audit,
+    ) = build_opentyrian_level1_source_data(
+        nes,
+        source_events,
+        data_root / "tyrian.hdt",
+    )
+    (output / "opentyrian_level1_events.bin").write_bytes(source_level_events)
+    (output / "opentyrian_level1_enemies.bin").write_bytes(source_level_enemies)
+    (output / "opentyrian_level1_source_audit.txt").write_text(
+        "\n".join(source_parity_audit) + "\n",
+        encoding="utf-8",
+    )
     layer1, _ = nes.render_map_layer(image_root, lookups[0], maps[0], 14, 3, 292)
     layer1 = layer1.crop((40, 0, 296, snes.BG1_ROWS * 8)).convert("RGBA")
     layer2, layer2_nonblank = nes.render_map_layer(
@@ -1785,6 +1971,27 @@ def main() -> None:
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
+    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_COUNT"] = int(
+        source_parity_report["event_count"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_RECORD_BYTES"] = int(
+        source_parity_report["event_record_bytes"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_EVENT_BYTES"] = int(
+        source_parity_report["event_bytes"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_EVENTS_BEFORE_LEGACY_CUTOFF"] = int(
+        source_parity_report["event_before_legacy_cutoff"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_COUNT"] = int(
+        source_parity_report["enemy_count"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_RECORD_BYTES"] = int(
+        source_parity_report["enemy_record_bytes"]
+    )
+    obj_metadata["OPENTYRIAN_LEVEL1_ENEMY_BYTES"] = int(
+        source_parity_report["enemy_bytes"]
+    )
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
@@ -1865,6 +2072,7 @@ def main() -> None:
     )
     report_lines = [
         "profile=GBA Mode 0 / complete Tyrian MAP1 + MAP2 + MAP3",
+        f"opentyrian_source_commit={source_commit}",
         "display_hz=59.7275",
         "logic_hz=34.7826",
         "background_layers=3 (Tyrian MAP1 + MAP2 + MAP3)",
@@ -1883,6 +2091,30 @@ def main() -> None:
         f"bg3_source_unique_tiles={bg3_report['source_unique_tiles']}",
         f"bg3_approximated_tiles={bg3_report['approximated_tiles']}",
         f"level_event_source_records={len(source_events)}",
+        (
+            "source_parity_event_record_bytes="
+            f"{source_parity_report['event_record_bytes']}"
+        ),
+        (
+            "source_parity_event_bytes="
+            f"{source_parity_report['event_bytes']}"
+        ),
+        (
+            "source_parity_event_sha256="
+            f"{source_parity_report['event_sha256']}"
+        ),
+        (
+            "source_parity_enemy_dependency_records="
+            f"{source_parity_report['enemy_count']}"
+        ),
+        (
+            "source_parity_enemy_bytes="
+            f"{source_parity_report['enemy_bytes']}"
+        ),
+        (
+            "source_parity_enemy_sha256="
+            f"{source_parity_report['enemy_sha256']}"
+        ),
         f"level_event_spawn_records={spawn_count}",
         f"level_event_control_records={control_count}",
         f"level_background_control_records={background_control_count}",
