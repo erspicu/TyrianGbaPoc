@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_stage1_v12
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_stage1_v12
+TARGET := tyrian_gba_level1_source_parity_stage2_v13
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_stage2_v13
 BUILD := build
 RES := res
 

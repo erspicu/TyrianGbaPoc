@@ -210,9 +210,10 @@ static void update_logic(void)
     level_tick++;
     telemetry_logic_updates++;
     /*
-     * Stage 1 runs the exact JE_EventRecType stream in shadow mode.  Entity
-     * cases remain deferred to the working v11 runtime, while translated
-     * source cases and ordering are audited on every tick.
+     * Stage 2 runs the exact JE_EventRecType stream, JE_makeEnemy and the
+     * 100-entry source enemy pool in shadow mode.  Rendering, movement,
+     * collision and death still remain with v11 until their source routines
+     * replace the legacy path.
      */
     if (game_state == STATE_PLAY) {
         ot_level_port_advance(&source_parity_level, level_position);
@@ -221,6 +222,22 @@ static void update_logic(void)
             source_parity_level.applied_event_count;
         telemetry_source_events_deferred =
             source_parity_level.deferred_event_count;
+        telemetry_source_events_skipped =
+            source_parity_level.skipped_event_count;
+        telemetry_source_spawn_attempts =
+            source_parity_level.spawn_attempt_count;
+        telemetry_source_spawn_successes =
+            source_parity_level.spawn_success_count;
+        telemetry_source_spawn_pool_full =
+            source_parity_level.spawn_pool_full_count;
+        telemetry_source_spawn_missing =
+            source_parity_level.spawn_missing_definition_count;
+        telemetry_source_max_enemies =
+            source_parity_level.max_active_enemy_count;
+        telemetry_source_control_writes =
+            source_parity_level.enemy_control_write_count;
+        telemetry_source_rng_calls =
+            source_parity_level.rng_call_count;
     }
     if (game_state == STATE_PLAY) process_events();
     advance_backgrounds();

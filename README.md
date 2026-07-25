@@ -6,9 +6,11 @@ binary conversion of the NES or SNES ROM.
 
 The `opentyrian-source-parity-port` branch is now replacing the reconstructed
 gameplay with a line-oriented translation of the OpenTyrian first-level loop.
-Stage 1 embeds all original first-level event records and the exact transitive
-HDT enemy dependency set, then runs the translated event state beside the
-v11 loop as a measured shadow runtime.  It does not yet claim gameplay parity.
+Stage 2 embeds all original first-level event records and the exact transitive
+HDT enemy dependency set, then runs the translated event state,
+`JE_makeEnemy()` and OpenTyrian's 100-entry enemy pool beside the v11 loop as
+a measured shadow runtime.  Movement, collision and rendering still use v11,
+so this milestone does not yet claim gameplay parity.
 
 The current scope is deliberately narrow:
 
@@ -36,6 +38,8 @@ The current scope is deliberately narrow:
 - player shots, projectile collisions, effects and an invincible player
 - a 48-entry enemy pool (30 peak on the complete route) with a zero-replacement
   regression invariant
+- a separate 100-entry source-parity shadow pool, split into the original four
+  25-slot groups, with exact spawn/control/skip/RNG telemetry
 - the original Pulse-Cannon power-1 sprite resolved through HDT weapon record
   155 to player-shot graphic 59, including its repeat rate and vertical speed
 - stable USP Talon neutral/left/right banking poses instead of alternating
@@ -74,7 +78,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_stage1_v12.gba
+build/tyrian_gba_level1_source_parity_stage2_v13.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route

@@ -19,9 +19,11 @@ OpenTyrian commit
 OpenTyrian C 原始碼逐段直譯。PC 版本不需要另外編譯；原始碼及資料檔
 作為唯讀依據，C# 版只協助理解，不作為第二套混合規則。
 
-Stage 1 已完成可編譯的直譯資料層與 shadow runtime。畫面上仍由 v11
-legacy game loop 執行，所以此版本不能宣稱第一關已完成 source parity；
-shadow runtime 的用途是讓每個後續函式都有可量測、可逐步取代的基礎。
+Stage 2 已完成可編譯的直譯資料層、100-entry enemy pool、
+`JE_makeEnemy()`、`JE_createNewEventEnemy()` 及第一關 enemy-control
+事件。畫面上仍由 v11 legacy game loop 執行，所以此版本不能宣稱第一關
+已完成 source parity；shadow runtime 的用途是讓每個後續函式都有可量測、
+可逐步取代的基礎。
 
 ## 已鎖定的顯示與操作規格
 
@@ -118,6 +120,89 @@ Stage 1 完整 auto-test 在進 Boss 前實際讀取 878 筆原始事件，其�
 完整結果位於 `build/verification.txt`。既有 v11 的 414 spawn、380 control、
 434 collision、金額、掉落、暫停及回到標題等回歸數字維持不變。
 
+## Stage 2 敵人池與事件直譯
+
+Stage 2 依 `src/varz.h` 建立固定寬度的 `OtEnemy`，逐欄位對應
+`JE_SingleEnemyType`，並保留原始四組各 25 格的 `enemyAvail[100]`。
+`Sprite2_array *sprite2s` 與 `void *enemydatofs` 是 PC 指標，GBA 端最小必要
+修改為 shape-bank ID 與 enemy-definition ID；其餘速度、加速度、動畫、
+armor、score item、turret、launch、death spawn、bounce 及特殊旗標欄位
+保留原始 8/16-bit signedness。
+
+`JE_makeEnemy()` 目前鎖定已確認的遊戲模式：
+
+```text
+single player
+Normal difficulty
+SA_NONE
+non-superTyrian
+non-Galaga
+```
+
+Normal 難度的 armor 與 value 分支是原值 identity transform，因此沒有把
+其他難度公式近似套用進來。初始化順序包含 turret wait、animate mode、
+random start、acceleration wait/reverse、score-item 判定及 `totalEnemy`。
+原始碼在 armor=0 且 value=0 時沒有清除 recycled slot 的 `scoreitem`，
+Stage 2 也刻意保存此行為，沒有自行「修正」。
+
+已直譯的第一關 entity event 家族：
+
+| 家族 | Event types | 狀態 |
+|---|---|---|
+| 四個 25-slot pool 生成 | 6, 7, 10, 15 | 已執行 |
+| 四片組合與底部生成 | 12, 17, 18, 23, 32, 56 | 已執行 |
+| 移動／加速度／反轉 | 19, 20, 27 | 已執行 |
+| 武器 override／death spawn | 31, 33, 45 | 已執行 |
+| 特殊敵人與條件跳過 | 60, 61 | 已執行 |
+
+事件 19、27、31、33、60 在 OpenTyrian 中會掃描所有 100 格，即使該格
+目前是 free；直譯版保留這個容易被誤改成「只掃 active」的細節。事件
+61 會改變 `eventLoc`，因此 telemetry 另外保存 skipped count，驗證式改為：
+
+```text
+applied + deferred + skipped == source event index
+```
+
+### RNG
+
+Stage 2 使用與 OpenTyrian `src/mtrand.c` 相同的 624-word MT19937 state、
+twist 與 temper 運算。PC 程式在 `main()` 以 `time(NULL)` seed，並會在進入
+關卡前由其他系統消耗亂數；目前 shadow runtime 為可重現 auto-test 使用
+固定 seed 5489。演算法內及關卡事件的 RNG 呼叫順序已保留，但在整個
+session 初始化也直譯完成前，不能宣稱與某一次 PC 執行具有相同亂數序列。
+
+### Shadow 限制
+
+`JE_drawEnemy()` 的 movement/off-screen release、碰撞、死亡與 death-spawn
+尚未接管。因此 source pool 只會增加、不會釋放，完整 shadow 路徑會填滿
+100 格；後續 373 次 pool-full 是此階段預期且有 assert 的量測結果，不是
+最終遊戲行為。同理，特殊敵人死亡尚未寫入 `globalFlags`，所以目前四筆
+type-61 分支依初始 flag=0 跳過；這些分支要在死亡流程移植後重新驗證。
+
+15,928-byte source context 放在 GBA EWRAM BSS，不會把整塊零初始化資料
+複製進 cartridge；ARM7 執行時仍只使用約 19.58 KiB EWRAM，距離 256 KiB
+硬體上限很遠。
+
+## Stage 2 驗證
+
+2026-07-26 以 ARM GCC 16.1.0 及 mGBA 0.11.0 完成全流程測試：
+
+| 項目 | 結果 |
+|---|---:|
+| Auto-test | PASS |
+| Release ROM | 682,192 bytes（666.20 KiB） |
+| Release SHA-256 | `b70e9f65352ae6f1f9cd8a61b570518bf0d4e8eabd95c8669df8c422e9525e8c` |
+| Source events index | 878 |
+| Applied／deferred／skipped | 869／5／4 |
+| Spawn attempts／success／pool full／missing | 473／100／373／0 |
+| Source enemy-control field writes | 3,586 |
+| Source MT19937 calls | 30 |
+| Missed VBlank／runtime errors | 0／0 |
+
+五筆 deferred record 全是尚未移植的 type-16 text-window/audio UI 事件。
+legacy 的 414 spawn、380 control、434 collision、金額、掉落、暫停與
+Boss 回標題等數字仍完全相同，證明新增 shadow 工作沒有改壞現有展示。
+
 ## 分檔
 
 原本 2,186 行的 `main.c` 已降至約 580 行。現有程式依責任分為：
@@ -166,13 +251,14 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 
 ## 下一個直譯階段
 
-1. 移植 `JE_makeEnemy()` 與 100-entry `enemyAvail`／enemy pool。
-2. 將事件 6、7、10、12、15、18、32 的 `JE_createNewEventEnemy()`
-   切換至 source-parity runtime。
-3. 移植事件 19、20、27、31、33、45、60、61。
-4. 移植 `JE_drawEnemy()` 的 update 部分，繪圖呼叫改送 GBA renderer。
-5. 移植玩家射擊、碰撞、死亡、獎賞及 Boss 結束流程。
-6. legacy event/gameplay runtime 完全移除。
+1. 移植 `JE_drawEnemy()` 的 movement、acceleration、animation、turret、
+   launch 與 off-screen slot release。
+2. 將 source pool 的 presentation 接到 GBA renderer，但不改內部
+   320×200 gameplay 座標與 update order。
+3. 移植玩家射擊、碰撞、死亡、獎賞及 Boss 結束流程，讓
+   `globalFlags`／`enemydie` 進入真實生命週期。
+4. 重新驗證 type-61 分支與 pool reuse，取消 Stage 2 的飽和預期。
+5. source-parity loop 成為 authoritative 後移除 legacy event/gameplay。
 
 ## 建置
 
@@ -180,10 +266,10 @@ source-parity context 後，legacy `.inc` 會被刪除，而不是成為新架�
 .\build.ps1
 ```
 
-Stage 1 ROM：
+目前 Stage 2 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_stage1_v12.gba
+build/tyrian_gba_level1_source_parity_stage2_v13.gba
 ```
 
 ROM 與中間產物不納入 Git。
@@ -192,3 +278,5 @@ ROM 與中間產物不納入 Git。
 
 新的直譯程式衍生自 OpenTyrian GPL 原始碼，使用
 `GPL-2.0-or-later`，並在 repository 根目錄保存原始 `COPYING`。
+MT19937 段落沿用 OpenTyrian `mtrand.c` 的 BSD 3-clause 授權，完整
+copyright、條件與 disclaimer 保留在 `src/opentyrian_level_port.c`。

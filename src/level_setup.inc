@@ -137,6 +137,14 @@ static void enter_level(void)
     telemetry_source_events = 0;
     telemetry_source_events_applied = 0;
     telemetry_source_events_deferred = 0;
+    telemetry_source_events_skipped = 0;
+    telemetry_source_spawn_attempts = 0;
+    telemetry_source_spawn_successes = 0;
+    telemetry_source_spawn_pool_full = 0;
+    telemetry_source_spawn_missing = 0;
+    telemetry_source_max_enemies = 0;
+    telemetry_source_control_writes = 0;
+    telemetry_source_rng_calls = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = 8;

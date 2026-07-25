@@ -381,7 +381,7 @@ static u16 event_offset;
 static u16 event_time;
 static u8 foreground_phase;
 static u32 logic_accumulator;
-static OtLevelPortState source_parity_level;
+static OtLevelPortState source_parity_level EWRAM_BSS;
 
 static u16 bg1_scroll_pixel;
 static u16 bg2_scroll_pixel;
@@ -440,6 +440,14 @@ volatile u32 telemetry_paused_frames;
 volatile u32 telemetry_source_events;
 volatile u32 telemetry_source_events_applied;
 volatile u32 telemetry_source_events_deferred;
+volatile u32 telemetry_source_events_skipped;
+volatile u32 telemetry_source_spawn_attempts;
+volatile u32 telemetry_source_spawn_successes;
+volatile u32 telemetry_source_spawn_pool_full;
+volatile u32 telemetry_source_spawn_missing;
+volatile u32 telemetry_source_max_enemies;
+volatile u32 telemetry_source_control_writes;
+volatile u32 telemetry_source_rng_calls;
 volatile u32 telemetry_state_transitions;
 
 static const u16 boss_bar_fill_colours[7][3] = {
