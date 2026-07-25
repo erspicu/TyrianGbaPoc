@@ -68,6 +68,13 @@ The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
 are under `res`, previews and ROMs under `build`, and the reproducible source
 asset conversion is `tools/build_assets.py`.
 
+## Documentation
+
+- [First-level technical demo](MD/Tyrian-GBA-First-Level-Tech-Demo.md)
+- [GBA toolchain and runtime setup](MD/Tyrian-GBA-Toolchain-Setup.md)
+- [Game Boy/GBC and GBA audio research](MD/Tyrian-Audio-Lab-GameBoy-GBA.md)
+- [Track 18 GB/GBA percussion correction](MD/Tyrian-Audio-Lab-Track18-Percussion-Fix.md)
+
 ## Repository policy
 
 Generated resources in `res/`, build intermediates in `build/`, emulator
