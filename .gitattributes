@@ -1,0 +1,18 @@
+* text=auto
+
+.gitattributes text eol=lf
+.gitignore text eol=lf
+Makefile text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.s text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.ps1 text eol=crlf
+
+*.bin binary
+*.gba binary
+*.it binary
+*.png binary
+*.sav binary
+*.wav binary
