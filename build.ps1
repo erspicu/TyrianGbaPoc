@@ -18,18 +18,23 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v26_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v26_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v26_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v27_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v27_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v27_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v27_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
+$jukeboxTestRom = Join-Path $buildDir "$jukeboxTestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
+$jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
 $deathTestStderr = Join-Path $buildDir "death_autotest_mgba_stderr.txt"
+$jukeboxTestStdout = Join-Path $buildDir "jukebox_autotest_mgba_stdout.txt"
+$jukeboxTestStderr = Join-Path $buildDir "jukebox_autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
@@ -60,7 +65,7 @@ set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest jukebox-autotest
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
@@ -324,6 +329,10 @@ $deathTestInfo = Test-GbaRom `
     -Name "death_autotest" `
     -Path $deathTestRom `
     -ExpectedGameCode "TYGD"
+$jukeboxTestInfo = Test-GbaRom `
+    -Name "jukebox_autotest" `
+    -Path $jukeboxTestRom `
+    -ExpectedGameCode "TYGJ"
 
 $env:PATH = "$ucrtBin;$env:PATH"
 if (Test-Path -LiteralPath $testSave) {
@@ -1056,6 +1065,109 @@ if ($failedDeathChecks.Count -ne 0) {
     )
 }
 
+if (Test-Path -LiteralPath $jukeboxTestSave) {
+    Remove-Item -LiteralPath $jukeboxTestSave -Force
+}
+$jukeboxTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$jukeboxTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $jukeboxTestStdout `
+    -StandardError $jukeboxTestStderr
+if (-not (Test-Path -LiteralPath $jukeboxTestSave)) {
+    throw (
+        "mGBA did not create the expected Jukebox auto-test SRAM file: " +
+        $jukeboxTestSave
+    )
+}
+$jukeboxRuntimeErrors = @(
+    Select-String `
+        -Path $jukeboxTestStdout, $jukeboxTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($jukeboxRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA Jukebox auto-test reported " +
+        "$($jukeboxRuntimeErrors.Count) runtime error(s)"
+    )
+}
+$jukeboxSaveBytes = [System.IO.File]::ReadAllBytes($jukeboxTestSave)
+if ($jukeboxSaveBytes.Length -lt 80) {
+    throw "Jukebox auto-test SRAM telemetry is truncated"
+}
+$jukeboxMagic = [Text.Encoding]::ASCII.GetString($jukeboxSaveBytes, 0, 4)
+if ($jukeboxMagic -ne "TGJ1") {
+    throw "Jukebox auto-test SRAM magic mismatch: '$jukeboxMagic'"
+}
+function Read-JukeboxTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($jukeboxSaveBytes, $Offset)
+}
+$jukeboxTelemetry = [ordered]@{
+    pass = Read-JukeboxTelemetryU32 4
+    selected_song = Read-JukeboxTelemetryU32 8
+    final_state = Read-JukeboxTelemetryU32 12
+    final_mode4 = Read-JukeboxTelemetryU32 16
+    display_frames = Read-JukeboxTelemetryU32 20
+    track_changes = Read-JukeboxTelemetryU32 24
+    previous_wraps = Read-JukeboxTelemetryU32 28
+    next_wraps = Read-JukeboxTelemetryU32 32
+    text_toggles = Read-JukeboxTelemetryU32 36
+    text_map_commits = Read-JukeboxTelemetryU32 40
+    palette_commits = Read-JukeboxTelemetryU32 44
+    max_hardware_oam = Read-JukeboxTelemetryU32 48
+    exits = Read-JukeboxTelemetryU32 52
+    music_active = Read-JukeboxTelemetryU32 56
+    last_jukebox_song = Read-JukeboxTelemetryU32 60
+    hide_text = Read-JukeboxTelemetryU32 64
+    quitting = Read-JukeboxTelemetryU32 68
+    fade_level = Read-JukeboxTelemetryU32 72
+    module_count = Read-JukeboxTelemetryU32 76
+}
+$jukeboxChecks = [ordered]@{
+    rom_reported_pass = $jukeboxTelemetry.pass -eq 1
+    all_source_tracks_embedded = $jukeboxTelemetry.module_count -eq 41
+    circular_previous_wrap = (
+        $jukeboxTelemetry.previous_wraps -eq 1 -and
+        $jukeboxTelemetry.track_changes -eq 3
+    )
+    circular_next_wrap = $jukeboxTelemetry.next_wraps -eq 1
+    source_track_identity = $jukeboxTelemetry.last_jukebox_song -eq 1
+    text_toggle_and_map_updates = (
+        $jukeboxTelemetry.text_toggles -eq 2 -and
+        $jukeboxTelemetry.text_map_commits -ge 5 -and
+        $jukeboxTelemetry.hide_text -eq 0
+    )
+    live_palette_animation = $jukeboxTelemetry.palette_commits -ge 30
+    projected_star_oam_budget = (
+        $jukeboxTelemetry.max_hardware_oam -ge 80 -and
+        $jukeboxTelemetry.max_hardware_oam -le 128
+    )
+    fade_exit_completed = (
+        $jukeboxTelemetry.display_frames -ge 176 -and
+        $jukeboxTelemetry.exits -eq 1 -and
+        $jukeboxTelemetry.quitting -eq 1 -and
+        $jukeboxTelemetry.fade_level -eq 0
+    )
+    return_to_title_music = (
+        $jukeboxTelemetry.selected_song -eq 29 -and
+        $jukeboxTelemetry.final_state -eq 0 -and
+        $jukeboxTelemetry.final_mode4 -eq 1 -and
+        $jukeboxTelemetry.music_active -eq 1
+    )
+}
+$failedJukeboxChecks = @(
+    $jukeboxChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedJukeboxChecks.Count -ne 0) {
+    throw (
+        "Jukebox auto-test failed invariant(s): " +
+        ($failedJukeboxChecks -join ", ")
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -1084,7 +1196,14 @@ $verification.Add("result=PASS")
 $verification.Add("verified_at=$([DateTime]::UtcNow.ToString('o'))")
 $verification.Add("compiler=$compilerVersion")
 $verification.Add("emulator=$mgbaVersion")
-foreach ($info in @($releaseInfo, $testInfo, $deathTestInfo)) {
+foreach (
+    $info in @(
+        $releaseInfo,
+        $testInfo,
+        $deathTestInfo,
+        $jukeboxTestInfo
+    )
+) {
     foreach ($entry in $info.GetEnumerator()) {
         $verification.Add("$($info.name)_$($entry.Key)=$($entry.Value)")
     }
@@ -1110,6 +1229,13 @@ $verification.Add(
 )
 foreach ($entry in $deathTelemetry.GetEnumerator()) {
     $verification.Add("death_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("jukebox_autotest_host_elapsed_ms=$jukeboxTestElapsed")
+$verification.Add(
+    "jukebox_autotest_runtime_error_count=$($jukeboxRuntimeErrors.Count)"
+)
+foreach ($entry in $jukeboxTelemetry.GetEnumerator()) {
+    $verification.Add("jukebox_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

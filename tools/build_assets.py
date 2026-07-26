@@ -8,6 +8,7 @@ import collections
 import hashlib
 import importlib.util
 import json
+import re
 import struct
 import wave
 import zlib
@@ -152,6 +153,12 @@ ENEMY_STRUCTURE_FRAME_KEYS = frozenset(
 )
 ENEMY_FILTER_PALETTE_BANK = 15
 SHAPE_TABLE_CHARACTERS = "2478ABCDEFGHIJKLMNOPQRSTU5#V0@3^59"
+JUKEBOX_MUSIC_COUNT = 41
+JUKEBOX_TITLE_BYTES = 48
+JUKEBOX_FONT_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-"
+JUKEBOX_BACKDROP_TILE_COUNT = 16
+JUKEBOX_STAR_TILE_COUNT = 3
+JUKEBOX_RECIPROCAL_MAX_Z = 500
 
 
 def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
@@ -1144,6 +1151,252 @@ def build_frontend_mode4_assets(
     )
 
 
+def pack_gba_palette(
+    banks: list[list[tuple[int, int, int]]],
+) -> bytes:
+    output = bytearray()
+    for bank in banks:
+        if len(bank) > 16:
+            raise ValueError("GBA palette bank exceeds 16 colours")
+        for red, green, blue in bank:
+            if not (
+                0 <= red <= 31 and
+                0 <= green <= 31 and
+                0 <= blue <= 31
+            ):
+                raise ValueError("GBA palette component outside 5-bit range")
+            output.extend(struct.pack(
+                "<H",
+                red | green << 5 | blue << 10,
+            ))
+        output.extend(b"\0" * ((16 - len(bank)) * 2))
+    return bytes(output).ljust(512, b"\0")
+
+
+def gradient_palette_bank(
+    colour: tuple[int, int, int],
+) -> list[tuple[int, int, int]]:
+    return [
+        (0, 0, 0),
+        *[
+            tuple(
+                max(0, min(31, component * level // 15))
+                for component in colour
+            )
+            for level in range(1, 16)
+        ],
+    ]
+
+
+def parse_opentyrian_music_titles(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    marker = "const char musicTitle"
+    start = text.index(marker)
+    start = text.index("{", start)
+    end = text.index("};", start)
+    titles = [
+        bytes(value, "utf-8").decode("unicode_escape")
+        for value in re.findall(r'"((?:\\.|[^"\\])*)"', text[start:end])
+    ]
+    if len(titles) != JUKEBOX_MUSIC_COUNT:
+        raise ValueError(
+            "OpenTyrian musicTitle count changed: "
+            f"{len(titles)} != {JUKEBOX_MUSIC_COUNT}"
+        )
+    if any(len(title.encode("ascii")) >= JUKEBOX_TITLE_BYTES for title in titles):
+        raise ValueError("OpenTyrian Jukebox title exceeds fixed ROM record")
+    return titles
+
+
+def build_jukebox_assets(
+    data_root: Path,
+    opentyrian_root: Path,
+    preview: Path,
+) -> tuple[dict[str, bytes], dict[str, int], list[str]]:
+    """Build a tile/OAM adapter for OpenTyrian's Jukebox and starlib."""
+    source = FrontendSourceRenderer(data_root)
+    titles = parse_opentyrian_music_titles(
+        opentyrian_root / "src" / "musmast.c"
+    )
+
+    # Tile zero is the blank glyph used to clear dynamic text map cells.
+    font_tiles = bytearray(32)
+    for character in JUKEBOX_FONT_CHARACTERS:
+        glyph = source.sprite(1, frontend_glyph_id(character))
+        if glyph is None:
+            raise ValueError(f"Jukebox font glyph is empty: {character!r}")
+        glyph_height, glyph_width = glyph.shape
+        output_width = max(
+            1,
+            min(8, (glyph_width * 8 + glyph_height // 2) // glyph_height),
+        )
+        x_offset = (8 - output_width) // 2
+        values = np.zeros((8, 8), dtype=np.uint8)
+        for output_y in range(8):
+            source_y = min(
+                glyph_height - 1,
+                output_y * glyph_height // 8,
+            )
+            for output_x in range(output_width):
+                source_x = min(
+                    glyph_width - 1,
+                    output_x * glyph_width // output_width,
+                )
+                pixel = int(glyph[source_y, source_x])
+                if pixel != 0xFF:
+                    values[output_y, x_offset + output_x] = (
+                        10 + min(5, pixel & 7)
+                    )
+        font_tiles.extend(encode_gba_4bpp(values))
+
+    random = np.random.default_rng(0x4A554B45)
+    backdrop_tiles = bytearray()
+    for tile_index in range(JUKEBOX_BACKDROP_TILE_COUNT):
+        values = np.zeros((8, 8), dtype=np.uint8)
+        point_count = 1 + tile_index % 4
+        for point in range(point_count):
+            x = int(random.integers(0, 8))
+            y = int(random.integers(0, 8))
+            values[y, x] = 1 + (tile_index + point) % 3
+        backdrop_tiles.extend(encode_gba_4bpp(values))
+
+    backdrop_map = bytearray()
+    for y in range(32):
+        for x in range(32):
+            value = x * 37 + y * 53 + (x ^ (y * 3)) * 11
+            tile = value % JUKEBOX_BACKDROP_TILE_COUNT
+            palette = (value >> 4) & 7
+            backdrop_map.extend(struct.pack(
+                "<H",
+                tile | palette << 12,
+            ))
+
+    star_tiles: list[np.ndarray] = []
+    small = np.zeros((8, 8), dtype=np.uint8)
+    small[3, 3] = 12
+    small[3, 2] = small[3, 4] = 4
+    star_tiles.append(small)
+    cross = np.zeros((8, 8), dtype=np.uint8)
+    cross[3, 3] = 15
+    cross[3, 2] = cross[3, 4] = 8
+    cross[2, 3] = cross[4, 3] = 8
+    star_tiles.append(cross)
+    flare = np.zeros((8, 8), dtype=np.uint8)
+    flare[3, 3] = 15
+    flare[3, 2:5] = (7, 15, 7)
+    flare[2:5, 3] = (7, 15, 7)
+    flare[3, 1] = flare[3, 5] = 3
+    flare[1, 3] = flare[5, 3] = 3
+    star_tiles.append(flare)
+    star_tile_data = b"".join(
+        encode_gba_4bpp(tile)
+        for tile in star_tiles
+    )
+
+    colour_wheel = [
+        (8, 15, 31),
+        (0, 27, 31),
+        (13, 10, 31),
+        (27, 8, 31),
+        (31, 9, 20),
+        (31, 22, 5),
+        (8, 31, 15),
+        (25, 31, 31),
+    ]
+    bg_banks = [
+        gradient_palette_bank(colour)
+        for colour in colour_wheel
+    ]
+    bg_banks.extend((
+        gradient_palette_bank((8, 27, 31)),
+        gradient_palette_bank((31, 31, 31)),
+        gradient_palette_bank((31, 22, 5)),
+        gradient_palette_bank((22, 10, 31)),
+    ))
+    obj_banks = [
+        gradient_palette_bank(colour)
+        for colour in colour_wheel
+    ]
+
+    title_data = bytearray()
+    for title in titles:
+        encoded = title.encode("ascii")
+        title_data.extend(encoded.ljust(JUKEBOX_TITLE_BYTES, b"\0"))
+
+    reciprocals = [
+        0,
+        *[
+            (1 << 16) // z
+            for z in range(1, JUKEBOX_RECIPROCAL_MAX_Z + 1)
+        ],
+    ]
+    reciprocal_data = struct.pack(
+        f"<{len(reciprocals)}I",
+        *reciprocals,
+    )
+    sine = np.rint(
+        np.sin(
+            np.arange(256, dtype=np.float64) *
+            (2.0 * np.pi / 256.0)
+        ) *
+        32767.0
+    ).astype("<i2")
+
+    font_preview = np.zeros(
+        (8, (len(JUKEBOX_FONT_CHARACTERS) + 1) * 8),
+        dtype=np.uint8,
+    )
+    for index in range(len(JUKEBOX_FONT_CHARACTERS) + 1):
+        tile = font_tiles[index * 32 : (index + 1) * 32]
+        for y in range(8):
+            for pair in range(4):
+                packed = tile[y * 4 + pair]
+                font_preview[y, index * 8 + pair * 2] = packed & 15
+                font_preview[y, index * 8 + pair * 2 + 1] = packed >> 4
+    Image.fromarray(
+        (font_preview * 17).astype(np.uint8),
+        "L",
+    ).resize(
+        (font_preview.shape[1] * 2, 16),
+        Image.Resampling.NEAREST,
+    ).save(preview / "jukebox_pc_font_tiles.png")
+
+    assets = {
+        "jukebox_font_tiles.bin": bytes(font_tiles),
+        "jukebox_backdrop_tiles.bin": bytes(backdrop_tiles),
+        "jukebox_backdrop_map.bin": bytes(backdrop_map),
+        "jukebox_bg_palette.bin": pack_gba_palette(bg_banks),
+        "jukebox_obj_tiles.bin": star_tile_data,
+        "jukebox_obj_palette.bin": pack_gba_palette(obj_banks),
+        "jukebox_titles.bin": bytes(title_data),
+        "jukebox_reciprocal.bin": reciprocal_data,
+        "jukebox_sine.bin": sine.tobytes(),
+    }
+    metadata = {
+        "JUKEBOX_MUSIC_COUNT": JUKEBOX_MUSIC_COUNT,
+        "JUKEBOX_TITLE_BYTES": JUKEBOX_TITLE_BYTES,
+        "JUKEBOX_FONT_TILE_COUNT":
+            len(JUKEBOX_FONT_CHARACTERS) + 1,
+        "JUKEBOX_BACKDROP_TILE_COUNT": JUKEBOX_BACKDROP_TILE_COUNT,
+        "JUKEBOX_STAR_TILE_COUNT": JUKEBOX_STAR_TILE_COUNT,
+        "JUKEBOX_RECIPROCAL_MAX_Z": JUKEBOX_RECIPROCAL_MAX_Z,
+        "JUKEBOX_SINE_COUNT": len(sine),
+    }
+    report = [
+        "jukebox_source=OpenTyrian jukebox.c/starlib.c/musmast.c",
+        f"jukebox_music_titles={len(titles)}",
+        (
+            "jukebox_font_characters="
+            f"{len(JUKEBOX_FONT_CHARACTERS)}"
+        ),
+        f"jukebox_backdrop_tiles={JUKEBOX_BACKDROP_TILE_COUNT}",
+        f"jukebox_star_tiles={JUKEBOX_STAR_TILE_COUNT}",
+        "jukebox_presentation=Mode0 BG tile text + parallax BG + OBJ stars",
+        "jukebox_runtime_full_frame_dma=0",
+    ]
+    return assets, metadata, report
+
+
 def bitmap_555(image: Image.Image) -> bytes:
     pixels = np.asarray(image.convert("RGB"), dtype=np.uint16)
     words = (
@@ -2086,6 +2339,148 @@ def extract_tyrian_sfx_entry(sound_file: Path, index: int) -> bytes:
     return data[offsets[index] : offsets[index + 1]]
 
 
+def split_packed_it_rows(packed: bytes, rows: int) -> list[bytes]:
+    """Split our deterministic IT packer output into individual row records."""
+    records: list[bytes] = []
+    offset = 0
+    for _ in range(rows):
+        start = offset
+        while True:
+            if offset >= len(packed):
+                raise ValueError("truncated packed IT row")
+            channel = packed[offset]
+            offset += 1
+            if channel == 0:
+                break
+            if not channel & 0x80 or offset >= len(packed):
+                raise ValueError("unsupported packed IT channel reuse")
+            mask = packed[offset]
+            offset += 1
+            offset += (
+                (1 if mask & 0x01 else 0) +
+                (1 if mask & 0x02 else 0) +
+                (1 if mask & 0x04 else 0) +
+                (2 if mask & 0x08 else 0)
+            )
+            if offset > len(packed):
+                raise ValueError("truncated packed IT cell")
+        records.append(packed[start:offset])
+    if offset != len(packed):
+        raise ValueError("trailing packed IT pattern data")
+    return records
+
+
+def remap_it_position_jumps(
+    packed: bytes,
+    order_starts: list[int],
+) -> bytes:
+    """Retarget Bxx order jumps after an oversized pattern is segmented."""
+    output = bytearray(packed)
+    offset = 0
+    while offset < len(output):
+        channel = output[offset]
+        offset += 1
+        if channel == 0:
+            continue
+        if not channel & 0x80 or offset >= len(output):
+            raise ValueError("unsupported packed IT channel reuse")
+        mask = output[offset]
+        offset += 1
+        if mask & 0x01:
+            offset += 1
+        if mask & 0x02:
+            offset += 1
+        if mask & 0x04:
+            offset += 1
+        if mask & 0x08:
+            if offset + 1 >= len(output):
+                raise ValueError("truncated packed IT effect")
+            if output[offset] == 2:
+                target = output[offset + 1]
+                if target >= len(order_starts):
+                    raise ValueError(
+                        f"IT Bxx target outside order list: {target}"
+                    )
+                output[offset + 1] = order_starts[target]
+            offset += 2
+    return bytes(output)
+
+
+def build_it_module_with_segmented_patterns(
+    original_builder: object,
+    workspace: Path,
+    name: str,
+    samples: list[tuple[str, bytes, int, bool, int]],
+    patterns: list[tuple[int, bytes]],
+    orders: list[int],
+    speed: int = 6,
+    tempo: int = 125,
+    channel_pans: list[int] | None = None,
+) -> bytes:
+    """Adapt the shared SNES writer when a TYM intro exceeds 200 rows.
+
+    The IT format limits a pattern to 200 rows.  The shared writer already
+    segments loop bodies, but represents the complete pre-loop introduction
+    as one pattern.  Several of Tyrian's 41 songs have longer introductions.
+    Segment every pattern here, expand repeated orders, and retarget the Bxx
+    loop jump without changing any source event or timing.
+    """
+    if not callable(original_builder):
+        raise TypeError("shared IT builder is not callable")
+
+    pattern_chunks: list[list[list[bytes]]] = []
+    expanded_pattern_ids: list[list[int]] = []
+    next_pattern = 0
+    for rows, packed in patterns:
+        row_records = split_packed_it_rows(packed, rows)
+        chunks = [
+            row_records[start : start + 200]
+            for start in range(0, rows, 200)
+        ]
+        pattern_chunks.append(chunks)
+        expanded_pattern_ids.append(
+            list(range(next_pattern, next_pattern + len(chunks)))
+        )
+        next_pattern += len(chunks)
+
+    expanded_orders: list[int] = []
+    order_starts: list[int] = []
+    for pattern_id in orders:
+        if pattern_id >= len(expanded_pattern_ids):
+            raise ValueError(f"IT order pattern outside table: {pattern_id}")
+        order_starts.append(len(expanded_orders))
+        expanded_orders.extend(expanded_pattern_ids[pattern_id])
+    if len(expanded_orders) > 200:
+        raise ValueError(
+            f"segmented IT order count out of range: {len(expanded_orders)}"
+        )
+
+    expanded_patterns: list[tuple[int, bytes]] = []
+    for chunks in pattern_chunks:
+        for chunk in chunks:
+            packed = remap_it_position_jumps(
+                b"".join(chunk),
+                order_starts,
+            )
+            expanded_patterns.append((len(chunk), packed))
+    if len(expanded_patterns) > 200:
+        raise ValueError(
+            "segmented IT pattern count out of range: "
+            f"{len(expanded_patterns)}"
+        )
+
+    return original_builder(
+        workspace,
+        name,
+        samples,
+        expanded_patterns,
+        expanded_orders,
+        speed,
+        tempo,
+        channel_pans,
+    )
+
+
 def build_sparse_tym_tracker_it(
     snes: ModuleType,
     workspace: Path,
@@ -2100,6 +2495,7 @@ def build_sparse_tym_tracker_it(
     satisfying the writer's fixed eight-voice interface.
     """
     original_loader = snes.load_snes_calibration
+    original_it_builder = snes.build_it_module
 
     def load_sparse_calibration(
         inner_workspace: Path,
@@ -2145,11 +2541,35 @@ def build_sparse_tym_tracker_it(
             sentinel += 1
         return sources, gains
 
+    def build_segmented_it(
+        inner_workspace: Path,
+        name: str,
+        samples: list[tuple[str, bytes, int, bool, int]],
+        patterns: list[tuple[int, bytes]],
+        orders: list[int],
+        speed: int = 6,
+        tempo: int = 125,
+        channel_pans: list[int] | None = None,
+    ) -> bytes:
+        return build_it_module_with_segmented_patterns(
+            original_it_builder,
+            inner_workspace,
+            name,
+            samples,
+            patterns,
+            orders,
+            speed,
+            tempo,
+            channel_pans,
+        )
+
     snes.load_snes_calibration = load_sparse_calibration
+    snes.build_it_module = build_segmented_it
     try:
         return snes.build_tym_tracker_it(workspace, tym_path)
     finally:
         snes.load_snes_calibration = original_loader
+        snes.build_it_module = original_it_builder
 
 
 def load_default_player_shot(
@@ -3354,6 +3774,13 @@ def main() -> None:
         "\n".join(frontend_report) + "\n",
         encoding="utf-8",
     )
+    (
+        jukebox_assets,
+        jukebox_metadata,
+        jukebox_report,
+    ) = build_jukebox_assets(data_root, opentyrian_root, preview)
+    for name, data in jukebox_assets.items():
+        (output / name).write_bytes(data)
 
     title = build_title(nes, image_root)
     title.save(preview / "title_gba.png")
@@ -3642,6 +4069,7 @@ def main() -> None:
         boss_bar_tiles,
     )
     obj_metadata.update(frontend_metadata)
+    obj_metadata.update(jukebox_metadata)
     for flash, (bottom, middle, top) in enumerate(boss_bar_flash_colours):
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
@@ -3694,28 +4122,52 @@ def main() -> None:
         Image.Resampling.NEAREST,
     ).save(preview / "boss_bar_pc_style.png")
 
-    title_music, title_report = snes.build_tym_tracker_it(
-        workspace,
-        workspace / "org" / "TyrianAudioLab" / "Music" / "30_tyrian_the_song.tym",
-    )
-    level_music, level_report = snes.build_tym_tracker_it(
-        workspace,
-        workspace / "org" / "TyrianAudioLab" / "Music" / "18_tyrian_the_level.tym",
-    )
-    end_level_music, end_level_report = build_sparse_tym_tracker_it(
-        snes,
-        workspace,
-        workspace / "org" / "TyrianAudioLab" / "Music" / "10_end_of_level.tym",
-    )
-    game_over_music, game_over_report = build_sparse_tym_tracker_it(
-        snes,
-        workspace,
-        workspace / "org" / "TyrianAudioLab" / "Music" / "11_game_over_solo.tym",
-    )
-    (output / "tyrian_title_full.it").write_bytes(title_music)
-    (output / "tyrian_level_full.it").write_bytes(level_music)
-    (output / "tyrian_end_level_full.it").write_bytes(end_level_music)
-    (output / "tyrian_game_over_full.it").write_bytes(game_over_music)
+    music_root = workspace / "org" / "TyrianAudioLab" / "Music"
+    music_paths = sorted(music_root.glob("[0-9][0-9]_*.tym"))
+    if len(music_paths) != JUKEBOX_MUSIC_COUNT:
+        raise ValueError(
+            "Tyrian TYM catalog changed: "
+            f"{len(music_paths)} != {JUKEBOX_MUSIC_COUNT}"
+        )
+    music_modules: list[bytes] = []
+    music_reports: list[dict[str, object]] = []
+    for source_index, music_path in enumerate(music_paths):
+        expected_number = source_index + 1
+        if int(music_path.name[:2]) != expected_number:
+            raise ValueError(
+                "Tyrian TYM catalog is not contiguous at "
+                f"{music_path.name}"
+            )
+        module, module_report = build_sparse_tym_tracker_it(
+            snes,
+            workspace,
+            music_path,
+        )
+        if int(module_report["track_number"]) != expected_number:
+            raise ValueError(
+                "TYM metadata track order changed: "
+                f"{music_path.name}"
+            )
+        (output / f"tyrian_music_{source_index:02d}.it").write_bytes(
+            module
+        )
+        music_modules.append(module)
+        music_reports.append(module_report)
+    for obsolete in (
+        "tyrian_title_full.it",
+        "tyrian_level_full.it",
+        "tyrian_end_level_full.it",
+        "tyrian_game_over_full.it",
+    ):
+        (output / obsolete).unlink(missing_ok=True)
+    title_music = music_modules[29]
+    title_report = music_reports[29]
+    level_music = music_modules[17]
+    level_report = music_reports[17]
+    end_level_music = music_modules[9]
+    end_level_report = music_reports[9]
+    game_over_music = music_modules[10]
+    game_over_report = music_reports[10]
     sound_file = data_root / "tyrian.snd"
     voice_file = data_root / "voices.snd"
     sfx = snes.extract_tyrian_sfx(sound_file)
@@ -3771,6 +4223,7 @@ def main() -> None:
         "profile=GBA Mode 0 / complete Tyrian MAP1 + MAP2 + MAP3",
         f"opentyrian_source_commit={source_commit}",
         *frontend_report,
+        *jukebox_report,
         "display_hz=59.7275",
         "logic_hz=34.7826",
         "background_layers=3 (Tyrian MAP1 + MAP2 + MAP3)",
@@ -3943,6 +4396,9 @@ def main() -> None:
         f"sprite_unknown_spawns={sprite_audit['unknown_spawns']}",
         f"sprite_bank_mismatch_spawns={sprite_audit['bank_mismatch_spawns']}",
         f"sprite_exact_graphic_spawns={sprite_audit['exact_graphic_spawns']}",
+        f"music_catalog_modules={len(music_modules)}",
+        f"music_catalog_it_bytes={sum(map(len, music_modules))}",
+        "music_catalog_profile=SuperNintendo calibrated tracker adapter",
         f"title_music_it_bytes={len(title_music)}",
         f"title_music_seconds={title_report['tracker_duration_seconds']:.6f}",
         f"level_music_it_bytes={len(level_music)}",

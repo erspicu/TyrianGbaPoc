@@ -20,9 +20,10 @@ $(error GAME_SPEED must be low or normal)
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v26_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v26_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v26_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v27_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v27_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v27_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v27_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -78,10 +79,11 @@ ASSET_INPUTS := \
 	../../org/opentyrian/src/tyrian2.c \
 	../../org/opentyrian/src/varz.h \
 	../../org/opentyrian/src/episodes.h \
-	../../org/TyrianAudioLab/Music/30_tyrian_the_song.tym \
-	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym \
-	../../org/TyrianAudioLab/Music/10_end_of_level.tym \
-	../../org/TyrianAudioLab/Music/11_game_over_solo.tym
+	../../org/opentyrian/src/jukebox.c \
+	../../org/opentyrian/src/starlib.c \
+	../../org/opentyrian/src/musmast.c \
+	../../org/TyrianAudioLab/Music/channel-calibration.json \
+	$(wildcard ../../org/TyrianAudioLab/Music/*.tym)
 
 ASSET_BINARIES := \
 	$(RES)/bg1_tiles.bin \
@@ -96,13 +98,27 @@ ASSET_BINARIES := \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
-	$(RES)/frontend_cube.bin
+	$(RES)/frontend_cube.bin \
+	$(RES)/jukebox_font_tiles.bin \
+	$(RES)/jukebox_backdrop_tiles.bin \
+	$(RES)/jukebox_backdrop_map.bin \
+	$(RES)/jukebox_bg_palette.bin \
+	$(RES)/jukebox_obj_tiles.bin \
+	$(RES)/jukebox_obj_palette.bin \
+	$(RES)/jukebox_titles.bin \
+	$(RES)/jukebox_reciprocal.bin \
+	$(RES)/jukebox_sine.bin
+
+TYRIAN_MUSIC_TRACKS := \
+	00 01 02 03 04 05 06 07 08 09 \
+	10 11 12 13 14 15 16 17 18 19 \
+	20 21 22 23 24 25 26 27 28 29 \
+	30 31 32 33 34 35 36 37 38 39 40
+TYRIAN_MUSIC_INPUTS := $(foreach track,$(TYRIAN_MUSIC_TRACKS),\
+	$(RES)/tyrian_music_$(track).it)
 
 AUDIO_INPUTS := \
-	$(RES)/tyrian_title_full.it \
-	$(RES)/tyrian_level_full.it \
-	$(RES)/tyrian_end_level_full.it \
-	$(RES)/tyrian_game_over_full.it \
+	$(TYRIAN_MUSIC_INPUTS) \
 	$(RES)/weapon_1.wav \
 	$(RES)/enemy_hit.wav \
 	$(RES)/explosion_9.wav \
@@ -125,13 +141,15 @@ COMMON_OBJECTS := \
 
 MAIN_INCLUDES := $(wildcard src/*.inc)
 
-.PHONY: all autotest death-autotest assets clean distclean
+.PHONY: all autotest death-autotest jukebox-autotest assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
 
 autotest: $(BUILD)/$(TEST_TARGET).gba
 
 death-autotest: $(BUILD)/$(DEATH_TEST_TARGET).gba
+
+jukebox-autotest: $(BUILD)/$(JUKEBOX_TEST_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -181,6 +199,13 @@ $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_JUKEBOX_FLOW \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -225,6 +250,12 @@ $(BUILD)/$(DEATH_TEST_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(JUKEBOX_TEST_TARGET).elf: \
+		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(JUKEBOX_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(TARGET).gba: $(BUILD)/$(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN GBA" -cTYGA -m00
@@ -237,6 +268,10 @@ $(BUILD)/$(DEATH_TEST_TARGET).gba: $(BUILD)/$(DEATH_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN DEATH" -cTYGD -m00
 
+$(BUILD)/$(JUKEBOX_TEST_TARGET).gba: $(BUILD)/$(JUKEBOX_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYRIAN JUKE" -cTYGJ -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -245,6 +280,8 @@ clean:
 		$(BUILD)/main_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -262,7 +299,10 @@ clean:
 		$(BUILD)/$(TEST_TARGET).map \
 		$(BUILD)/$(DEATH_TEST_TARGET).elf \
 		$(BUILD)/$(DEATH_TEST_TARGET).gba \
-		$(BUILD)/$(DEATH_TEST_TARGET).map
+		$(BUILD)/$(DEATH_TEST_TARGET).map \
+		$(BUILD)/$(JUKEBOX_TEST_TARGET).elf \
+		$(BUILD)/$(JUKEBOX_TEST_TARGET).gba \
+		$(BUILD)/$(JUKEBOX_TEST_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -272,6 +312,7 @@ distclean: clean
 -include $(BUILD)/main_release_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_death_test_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_sprite2.d

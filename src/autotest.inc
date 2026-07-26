@@ -147,6 +147,112 @@ static void autotest_death_update(void)
 }
 #endif
 
+#ifdef AUTOTEST_JUKEBOX_FLOW
+static u8 autotest_jukebox_entered;
+
+static u16 autotest_jukebox_input(void)
+{
+    if (
+        game_state == STATE_INTRO_LOGO_1 ||
+        game_state == STATE_INTRO_LOGO_2
+    ) {
+        return KEY_A;
+    }
+    if (game_state == STATE_TITLE) {
+        if (autotest_jukebox_entered) return 0;
+        return frontend_selection == 0 ? KEY_DOWN : KEY_A;
+    }
+    if (game_state != STATE_JUKEBOX) return 0;
+
+    autotest_jukebox_entered = 1;
+    switch (telemetry_jukebox_frames + 1u) {
+    case 24:
+        return KEY_LEFT;
+    case 48:
+        return KEY_RIGHT;
+    case 72:
+        return KEY_A;
+    case 96:
+    case 120:
+        return KEY_SELECT;
+    case 160:
+        return KEY_B;
+    default:
+        return 0;
+    }
+}
+
+static void autotest_jukebox_maybe_finish(void)
+{
+    const OtDataCatalog *catalog = ot_data_catalog();
+    volatile u8 *sram = (volatile u8 *)0x0E000000;
+    u8 passed;
+
+#ifdef AUTOTEST_JUKEBOX_CAPTURE
+    if (
+        game_state == STATE_JUKEBOX &&
+        telemetry_jukebox_frames >= 140
+    ) {
+        __asm__ volatile("swi 3");
+    }
+#endif
+    if (
+        !autotest_jukebox_entered ||
+        game_state != STATE_TITLE
+    ) {
+        return;
+    }
+
+    passed = (
+        catalog != 0 &&
+        catalog->selected_mus_song == 29 &&
+        mmActive() &&
+        frontend_mode4_active &&
+        telemetry_jukebox_frames >= 176 &&
+        telemetry_jukebox_track_changes == 3 &&
+        telemetry_jukebox_previous_wraps == 1 &&
+        telemetry_jukebox_next_wraps == 1 &&
+        telemetry_jukebox_text_toggles == 2 &&
+        telemetry_jukebox_text_map_commits >= 5 &&
+        telemetry_jukebox_palette_commits >= 30 &&
+        telemetry_jukebox_max_oam <= HARDWARE_OAM_ENTRIES &&
+        telemetry_jukebox_max_oam >= 80 &&
+        telemetry_jukebox_exits == 1 &&
+        jukebox_song == 1 &&
+        !jukebox_hide_text &&
+        jukebox_fade_level == 0
+    );
+
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'J';
+    sram[3] = '1';
+    sram_write_u32(4, passed);
+    sram_write_u32(
+        8,
+        catalog ? catalog->selected_mus_song : 0xffffu
+    );
+    sram_write_u32(12, game_state);
+    sram_write_u32(16, frontend_mode4_active);
+    sram_write_u32(20, telemetry_jukebox_frames);
+    sram_write_u32(24, telemetry_jukebox_track_changes);
+    sram_write_u32(28, telemetry_jukebox_previous_wraps);
+    sram_write_u32(32, telemetry_jukebox_next_wraps);
+    sram_write_u32(36, telemetry_jukebox_text_toggles);
+    sram_write_u32(40, telemetry_jukebox_text_map_commits);
+    sram_write_u32(44, telemetry_jukebox_palette_commits);
+    sram_write_u32(48, telemetry_jukebox_max_oam);
+    sram_write_u32(52, telemetry_jukebox_exits);
+    sram_write_u32(56, mmActive());
+    sram_write_u32(60, jukebox_song);
+    sram_write_u32(64, jukebox_hide_text);
+    sram_write_u32(68, jukebox_quitting);
+    sram_write_u32(72, jukebox_fade_level);
+    sram_write_u32(76, MSL_NSONGS);
+    __asm__ volatile("swi 3");
+}
+#endif
+
 static void autotest_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;

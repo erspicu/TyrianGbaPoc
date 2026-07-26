@@ -46,6 +46,14 @@ static void commit_vblank_work(void)
         }
         return;
     }
+    if (game_state == STATE_JUKEBOX) {
+        jukebox_commit_vblank();
+        if (oam_dirty) {
+            dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
+            oam_dirty = 0;
+        }
+        return;
+    }
     if (bg1_row_pending) {
         commit_background_row(bg1_row_source, bg1_row_target);
         bg1_row_pending = 0;
@@ -141,28 +149,11 @@ static void commit_vblank_work(void)
     }
 }
 
-static void audio_load_music_internal(
-    u16 module,
+static void audio_load_source_song_internal(
+    u8 source_song,
     u8 cancel_effects
 )
 {
-    uint16_t source_song;
-
-    switch (module) {
-    case MOD_TYRIAN_TITLE_FULL:
-        source_song = 29u;
-        break;
-    case MOD_TYRIAN_END_LEVEL_FULL:
-        source_song = 9u;
-        break;
-    case MOD_TYRIAN_GAME_OVER_FULL:
-        source_song = 10u;
-        break;
-    default:
-        source_song = 17u;
-        break;
-    }
-
     mmStop();
     if (cancel_effects) mmEffectCancelAll();
     /*
@@ -171,8 +162,18 @@ static void audio_load_music_internal(
      * adapter until the OPL/LDS mixer translation replaces its cached IT
      * modules.
      */
-    if (!ot_data_mus_select(source_song)) return;
-    mmStart(module, MM_PLAY_LOOP);
+    if (
+        source_song >= JUKEBOX_MUSIC_COUNT ||
+        !ot_data_mus_select(source_song)
+    ) {
+        return;
+    }
+    /*
+     * v27 builds all 41 modules in music.mus order.  The generated soundbank
+     * asserts source song N == Maxmod module N, so Jukebox and game flow use
+     * one authoritative zero-based index without a four-song switch table.
+     */
+    mmStart(source_song, MM_PLAY_LOOP);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
 }
@@ -189,14 +190,14 @@ static void audio_set_source_music_volume(u8 source_volume)
     );
 }
 
-static void audio_load_music(u16 module)
+static void audio_load_source_song(u8 source_song)
 {
-    audio_load_music_internal(module, 1);
+    audio_load_source_song_internal(source_song, 1);
 }
 
-static void audio_load_music_preserve_effects(u16 module)
+static void audio_load_source_song_preserve_effects(u8 source_song)
 {
-    audio_load_music_internal(module, 0);
+    audio_load_source_song_internal(source_song, 0);
 }
 
 static void audio_effect(u16 effect)

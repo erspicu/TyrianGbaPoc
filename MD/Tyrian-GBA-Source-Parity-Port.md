@@ -592,6 +592,7 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | `main.c` | GBA 入口、共享狀態及主排程 |
 | `src/layer_runtime.inc` | PC software draw stage 到 GBA BG/OBJ priority 的純映射與窮舉測試 |
 | `src/gba_platform.inc` | VBlank、音訊及暫停平台層 |
+| `src/jukebox_runtime.inc` | 41 曲 Jukebox、投影星空、tile text、切歌與 fade |
 | `src/level_setup.inc` | 關卡進出與 VRAM 資源設定 |
 | `src/entity_runtime.inc` | GBA explosion／測試 reward presentation pool |
 | `src/combat_runtime.inc` | GBA 玩家輸入、玩家彈及簡化 Boss projectile adapter |
@@ -634,7 +635,7 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 
 所有無法直接保留的差異要以 `GBA_PORT` 註解及本文件記錄。
 
-## v25／v26 來源流程進度
+## v25／v26／v27 來源流程進度
 
 v25 已把第一關 Boss group 清空後的 player end-level warp、殘影、End of
 Level 曲目、`Level completed` voice、分段統計與按鍵返回翻寫完成。
@@ -651,19 +652,30 @@ v26 已完成玩家死亡路徑：
 5. effect 邏輯 pool 對齊 PC 的 200 格；GBA OAM 僅在 presentation
    階段限制每幀 48 個 effect。
 
+v27 已完成 Jukebox：
+
+1. 主選單入口、41 首 source song index 及 `musmast.c` 曲名已接通。
+2. PC `starlib.c` 星空改以 Mode 0 tile／palette 與 112 OBJ 投影呈現；
+   切歌只更新 2 KiB text map，不重建整張 bitmap。
+3. 上一首／下一首雙向環回、自然播畢淡出換曲、文字隱藏及退出 fade
+   均已實作。
+4. 全部 41 首 TYM/LDS 轉入 Maxmod；超過 200 rows 的 IT intro pattern
+   以保留 timing 及 `Bxx` loop target 的方式分段。
+5. 退出後恢復 title song 29，獨立 `TGJ1` SRAM auto-test 已加入四組
+   Detail／Game Speed 回歸。
+
 詳細紀錄：
 
 - `Tyrian-GBA-End-Level-Source-Parity-v25.md`
 - `Tyrian-GBA-Player-Death-Source-Parity-v26.md`
+- `Tyrian-GBA-Jukebox-v27.md`
 
 ## 下一個移植階段
 
-1. 啟用 Jukebox，對照 PC 曲目 catalog、曲名與星塵／粒子流程，以 GBA
-   tile、palette cycling 及少量 OBJ 做硬體轉接。
-2. 讓 Episode 選擇真正決定 episode data，打通 `nextLevel` 與第二關。
-3. MUS、SHP、PIC、HDT、LVL loader 持續收斂到通用 ROMFS reader，避免
+1. 讓 Episode 選擇真正決定 episode data，打通 `nextLevel` 與第二關。
+2. MUS、SHP、PIC、HDT、LVL loader 持續收斂到通用 ROMFS reader，避免
    為每一關新增 Python 特例。
-4. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
+3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
 
 ## 建置
 
@@ -671,10 +683,10 @@ v26 已完成玩家死亡路徑：
 .\build.ps1
 ```
 
-目前 ROMFS v26 預設 ROM：
+目前 ROMFS v27 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v26_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v27_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

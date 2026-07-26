@@ -565,7 +565,7 @@ static void frontend_enter_state(u8 state, u8 selection)
 static void enter_title(void)
 {
     frontend_enter_state(STATE_TITLE, 0);
-    audio_load_music(MOD_TYRIAN_TITLE_FULL);
+    audio_load_source_song(29);
 }
 
 static void frontend_begin(void)
@@ -657,7 +657,7 @@ static void frontend_update(void)
                 frontend_redraw();
             } else {
                 frontend_enter_state(STATE_GAME_MENU, 4);
-                audio_load_music(MOD_TYRIAN_TITLE_FULL);
+                audio_load_source_song(29);
 #ifdef AUTOTEST
                 autotest_frontend_finish_pending = 1;
 #endif
@@ -770,8 +770,9 @@ static void frontend_update(void)
     case STATE_TITLE:
         if (frontend_selection == 0) {
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
+        } else {
+            jukebox_enter();
         }
-        /* JukeBox remains visible but intentionally disabled. */
         break;
     case STATE_PLAY_MODE_MENU:
         frontend_play_mode = frontend_selection;
@@ -832,7 +833,7 @@ static void frontend_enter_game_over(void)
     game_paused = 0;
     player_death_music_fade_active = 0;
     game_over_tile_upload_pending = 1;
-    audio_load_music_preserve_effects(MOD_TYRIAN_GAME_OVER_FULL);
+    audio_load_source_song_preserve_effects(10);
     telemetry_game_over_music_starts++;
     telemetry_state_transitions++;
 }
@@ -842,6 +843,6 @@ static void game_over_update(void)
     if (pad_pressed == 0) return;
 
     frontend_enter_state(STATE_GAME_MENU, 4);
-    audio_load_music(MOD_TYRIAN_TITLE_FULL);
+    audio_load_source_song(29);
     telemetry_game_over_exits++;
 }

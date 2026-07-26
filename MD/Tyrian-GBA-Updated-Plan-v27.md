@@ -1,4 +1,4 @@
-# Tyrian GBA Updated Plan v26
+# Tyrian GBA Updated Plan v27
 
 更新日期：2026-07-26
 工作分支：`opentyrian-source-parity-port`
@@ -69,14 +69,14 @@ PC 版不是以一般文字繪製拾取金額，而是在 `scoreitem` 分支建�
 第一關自動測試實際拾取兩個 `scoreitem`，產生兩個固定金額效果，
 pool drop 為 0。
 
-## v26 驗證矩陣
+## v27 驗證矩陣
 
-| Detail | Game Speed | 完整關卡 | 死亡流程 | 邏輯更新 | 顯示 frame | BG2 最終狀態 |
+| Detail | Game Speed | 完整關卡 | 死亡流程 | Jukebox | 邏輯更新 | BG2 最終狀態 |
 |---|---|---:|---:|---:|---:|---:|
-| Low | Normal | PASS | PASS | 7,832 | 13,509 | 關閉 |
-| Normal | Normal | PASS | PASS | 7,832 | 13,509 | 開啟 |
-| Low | Low | PASS | PASS | 7,832 | 16,872 | 關閉 |
-| Normal | Low | PASS | PASS | 7,832 | 16,872 | 開啟 |
+| Low | Normal | PASS | PASS | PASS | 7,832 | 關閉 |
+| Normal | Normal | PASS | PASS | PASS | 7,832 | 開啟 |
+| Low | Low | PASS | PASS | PASS | 7,832 | 關閉 |
+| Normal | Low | PASS | PASS | PASS | 7,832 | 開啟 |
 
 四種組合皆走完 935 個第一關事件、100 個敵人擊破、Boss group 清空、
 1 個 data cube、2 個 `scoreitem` 拾取，最後回到 Game Menu。ROMFS
@@ -86,6 +86,10 @@ self-test、Sprite2 decode、map stream 與 reward pool 均為零失敗／
 四種組合也各自執行獨立的強制死亡測試，皆得到 120 次大型爆炸呼叫、
 59 次音樂 fade、138 次來源 RNG 呼叫、零 effect drop；Game Over 使用
 曲目索引 10，按鍵返回後才切至選單曲索引 29。
+
+四種組合另執行獨立 Jukebox 測試，驗證 41 首 source song 全數嵌入、
+首尾雙向環回、文字隱藏／恢復、112/128 OAM 星空、fade-out 及回到 title
+song 29。詳細結果見 `Tyrian-GBA-Jukebox-v27.md`。
 
 預設交付組合維持：
 
@@ -122,17 +126,21 @@ Game Speed   = Normal
 驗收：四組 Detail／Game Speed 的獨立強制死亡 auto-test 全數 PASS。
 完整結果見 `Tyrian-GBA-Player-Death-Source-Parity-v26.md`。
 
-### P3：Jukebox（目前階段）
+### P3：Jukebox（v27 已完成）
 
-1. 啟用目前 disabled 的 Jukebox 選項。
-2. 對照 PC 原始星空／粒子背景，依 GBA 特性使用 tile、palette cycling
-   與少量 OBJ 組合，不每次按鍵重建全畫面。
-3. 從 ROMFS 曲目 catalog 選歌，支援上一首／下一首及曲名顯示。
-4. 退出時恢復選單曲與前端狀態。
+1. 已啟用主選單 Jukebox，保留 OpenTyrian 41 首 source index 與
+   `musmast.c` 曲名。
+2. 以 Mode 0 BG0 tile text、BG1 parallax、palette cycling 與 112 OBJ
+   投影星轉接 PC `starlib.c`，切歌不重建 38.4 KiB bitmap。
+3. 已支援雙向環回切歌、`Select` 隱藏文字及自然播畢淡出換曲。
+4. 已將 41 首 TYM/LDS 轉成 IT/Maxmod；oversized intro pattern 會分段並
+   重定位 `Bxx` jump，不刪除音樂事件。
+5. 退出 fade 完成後恢復 title song 29 與 Mode 4 選單。
 
-驗收：曲目可連續切換、無 VRAM 重建卡頓、退出後音樂正確。
+驗收：四組建置的 `TGJ1` auto-test 全數 PASS；最大 OAM 112、text map
+commit 5、palette commit 41、最終 module count 41。
 
-### P4：Episode、Next Level 與多關卡
+### P4：Episode、Next Level 與多關卡（目前階段）
 
 1. Episode 選擇改為真正決定 episode data，不只改 UI selection。
 2. `Next Level -> Tyrian` 改為讀取目前 episode／level，不固定第一關。

@@ -198,6 +198,14 @@ _Static_assert(
     "GAME OVER cartridge bank must use the first time-shared upper slot"
 );
 _Static_assert(
+    JUKEBOX_MUSIC_COUNT == 41 &&
+        MSL_NSONGS == JUKEBOX_MUSIC_COUNT &&
+        MOD_TYRIAN_MUSIC_00 == 0 &&
+        MOD_TYRIAN_MUSIC_29 == 29 &&
+        MOD_TYRIAN_MUSIC_40 == 40,
+    "Maxmod modules must preserve zero-based music.mus catalog order"
+);
+_Static_assert(
     OBJ_PROJECTILE_SOURCE_COUNT == 8,
     "enemy projectile source count must match the PC level-1 set"
 );
@@ -312,6 +320,7 @@ enum {
     STATE_NEXT_LEVEL_MENU = 8,
     STATE_LEVEL_STATS = 9,
     STATE_GAME_OVER = 10,
+    STATE_JUKEBOX = 11,
 };
 
 enum {
@@ -339,6 +348,15 @@ extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
 extern const u8 frontend_cube[];
+extern const u8 jukebox_font_tiles[];
+extern const u8 jukebox_backdrop_tiles[];
+extern const u8 jukebox_backdrop_map[];
+extern const u8 jukebox_bg_palette[];
+extern const u8 jukebox_obj_tiles[];
+extern const u8 jukebox_obj_palette[];
+extern const u8 jukebox_titles[];
+extern const u8 jukebox_reciprocal[];
+extern const u8 jukebox_sine[];
 extern const u8 soundbank[];
 
 typedef struct {
@@ -697,6 +715,10 @@ static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
 static void source_effect_cache_commit(void);
 static void frontend_commit_vblank(void);
+static void jukebox_commit_vblank(void);
+static void jukebox_enter(void);
+static void jukebox_update(void);
+static void jukebox_render(void);
 static void load_ring(
     const u8 *map,
     u16 rows,
@@ -713,6 +735,7 @@ static void load_ring(
 #include "src/source_runtime.inc"
 #include "src/level_update.inc"
 #include "src/gba_oam.inc"
+#include "src/jukebox_runtime.inc"
 #include "src/gba_hud.inc"
 #include "src/gba_scene.inc"
 #include "src/autotest.inc"
@@ -778,7 +801,9 @@ int main(void)
         } else if (game_state != STATE_PLAY) {
             if (!autotest_running) autotest_running = 1;
             pad_now = 0;
-#ifdef AUTOTEST_FRONTEND_STRESS
+#ifdef AUTOTEST_JUKEBOX_FLOW
+            pad_pressed = autotest_jukebox_input();
+#elif defined(AUTOTEST_FRONTEND_STRESS)
             pad_pressed =
                 game_state == STATE_TITLE ?
                     0 :
@@ -823,6 +848,12 @@ int main(void)
 #ifdef AUTOTEST_DEATH_FLOW
                 autotest_death_update();
 #endif
+            }
+        } else if (game_state == STATE_JUKEBOX) {
+            jukebox_update();
+            if (game_state == STATE_JUKEBOX) {
+                jukebox_render();
+                telemetry_display_frames++;
             }
         } else if (game_state != STATE_PLAY) {
 #ifdef AUTOTEST_BOOT_ONLY
@@ -1022,5 +1053,8 @@ int main(void)
             }
 #endif
         }
+#ifdef AUTOTEST_JUKEBOX_FLOW
+        autotest_jukebox_maybe_finish();
+#endif
     }
 }

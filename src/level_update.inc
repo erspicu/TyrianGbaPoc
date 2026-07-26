@@ -138,7 +138,7 @@ static void source_begin_end_level_audio(void)
      * enters endLevel.  Keep it running through JE_endLevelAni(), where the
      * "Level completed" voice and cube effects are mixed over the module.
      */
-    audio_load_music_preserve_effects(MOD_TYRIAN_END_LEVEL_FULL);
+    audio_load_source_song_preserve_effects(9);
     telemetry_end_level_music_starts++;
     telemetry_end_level_initial_warp = (u8)player_end_warp;
 }

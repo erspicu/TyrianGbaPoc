@@ -66,6 +66,51 @@ frontend_cube:
 	.incbin "res/frontend_cube.bin"
 
 	.balign 4
+	.global jukebox_font_tiles
+jukebox_font_tiles:
+	.incbin "res/jukebox_font_tiles.bin"
+
+	.balign 4
+	.global jukebox_backdrop_tiles
+jukebox_backdrop_tiles:
+	.incbin "res/jukebox_backdrop_tiles.bin"
+
+	.balign 4
+	.global jukebox_backdrop_map
+jukebox_backdrop_map:
+	.incbin "res/jukebox_backdrop_map.bin"
+
+	.balign 4
+	.global jukebox_bg_palette
+jukebox_bg_palette:
+	.incbin "res/jukebox_bg_palette.bin"
+
+	.balign 4
+	.global jukebox_obj_tiles
+jukebox_obj_tiles:
+	.incbin "res/jukebox_obj_tiles.bin"
+
+	.balign 4
+	.global jukebox_obj_palette
+jukebox_obj_palette:
+	.incbin "res/jukebox_obj_palette.bin"
+
+	.balign 4
+	.global jukebox_titles
+jukebox_titles:
+	.incbin "res/jukebox_titles.bin"
+
+	.balign 4
+	.global jukebox_reciprocal
+jukebox_reciprocal:
+	.incbin "res/jukebox_reciprocal.bin"
+
+	.balign 4
+	.global jukebox_sine
+jukebox_sine:
+	.incbin "res/jukebox_sine.bin"
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

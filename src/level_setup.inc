@@ -257,7 +257,7 @@ static void enter_level(void)
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
         (source_background2_enabled ? BG1_ON : 0);
-    audio_load_music(MOD_TYRIAN_LEVEL_FULL);
+    audio_load_source_song(17);
     game_state = STATE_PLAY;
     telemetry_state_transitions++;
 }
