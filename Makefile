@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v22
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v22
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v23
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v23
 BUILD := build
 RES := res
 

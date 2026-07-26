@@ -10,6 +10,20 @@
 #include "src/opentyrian_rom_io.h"
 #include "src/opentyrian_sprite2.h"
 
+/*
+ * Development-validation switch.  Keep this at 1 (true) while inspecting
+ * authored level flow; set it to 0 for the translated shield/armor/death
+ * path.  The build can override it with
+ * -DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0.
+ */
+#ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
+#endif
+#if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 0 && \
+    TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 1
+#error TYRIAN_GBA_DEV_PLAYER_INVINCIBLE must be 0 or 1
+#endif
+
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
     defined(AUTOTEST_SCREENSHOT_POSITION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
@@ -733,6 +747,25 @@ int main(void)
                      */
                     frontend_capture_armed = 2;
                 } else if (frontend_capture_armed == 2) {
+#ifdef AUTOTEST_DEATH_MUSIC_CHECK
+                    const OtDataCatalog *catalog = ot_data_catalog();
+                    volatile u8 *sram = (volatile u8 *)0x0E000000;
+
+                    sram[0] = 'T';
+                    sram[1] = 'G';
+                    sram[2] = 'D';
+                    sram[3] = 'M';
+                    sram_write_u32(
+                        4,
+                        catalog ? catalog->selected_mus_song : 0xffffu
+                    );
+                    sram_write_u32(8, mmActive());
+                    sram_write_u32(12, game_state);
+                    sram_write_u32(
+                        16,
+                        TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
+                    );
+#endif
                     __asm__ volatile("swi 3");
                 }
             }

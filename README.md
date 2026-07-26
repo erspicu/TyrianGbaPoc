@@ -57,11 +57,19 @@ The current scope is deliberately narrow:
 - original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
   poses, original explosion and reward animation assets, TINY_FONT cash and
   FONT_SHAPES `PAUSED`
-- shield-to-armor player damage, explosion and Game Over flow
+- shield-to-armor player damage, explosion and Game Over flow; the current
+  validation ROM keeps `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1`, while setting it
+  to `0` restores that translated damage path
 - the linked source boss group, PC-style boss health bar, end-level flight,
   level statistics and return to Game Menu
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
+
+The v23 validation build keeps the player invincible without suppressing
+collision telemetry. A dedicated forced-death regression compiles the flag
+off and verifies that Game Over selects stock MUS song 29 (the title/menu
+music) instead of leaving level song 17 active. The normal level-statistics
+return now makes the same explicit music transition.
 
 The v22 front-end stress test changes the Title selection every frame for
 600 frames. Its result is pixel-identical to the generated target frame and
@@ -89,7 +97,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v22.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v23.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -106,6 +114,7 @@ under `Backup`, and the reproducible source asset conversions are
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [v23 development invincibility and menu-music transition](MD/Tyrian-GBA-Dev-Invincibility-Music-v23.md)
 - [v22 Mode-4 front-end and benchmark](MD/Tyrian-GBA-Frontend-Mode4-v22.md)
 - [v21 runtime raw Sprite2 pipeline](MD/Tyrian-GBA-Runtime-Sprite2-v21.md)
 - [v20 PC layer order and structure palette](MD/Tyrian-GBA-PC-Layer-Order-Palette-v20.md)

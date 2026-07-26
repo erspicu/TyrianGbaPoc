@@ -536,6 +536,7 @@ static void frontend_update(void)
     if (game_state == STATE_LEVEL_STATS) {
         if (pad_pressed != 0) {
             frontend_enter_state(STATE_GAME_MENU, 4);
+            audio_load_music(MOD_TYRIAN_TITLE_FULL);
 #ifdef AUTOTEST
             autotest_frontend_finish_pending = 1;
 #endif
@@ -665,4 +666,9 @@ static void frontend_enter_level_stats(u8 completed)
 static void frontend_enter_game_over(void)
 {
     frontend_enter_state(STATE_GAME_OVER, 0);
+    /*
+     * The level module loops indefinitely, so leaving gameplay must select
+     * the front-end source song explicitly before Game Over / Game Menu.
+     */
+    audio_load_music(MOD_TYRIAN_TITLE_FULL);
 }

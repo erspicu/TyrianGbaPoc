@@ -28,7 +28,14 @@ static void player_damage(u16 damage)
 
     if (!player_alive || player_invulnerable || remaining == 0) return;
     telemetry_collision_count++;
-#ifdef AUTOTEST
+#if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
+    /*
+     * Development validation still records the collision, but deliberately
+     * leaves the translated shield, armor and death state untouched.
+     */
+    return;
+#endif
+#if defined(AUTOTEST) && !defined(AUTOTEST_FORCE_PLAYER_DEATH)
     /*
      * The deterministic source-event audit must reach the authored boss and
      * level-exit records; release builds retain the translated damage path.
@@ -64,6 +71,14 @@ static void update_player(void)
     s16 accel_x;
     s16 accel_y;
     s16 ship_banking;
+
+#ifdef AUTOTEST_FORCE_PLAYER_DEATH
+    if (level_tick == 2 && player_alive) {
+        player_shield = 0;
+        player_armor = 0;
+        player_damage(1);
+    }
+#endif
 
     if (!player_alive) {
         if (player_exploding_ticks > 0) {
