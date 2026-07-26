@@ -150,6 +150,6 @@ Telemetry schema 19 在 mGBA 跑完開場、第一關、簡化 Boss、回開場�
 
 ```text
 build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
-10,785,528 bytes
+10,785,544 bytes
 SHA-256 8c976a8c6abfec7f931eea17e76d2f3dc5b7e1a3b998c5dee75321c167e99a33
 ```

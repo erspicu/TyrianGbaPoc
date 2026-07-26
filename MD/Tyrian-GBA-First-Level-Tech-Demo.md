@@ -31,7 +31,7 @@ SHA-256：
 8c976a8c6abfec7f931eea17e76d2f3dc5b7e1a3b998c5dee75321c167e99a33
 ```
 
-ROM 大小為 10,785,528 bytes（約 10.29 MiB），其中 9,853,080 bytes 是
+ROM 大小為 10,785,544 bytes（約 10.29 MiB），其中 9,853,080 bytes 是
 68 個 stock Tyrian runtime 檔案的唯讀 ROMFS；使用標準 32 MiB GBA ROM
 視窗的約 32.14%。
 
