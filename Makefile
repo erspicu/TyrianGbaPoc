@@ -1,7 +1,27 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v23
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v23
+DETAIL_LEVEL ?= low
+GAME_SPEED ?= normal
+
+ifeq ($(DETAIL_LEVEL),low)
+DETAIL_LEVEL_VALUE := 0
+else ifeq ($(DETAIL_LEVEL),normal)
+DETAIL_LEVEL_VALUE := 1
+else
+$(error DETAIL_LEVEL must be low or normal)
+endif
+
+ifeq ($(GAME_SPEED),low)
+GAME_SPEED_VALUE := 0
+else ifeq ($(GAME_SPEED),normal)
+GAME_SPEED_VALUE := 1
+else
+$(error GAME_SPEED must be low or normal)
+endif
+
+CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v24_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v24_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -21,6 +41,9 @@ CFLAGS := $(ARCH) -std=gnu17 -O3 -g -Wall -Wextra \
 	-ffunction-sections -fdata-sections \
 	-I. -Isrc -I$(LIBGBA)/include -I$(MAXMOD)/include
 CFLAGS += $(EXTRA_CFLAGS)
+CFLAGS += \
+	-DTYRIAN_GBA_DETAIL_LEVEL=$(DETAIL_LEVEL_VALUE) \
+	-DTYRIAN_GBA_GAME_SPEED=$(GAME_SPEED_VALUE)
 ASFLAGS := $(ARCH) -x assembler-with-cpp
 LINKFLAGS := $(ARCH) -specs=gba.specs -Wl,--gc-sections \
 	-L$(LIBGBA)/lib -L$(MAXMOD)/lib
@@ -125,15 +148,15 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 		--meta-header "$(VFS_META)" \
 		--audit "$(VFS_AUDIT)"
 
-$(BUILD)/main_release.o: main.c $(MAIN_INCLUDES) \
+$(BUILD)/main_release_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
-		src/opentyrian_rom_io.h src/opentyrian_sprite2.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(BUILD)/main_test.o: main.c $(MAIN_INCLUDES) \
+$(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
-		src/opentyrian_rom_io.h src/opentyrian_sprite2.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
@@ -163,12 +186,14 @@ $(BUILD)/assets.o: assets.s $(ASSET_BINARIES) \
 		$(RES)/soundbank.bin $(VFS_IMAGE) | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
-$(BUILD)/$(TARGET).elf: $(BUILD)/main_release.o $(COMMON_OBJECTS)
+$(BUILD)/$(TARGET).elf: \
+		$(BUILD)/main_release_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
-$(BUILD)/$(TEST_TARGET).elf: $(BUILD)/main_test.o $(COMMON_OBJECTS)
+$(BUILD)/$(TEST_TARGET).elf: \
+		$(BUILD)/main_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(TEST_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
@@ -183,8 +208,10 @@ $(BUILD)/$(TEST_TARGET).gba: $(BUILD)/$(TEST_TARGET).elf
 
 clean:
 	rm -f \
-		$(BUILD)/main_release.o $(BUILD)/main_release.d \
-		$(BUILD)/main_test.o $(BUILD)/main_test.d \
+		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_release_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -206,8 +233,8 @@ distclean: clean
 		$(ASSET_STAMP) $(RES)/soundbank.bin $(RES)/soundbank.h \
 		$(VFS_OUTPUTS)
 
--include $(BUILD)/main_release.d
--include $(BUILD)/main_test.d
+-include $(BUILD)/main_release_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_sprite2.d

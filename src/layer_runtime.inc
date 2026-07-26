@@ -117,6 +117,20 @@ static u8 source_background3_priority(void)
 
 static u8 source_object_priority(u8 object_stage)
 {
+    if (!source_background2_enabled) {
+        /*
+         * PC Low detail has only background 1 and background 3.  Priority 2
+         * keeps objects below BG3 but still above the base BG0 layer;
+         * priority 0 keeps later software-render stages in front.
+         */
+        return
+            object_stage >
+                source_background3_draw_stage_for(
+                    source_parity_level.background3_over
+                ) ?
+            0 :
+            2;
+    }
     return source_object_priority_for_stages(
         object_stage,
         source_background2_draw_stage_for(

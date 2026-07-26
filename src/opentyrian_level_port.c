@@ -1779,6 +1779,27 @@ static void ot_add_hit_effect(
     (*effect_count)++;
 }
 
+static void ot_add_pickup_effect(
+    OtPlayerCollisionResult *result,
+    int16_t x,
+    int16_t y,
+    uint8_t explosion_type
+)
+{
+    OtPickupEffect *effect;
+
+    if (
+        result->pickup_effect_count >= OT_PICKUP_EFFECT_COUNT
+    ) {
+        return;
+    }
+    effect = &result->pickup_effects[result->pickup_effect_count];
+    effect->x = x;
+    effect->y = y;
+    effect->explosion_type = explosion_type;
+    result->pickup_effect_count++;
+}
+
 static void ot_spawn_death_enemy(
     OtLevelPortState *state,
     uint8_t dead_index,
@@ -2174,6 +2195,7 @@ void ot_level_port_collide_player(
         bool was_score_item;
         bool consumed = false;
         bool suppress_contact = false;
+        bool show_fixed_pickup_effect = false;
 
         if (state->enemy_avail[index] == 1) continue;
         enemy = &state->enemy[index];
@@ -2252,6 +2274,7 @@ void ot_level_port_collide_player(
         } else if (enemy->scoreitem) {
             suppress_contact = true;
             consumed = true;
+            show_fixed_pickup_effect = true;
             if (value == 1) {
                 state->data_cube_pickup_count++;
                 result->data_cubes_awarded++;
@@ -2294,14 +2317,23 @@ void ot_level_port_collide_player(
         }
 
         if (consumed) {
-            ot_add_hit_effect(
-                result->effects,
-                &result->effect_count,
-                (int16_t)(enemy->ex + enemy->mapoffset),
-                enemy->ey,
-                false,
-                enemy->enemyground
-            );
+            if (show_fixed_pickup_effect) {
+                /*
+                 * Literal JE_playerCollide() tail:
+                 * JE_setupExplosion(..., explosiontype, true, false).
+                 * JE_makeEnemy split the source byte into enemyground and
+                 * explonum, so reconstruct it without another HDT read.
+                 */
+                ot_add_pickup_effect(
+                    result,
+                    (int16_t)(enemy->ex + enemy->mapoffset),
+                    enemy->ey,
+                    (uint8_t)(
+                        (enemy->explonum << 1) |
+                        (enemy->enemyground ? 0u : 1u)
+                    )
+                );
+            }
             ot_release_enemy(state, index);
             if (was_score_item) {
                 state->score_item_pickup_count++;

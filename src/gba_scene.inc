@@ -67,6 +67,38 @@ static void render_legacy_rewards(u8 priority)
     }
 }
 
+static void render_source_pickup_explosions(u8 priority)
+{
+    s16 index;
+
+    for (index = MAX_PICKUP_EXPLOSIONS - 1; index >= 0; index--) {
+        const PickupExplosion *explosion =
+            &pickup_explosions[index];
+        OtEnemyDrawCommand draw;
+        u16 tile;
+
+        if (!explosion->active) continue;
+        draw = (OtEnemyDrawCommand){
+            .active = true,
+            .x = explosion->x,
+            .y = explosion->y,
+            .graphic = explosion->graphic,
+            .shape_table = OT_COMP_SHAPE_TABLE_EXPLOSION,
+            .size = 0,
+            .filter = 0,
+            .pool = 0,
+        };
+        tile = source_enemy_cache_acquire(&draw);
+        if (tile == 0xffff) continue;
+        put_sprite_8bpp_32(
+            source_enemy_draw_screen_x(&draw),
+            source_enemy_draw_screen_y(&draw),
+            tile,
+            priority
+        );
+    }
+}
+
 static void render_source_enemy_pool(
     u8 pool,
     u8 draw_stage,
@@ -147,6 +179,9 @@ static void render_source_play_scene(void)
      * equal-priority OBJ overlap in favour of the lower OAM index, so emit
      * the complete JE_main() sequence in reverse.
      */
+    render_source_pickup_explosions(
+        source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
+    );
     render_effect_sprites(
         source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
     );

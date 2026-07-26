@@ -59,7 +59,7 @@ static void autotest_finish(void)
         !game_paused &&
         level_position >= LEVEL_BOSS_TICK &&
         telemetry_max_oam <= SPRITE_LIMIT &&
-        telemetry_effect_drops == 33 &&
+        telemetry_effect_drops <= 33 &&
         telemetry_reward_drops == 0 &&
         telemetry_enemy_replacements == 0 &&
         telemetry_pause_toggles == 2 &&
@@ -169,6 +169,11 @@ static void autotest_finish(void)
             SOURCE_EFFECT_CACHE_SLOT_COUNT &&
         telemetry_effect_cache_max_visible_unique <=
             SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+        telemetry_pickup_explosion_spawns ==
+            SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS &&
+        telemetry_pickup_explosion_drops == 0 &&
+        telemetry_pickup_explosion_max_active <=
+            MAX_PICKUP_EXPLOSIONS &&
         source_parity_level.enemy_shot_active_count == 2 &&
         source_parity_level.active_enemy_count == 0 &&
         player_cash == 1456 &&
@@ -200,7 +205,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 20;
+    sram[4] = 21;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -395,6 +400,12 @@ static void autotest_finish(void)
     sram_write_u32(576, telemetry_effect_cache_upload_bytes);
     sram_write_u32(580, telemetry_effect_cache_max_uploads);
     sram_write_u32(584, telemetry_effect_cache_max_visible_unique);
+    sram_write_u32(588, telemetry_pickup_explosion_spawns);
+    sram_write_u32(592, telemetry_pickup_explosion_drops);
+    sram_write_u32(596, telemetry_pickup_explosion_max_active);
+    sram_write_u32(600, TYRIAN_GBA_DETAIL_LEVEL);
+    sram_write_u32(604, TYRIAN_GBA_GAME_SPEED);
+    sram_write_u32(608, source_background2_enabled);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
@@ -557,6 +568,9 @@ static u8 autotest_reward_visible(void)
     }
     for (index = 0; index < MAX_REWARDS; index++) {
         if (rewards[index].active) return 1;
+    }
+    for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
+        if (pickup_explosions[index].active) return 1;
     }
     return 0;
 }

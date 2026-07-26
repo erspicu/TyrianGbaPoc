@@ -27,6 +27,7 @@ enum {
     OT_NEW_PL_COUNT = 10,
     OT_MT_STATE_COUNT = 624,
     OT_HIT_EFFECT_COUNT = 16,
+    OT_PICKUP_EFFECT_COUNT = 16,
 };
 
 /*
@@ -131,6 +132,12 @@ typedef struct {
     bool ground;
 } OtHitEffect;
 
+typedef struct {
+    int16_t x;
+    int16_t y;
+    uint8_t explosion_type;
+} OtPickupEffect;
+
 /*
  * Presentation command captured at the exact blit_enemy() point inside the
  * translated JE_drawEnemy() phase.  Gameplay may move or release the slot
@@ -172,6 +179,8 @@ typedef struct {
     uint16_t next_level;
     uint32_t cash_awarded;
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
+    uint8_t pickup_effect_count;
+    OtPickupEffect pickup_effects[OT_PICKUP_EFFECT_COUNT];
 } OtPlayerCollisionResult;
 
 /*

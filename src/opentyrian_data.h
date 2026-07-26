@@ -36,6 +36,12 @@ enum {
     OT_SHP_SECTION_COUNT = 12,
     OT_SHP_TABLE_SECTION_COUNT = 7,
     OT_SHP_MAX_SPRITES_PER_TABLE = 151,
+    /*
+     * Adapter-only ID for OpenTyrian's separately loaded
+     * explosionSpriteSheet (newsh6.shp).  Authored shape-table values occupy
+     * 1..34, so this cannot alias level data.
+     */
+    OT_COMP_SHAPE_TABLE_EXPLOSION = 35,
     OT_MUS_LDS_PATCH_BYTES = 46,
     OT_MUS_LDS_CHANNEL_COUNT = 9,
 };

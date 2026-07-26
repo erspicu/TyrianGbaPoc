@@ -73,7 +73,11 @@ static void advance_backgrounds(void)
         bg2_scroll_pixel = 0;
     }
     new_row = bg2_scroll_pixel >> 3;
-    if (new_row != old_row) {
+    if (
+        new_row != old_row &&
+        source_background2_enabled &&
+        !source_background2_upload_pending
+    ) {
         schedule_row(
             bg2_map, new_row, BG1_SCREEN_BLOCK,
             &bg2_row_pending, &bg2_row_source, &bg2_row_target
@@ -201,6 +205,11 @@ static void update_logic(void)
      * spawned effect renders source frame 122 for one complete tick.
      */
     update_effects();
+    /*
+     * Existing fixed-position JE_setupExplosion entries lose one TTL before
+     * JE_playerCollide() can append this tick's newly collected label.
+     */
+    source_update_fixed_pickup_explosions();
 #ifdef AUTOTEST_EXPLOSION_SEAM_TEST
     if (level_tick == 2) spawn_large_effect(120, 72, 0);
 #endif

@@ -1,5 +1,9 @@
 param(
-    [switch]$KeepIntermediates
+    [switch]$KeepIntermediates,
+    [ValidateSet("low", "normal")]
+    [string]$DetailLevel = "low",
+    [ValidateSet("low", "normal")]
+    [string]$GameSpeed = "normal"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,8 +17,9 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v23"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v23"
+$configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v24_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v24_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -49,9 +54,13 @@ $buildCommand = @'
 set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
-make PYTHON="__PYTHON__" assets
-make -j2 PYTHON="__PYTHON__" all autotest
-'@.Replace("__PROJECT__", $unixProject).Replace("__PYTHON__", $unixPython)
+make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest
+'@
+$buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
+$buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
+$buildCommand = $buildCommand.Replace("__DETAIL__", $DetailLevel)
+$buildCommand = $buildCommand.Replace("__SPEED__", $GameSpeed)
 
 & $bash -lc $buildCommand
 if ($LASTEXITCODE -ne 0) {
@@ -335,7 +344,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 588) {
+if ($saveBytes.Length -lt 612) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -498,6 +507,12 @@ $telemetry = [ordered]@{
     effect_cache_upload_bytes = Read-TelemetryU32 576
     effect_cache_max_uploads_per_frame = Read-TelemetryU32 580
     effect_cache_max_visible_unique = Read-TelemetryU32 584
+    pickup_explosion_spawns = Read-TelemetryU32 588
+    pickup_explosion_drops = Read-TelemetryU32 592
+    pickup_explosion_max_active = Read-TelemetryU32 596
+    configured_detail_level = Read-TelemetryU32 600
+    configured_game_speed = Read-TelemetryU32 604
+    final_background2_enabled = Read-TelemetryU32 608
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -768,13 +783,18 @@ $legacyStage4TelemetryChecks = [ordered]@{
 # The legacy block above remains as an audit record for the position-5400
 # proof.  The active regression contract follows the authored boss, end
 # flight, stats screen and return to the PC-style Game Menu.
+$expectedDetailLevel = if ($DetailLevel -eq "low") { 0 } else { 1 }
+$expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
+$expectedDisplayFrames = if ($GameSpeed -eq "low") { 16863 } else { 13502 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 20
+    schema_version = $telemetry.version -eq 21
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
     full_level_logic_updates = $telemetry.logic_updates -eq 7828
-    full_level_display_frames = $telemetry.display_frames -eq 13502
+    full_level_display_frames = (
+        $telemetry.display_frames -eq $expectedDisplayFrames
+    )
     authored_boss_exit_position = $telemetry.final_level_position -eq 6477
     authored_event_cursor = $telemetry.final_source_event_index -eq 935
     full_level_tick = $telemetry.final_level_tick -eq 7828
@@ -783,6 +803,20 @@ $telemetryChecks = [ordered]@{
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
     no_map_stream_drops = $telemetry.stream_drops -eq 0
     no_reward_drops = $telemetry.reward_drops -eq 0
+    source_pickup_explosion_labels = (
+        $telemetry.pickup_explosion_spawns -eq
+            $telemetry.source_parity_score_item_pickups -and
+        $telemetry.pickup_explosion_drops -eq 0 -and
+        $telemetry.pickup_explosion_max_active -le 32
+    )
+    requested_port_configuration = (
+        $telemetry.configured_detail_level -eq $expectedDetailLevel -and
+        $telemetry.configured_game_speed -eq $expectedGameSpeed
+    )
+    low_detail_background2_state = (
+        $DetailLevel -ne "low" -or
+        $telemetry.final_background2_enabled -eq 0
+    )
     no_enemy_pool_replacements = $telemetry.enemy_pool_replacements -eq 0
     pause_round_trip = (
         $telemetry.pause_toggles -eq 2 -and

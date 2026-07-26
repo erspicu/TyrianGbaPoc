@@ -8,8 +8,16 @@ static void clear_entities(void)
     }
     for (index = 0; index < MAX_EFFECTS; index++) effects[index].active = 0;
     for (index = 0; index < MAX_REWARDS; index++) rewards[index].active = 0;
+    for (
+        index = 0;
+        index < MAX_PICKUP_EXPLOSIONS;
+        index++
+    ) {
+        pickup_explosions[index].active = 0;
+    }
     active_effect_count = 0;
     active_reward_count = 0;
+    active_pickup_explosion_count = 0;
 }
 
 static const u8 *map_row(const u8 *map, u16 row)
@@ -63,11 +71,16 @@ static void enter_level(void)
     bg1_row_pending = 0;
     bg2_row_pending = 0;
     bg3_row_pending = 0;
+    source_background2_enabled =
+        TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_NORMAL;
+    source_background2_upload_pending = 0;
     clear_entities();
     hide_all_sprites();
 
     dmaCopy(bg1_tiles, CHAR_BASE_BLOCK(0), 512 * 32);
-    dmaCopy(bg2_tiles, CHAR_BASE_BLOCK(1), 512 * 32);
+    if (source_background2_enabled) {
+        dmaCopy(bg2_tiles, CHAR_BASE_BLOCK(1), 512 * 32);
+    }
     dmaCopy(bg3_tiles, CHAR_BASE_BLOCK(2), 512 * 32);
     dmaCopy(bg_palette, BG_PALETTE, 512);
     dmaCopy(obj_tiles, OBJ_BASE_ADR, OBJ_TILE_COUNT * 32);
@@ -95,7 +108,14 @@ static void enter_level(void)
     bg2_presentation_scroll_pixel = bg2_scroll_pixel;
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
     load_ring(bg1_map, BG1_ROWS, bg1_scroll_pixel >> 3, BG0_SCREEN_BLOCK);
-    load_ring(bg2_map, BG2_ROWS, bg2_scroll_pixel >> 3, BG1_SCREEN_BLOCK);
+    if (source_background2_enabled) {
+        load_ring(
+            bg2_map,
+            BG2_ROWS,
+            bg2_scroll_pixel >> 3,
+            BG1_SCREEN_BLOCK
+        );
+    }
     load_ring(bg3_map, BG3_ROWS, bg3_scroll_pixel >> 3, BG2_SCREEN_BLOCK);
     /* First-level event 0 selects the original 1:2:0 opening motion. */
     bg1_scroll_speed = 1;
@@ -203,6 +223,9 @@ static void enter_level(void)
     telemetry_source_launch_successes = 0;
     telemetry_source_random_attempts = 0;
     telemetry_source_random_successes = 0;
+    telemetry_pickup_explosion_spawns = 0;
+    telemetry_pickup_explosion_drops = 0;
+    telemetry_pickup_explosion_max_active = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = source_background_hofs(0);
@@ -212,8 +235,8 @@ static void enter_level(void)
     REG_BG1VOFS = bg2_scroll_pixel & 255;
     REG_BG2VOFS = bg3_scroll_pixel & 255;
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
-    REG_DISPCNT = MODE_0 | BG0_ON | BG1_ON | BG2_ON |
-                  OBJ_ON | OBJ_1D_MAP;
+    REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
+        (source_background2_enabled ? BG1_ON : 0);
     audio_load_music(MOD_TYRIAN_LEVEL_FULL);
     game_state = STATE_PLAY;
     telemetry_state_transitions++;

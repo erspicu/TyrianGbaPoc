@@ -1146,6 +1146,19 @@ bool ot_data_comp_shape_bank_view(
     if (shape_table == 26) {
         return ot_data_shp_section_view(10, view);
     }
+    if (shape_table == OT_COMP_SHAPE_TABLE_EXPLOSION) {
+        /*
+         * OpenTyrian loads explosionSpriteSheet outside shapeFile[].  Expose
+         * its unchanged ROMFS stream through the same Sprite2 decoder used
+         * by source enemy graphics.
+         */
+        if (!stat_data_file("newsh6.shp", &stat) || stat.size == 0) {
+            return false;
+        }
+        view->data = stat.data;
+        view->size = stat.size;
+        return true;
+    }
     if (shape_table > sizeof(shape_file) / sizeof(shape_file[0])) {
         return false;
     }

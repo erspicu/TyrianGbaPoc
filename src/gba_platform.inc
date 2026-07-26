@@ -50,7 +50,22 @@ static void commit_vblank_work(void)
         commit_background_row(bg1_row_source, bg1_row_target);
         bg1_row_pending = 0;
     }
-    if (bg2_row_pending) {
+    if (source_background2_upload_pending) {
+        /*
+         * Low detail leaves this 20 KiB BG layer unallocated.  Match the PC
+         * background2over==3 escape hatch by restoring its tiles and current
+         * ring atomically in VBlank before enabling BG1.
+         */
+        dmaCopy(bg2_tiles, CHAR_BASE_BLOCK(1), 512 * 32);
+        load_ring(
+            bg2_map,
+            BG2_ROWS,
+            bg2_scroll_pixel >> 3,
+            BG1_SCREEN_BLOCK
+        );
+        bg2_row_pending = 0;
+        source_background2_upload_pending = 0;
+    } else if (bg2_row_pending) {
         commit_background_row(bg2_row_source, bg2_row_target);
         bg2_row_pending = 0;
     }
@@ -78,6 +93,9 @@ static void commit_vblank_work(void)
         REG_BG2CNT = BG_PRIORITY(background3_priority) |
                      CHAR_BASE(2) | SCREEN_BASE(BG2_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_1;
+        REG_DISPCNT =
+            MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
+            (source_background2_enabled ? BG1_ON : 0);
         if (boss_obj_palette_restore_pending) {
             dmaCopy(
                 obj_palette,

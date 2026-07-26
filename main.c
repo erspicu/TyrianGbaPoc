@@ -5,6 +5,7 @@
 #include "res/asset_meta.h"
 #include "res/soundbank.h"
 #include "res/tyrian_romfs_meta.h"
+#include "src/port_config.h"
 #include "src/opentyrian_data.h"
 #include "src/opentyrian_level_port.h"
 #include "src/opentyrian_rom_io.h"
@@ -50,6 +51,7 @@
 #define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
 #define MAX_REWARDS 32
+#define MAX_PICKUP_EXPLOSIONS 32
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
 /*
@@ -355,11 +357,26 @@ typedef struct {
     u16 value;
 } Reward;
 
+/*
+ * OpenTyrian stores pickup value labels in the ordinary Explosion pool with
+ * fixedPosition=true.  These retain source coordinates and the exact
+ * newsh6.shp Sprite2 number instead of using a GBA-authored text overlay.
+ */
+typedef struct {
+    u8 active;
+    u8 ttl;
+    u16 graphic;
+    s16 x;
+    s16 y;
+} PickupExplosion;
+
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
+static PickupExplosion pickup_explosions[MAX_PICKUP_EXPLOSIONS] EWRAM_DATA;
 static u8 active_effect_count;
 static u8 active_reward_count;
+static u8 active_pickup_explosion_count;
 static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
 
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
@@ -461,6 +478,8 @@ static u8 bg3_step;
 static u8 bg1_row_pending;
 static u8 bg2_row_pending;
 static u8 bg3_row_pending;
+static u8 source_background2_enabled;
+static u8 source_background2_upload_pending;
 static const u8 *bg1_row_source;
 static const u8 *bg2_row_source;
 static const u8 *bg3_row_source;
@@ -562,6 +581,9 @@ volatile u32 telemetry_romfs_failures;
 volatile u32 telemetry_romfs_manifest_crc32;
 volatile u32 telemetry_layer_rule_checks;
 volatile u32 telemetry_layer_rule_failures;
+volatile u32 telemetry_pickup_explosion_spawns;
+volatile u32 telemetry_pickup_explosion_drops;
+volatile u32 telemetry_pickup_explosion_max_active;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -618,6 +640,12 @@ static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
 static void source_effect_cache_commit(void);
 static void frontend_commit_vblank(void);
+static void load_ring(
+    const u8 *map,
+    u16 rows,
+    u16 top_row,
+    u16 screen_block
+);
 
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
@@ -842,9 +870,9 @@ int main(void)
                 }
 #endif
             } else {
-                logic_accumulator += ORIGINAL_LOGIC_NUMERATOR;
-                if (logic_accumulator >= ORIGINAL_LOGIC_DENOMINATOR) {
-                    logic_accumulator -= ORIGINAL_LOGIC_DENOMINATOR;
+                logic_accumulator += TYRIAN_GBA_LOGIC_NUMERATOR;
+                if (logic_accumulator >= TYRIAN_GBA_LOGIC_DENOMINATOR) {
+                    logic_accumulator -= TYRIAN_GBA_LOGIC_DENOMINATOR;
                     update_logic();
                     if (game_state == STATE_PLAY) {
                         render_game();

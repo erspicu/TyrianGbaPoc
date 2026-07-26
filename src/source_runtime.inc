@@ -663,6 +663,100 @@ static s16 source_enemy_shot_screen_y(const OtEnemyShot *shot)
     return source_world_to_screen_y(shot->sy);
 }
 
+typedef struct {
+    u16 sprite;
+    u8 ttl;
+} SourceExplosionDefinition;
+
+/*
+ * Direct JE_setupExplosion() table from OpenTyrian varz.c.  For a fixed
+ * pickup label the PC renderer does not increment sprite; blit_sprite2()
+ * receives sprite + 1 on every tick.
+ */
+static const SourceExplosionDefinition source_explosion_definition[53] = {
+    { 144,  7 }, { 120, 12 }, { 190, 12 }, { 209, 12 },
+    { 152, 12 }, { 171, 12 }, { 133,  7 }, {   1, 12 },
+    {  20, 12 }, {  39, 12 }, {  58, 12 }, { 110,  3 },
+    {  76,  7 }, {  91,  3 }, { 227,  3 }, { 230,  3 },
+    { 233,  3 }, { 252,  3 }, { 246,  3 }, { 249,  3 },
+    { 265,  3 }, { 268,  3 }, { 271,  3 }, { 236,  3 },
+    { 239,  3 }, { 242,  3 }, { 261,  3 }, { 274,  3 },
+    { 277,  3 }, { 280,  3 }, { 299,  3 }, { 284,  3 },
+    { 287,  3 }, { 290,  3 }, { 293,  3 }, { 165,  8 },
+    { 184,  8 }, { 203,  8 }, { 222,  8 }, { 168,  8 },
+    { 187,  8 }, { 206,  8 }, { 225, 10 }, { 169, 10 },
+    { 188, 10 }, { 207, 20 }, { 226, 14 }, { 170, 14 },
+    { 189, 14 }, { 208, 14 }, { 246, 14 }, { 227, 14 },
+    { 265, 14 },
+};
+
+static void source_spawn_fixed_pickup_explosion(
+    const OtPickupEffect *effect
+)
+{
+    u8 type = effect->explosion_type;
+    s16 x = effect->x;
+    s16 y = effect->y;
+    u8 index;
+
+    if (y <= -16 || y >= 190) return;
+    if (type == 6) {
+        y = (s16)(y + 12);
+        x = (s16)(x + 2);
+    } else if (type == 98) {
+        type = 6;
+    }
+    if (
+        type >=
+        sizeof(source_explosion_definition) /
+            sizeof(source_explosion_definition[0])
+    ) {
+        telemetry_pickup_explosion_drops++;
+        return;
+    }
+    for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
+        PickupExplosion *explosion = &pickup_explosions[index];
+
+        if (explosion->active) continue;
+        explosion->active = 1;
+        explosion->x = x;
+        explosion->y = y;
+        explosion->graphic = (u16)(
+            source_explosion_definition[type].sprite + 1
+        );
+        explosion->ttl = source_explosion_definition[type].ttl;
+        active_pickup_explosion_count++;
+        telemetry_pickup_explosion_spawns++;
+        if (
+            active_pickup_explosion_count >
+            telemetry_pickup_explosion_max_active
+        ) {
+            telemetry_pickup_explosion_max_active =
+                active_pickup_explosion_count;
+        }
+        return;
+    }
+    telemetry_pickup_explosion_drops++;
+}
+
+static void source_update_fixed_pickup_explosions(void)
+{
+    u8 index;
+
+    for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
+        PickupExplosion *explosion = &pickup_explosions[index];
+
+        if (!explosion->active) continue;
+        if (explosion->ttl > 0) explosion->ttl--;
+        if (explosion->ttl == 0) {
+            explosion->active = 0;
+            if (active_pickup_explosion_count) {
+                active_pickup_explosion_count--;
+            }
+        }
+    }
+}
+
 static void source_emit_effect(const OtHitEffect *effect)
 {
     s16 centre_x = source_world_to_screen_x((s16)(effect->x + 6));
@@ -798,6 +892,18 @@ static void source_sync_runtime_telemetry(void)
 
 static void source_apply_background_state(void)
 {
+    /*
+     * PC Low detail starts with background2=false.  Its special
+     * background2over==3 draw path both draws layer 2 and permanently flips
+     * background2=true, so a later authored event can still restore it.
+     */
+    if (
+        !source_background2_enabled &&
+        source_parity_level.background2_over == 3
+    ) {
+        source_background2_enabled = 1;
+        source_background2_upload_pending = 1;
+    }
     bg1_scroll_speed = (u8)source_parity_level.back_move;
     bg2_scroll_speed = (u8)source_parity_level.back_move2;
     bg3_scroll_speed = (u8)source_parity_level.back_move3;
@@ -865,6 +971,15 @@ static void source_process_player_collisions(void)
         effect_index++
     ) {
         source_emit_effect(&player_result.effects[effect_index]);
+    }
+    for (
+        effect_index = 0;
+        effect_index < player_result.pickup_effect_count;
+        effect_index++
+    ) {
+        source_spawn_fixed_pickup_explosion(
+            &player_result.pickup_effects[effect_index]
+        );
     }
     if (player_result.pickup_count) audio_effect(SFX_ITEM);
     if (player_result.damage) player_damage(player_result.damage);
