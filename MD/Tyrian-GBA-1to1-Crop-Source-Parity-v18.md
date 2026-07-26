@@ -2,6 +2,10 @@
 
 更新日期：2026-07-26
 
+> 後續 v19 保留本文件的 1:1 座標與裁切模型，但把玩家垂直 clamp
+> 收窄為 `Y=17..152`，避免飛機在 GBA 上下邊緣被裁切；詳見
+> [Tyrian-GBA-Player-Crop-Bounds-v19.md](Tyrian-GBA-Player-Crop-Bounds-v19.md)。
+
 ## 結論
 
 v18 已把第一關 gameplay 與 presentation 的責任分開：

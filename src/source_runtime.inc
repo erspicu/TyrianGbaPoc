@@ -277,7 +277,12 @@ static s16 source_player_screen_x(void)
 static s16 source_player_screen_y(void)
 {
     return (s16)(
-        source_world_to_screen_y((s16)(player_source_y + 8)) - 16
+        source_world_to_screen_y(
+            (s16)(
+                player_source_y +
+                SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+            )
+        ) - 16
     );
 }
 

@@ -19,7 +19,7 @@ cartridge ROM 的 memory-mapped 位址。
 | 32 MiB ROM 使用率 | 約 32.44% |
 | 尚餘標準 ROM 空間 | 22,670,848 bytes（約 21.62 MiB） |
 | 開機 ROMFS 自我檢查 | 93／93 PASS |
-| Missed VBlank／runtime errors | 58／0 |
+| Missed VBlank／runtime errors | 54／0 |
 
 封裝內容包含 stock 遊戲所需的 MUS、SND、SHP、PIC、HDT、CDT、LVL、
 palette、episode level table、文字及 demo 資料。DOS executable、安裝程式、
@@ -336,13 +336,13 @@ SRAM telemetry。
 - 若未來 ROM 超過標準 32 MiB，不能只改 linker；需先減少資料、加入壓縮
   或設計非標準 bank switching，並重新確認實機及 flash cartridge 支援。
 
-## v18 驗證識別
+## v19 驗證識別
 
 ```text
 Release ROM:
-  build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
+  build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
   10,883,584 bytes
-  SHA-256 5b608adee2c4a21725e84769d10d455461150fa1a794b244f75713c80b148153
+  SHA-256 04b664d9fb48b0a73363d9b8b0b1f0fc9028fb07ae39ef7632d1de9d284839b5
 
 ROMFS:
   9,853,080 bytes
@@ -350,8 +350,8 @@ ROMFS:
   manifest CRC32 764b1e68
 ```
 
-Build 以 telemetry schema 16 同時取得 ROM 內與 host verifier PASS：
+Build 以 telemetry schema 17 同時取得 ROM 內與 host verifier PASS：
 93 項 ROMFS self-test 全通過，並鎖定 Stage 4 authoritative runtime 的
-878 個 source events、473/473 event spawns、181/181 projectile
+878 個 source events、473/473 event spawns、185/185 projectile
 spawn/release、198 個 exact enemy/reward frame、0 catalog miss 與
 0 cache/projectile drop。

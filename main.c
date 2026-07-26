@@ -54,8 +54,18 @@
     (3 * SOURCE_MAP_CELL_WIDTH + SOURCE_PRESENTATION_X_ORIGIN)
 #define SOURCE_PLAYER_MIN_X 40
 #define SOURCE_PLAYER_MAX_X 256
-#define SOURCE_PLAYER_MIN_Y 10
-#define SOURCE_PLAYER_MAX_Y 160
+#define SOURCE_PLAYER_DRAW_Y_OFFSET (-7)
+#define SOURCE_PLAYER_PRESENTATION_CENTRE_Y 7
+#define SOURCE_PLAYER_CONTAINER_Y 2
+#define SOURCE_PLAYER_ALPHA_TOP 2
+#define SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE 27
+#define SOURCE_PLAYER_MIN_Y \
+    (SOURCE_PRESENTATION_Y_ORIGIN - \
+        SOURCE_PLAYER_DRAW_Y_OFFSET - SOURCE_PLAYER_ALPHA_TOP)
+#define SOURCE_PLAYER_MAX_Y \
+    (SOURCE_PRESENTATION_Y_ORIGIN + SCREEN_HEIGHT - \
+        SOURCE_PLAYER_DRAW_Y_OFFSET - \
+        SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE)
 #define PLAYER_SHOT_SPEED 10
 #define PLAYER_SHOT_COOLDOWN 4
 #define PLAYER_SHOT_X_OFFSET 8
@@ -165,6 +175,23 @@ _Static_assert(
 _Static_assert(
     SOURCE_VIEW_CROP_X == 12 && SOURCE_VIEW_CROP_Y == 12,
     "OpenTyrian gameplay viewport must be centre-cropped by 12 pixels"
+);
+_Static_assert(
+    SOURCE_PLAYER_MIN_Y == 17 && SOURCE_PLAYER_MAX_Y == 152,
+    "player Y bounds must keep the source ship alpha bbox inside the crop"
+);
+_Static_assert(
+    SOURCE_PLAYER_MIN_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
+        SOURCE_PRESENTATION_Y_ORIGIN - 16 +
+        SOURCE_PLAYER_CONTAINER_Y + SOURCE_PLAYER_ALPHA_TOP == 0,
+    "top player bound must place the first opaque row at GBA y=0"
+);
+_Static_assert(
+    SOURCE_PLAYER_MAX_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
+        SOURCE_PRESENTATION_Y_ORIGIN - 16 +
+        SOURCE_PLAYER_CONTAINER_Y +
+        SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE - 1 == SCREEN_HEIGHT - 1,
+    "bottom player bound must place the last opaque row at GBA y=159"
 );
 _Static_assert(BG_MAP_COLUMNS == 64, "background map must be 512 pixels wide");
 _Static_assert(
@@ -528,7 +555,7 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V118";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V119";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;

@@ -465,6 +465,35 @@ offset、三層 HOFS、三層垂直來源與裁切 origin，host verifier 逐一
 完整公式、原碼定位與 framebuffer 檢查記錄見
 [Tyrian-GBA-1to1-Crop-Source-Parity-v18.md](Tyrian-GBA-1to1-Crop-Source-Parity-v18.md)。
 
+## v19 玩家可見邊界
+
+v18 的最終裁切正確，但玩家仍可到達 PC 完整 viewport 使用的
+`Y=10..160`，因此 24×28 飛機在 GBA 上下邊緣會被裁切。v19 依兩張
+玩家 source graphic 的實際 alpha bbox `[2,27)` 推導安全範圍：
+
+```text
+player draw origin = playerY - 7
+GBA visible source rows = 12..171
+playerY - 7 + 2  >= 12  -> playerY >= 17
+playerY - 7 + 26 <= 171 -> playerY <= 152
+```
+
+玩家 source Y clamp 因此改為 `17..152`；X clamp `40..256` 不變。
+`source_player_screen_y()` 的 presentation centre 同時由 `+8` 修正為
+`+7`，使 32×32 OAM container 內的 24×28 source cell 精確對回 PC
+`playerY-7` draw origin。
+
+這個差異只存在於 GBA viewport adapter。敵人、背景、子彈、碰撞及
+parallax 仍使用 PC source space；玩家位置也沒有改成 GBA 座標。上下
+極限專用 framebuffer 回歸確認第一個／最後一個不透明 pixel 分別落在
+GBA `y=0`／`y=159`。
+
+v19 telemetry schema 17 的完整路線取得 ROM／host PASS，最終玩家座標
+為 `(77,17)`，54/12,239 missed VBlank，ROMFS 93/93 checks，且所有
+stream、effect、reward、projectile、catalog 及 frame-cache drop 都是 0。
+推導、靜態斷言與驗證記錄見
+[Tyrian-GBA-Player-Crop-Bounds-v19.md](Tyrian-GBA-Player-Crop-Bounds-v19.md)。
+
 ## ROMFS v1 與原始格式 loader
 
 v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它，
@@ -533,6 +562,7 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 - 檔案讀取 → ROM 中的 const table
 - PC 動態配置 → GBA 固定 pool
 - 264×184 gameplay viewport → 四邊各裁 12 px 的 240×160 1:1 視窗
+- 玩家垂直 clamp → 保持完整 24×28 飛機可見的 source `Y=17..152`
 
 不允許在 platform adapter 內修改：
 
@@ -552,7 +582,7 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 2. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
    build option。
 3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
-4. 量測 58 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
+4. 量測 54 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
    rate、不刪音樂／圖層的前提下優化。
 
 ## 建置
@@ -561,10 +591,10 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 .\build.ps1
 ```
 
-目前 ROMFS v18 1:1 crop ROM：
+目前 ROMFS v19 player-bounds ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
+build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
 ```
 
 ROM 與中間產物不納入 Git。

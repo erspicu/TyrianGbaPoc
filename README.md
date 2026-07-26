@@ -30,14 +30,14 @@ The current scope is deliberately narrow:
   deferred and four conditionally skipped)
 - PC `curLoc` timing and source enemy identity, pool, position, movement,
   armor, animation, link, turret and death fields
-- the original four 25-slot enemy groups: 473/473 event spawns, six successful
+- the original four 25-slot enemy groups: 473/473 event spawns, three successful
   death spawns, a peak of 39 active objects and no pool-full loss
-- a concrete 60-entry OpenTyrian projectile pool: 181 source shots, peak nine,
-  8,452 movement updates, 19 player contacts and zero drops
+- a concrete 60-entry OpenTyrian projectile pool: 185 source shots, peak nine,
+  9,163 movement updates, 11 player contacts and zero drops
 - source player-shot ordering and collision formulas, armor damage,
   `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
   `eenemydie` children
-- six physical pickups spawned and four collected by the deterministic route;
+- three physical pickups spawned and two collected by the deterministic route;
   `JE_playerCollide()` reward branches, including the data-cube branch not
   crossed by this route, retain their fixed-single-player gameplay state
 - 198 exact source Sprite2 frames keyed by
@@ -45,8 +45,9 @@ The current scope is deliberately narrow:
   all fallback visuals are removed
 - a 24-slot VBlank-uploaded OBJ frame cache with zero catalog misses or cache
   drops, plus all 128 GBA OAM entries with a measured peak of 43
-- exact PC player inertia, clamps, background parallax and enemy map offsets;
-  the GBA only crops `game_screen x=36..275, y=12..171`
+- exact PC player inertia, background parallax and enemy map offsets; the GBA
+  crops `game_screen x=36..275, y=12..171` and restricts the player to source
+  `y=17..152`, keeping the complete 24x28 ship inside that visible crop
 - original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
   poses, original explosion and reward animation assets, TINY_FONT cash and
   FONT_SHAPES `PAUSED`
@@ -56,9 +57,9 @@ The current scope is deliberately narrow:
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
 
-The deterministic v18 route has no stream, effect, reward, projectile-pool,
-catalog or frame-cache drops. It records 58 missed VBlanks over 12,239
-displayed frames (about 0.47%); this includes 145 exact-frame uploads and
+The deterministic v19 route has no stream, effect, reward, projectile-pool,
+catalog or frame-cache drops. It records 54 missed VBlanks over 12,239
+displayed frames (about 0.44%); this includes 145 exact-frame uploads and
 remains visible as a measured GBA workload result. All 198 catalogued first-
 level enemy/reward frames resolve without fallback.
 
@@ -81,7 +82,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
+build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -98,6 +99,7 @@ under `Backup`, and the reproducible source asset conversions are
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [v19 player crop-safe bounds](MD/Tyrian-GBA-Player-Crop-Bounds-v19.md)
 - [v18 PC-coordinate 1:1 crop](MD/Tyrian-GBA-1to1-Crop-Source-Parity-v18.md)
 - [v17 enemy/reward source-parity translation](MD/Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md)
 - [Cartridge ROMFS format and porting API](MD/Tyrian-GBA-ROMFS.md)
