@@ -670,12 +670,32 @@ v27 已完成 Jukebox：
 - `Tyrian-GBA-Player-Death-Source-Parity-v26.md`
 - `Tyrian-GBA-Jukebox-v27.md`
 
+## v28 通用 ROMFS／多關卡進度
+
+v28 已把第一關專用 reader 改成 selected-level runtime：
+
+1. 62/62 個 LVL sections、53,338 筆 events 與 24 條 script route 已在
+   GBA runtime matrix 通過。
+2. EP1–EP4 代表 route 均能讀取原始 ROMFS 資料並完成 gameplay／stats。
+3. Episode 1 已依 `levels1.dat` 真正連續完成四關，路徑為
+   section 3 → 5 → 29 → 25。
+4. 跨關卡保留 `enemySpriteSheets[4]` slot pointer 語意；不新增每關
+   Python asset。
+5. OBJ VRAM 增加一個 16×16 compact Sprite2 slot，使第三關 24 個同幀
+   unique enemy graphics 維持零 cache drop。
+
+詳細紀錄：
+
+- `Tyrian-GBA-ROMFS-All-Levels-v28.md`
+- `Tyrian-GBA-Updated-Plan-v28.md`
+
 ## 下一個移植階段
 
-1. 讓 Episode 選擇真正決定 episode data，打通 `nextLevel` 與第二關。
-2. MUS、SHP、PIC、HDT、LVL loader 持續收斂到通用 ROMFS reader，避免
-   為每一關新增 Python 特例。
-3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
+1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
+   Episode 2 轉場。
+2. 保存關卡間的 player、cash、cube、weapon 與 global flag 狀態。
+3. 逐行翻寫 front／rear／special weapon，移除 route-test combat assist，
+   並完成 turret 251..255 magnet／special effects 與 misc-shot 104。
 
 ## 建置
 
@@ -683,10 +703,10 @@ v27 已完成 Jukebox：
 .\build.ps1
 ```
 
-目前 ROMFS v27 預設 ROM：
+目前 ROMFS v28 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v27_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v28_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

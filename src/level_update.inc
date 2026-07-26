@@ -1,7 +1,7 @@
 /* Legacy background, boss and frame update orchestration. */
 
 static void schedule_row(
-    const u8 *map,
+    u8 layer,
     u16 row,
     u16 screen_block,
     u8 *pending,
@@ -13,8 +13,16 @@ static void schedule_row(
         telemetry_stream_drops++;
         return;
     }
-    *source = map_row(map, row);
-    *target = (u16 *)SCREEN_BASE_BLOCK(screen_block) + ((row & 31) * 32);
+    if (!background_schedule_row(
+            layer,
+            row,
+            screen_block,
+            source,
+            target
+        )) {
+        telemetry_stream_drops++;
+        return;
+    }
     *pending = 1;
     telemetry_map_rows++;
 }
@@ -53,7 +61,7 @@ static void advance_backgrounds(void)
     new_row = bg1_scroll_pixel >> 3;
     if (new_row != old_row) {
         schedule_row(
-            bg1_map, new_row, BG0_SCREEN_BLOCK,
+            0, new_row, BG0_SCREEN_BLOCK,
             &bg1_row_pending, &bg1_row_source, &bg1_row_target
         );
     }
@@ -79,7 +87,7 @@ static void advance_backgrounds(void)
         !source_background2_upload_pending
     ) {
         schedule_row(
-            bg2_map, new_row, BG1_SCREEN_BLOCK,
+            1, new_row, BG1_SCREEN_BLOCK,
             &bg2_row_pending, &bg2_row_source, &bg2_row_target
         );
     }
@@ -95,7 +103,7 @@ static void advance_backgrounds(void)
     new_row = bg3_scroll_pixel >> 3;
     if (new_row != old_row) {
         schedule_row(
-            bg3_map, new_row, BG2_SCREEN_BLOCK,
+            2, new_row, BG2_SCREEN_BLOCK,
             &bg3_row_pending, &bg3_row_source, &bg3_row_target
         );
     }
@@ -127,6 +135,28 @@ static u8 source_enemy_still_exploding(void)
         if (effects[index].active) return 1;
     }
     return 0;
+}
+
+static void source_resume_group_stopped_backgrounds(void)
+{
+    /*
+     * Direct translation of the stopBackgroundNum==9 branch at the end of
+     * OpenTyrian's level loop.  Group-specific event 4 stops (ground/sky)
+     * resume once that pool has left the screen and its final explosion has
+     * completed, even if a different enemy layer is still populated.
+     */
+    if (
+        source_parity_level.stop_background_num == 9 &&
+        source_parity_level.back_move == 0 &&
+        !source_enemy_still_exploding()
+    ) {
+        source_parity_level.back_move = 1;
+        source_parity_level.back_move2 = 2;
+        source_parity_level.back_move3 = 3;
+        source_parity_level.explode_move = 2;
+        source_parity_level.stop_background_num = 0;
+        source_parity_level.stop_backgrounds = false;
+    }
 }
 
 static void source_begin_end_level_audio(void)
@@ -204,6 +234,13 @@ static void update_logic(void)
         player_source_x,
         player_source_y
     );
+    if (source_parity_level.cur_loc != level_position) {
+        level_position = source_parity_level.cur_loc;
+    }
+    if (source_parity_level.frame_player_invulnerable_ticks != 0) {
+        player_invulnerable =
+            source_parity_level.frame_player_invulnerable_ticks;
+    }
     source_apply_background_state();
     if (!end_level_before && source_parity_level.end_level) {
         source_begin_end_level_audio();
@@ -240,6 +277,7 @@ static void update_logic(void)
     if (player_alive && !source_parity_level.end_level) {
         source_process_player_collisions();
     }
+    source_resume_group_stopped_backgrounds();
     update_player();
     if (game_state != STATE_PLAY) return;
     if (player_alive) {

@@ -61,6 +61,12 @@ typedef struct {
     uint8_t animax;
     uint8_t aniwhenfire;
     uint8_t shape_table;
+    /*
+     * OpenTyrian stores a Sprite2_array pointer, not the authored bank ID.
+     * 0..3 identify enemySpriteSheets[]; the remaining values model its two
+     * fixed sheets and a cold-start NULL pointer.
+     */
+    uint8_t shape_slot;
     int8_t exrev;
     int8_t eyrev;
     int16_t exccadd;
@@ -152,6 +158,9 @@ typedef struct {
     uint8_t size;
     uint8_t filter;
     uint8_t pool;
+    uint8_t source_index;
+    uint8_t enemy_cycle;
+    uint16_t enemy_definition_id;
 } OtEnemyDrawCommand;
 
 typedef struct {
@@ -202,7 +211,11 @@ typedef struct {
  */
 typedef struct {
     uint16_t event_index;
+    uint16_t event_count;
     uint16_t cur_loc;
+    uint16_t return_loc;
+    uint16_t level_timer_countdown;
+    uint16_t level_timer_jump_to;
 
     uint16_t back_move;
     uint16_t back_move2;
@@ -217,16 +230,30 @@ typedef struct {
     uint8_t boss_bar_link[2];
     uint8_t boss_bar_color[2];
     uint8_t difficulty_level;
+    uint8_t initial_difficulty;
+    uint8_t damage_rate;
     uint8_t stop_background_num;
     uint8_t background3_over;
     uint8_t background2_over;
+    uint8_t pending_text_window;
     int16_t starfield_speed;
     uint16_t level_enemy_frequency;
     uint16_t super_enemy_254_jump;
+    uint16_t galaga_shot_frequency;
     int16_t current_song;
     uint8_t level_end;
     uint16_t map_x;
     uint16_t map_x3;
+    uint16_t map1_pointer_offset;
+    uint16_t map2_pointer_offset;
+    uint16_t background2_wrap_offset;
+    uint16_t background2_wrap_to_offset;
+    int8_t level_filter;
+    int8_t level_filter_new;
+    int8_t level_brightness;
+    int8_t level_brightness_change;
+    uint8_t smoothies[9];
+    uint8_t smoothie_data[9];
     /*
      * JE_mainGamePlayerFunctions() derives these horizontal offsets from
      * the player in PC coordinates.  The presentation fields retain the
@@ -259,6 +286,14 @@ typedef struct {
     bool really_end_level;
     bool random_explosions;
     bool small_enemy_adjust;
+    bool arcade_mode;
+    bool level_timer;
+    bool return_active;
+    bool filter_active;
+    bool filter_fade;
+    bool filter_fade_start;
+    bool map_position_override_pending;
+    bool background2_wrap_pending;
     bool assets_valid;
     bool parallax_initialized;
     bool presentation_parallax_initialized;
@@ -272,7 +307,12 @@ typedef struct {
     uint8_t new_pl[OT_NEW_PL_COUNT];
     OtMt19937 rng;
     uint16_t frame_sound_mask;
+    uint8_t frame_sound_queue[8];
     uint16_t frame_player_damage;
+    uint16_t frame_player_invulnerable_ticks;
+    uint8_t frame_enemy_on_screen;
+    uint8_t frame_ground_enemy_on_screen;
+    uint8_t frame_sky_enemy_on_screen;
 
     /*
      * Fixed single-player state required by the directly translated
@@ -349,7 +389,9 @@ typedef struct {
 
 void ot_level_port_init(
     OtLevelPortState *state,
-    uint8_t difficulty_level
+    uint8_t difficulty_level,
+    bool arcade_mode,
+    bool preserve_shape_history
 );
 void ot_level_port_advance(
     OtLevelPortState *state,
@@ -376,7 +418,7 @@ void ot_level_port_collide_player(
     OtPlayerCollisionResult *result
 );
 void ot_level_port_clear_projectiles(OtLevelPortState *state);
-bool ot_level1_event_read(uint16_t index, OtEventRecord *event);
-bool ot_level1_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy);
+bool ot_level_event_read(uint16_t index, OtEventRecord *event);
+bool ot_level_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy);
 
 #endif

@@ -23,11 +23,11 @@ enum {
     OT_HDT_OPTION_RECORD_BYTES = 86,
     OT_HDT_SHIELD_COUNT = 11,
     OT_HDT_SHIELD_RECORD_BYTES = 37,
-    OT_LEVEL_MAP_SHAPE_LAYER_BYTES = 128 * 2,
+    OT_LEVEL_MAP_SHAPE_LAYER_BYTES = OT_LEVEL_MAP_SHAPE_COUNT * 2,
     OT_LEVEL_MAP_SHAPE_BYTES = 3 * OT_LEVEL_MAP_SHAPE_LAYER_BYTES,
-    OT_LEVEL_MAP1_BYTES = 14 * 300,
-    OT_LEVEL_MAP2_BYTES = 14 * 600,
-    OT_LEVEL_MAP3_BYTES = 15 * 600,
+    OT_LEVEL_MAP1_BYTES = OT_LEVEL_MAP1_COLUMNS * OT_LEVEL_MAP1_ROWS,
+    OT_LEVEL_MAP2_BYTES = OT_LEVEL_MAP2_COLUMNS * OT_LEVEL_MAP2_ROWS,
+    OT_LEVEL_MAP3_BYTES = OT_LEVEL_MAP3_COLUMNS * OT_LEVEL_MAP3_ROWS,
 };
 
 typedef struct {
@@ -42,7 +42,7 @@ typedef struct {
     const uint8_t *level_map_shapes;
     const uint8_t *level_maps[3];
     uint32_t level_map_bytes[3];
-    OtLevel1Info level_info;
+    OtLevelInfo level_info;
     uint32_t hdt_weapon_table_offset;
     uint32_t hdt_enemy_table_offset;
 } OtDataState;
@@ -133,6 +133,94 @@ static bool stat_data_file(const char *name, OtRomFsStat *stat)
     return ot_romfs_stat(filesystem, path, stat) == OT_ROMFS_OK;
 }
 
+static bool encrypted_pascal_read(
+    const OtRomFsStat *file,
+    uint32_t *position,
+    char *destination,
+    uint32_t destination_size
+)
+{
+    static const uint8_t crypt_key[10] = {
+        204, 129, 63, 255, 71, 19, 25, 62, 1, 99
+    };
+    uint8_t length;
+    uint32_t index;
+
+    if (
+        file == 0 ||
+        position == 0 ||
+        destination == 0 ||
+        destination_size == 0 ||
+        !span_is_valid(file->size, *position, 1)
+    ) {
+        return false;
+    }
+    length = file->data[(*position)++];
+    if (
+        length >= destination_size ||
+        !span_is_valid(file->size, *position, length)
+    ) {
+        return false;
+    }
+    memcpy(destination, file->data + *position, length);
+    *position += length;
+    for (index = length; index > 0; index--) {
+        uint32_t i = index - 1;
+
+        destination[i] = (char)(
+            (uint8_t)destination[i] ^ crypt_key[i % 10]
+        );
+        if (i != 0) {
+            destination[i] = (char)(
+                (uint8_t)destination[i] ^
+                (uint8_t)destination[i - 1]
+            );
+        }
+    }
+    destination[length] = '\0';
+    return true;
+}
+
+static uint16_t script_number(const char *text)
+{
+    uint32_t value = 0;
+
+    if (text == 0) return 0;
+    while (*text == ' ' || *text == '\t') text++;
+    while (*text >= '0' && *text <= '9') {
+        value = value * 10u + (uint8_t)(*text - '0');
+        if (value > UINT16_MAX) return UINT16_MAX;
+        text++;
+    }
+    return (uint16_t)value;
+}
+
+static bool episode_seek_section(
+    const OtRomFsStat *file,
+    uint16_t section,
+    uint32_t *position
+)
+{
+    char line[256];
+    uint16_t current = 0;
+    uint32_t cursor = 0;
+
+    if (section == 0 || position == 0) return false;
+    while (current < section) {
+        if (!encrypted_pascal_read(
+                file,
+                &cursor,
+                line,
+                sizeof(line)
+            )) {
+            return false;
+        }
+        if (line[0] == '*') current++;
+    }
+    *position = cursor;
+    return true;
+}
+
 static bool offset_table_is_valid(
     const OtRomFsStat *file,
     uint16_t count
@@ -164,10 +252,19 @@ static uint32_t table_offset(
     return read_u32(file->data + 2u + (uint32_t)index * 4u);
 }
 
-static bool parse_lvl(void)
+static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
 {
+    OtRomFsStat lvl;
+    OtLevelInfo level_info;
+    const uint8_t *level_enemy_ids;
+    const uint8_t *level_events;
+    const uint8_t *level_map_shapes;
+    const uint8_t *level_maps[3];
+    uint32_t level_map_bytes[3];
+    char filename[] = "tyrian1.lvl";
     const uint8_t *source;
     uint16_t level_count;
+    uint32_t offset_index;
     uint32_t offset;
     uint32_t section_end;
     uint32_t position;
@@ -175,33 +272,48 @@ static bool parse_lvl(void)
     uint16_t enemy_count;
     uint16_t event_count;
 
-    if (!stat_data_file("tyrian1.lvl", &data_state.lvl)) return false;
-    if (!span_is_valid(data_state.lvl.size, 0, 2)) return false;
-    source = data_state.lvl.data;
-    level_count = read_u16(source);
     if (
-        level_count <= OT_LEVEL1_LVL_OFFSET_INDEX + 2 ||
-        !offset_table_is_valid(&data_state.lvl, level_count)
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        lvl_file_number == 0
+    ) {
+        return false;
+    }
+    filename[6] = (char)('0' + episode);
+    if (
+        !stat_data_file(filename, &lvl) ||
+        !span_is_valid(lvl.size, 0, 2)
+    ) {
+        return false;
+    }
+    source = lvl.data;
+    level_count = read_u16(source);
+    offset_index = ((uint32_t)lvl_file_number - 1u) * 2u;
+    if (
+        offset_index >= level_count ||
+        !offset_table_is_valid(&lvl, level_count)
     ) {
         return false;
     }
 
-    offset = table_offset(&data_state.lvl, OT_LEVEL1_LVL_OFFSET_INDEX);
-    section_end =
-        table_offset(&data_state.lvl, OT_LEVEL1_LVL_OFFSET_INDEX + 2);
+    offset = table_offset(&lvl, (uint16_t)offset_index);
+    section_end = offset_index + 2u < level_count ?
+        table_offset(&lvl, (uint16_t)(offset_index + 2u)) :
+        lvl.size;
     if (
         section_end <= offset ||
-        !span_is_valid(data_state.lvl.size, offset, section_end - offset) ||
+        !span_is_valid(lvl.size, offset, section_end - offset) ||
         !span_is_valid(section_end, offset, 10)
     ) {
         return false;
     }
 
-    data_state.level_info.map_file = (char)source[offset];
-    data_state.level_info.shape_file = (char)source[offset + 1];
-    data_state.level_info.map_x = read_u16(source + offset + 2);
-    data_state.level_info.map_x2 = read_u16(source + offset + 4);
-    data_state.level_info.map_x3 = read_u16(source + offset + 6);
+    level_info = (OtLevelInfo){0};
+    level_info.map_file = (char)source[offset];
+    level_info.shape_file = (char)source[offset + 1];
+    level_info.map_x = read_u16(source + offset + 2);
+    level_info.map_x2 = read_u16(source + offset + 4);
+    level_info.map_x3 = read_u16(source + offset + 6);
     enemy_count = read_u16(source + offset + 8);
     position = offset + 10;
     if (
@@ -210,57 +322,69 @@ static bool parse_lvl(void)
     ) {
         return false;
     }
-    data_state.level_enemy_ids = source + position;
+    level_enemy_ids = source + position;
     position += bytes;
 
     event_count = read_u16(source + position);
     position += 2;
     if (
-        event_count != OT_LEVEL1_EXPECTED_EVENT_COUNT ||
-        !multiply_is_valid(
-            event_count,
-            OT_LEVEL1_EVENT_RECORD_BYTES,
-            &bytes
-        ) ||
+        !multiply_is_valid(event_count, OT_LEVEL_EVENT_RECORD_BYTES, &bytes) ||
         !span_is_valid(section_end, position, bytes)
     ) {
         return false;
     }
-    data_state.level_events = source + position;
+    level_events = source + position;
     position += bytes;
 
     if (!span_is_valid(section_end, position, OT_LEVEL_MAP_SHAPE_BYTES)) {
         return false;
     }
-    data_state.level_map_shapes = source + position;
+    level_map_shapes = source + position;
     position += OT_LEVEL_MAP_SHAPE_BYTES;
 
-    data_state.level_map_bytes[0] = OT_LEVEL_MAP1_BYTES;
-    data_state.level_map_bytes[1] = OT_LEVEL_MAP2_BYTES;
-    data_state.level_map_bytes[2] = OT_LEVEL_MAP3_BYTES;
+    level_map_bytes[0] = OT_LEVEL_MAP1_BYTES;
+    level_map_bytes[1] = OT_LEVEL_MAP2_BYTES;
+    level_map_bytes[2] = OT_LEVEL_MAP3_BYTES;
     for (uint8_t layer = 0; layer < 3; layer++) {
         if (
             !span_is_valid(
                 section_end,
                 position,
-                data_state.level_map_bytes[layer]
+                level_map_bytes[layer]
             )
         ) {
             return false;
         }
-        data_state.level_maps[layer] = source + position;
-        position += data_state.level_map_bytes[layer];
+        level_maps[layer] = source + position;
+        position += level_map_bytes[layer];
     }
     if (position != section_end) return false;
 
-    data_state.level_info.enemy_count = enemy_count;
-    data_state.level_info.event_count = event_count;
-    data_state.level_info.section_offset = offset;
-    data_state.level_info.section_bytes = section_end - offset;
+    level_info.enemy_count = enemy_count;
+    level_info.event_count = event_count;
+    level_info.section_offset = offset;
+    level_info.section_bytes = section_end - offset;
+    data_state.lvl = lvl;
+    data_state.level_info = level_info;
+    data_state.level_enemy_ids = level_enemy_ids;
+    data_state.level_events = level_events;
+    data_state.level_map_shapes = level_map_shapes;
+    for (uint8_t layer = 0; layer < 3; layer++) {
+        data_state.level_maps[layer] = level_maps[layer];
+        data_state.level_map_bytes[layer] = level_map_bytes[layer];
+    }
     catalog.lvl_count = level_count;
-    catalog.level1_enemy_count = enemy_count;
-    catalog.level1_event_count = event_count;
+    catalog.selected_episode = episode;
+    catalog.selected_lvl_file_number = lvl_file_number;
+    catalog.level_enemy_count = enemy_count;
+    catalog.level_event_count = event_count;
     return true;
+}
+
+static bool parse_lvl(void)
+{
+    /* OpenTyrian Episode 1 / TYRIAN normal route boot-time sanity level. */
+    return select_lvl(1, 9);
 }
 
 static bool parse_hdt(void)
@@ -780,7 +904,437 @@ const OtDataCatalog *ot_data_catalog(void)
     return &catalog;
 }
 
-bool ot_data_level1_info(OtLevel1Info *info)
+bool ot_data_episode_level_resolve(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    OtEpisodeLevel *level
+)
+{
+    OtRomFsStat script;
+    OtEpisodeLevel resolved;
+    char filename[] = "levels1.dat";
+    char line[256];
+    uint16_t section = main_section;
+    uint8_t jump_count;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.initialized ||
+        level == 0 ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        main_section == 0
+    ) {
+        return false;
+    }
+    filename[6] = (char)('0' + episode);
+    if (!stat_data_file(filename, &script)) return false;
+
+    resolved = (OtEpisodeLevel){0};
+    resolved.episode = episode;
+    resolved.requested_section = main_section;
+    for (jump_count = 0; jump_count < 64; jump_count++) {
+        uint32_t position;
+        uint16_t line_count;
+        bool jumped = false;
+
+        if (!episode_seek_section(&script, section, &position)) {
+            return false;
+        }
+        for (line_count = 0; line_count < 4096; line_count++) {
+            uint32_t length;
+
+            if (!encrypted_pascal_read(
+                    &script,
+                    &position,
+                    line,
+                    sizeof(line)
+                )) {
+                return false;
+            }
+            if (line[0] != ']') continue;
+            length = (uint32_t)strlen(line);
+            switch (line[1]) {
+            case 'J':
+                section = script_number(line + 3);
+                jumped = true;
+                break;
+
+            case '2':
+                if (play_mode != 0) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'H':
+                if (difficulty < 3) {
+                    section = script_number(line + 4);
+                    jumped = true;
+                }
+                break;
+
+            case 'h':
+                if (
+                    difficulty > 2 &&
+                    !encrypted_pascal_read(
+                        &script,
+                        &position,
+                        line,
+                        sizeof(line)
+                    )
+                ) {
+                    return false;
+                }
+                break;
+
+            case 'I': {
+                uint8_t item_group;
+
+                /*
+                 * JE_loadMap() consumes nine encrypted item-availability
+                 * records before opening the PC item screen.  The GBA menu
+                 * omits that screen but must advance the same script stream.
+                 */
+                for (item_group = 0; item_group < 9; item_group++) {
+                    if (!encrypted_pascal_read(
+                            &script,
+                            &position,
+                            line,
+                            sizeof(line)
+                        )) {
+                        return false;
+                    }
+                }
+                break;
+            }
+
+            case 'W':
+                /* Skip the source warning-text block through its '#'. */
+                do {
+                    if (!encrypted_pascal_read(
+                            &script,
+                            &position,
+                            line,
+                            sizeof(line)
+                        )) {
+                        return false;
+                    }
+                } while (line[0] != '#');
+                break;
+
+            case 'G': {
+                uint16_t choice_count = script_number(line + 7);
+                uint16_t choice_index;
+
+                /*
+                 * JE_itemScreen() exposes every ]G destination in Full
+                 * Game, while one-player Arcade immediately chooses the
+                 * final mapSection.  This compatibility entry point picks
+                 * the first Full Game destination; the GBA front-end uses
+                 * ot_data_episode_map_resolve() to present all choices.
+                 */
+                if (
+                    choice_count == 0 ||
+                    choice_count > OT_EPISODE_MAP_CHOICE_COUNT
+                ) {
+                    return false;
+                }
+                choice_index = play_mode != 0 ?
+                    (uint16_t)(choice_count - 1u) :
+                    0;
+                section = script_number(
+                    line + 4u + (choice_index + 1u) * 8u
+                );
+                if (section == 0) return false;
+                jumped = true;
+                break;
+            }
+
+            case 'L': {
+                uint16_t one_based_song;
+                uint8_t index;
+
+                resolved.resolved_section = section;
+                resolved.next_section =
+                    length > 9 ? script_number(line + 9) : 0;
+                if (resolved.next_section == 0) {
+                    resolved.next_section = (uint16_t)(section + 1u);
+                }
+                memset(resolved.level_name, 0, sizeof(resolved.level_name));
+                for (
+                    index = 0;
+                    index < sizeof(resolved.level_name) - 1u &&
+                    13u + index < length;
+                    index++
+                ) {
+                    resolved.level_name[index] = line[13u + index];
+                }
+                one_based_song =
+                    length > 22 ? script_number(line + 22) : 0;
+                resolved.source_song =
+                    one_based_song > 0 ? one_based_song - 1u : 0;
+                resolved.lvl_file_number =
+                    length > 25 ? script_number(line + 25) : 0;
+                resolved.normal_bonus_level =
+                    length > 27 && line[27] == '$';
+                resolved.bonus_level =
+                    length > 28 && line[28] == '$';
+                resolved.episode_complete = false;
+                if (resolved.lvl_file_number == 0) return false;
+                *level = resolved;
+                return true;
+            }
+
+            case 'Q':
+                resolved.resolved_section = section;
+                resolved.next_section = 0;
+                resolved.episode_complete = true;
+                *level = resolved;
+                return true;
+
+            default:
+                /*
+                 * Presentation, save, item-state and music directives do
+                 * not alter which raw LVL section is selected by this GBA
+                 * adapter. Their records are still consumed directly.
+                 */
+                break;
+            }
+            if (jumped) break;
+        }
+        if (!jumped || section == 0) return false;
+    }
+    return false;
+}
+
+bool ot_data_episode_map_resolve(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    OtEpisodeMap *map
+)
+{
+    OtRomFsStat script;
+    OtEpisodeMap resolved;
+    char filename[] = "levels1.dat";
+    char line[256];
+    uint16_t section = main_section;
+    uint8_t jump_count;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.initialized ||
+        map == 0 ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        main_section == 0
+    ) {
+        return false;
+    }
+    filename[6] = (char)('0' + episode);
+    if (!stat_data_file(filename, &script)) return false;
+
+    resolved = (OtEpisodeMap){0};
+    resolved.episode = episode;
+    resolved.requested_section = main_section;
+    for (jump_count = 0; jump_count < 64; jump_count++) {
+        uint32_t position;
+        uint16_t line_count;
+        bool jumped = false;
+
+        if (!episode_seek_section(&script, section, &position)) {
+            return false;
+        }
+        for (line_count = 0; line_count < 4096; line_count++) {
+            if (!encrypted_pascal_read(
+                    &script,
+                    &position,
+                    line,
+                    sizeof(line)
+                )) {
+                return false;
+            }
+            if (line[0] != ']') continue;
+            switch (line[1]) {
+            case 'J':
+                section = script_number(line + 3);
+                jumped = true;
+                break;
+
+            case '2':
+                if (play_mode != 0) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'H':
+                if (difficulty < 3) {
+                    section = script_number(line + 4);
+                    jumped = true;
+                }
+                break;
+
+            case 'h':
+                if (
+                    difficulty > 2 &&
+                    !encrypted_pascal_read(
+                        &script,
+                        &position,
+                        line,
+                        sizeof(line)
+                    )
+                ) {
+                    return false;
+                }
+                break;
+
+            case 'I': {
+                uint8_t item_group;
+
+                for (item_group = 0; item_group < 9; item_group++) {
+                    if (!encrypted_pascal_read(
+                            &script,
+                            &position,
+                            line,
+                            sizeof(line)
+                        )) {
+                        return false;
+                    }
+                }
+                break;
+            }
+
+            case 'W':
+                do {
+                    if (!encrypted_pascal_read(
+                            &script,
+                            &position,
+                            line,
+                            sizeof(line)
+                        )) {
+                        return false;
+                    }
+                } while (line[0] != '#');
+                break;
+
+            case 'G': {
+                uint16_t choice_count = script_number(line + 7);
+                uint8_t choice;
+
+                if (
+                    choice_count == 0 ||
+                    choice_count > OT_EPISODE_MAP_CHOICE_COUNT
+                ) {
+                    return false;
+                }
+                resolved.resolved_section = section;
+                resolved.map_origin = (uint8_t)script_number(line + 4);
+                resolved.choice_count = (uint8_t)choice_count;
+                for (choice = 0; choice < resolved.choice_count; choice++) {
+                    resolved.map_planet[choice] = (uint8_t)script_number(
+                        line + 1u + (uint16_t)(choice + 1u) * 8u
+                    );
+                    resolved.map_section[choice] = script_number(
+                        line + 4u + (uint16_t)(choice + 1u) * 8u
+                    );
+                    if (
+                        resolved.map_planet[choice] == 0 ||
+                        resolved.map_section[choice] == 0
+                    ) {
+                        return false;
+                    }
+                }
+                *map = resolved;
+                return true;
+            }
+
+            case 'L':
+                /*
+                 * Some script paths jump directly to a playable level
+                 * without returning to JE_itemScreen().  Keep the same
+                 * section as the sole selectable destination.
+                 */
+                resolved.resolved_section = section;
+                resolved.choice_count = 1;
+                resolved.map_section[0] = section;
+                resolved.direct_level = true;
+                *map = resolved;
+                return true;
+
+            case 'Q':
+                resolved.resolved_section = section;
+                resolved.episode_complete = true;
+                *map = resolved;
+                return true;
+
+            default:
+                break;
+            }
+            if (jumped) break;
+        }
+        if (!jumped || section == 0) return false;
+    }
+    return false;
+}
+
+bool ot_data_episode_lvl_count(
+    uint8_t episode,
+    uint16_t *level_count
+)
+{
+    OtRomFsStat lvl;
+    char filename[] = "tyrian1.lvl";
+    uint16_t offset_count;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.initialized ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        level_count == 0
+    ) {
+        return false;
+    }
+    filename[6] = (char)('0' + episode);
+    if (
+        !stat_data_file(filename, &lvl) ||
+        !span_is_valid(lvl.size, 0, 2)
+    ) {
+        return false;
+    }
+    offset_count = read_u16(lvl.data);
+    /*
+     * OpenTyrian's LVL directory has two offsets per logical level and one
+     * trailing sentinel.  Enforce that contract here so a corrupt table
+     * cannot silently turn into a generated/fallback catalog.
+     */
+    if (
+        offset_count < 3 ||
+        (offset_count & 1u) == 0 ||
+        !offset_table_is_valid(&lvl, offset_count)
+    ) {
+        return false;
+    }
+    *level_count = (uint16_t)(offset_count / 2u);
+    return *level_count != 0;
+}
+
+bool ot_data_level_select(
+    uint8_t episode,
+    uint16_t lvl_file_number
+)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.initialized) return false;
+    return select_lvl(episode, lvl_file_number);
+}
+
+bool ot_data_level_info(OtLevelInfo *info)
 {
     if (!initialization_attempted) ot_data_init();
     if (!catalog.lvl_valid || info == 0) return false;
@@ -788,7 +1342,7 @@ bool ot_data_level1_info(OtLevel1Info *info)
     return true;
 }
 
-bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event)
+bool ot_data_level_event_read(uint16_t index, OtEventRecord *event)
 {
     const uint8_t *source;
 
@@ -796,13 +1350,13 @@ bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event)
     if (
         !catalog.lvl_valid ||
         event == 0 ||
-        index >= catalog.level1_event_count
+        index >= catalog.level_event_count
     ) {
         return false;
     }
     source =
         data_state.level_events +
-        (uint32_t)index * OT_LEVEL1_EVENT_RECORD_BYTES;
+        (uint32_t)index * OT_LEVEL_EVENT_RECORD_BYTES;
     event->eventtime = read_u16(source);
     event->eventtype = source[2];
     event->eventdat = read_s16(source + 3);
@@ -814,13 +1368,13 @@ bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event)
     return true;
 }
 
-bool ot_data_level1_enemy_pool_read(uint16_t index, uint16_t *enemy_id)
+bool ot_data_level_enemy_pool_read(uint16_t index, uint16_t *enemy_id)
 {
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.lvl_valid ||
         enemy_id == 0 ||
-        index >= catalog.level1_enemy_count
+        index >= catalog.level_enemy_count
     ) {
         return false;
     }
@@ -828,7 +1382,7 @@ bool ot_data_level1_enemy_pool_read(uint16_t index, uint16_t *enemy_id)
     return true;
 }
 
-bool ot_data_level1_map_shape_view(uint8_t layer, OtDataView *view)
+bool ot_data_level_map_shape_view(uint8_t layer, OtDataView *view)
 {
     if (!initialization_attempted) ot_data_init();
     if (!catalog.lvl_valid || view == 0 || layer >= 3) return false;
@@ -839,12 +1393,53 @@ bool ot_data_level1_map_shape_view(uint8_t layer, OtDataView *view)
     return true;
 }
 
-bool ot_data_level1_map_view(uint8_t layer, OtDataView *view)
+bool ot_data_level_map_view(uint8_t layer, OtDataView *view)
 {
     if (!initialization_attempted) ot_data_init();
     if (!catalog.lvl_valid || view == 0 || layer >= 3) return false;
     view->data = data_state.level_maps[layer];
     view->size = data_state.level_map_bytes[layer];
+    return true;
+}
+
+bool ot_data_background_shape_file_view(
+    char shape_file_id,
+    OtDataView *view
+)
+{
+    OtRomFsStat file;
+    char filename[] = "shapesx.dat";
+    uint32_t position = 0;
+    uint16_t shape_index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.initialized || view == 0) return false;
+    if (shape_file_id >= 'A' && shape_file_id <= 'Z') {
+        shape_file_id = (char)(shape_file_id + ('a' - 'A'));
+    }
+    filename[6] = shape_file_id;
+    if (!stat_data_file(filename, &file)) return false;
+
+    /*
+     * Stock shapes?.dat contains 600 Pascal boolean records followed by
+     * 672 raw PC palette indices for each nonblank 24x28 shape. Some files
+     * carry unused trailing bytes, so validate the records but retain the
+     * complete zero-copy ROM view.
+     */
+    for (shape_index = 0; shape_index < 600; shape_index++) {
+        uint8_t blank;
+
+        if (!span_is_valid(file.size, position, 1)) return false;
+        blank = file.data[position++];
+        if (blank == 0) {
+            if (!span_is_valid(file.size, position, 24u * 28u)) {
+                return false;
+            }
+            position += 24u * 28u;
+        }
+    }
+    view->data = file.data;
+    view->size = file.size;
     return true;
 }
 
@@ -1158,6 +1753,12 @@ bool ot_data_comp_shape_bank_view(
         view->data = stat.data;
         view->size = stat.size;
         return true;
+    }
+    if (shape_table == OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY) {
+        return ot_data_shp_section_view(8, view);
+    }
+    if (shape_table == OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY) {
+        return ot_data_shp_section_view(12, view);
     }
     if (shape_table > sizeof(shape_file) / sizeof(shape_file[0])) {
         return false;

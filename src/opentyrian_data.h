@@ -16,10 +16,21 @@
 #include <stdint.h>
 
 enum {
-    OT_LEVEL1_LVL_FILE_NUMBER = 9,
-    OT_LEVEL1_LVL_OFFSET_INDEX = (OT_LEVEL1_LVL_FILE_NUMBER - 1) * 2,
-    OT_LEVEL1_EXPECTED_EVENT_COUNT = 1009,
-    OT_LEVEL1_EVENT_RECORD_BYTES = 11,
+    OT_EPISODE_COUNT = 4,
+    OT_EPISODE_MAP_CHOICE_COUNT = 5,
+    OT_LEVEL_EVENT_RECORD_BYTES = 11,
+    OT_LEVEL_MAP_SHAPE_COUNT = 128,
+    OT_LEVEL_MAP1_COLUMNS = 14,
+    OT_LEVEL_MAP1_ROWS = 300,
+    OT_LEVEL_MAP2_COLUMNS = 14,
+    OT_LEVEL_MAP2_ROWS = 600,
+    OT_LEVEL_MAP3_COLUMNS = 15,
+    OT_LEVEL_MAP3_ROWS = 600,
+    OT_LEVEL_MAP_CELL_WIDTH = 24,
+    OT_LEVEL_MAP_CELL_HEIGHT = 28,
+    OT_LEVEL_MAP1_FIRST_SOURCE_ROW = 3,
+    OT_LEVEL_MAP23_FIRST_SOURCE_ROW = 14,
+    OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS = 8,
     OT_HDT_WEAPON_COUNT = 781,
     OT_HDT_WEAPON_RECORD_BYTES = 80,
     OT_HDT_ENEMY_COUNT = 851,
@@ -42,6 +53,12 @@ enum {
      * 1..34, so this cannot alias level data.
      */
     OT_COMP_SHAPE_TABLE_EXPLOSION = 35,
+    /*
+     * Adapter-only IDs for the two compressed player/enemy projectile banks
+     * embedded unchanged in tyrian.shp sections 8 and 12.
+     */
+    OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY = 36,
+    OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY = 37,
     OT_MUS_LDS_PATCH_BYTES = 46,
     OT_MUS_LDS_CHANNEL_COUNT = 9,
 };
@@ -127,7 +144,42 @@ typedef struct {
     uint16_t event_count;
     uint32_t section_offset;
     uint32_t section_bytes;
-} OtLevel1Info;
+} OtLevelInfo;
+
+/*
+ * Original ]G route information consumed by JE_itemScreen().  Full Game
+ * exposes every destination; one-player Arcade selects the final entry.
+ * Planet and section values remain the one-based values stored in
+ * levelsN.dat.
+ */
+typedef struct {
+    uint8_t episode;
+    uint16_t requested_section;
+    uint16_t resolved_section;
+    uint8_t map_origin;
+    uint8_t choice_count;
+    uint8_t map_planet[OT_EPISODE_MAP_CHOICE_COUNT];
+    uint16_t map_section[OT_EPISODE_MAP_CHOICE_COUNT];
+    bool direct_level;
+    bool episode_complete;
+} OtEpisodeMap;
+
+/*
+ * Result of interpreting one original levelsN.dat section. Script sections
+ * are one-based and source_song is zero-based for play_song().
+ */
+typedef struct {
+    uint8_t episode;
+    uint16_t requested_section;
+    uint16_t resolved_section;
+    uint16_t next_section;
+    uint16_t lvl_file_number;
+    uint16_t source_song;
+    bool bonus_level;
+    bool normal_bonus_level;
+    bool episode_complete;
+    char level_name[10];
+} OtEpisodeLevel;
 
 typedef struct {
     bool populated;
@@ -156,8 +208,10 @@ typedef struct {
     bool shp_valid;
     bool mus_valid;
     uint16_t lvl_count;
-    uint16_t level1_enemy_count;
-    uint16_t level1_event_count;
+    uint8_t selected_episode;
+    uint16_t selected_lvl_file_number;
+    uint16_t level_enemy_count;
+    uint16_t level_event_count;
     uint16_t pic_count;
     uint16_t shp_section_count;
     uint16_t mus_song_count;
@@ -185,11 +239,60 @@ typedef struct {
 bool ot_data_init(void);
 const OtDataCatalog *ot_data_catalog(void);
 bool ot_data_frontend_text_load(OtFrontendText *text);
-bool ot_data_level1_info(OtLevel1Info *info);
-bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event);
-bool ot_data_level1_enemy_pool_read(uint16_t index, uint16_t *enemy_id);
-bool ot_data_level1_map_shape_view(uint8_t layer, OtDataView *view);
-bool ot_data_level1_map_view(uint8_t layer, OtDataView *view);
+
+/*
+ * Interpret the stock encrypted levelsN.dat script without a generated
+ * catalog. play_mode is 0 for Full Game and non-zero for Arcade;
+ * difficulty follows the source values Easy=1, Normal=2, Hard=3.
+ */
+bool ot_data_episode_level_resolve(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    OtEpisodeLevel *level
+);
+
+/*
+ * Resolve the stock script up to its ]G map-choice directive.  Sections
+ * which lead directly to ]L are returned as a one-entry direct_level route,
+ * and ]Q is reported without inventing a destination.
+ */
+bool ot_data_episode_map_resolve(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    OtEpisodeMap *map
+);
+
+/*
+ * Return the number of playable data sections in one stock tyrianN.lvl.
+ * The on-disk offset table contains two entries per level plus one final
+ * sentinel; callers never need a generated per-Episode level catalog.
+ */
+bool ot_data_episode_lvl_count(
+    uint8_t episode,
+    uint16_t *level_count
+);
+
+/*
+ * Select one original section in tyrianN.lvl. All following views point
+ * directly into that ROMFS file.
+ */
+bool ot_data_level_select(
+    uint8_t episode,
+    uint16_t lvl_file_number
+);
+bool ot_data_level_info(OtLevelInfo *info);
+bool ot_data_level_event_read(uint16_t index, OtEventRecord *event);
+bool ot_data_level_enemy_pool_read(uint16_t index, uint16_t *enemy_id);
+bool ot_data_level_map_shape_view(uint8_t layer, OtDataView *view);
+bool ot_data_level_map_view(uint8_t layer, OtDataView *view);
+bool ot_data_background_shape_file_view(
+    char shape_file,
+    OtDataView *view
+);
 bool ot_data_hdt_enemy_read(
     uint16_t enemy_id,
     OtEnemyDefinition *enemy

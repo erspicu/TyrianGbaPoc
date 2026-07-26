@@ -55,6 +55,7 @@ static void commit_vblank_work(void)
         return;
     }
     if (bg1_row_pending) {
+        background_commit_row_uploads(0);
         commit_background_row(bg1_row_source, bg1_row_target);
         bg1_row_pending = 0;
     }
@@ -64,20 +65,20 @@ static void commit_vblank_work(void)
          * background2over==3 escape hatch by restoring its tiles and current
          * ring atomically in VBlank before enabling BG1.
          */
-        dmaCopy(bg2_tiles, CHAR_BASE_BLOCK(1), 512 * 32);
-        load_ring(
-            bg2_map,
-            BG2_ROWS,
+        background_commit_full_layer(
+            1,
             bg2_scroll_pixel >> 3,
             BG1_SCREEN_BLOCK
         );
         bg2_row_pending = 0;
         source_background2_upload_pending = 0;
     } else if (bg2_row_pending) {
+        background_commit_row_uploads(1);
         commit_background_row(bg2_row_source, bg2_row_target);
         bg2_row_pending = 0;
     }
     if (bg3_row_pending) {
+        background_commit_row_uploads(2);
         commit_background_row(bg3_row_source, bg3_row_target);
         bg3_row_pending = 0;
     }
@@ -136,6 +137,7 @@ static void commit_vblank_work(void)
      * translated JE_drawEnemy selected it.
      */
     source_enemy_cache_commit();
+    source_projectile_cache_commit();
     source_effect_cache_commit();
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));

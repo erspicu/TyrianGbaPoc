@@ -38,6 +38,7 @@
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
 #define MAP_RING_ROWS 32
+#define BG_MAP_COLUMNS 64
 #define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
 #define MAP_HALF_ROW_BYTES (32 * sizeof(u16))
 #define MAP_SCREEN_BLOCK_WORDS (32 * 32)
@@ -68,6 +69,34 @@
     (SOURCE_GAME_SCREEN_VISIBLE_X + SOURCE_VIEW_CROP_X)
 #define SOURCE_PRESENTATION_Y_ORIGIN SOURCE_VIEW_CROP_Y
 #define SOURCE_MAP_CELL_WIDTH 24
+#define BG1_INITIAL_SCROLL \
+    ( \
+        ( \
+            OT_LEVEL_MAP1_ROWS - \
+            OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS - \
+            OT_LEVEL_MAP1_FIRST_SOURCE_ROW \
+        ) * OT_LEVEL_MAP_CELL_HEIGHT + SOURCE_VIEW_CROP_Y \
+    )
+#define BG23_INITIAL_SCROLL \
+    ( \
+        ( \
+            OT_LEVEL_MAP2_ROWS - \
+            OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS - \
+            OT_LEVEL_MAP23_FIRST_SOURCE_ROW \
+        ) * OT_LEVEL_MAP_CELL_HEIGHT + SOURCE_VIEW_CROP_Y \
+    )
+#define BG2_INITIAL_SCROLL BG23_INITIAL_SCROLL
+#define BG3_INITIAL_SCROLL BG23_INITIAL_SCROLL
+#define BG12_INITIAL_HOFS \
+    ( \
+        OT_LEVEL_MAP_CELL_WIDTH + \
+        SOURCE_GAME_SCREEN_VISIBLE_X + SOURCE_VIEW_CROP_X \
+    )
+#define BG3_INITIAL_HOFS \
+    ( \
+        2 * OT_LEVEL_MAP_CELL_WIDTH + \
+        SOURCE_GAME_SCREEN_VISIBLE_X + SOURCE_VIEW_CROP_X \
+    )
 #define SOURCE_BG12_PARALLAX_BASE_X \
     (2 * SOURCE_MAP_CELL_WIDTH + SOURCE_PRESENTATION_X_ORIGIN)
 #define SOURCE_BG3_PARALLAX_BASE_X \
@@ -119,13 +148,41 @@
 #define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
 #define SOURCE_ENEMY_FRAME_BYTES 1024
 #define SOURCE_ENEMY_TILES_PER_SLOT 32
+/*
+ * The old POC's pre-rendered boss atlas occupied OBJ tiles 32..95, but the
+ * source-parity runtime draws every boss component from ROMFS Sprite2 data.
+ * Reclaim its two 32-tile 8bpp slots without overlapping the streamed
+ * explosion bank which begins at tile 96.
+ */
+#define SOURCE_ENEMY_CACHE_RECLAIMED_TILE_BASE 32
+#define SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT 2
 #define SOURCE_ENEMY_CACHE_LOWER_TILE_BASE 224
 #define SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT 9
 #define SOURCE_ENEMY_CACHE_UPPER_TILE_BASE 640
 #define SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT 12
-#define SOURCE_ENEMY_CACHE_SLOT_COUNT \
-    (SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
+#define SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT \
+    (SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT + \
+        SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT)
+#define SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT 1
+#define SOURCE_ENEMY_CACHE_SLOT_COUNT \
+    (SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + \
+        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT)
+#define SOURCE_ENEMY_COMPACT_FRAME_BYTES 256
+#define SOURCE_ENEMY_COMPACT_TILES_PER_SLOT 8
+#define SOURCE_PROJECTILE_CACHE_SLOT_COUNT 8
+#define SOURCE_PROJECTILE_TILES_PER_SLOT 8
+#define SOURCE_PROJECTILE_CACHE_LOWER_TILE_BASE OBJ_TILE_REWARD
+#define SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT 7
+#define SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE \
+    (OBJ_TILE_PLAYER_SHOT + 4)
+#define SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE \
+    (SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE + \
+        (SOURCE_PROJECTILE_CACHE_SLOT_COUNT - \
+            SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT) * \
+            SOURCE_PROJECTILE_TILES_PER_SLOT)
+#define SOURCE_PROJECTILE_FRAME_BYTES \
+    (SOURCE_PROJECTILE_TILES_PER_SLOT * 32)
 
 /*
  * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
@@ -137,14 +194,6 @@
 #define SOURCE_EFFECT_TILES_PER_SLOT EXPLOSION_TILES_PER_FRAME
 #define SOURCE_EFFECT_FRAME_BYTES \
     (SOURCE_EFFECT_TILES_PER_SLOT * 32)
-
-#define PC_SHOT_GRAPHIC_DART 58
-#define PC_SHOT_GRAPHIC_RED 112
-#define PC_SHOT_GRAPHIC_LASER_LEFT 145
-#define PC_SHOT_GRAPHIC_LASER_DOWN 146
-#define PC_SHOT_GRAPHIC_LASER_RIGHT 147
-#define PC_SHOT_GRAPHIC_DART_LEFT 201
-#define PC_SHOT_GRAPHIC_DART_RIGHT 202
 
 _Static_assert(
     EXPLOSION_FRAME_COUNT == OBJ_EXPLOSION_FRAME_COUNT,
@@ -205,22 +254,6 @@ _Static_assert(
         MOD_TYRIAN_MUSIC_40 == 40,
     "Maxmod modules must preserve zero-based music.mus catalog order"
 );
-_Static_assert(
-    OBJ_PROJECTILE_SOURCE_COUNT == 8,
-    "enemy projectile source count must match the PC level-1 set"
-);
-_Static_assert(
-    OBJ_PROJECTILE_TILE_COUNT == 18,
-    "enemy projectile shape packing must remain within OBJ VRAM"
-);
-_Static_assert(
-    OBJ_TILE_PROJECTILE_113 == OBJ_TILE_PROJECTILE_112 + 1,
-    "PC red projectile animation frames must be adjacent"
-);
-_Static_assert(
-    OBJ_PAL_PROJECTILE_112 == OBJ_PAL_PROJECTILE_113,
-    "PC red projectile animation frames must share a palette"
-);
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 _Static_assert(
     SOURCE_ENEMY_FRAME_BYTES ==
@@ -233,11 +266,36 @@ _Static_assert(
     "8bpp enemy frame tile stride changed"
 );
 _Static_assert(
+    SOURCE_ENEMY_COMPACT_FRAME_BYTES ==
+        SOURCE_ENEMY_COMPACT_TILES_PER_SLOT * 32,
+    "compact 8bpp enemy frame tile stride changed"
+);
+_Static_assert(
+    SOURCE_ENEMY_CACHE_RECLAIMED_TILE_BASE +
+        SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT *
+            SOURCE_ENEMY_TILES_PER_SLOT <=
+        SOURCE_EFFECT_CACHE_TILE_BASE,
+    "reclaimed boss cache overlaps the streamed explosion bank"
+);
+_Static_assert(
     SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
         SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
             SOURCE_ENEMY_TILES_PER_SLOT <=
         OBJ_TILE_REWARD,
     "lower enemy frame cache overlaps retained static OBJ assets"
+);
+_Static_assert(
+    SOURCE_PROJECTILE_CACHE_LOWER_TILE_BASE +
+        SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT *
+            SOURCE_PROJECTILE_TILES_PER_SLOT <=
+        OBJ_TILE_SCORE_DIGITS &&
+        SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
+            (
+                SOURCE_PROJECTILE_CACHE_SLOT_COUNT -
+                SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT
+            ) * SOURCE_PROJECTILE_TILES_PER_SLOT <=
+        OBJ_TILE_BOSS_BAR,
+    "runtime projectile cache overlaps retained OBJ assets"
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
@@ -248,8 +306,16 @@ _Static_assert(
 );
 _Static_assert(
     (SOURCE_ENEMY_CACHE_LOWER_TILE_BASE & 1) == 0 &&
-        (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE & 1) == 0,
+        (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE & 1) == 0 &&
+        (SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE & 1) == 0,
     "8bpp OBJ cache bases must use even character indices"
+);
+_Static_assert(
+    SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
+        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT *
+            SOURCE_ENEMY_COMPACT_TILES_PER_SLOT <=
+        OBJ_TILE_BOSS_BAR,
+    "compact enemy cache overlaps the boss bar"
 );
 _Static_assert(
     SOURCE_EFFECT_CACHE_TILE_BASE +
@@ -301,11 +367,11 @@ _Static_assert(
     BG1_INITIAL_SCROLL == 8104 &&
         BG2_INITIAL_SCROLL == 16196 &&
         BG3_INITIAL_SCROLL == 16196,
-    "generated background phase no longer matches OpenTyrian mapY setup"
+    "runtime background phase no longer matches OpenTyrian mapY setup"
 );
 _Static_assert(
     BG12_INITIAL_HOFS == 60 && BG3_INITIAL_HOFS == 84,
-    "generated background X phase no longer matches OpenTyrian pointers"
+    "runtime background X phase no longer matches OpenTyrian pointers"
 );
 
 enum {
@@ -335,13 +401,6 @@ enum {
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
      (ay) + (ah) > (by) && (by) + (bh) > (ay))
 
-extern const u8 bg1_tiles[];
-extern const u8 bg2_tiles[];
-extern const u8 bg3_tiles[];
-extern const u8 bg_palette[];
-extern const u8 bg1_map[];
-extern const u8 bg2_map[];
-extern const u8 bg3_map[];
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
 extern const u8 frontend_frames[];
@@ -365,18 +424,6 @@ typedef struct {
     s16 y;
     u8 damage;
 } PlayerShot;
-
-typedef struct {
-    u8 active;
-    s16 x;
-    s16 y;
-    s8 dx;
-    s8 dy;
-    u8 duration;
-    u8 graphic;
-    u8 animate;
-    u8 animax;
-} EnemyShot;
 
 typedef struct {
     u8 active;
@@ -472,6 +519,14 @@ static u8 frontend_selection;
 static u8 frontend_play_mode;
 static u8 frontend_episode;
 static u8 frontend_difficulty;
+static u16 frontend_main_section;
+static OtEpisodeMap frontend_map;
+static OtEpisodeLevel frontend_map_level[OT_EPISODE_MAP_CHOICE_COUNT];
+static OtEpisodeLevel frontend_level;
+static OtFrontendText frontend_text;
+static u8 frontend_text_ready;
+static u8 frontend_map_ready;
+static u8 frontend_level_ready;
 static u16 frontend_timer;
 static u8 frontend_stats_stage;
 static u8 frontend_stats_cube_visible_count;
@@ -494,7 +549,7 @@ static s8 player_source_velocity_x;
 static s8 player_source_velocity_y;
 static u8 player_source_x_friction_ticks;
 static u8 player_source_y_friction_ticks;
-static u8 player_invulnerable;
+static u16 player_invulnerable;
 static u8 player_alive;
 static u8 player_exploding_ticks;
 static u8 player_death_fx_wait;
@@ -518,6 +573,7 @@ static u16 level_position;
 static u32 logic_accumulator;
 static u8 level_exit_music_started;
 static OtLevelPortState source_parity_level EWRAM_BSS;
+static u8 source_enemy_shape_history_valid;
 
 static u16 bg1_scroll_pixel;
 static u16 bg2_scroll_pixel;
@@ -602,6 +658,7 @@ volatile u32 telemetry_source_enemy_shot_player_hits;
 volatile u32 telemetry_source_player_shot_hits;
 volatile u32 telemetry_source_enemy_kills;
 volatile u32 telemetry_source_direct_cash;
+volatile u32 telemetry_autotest_combat_assists;
 volatile u32 telemetry_source_score_item_spawns;
 volatile u32 telemetry_source_score_item_pickups;
 volatile u32 telemetry_source_score_item_max_active;
@@ -617,14 +674,24 @@ volatile u32 telemetry_source_launch_successes;
 volatile u32 telemetry_source_random_attempts;
 volatile u32 telemetry_source_random_successes;
 volatile u32 telemetry_sprite2_decode_failures;
+volatile u32 telemetry_sprite2_null_pointer_skips;
+volatile u32 telemetry_sprite2_zero_graphic_skips;
 volatile u32 telemetry_sprite2_cache_hits;
 volatile u32 telemetry_sprite2_cache_misses;
 volatile u32 telemetry_sprite2_cache_evictions;
 volatile u32 telemetry_sprite2_cache_drops;
 volatile u32 telemetry_sprite2_uploads;
 volatile u32 telemetry_sprite2_upload_bytes;
+volatile u32 telemetry_sprite2_compact_uploads;
 volatile u32 telemetry_sprite2_max_uploads;
 volatile u32 telemetry_sprite2_max_visible_unique;
+volatile u32 telemetry_projectile_cache_hits;
+volatile u32 telemetry_projectile_cache_misses;
+volatile u32 telemetry_projectile_cache_evictions;
+volatile u32 telemetry_projectile_cache_drops;
+volatile u32 telemetry_projectile_cache_uploads;
+volatile u32 telemetry_projectile_cache_max_uploads;
+volatile u32 telemetry_projectile_cache_max_visible_unique;
 volatile u32 telemetry_effect_cache_hits;
 volatile u32 telemetry_effect_cache_misses;
 volatile u32 telemetry_effect_cache_evictions;
@@ -703,6 +770,46 @@ static u8 autotest_running;
 static u8 autotest_frontend_finish_pending;
 static const char save_type_marker[] __attribute__((used)) = "SRAM_V121";
 static void autotest_finish(void);
+#ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
+#if AUTOTEST_CAMPAIGN_LEVEL_COUNT < 1 || AUTOTEST_CAMPAIGN_LEVEL_COUNT > 16
+#error AUTOTEST_CAMPAIGN_LEVEL_COUNT must be between 1 and 16
+#endif
+typedef struct {
+    u32 episode;
+    u32 resolved_section;
+    u32 lvl_file_number;
+    u32 source_song;
+    u32 event_index;
+    u32 level_position;
+    u32 enemy_kills;
+    u32 background_approximations;
+    u32 failure_flags;
+} AutotestCampaignRecord;
+
+enum {
+    AUTOTEST_CAMPAIGN_FAIL_DUPLICATE_ROUTE = 1u << 0,
+    AUTOTEST_CAMPAIGN_FAIL_COMPLETION = 1u << 1,
+    AUTOTEST_CAMPAIGN_FAIL_ASSETS = 1u << 2,
+    AUTOTEST_CAMPAIGN_FAIL_EVENT_ACCOUNTING = 1u << 3,
+    AUTOTEST_CAMPAIGN_FAIL_EVENT_SPAWN = 1u << 4,
+    AUTOTEST_CAMPAIGN_FAIL_LAUNCH_SPAWN = 1u << 5,
+    AUTOTEST_CAMPAIGN_FAIL_RANDOM_SPAWN = 1u << 6,
+    AUTOTEST_CAMPAIGN_FAIL_DEATH_SPAWN = 1u << 7,
+    AUTOTEST_CAMPAIGN_FAIL_ROMFS = 1u << 8,
+    AUTOTEST_CAMPAIGN_FAIL_SPRITE_DECODE = 1u << 9,
+    AUTOTEST_CAMPAIGN_FAIL_SPRITE_CACHE = 1u << 10,
+    AUTOTEST_CAMPAIGN_FAIL_EFFECT_CACHE = 1u << 11,
+    AUTOTEST_CAMPAIGN_FAIL_PROJECTILE_CACHE = 1u << 12,
+    AUTOTEST_CAMPAIGN_FAIL_LAYER_RULE = 1u << 13,
+    AUTOTEST_CAMPAIGN_FAIL_END_MUSIC = 1u << 14,
+};
+
+static u32 autotest_campaign_levels_completed;
+static u32 autotest_campaign_failures;
+static u32 autotest_campaign_checksum;
+static AutotestCampaignRecord
+    autotest_campaign_record[AUTOTEST_CAMPAIGN_LEVEL_COUNT];
+#endif
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;
 #endif
@@ -713,19 +820,14 @@ static s16 source_player_screen_y(void);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
+static void source_projectile_cache_commit(void);
 static void source_effect_cache_commit(void);
 static void frontend_commit_vblank(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
 static void jukebox_update(void);
 static void jukebox_render(void);
-static void load_ring(
-    const u8 *map,
-    u16 rows,
-    u16 top_row,
-    u16 screen_block
-);
-
+#include "src/background_runtime.inc"
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"
@@ -742,6 +844,7 @@ static void load_ring(
 int main(void)
 {
     u32 current_vblank;
+    u8 logic_updated;
     uint32_t romfs_passed_checks = 0;
     uint32_t romfs_failed_checks = 0;
     const OtRomFs *mounted_romfs;
@@ -762,6 +865,14 @@ int main(void)
     telemetry_romfs_failures = romfs_failed_checks;
     telemetry_romfs_manifest_crc32 =
         mounted_romfs != 0 ? mounted_romfs->manifest_crc32 : 0;
+#ifdef AUTOTEST_ROMFS_LEVEL_MATRIX
+    /*
+     * Exercise every stock tyrianN.lvl section and every levelsN.dat route
+     * on the actual GBA runtime.  This path deliberately runs before audio
+     * or front-end setup: its only inputs are the original ROMFS files.
+     */
+    autotest_romfs_level_matrix();
+#endif
     /*
      * Maxmod's GBA initializer waits across two display frames while its
      * VBlank routine primes the double-buffer write position.  The IRQ must
@@ -774,8 +885,27 @@ int main(void)
     telemetry_state_transitions = 0;
     hide_all_sprites();
     frontend_begin();
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+    /*
+     * Visual/test-only direct route entry.  Release builds always traverse
+     * the original logo and menu sequence.
+     */
+#ifdef AUTOTEST_FRONTEND_ROUTE_EPISODE
+    frontend_episode = AUTOTEST_FRONTEND_ROUTE_EPISODE - 1;
+#else
+    frontend_episode = 0;
+#endif
+    frontend_main_section = AUTOTEST_FRONTEND_ROUTE_SECTION;
+#ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
+    frontend_play_mode = FRONTEND_PLAY_ARCADE;
+#endif
+    if (frontend_prepare_map()) {
+        frontend_enter_state(STATE_NEXT_LEVEL_MENU, 0);
+    }
+#endif
 
     for (;;) {
+        logic_updated = 0;
         VBlankIntrWait();
         current_vblank = telemetry_vblank_irqs;
         if (last_vblank_seen && current_vblank > last_vblank_seen + 1) {
@@ -982,6 +1112,7 @@ int main(void)
                 logic_accumulator += TYRIAN_GBA_LOGIC_NUMERATOR;
                 if (logic_accumulator >= TYRIAN_GBA_LOGIC_DENOMINATOR) {
                     logic_accumulator -= TYRIAN_GBA_LOGIC_DENOMINATOR;
+                    logic_updated = 1;
                     update_logic();
                     if (
                         game_state == STATE_PLAY ||
@@ -1037,6 +1168,11 @@ int main(void)
 #endif
                     }
                 }
+            }
+            if (game_state == STATE_PLAY) {
+                background_prefetch_step(
+                    logic_updated ? 0 : BACKGROUND_PREFETCH_IDLE_MISSES
+                );
             }
             telemetry_display_frames++;
 #ifdef AUTOTEST

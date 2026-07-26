@@ -173,12 +173,21 @@ static void render_source_pickup_explosions(u8 priority)
         };
         tile = source_enemy_cache_acquire(&draw);
         if (tile == 0xffff) continue;
-        put_sprite_8bpp_32(
-            source_enemy_draw_screen_x(&draw),
-            source_enemy_draw_screen_y(&draw),
-            tile,
-            priority
-        );
+        if (source_enemy_cache_tile_is_compact(tile)) {
+            put_sprite_8bpp_16(
+                source_enemy_draw_screen_x(&draw) + 8,
+                source_enemy_draw_screen_y(&draw) + 8,
+                tile,
+                priority
+            );
+        } else {
+            put_sprite_8bpp_32(
+                source_enemy_draw_screen_x(&draw),
+                source_enemy_draw_screen_y(&draw),
+                tile,
+                priority
+            );
+        }
     }
 }
 
@@ -215,12 +224,21 @@ static void render_source_enemy_pool(
         (*visible_source_enemies)++;
         tile = source_enemy_cache_acquire(draw);
         if (tile == 0xffff) continue;
-        put_sprite_8bpp_32(
-            screen_x,
-            screen_y,
-            tile,
-            priority
-        );
+        if (source_enemy_cache_tile_is_compact(tile)) {
+            put_sprite_8bpp_16(
+                screen_x + 8,
+                screen_y + 8,
+                tile,
+                priority
+            );
+        } else {
+            put_sprite_8bpp_32(
+                screen_x,
+                screen_y,
+                tile,
+                priority
+            );
+        }
     }
 }
 
@@ -231,22 +249,33 @@ static void render_source_enemy_shots(u8 priority)
     for (index = OT_ENEMY_SHOT_COUNT - 1; index >= 0; index--) {
         const OtEnemyShot *source_shot =
             &source_parity_level.enemy_shot[index];
-        EnemyShot presented;
+        u8 shape_table;
         u16 graphic;
+        u16 tile;
 
         if (!source_shot->active) continue;
-        graphic = source_shot->sgr >= 500 ?
-            (u16)(source_shot->sgr - 500) :
-            source_shot->sgr;
-        if (graphic > 255) continue;
-        presented = (EnemyShot){
-            .active = 1,
-            .x = source_enemy_shot_screen_x(source_shot),
-            .y = source_enemy_shot_screen_y(source_shot),
-            .graphic = (u8)graphic,
-            .animate = (u8)source_shot->animate,
-        };
-        render_enemy_shot(&presented, priority);
+        shape_table =
+            source_shot->sgr >= 500 ?
+                OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
+                OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
+        graphic = (u16)(
+            (
+                source_shot->sgr >= 500 ?
+                    source_shot->sgr - 500 :
+                    source_shot->sgr
+            ) + source_shot->animate
+        );
+        tile = source_projectile_cache_acquire(
+            shape_table,
+            graphic
+        );
+        if (tile == 0xffff) continue;
+        put_sprite_8bpp_16(
+            source_enemy_shot_screen_x(source_shot),
+            source_enemy_shot_screen_y(source_shot),
+            tile,
+            priority
+        );
     }
 }
 
@@ -255,6 +284,7 @@ static void render_source_play_scene(void)
     u8 visible_source_enemies = 0;
 
     source_enemy_cache_begin_frame();
+    source_projectile_cache_begin_frame();
     render_source_boss_bars();
 
     /*
@@ -320,6 +350,7 @@ static void render_source_play_scene(void)
         &visible_source_enemies
     );
     source_enemy_cache_end_frame();
+    source_projectile_cache_end_frame();
 
     telemetry_source_visible_enemies = visible_source_enemies;
     if (

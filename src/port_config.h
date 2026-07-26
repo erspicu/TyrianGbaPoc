@@ -26,6 +26,14 @@
 #define TYRIAN_GBA_GAME_SPEED_LOW 0
 #define TYRIAN_GBA_GAME_SPEED_NORMAL 1
 
+/*
+ * 34.78259095 Hz / the GBA's 59.72750057 Hz display rate, expressed
+ * with the original 1,193,182 Hz PC PIT numerator.  This timing is a
+ * platform rule, not generated metadata from any particular level.
+ */
+#define ORIGINAL_LOGIC_NUMERATOR 1193182ul
+#define ORIGINAL_LOGIC_DENOMINATOR 2048892ul
+
 #ifndef TYRIAN_GBA_GAME_SPEED
 #define TYRIAN_GBA_GAME_SPEED TYRIAN_GBA_GAME_SPEED_NORMAL
 #endif

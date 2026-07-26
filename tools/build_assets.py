@@ -2009,8 +2009,6 @@ def repack_obj_tiles(
     pause_advances: tuple[int, ...],
     game_over_tiles: bytes,
     game_over_advances: tuple[int, ...],
-    projectile_tiles: bytes,
-    projectile_layouts: tuple[dict[str, int], ...],
     boss_bar_tiles: bytes,
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
@@ -2143,20 +2141,10 @@ def repack_obj_tiles(
     output.extend(pause_tiles)
 
     append_asset("PLAYER_SHOT", 2, 2)
-    projectile_base = len(output) // 32
-    for layout in projectile_layouts:
-        suffix = f"{layout['source_id']:03d}"
-        metadata[f"OBJ_TILE_PROJECTILE_{suffix}"] = (
-            projectile_base + layout["start_tile"]
-        )
-        metadata[f"OBJ_PAL_PROJECTILE_{suffix}"] = layout["palette_bank"]
-        metadata[f"OBJ_PROJECTILE_OFFSET_X_{suffix}"] = layout["offset_x"]
-        metadata[f"OBJ_PROJECTILE_OFFSET_Y_{suffix}"] = layout["offset_y"]
-        metadata[f"OBJ_PROJECTILE_WIDTH_{suffix}"] = layout["width"]
-        metadata[f"OBJ_PROJECTILE_HEIGHT_{suffix}"] = layout["height"]
-    metadata["OBJ_PROJECTILE_SOURCE_COUNT"] = len(projectile_layouts)
-    metadata["OBJ_PROJECTILE_TILE_COUNT"] = len(projectile_tiles) // 32
-    output.extend(projectile_tiles)
+    # Keep the former 18-tile range as empty runtime VRAM. Enemy shots are
+    # decoded from ROMFS tyrian.shp sections 8/12 into this reserve instead
+    # of generating a level-1 projectile atlas.
+    output.extend(b"\0" * (18 * 32))
     if len(boss_bar_tiles) != 4 * 32:
         raise ValueError("PC-style boss bar must occupy exactly four OBJ tiles")
     metadata["OBJ_TILE_BOSS_BAR"] = len(output) // 32
@@ -2641,34 +2629,10 @@ def load_default_player_shot(
 def write_meta_header(
     output: Path,
     metadata: dict[str, int],
-    *,
-    bg1_rows: int,
-    bg2_rows: int,
-    bg3_rows: int,
-    event_bytes: int,
-    boss_tick: int,
-    end_tick: int,
 ) -> None:
-    # 34.78259095 Hz / the GBA's 59.72750057 Hz display rate, expressed
-    # with the original 1,193,182 Hz PIT numerator.
     lines = [
         "#ifndef TYRIAN_GBA_ASSET_META_H",
         "#define TYRIAN_GBA_ASSET_META_H",
-        "",
-        f"#define BG1_ROWS {bg1_rows}u",
-        f"#define BG2_ROWS {bg2_rows}u",
-        f"#define BG3_ROWS {bg3_rows}u",
-        f"#define BG_MAP_COLUMNS {GBA_BG_MAP_COLUMNS}u",
-        f"#define BG1_INITIAL_SCROLL {GBA_BG1_INITIAL_SCROLL}u",
-        f"#define BG2_INITIAL_SCROLL {GBA_BG23_INITIAL_SCROLL}u",
-        f"#define BG3_INITIAL_SCROLL {GBA_BG23_INITIAL_SCROLL}u",
-        f"#define BG12_INITIAL_HOFS {GBA_BG12_INITIAL_HOFS}u",
-        f"#define BG3_INITIAL_HOFS {GBA_BG3_INITIAL_HOFS}u",
-        f"#define LEGACY_LEVEL_EVENT_AUDIT_BYTES {event_bytes}u",
-        f"#define LEVEL_BOSS_TICK {boss_tick}u",
-        f"#define LEVEL_END_TICK {end_tick}u",
-        "#define ORIGINAL_LOGIC_NUMERATOR 1193182ul",
-        "#define ORIGINAL_LOGIC_DENOMINATOR 2048892ul",
         "",
     ]
     lines.extend(f"#define {name} {value}u" for name, value in sorted(metadata.items()))
@@ -3374,12 +3338,6 @@ def encode_gba_level_events(
             f"cursor={cursor}/{len(encoded)}, spawns={spawn_index}/{spawn_count}, "
             f"fire={fire_override_index}/{len(fire_overrides)}"
         )
-    unsupported = used_weapon_ids.difference(ENEMY_PROJECTILE_WEAPON_IDS)
-    if unsupported:
-        raise ValueError(
-            "first-level enemy weapon has no GBA projectile implementation: "
-            + ",".join(str(value) for value in sorted(unsupported))
-        )
     report = {
         "eligible": sum(reward_counts[1:]),
         "value_25": reward_counts[1],
@@ -3417,12 +3375,9 @@ def encode_gba_level_events(
         )
     audit_lines.extend((
         "",
-        "projectile_graphics="
-        + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
+        "projectile_graphics=runtime ROMFS tyrian.shp sections 8/12",
         "enemy_weapon_records="
         + ",".join(str(value) for value in sorted(used_weapon_ids)),
-        "boss_weapon_records="
-        + ",".join(str(value) for value in BOSS_PROJECTILE_WEAPON_IDS),
         f"event31_three_slot_records={len(fire_overrides)}",
     ))
     return bytes(output), spawn_count, control_count, report, audit_lines
@@ -3785,189 +3740,9 @@ def main() -> None:
     title = build_title(nes, image_root)
     title.save(preview / "title_gba.png")
 
-    lookups, maps, source_events = nes.parse_first_level(data_root / "tyrian1.lvl")
-    (
-        source_level_events,
-        source_level_enemies,
-        source_parity_report,
-        source_parity_audit,
-    ) = audit_opentyrian_level1_source_data(
-        nes,
-        source_events,
-        data_root / "tyrian.hdt",
-    )
-    # Audit-only compatibility values.  Runtime source data is read directly
-    # from the stock LVL/HDT files in cartridge ROMFS.
-    del source_level_events, source_level_enemies
-    (output / "opentyrian_level1_source_audit.txt").write_text(
-        "\n".join(source_parity_audit) + "\n",
-        encoding="utf-8",
-    )
-    layer1, _ = nes.render_map_layer(
-        image_root,
-        lookups[0],
-        maps[0],
-        14,
-        PC_BG1_FIRST_ROW,
-        PC_BG1_LAST_ROW,
-    )
-    layer1 = pack_pc_background_layer(layer1, GBA_BG1_PACK_HEIGHT)
-    layer2, layer2_nonblank = nes.render_map_layer(
-        image_root,
-        lookups[1],
-        maps[1],
-        14,
-        PC_BG23_FIRST_ROW,
-        PC_BG23_LAST_ROW,
-    )
-    layer2 = pack_pc_background_layer(layer2, GBA_BG23_PACK_HEIGHT)
-    layer3, layer3_nonblank = nes.render_map_layer(
-        image_root,
-        lookups[2],
-        maps[2],
-        15,
-        PC_BG23_FIRST_ROW,
-        PC_BG23_LAST_ROW,
-    )
-    layer3 = pack_pc_background_layer(layer3, GBA_BG23_PACK_HEIGHT)
-
-    bg1_snes_tiles, bg1_snes_map, bg1_palettes, bg1_report, _ = (
-        quantize_gba_background_layer(
-            snes, layer1, snes.BG1_PALETTES
-        )
-    )
-    bg2_snes_tiles, bg2_snes_map, bg2_palettes, bg2_report, _ = (
-        quantize_gba_background_layer(
-            snes, layer2, snes.BG1_PALETTES
-        )
-    )
-    bg3_snes_tiles, bg3_snes_map, bg3_palettes, bg3_report, _ = (
-        quantize_gba_background_layer(
-            snes, layer3, snes.BG1_PALETTES
-        )
-    )
-    palette_bytes = snes.snes_palette_bytes(
-        bg1_palettes + bg2_palettes + bg3_palettes
-    ).ljust(512, b"\0")
-    if len(palette_bytes) != 512:
-        raise ValueError(
-            f"three-layer GBA palette must fit 512 bytes: {len(palette_bytes)}"
-        )
-    bg1_tiles = convert_tile_bank(bg1_snes_tiles)
-    bg2_tiles = convert_tile_bank(bg2_snes_tiles)
-    bg3_tiles = convert_tile_bank(bg3_snes_tiles)
-    bg1_map = convert_tilemap(bg1_snes_map, 0)
-    bg2_map = convert_tilemap(bg2_snes_map, snes.BG1_PALETTES)
-    bg3_map = convert_tilemap(bg3_snes_map, snes.BG1_PALETTES * 2)
-    (output / "bg1_tiles.bin").write_bytes(bg1_tiles)
-    (output / "bg2_tiles.bin").write_bytes(bg2_tiles)
-    (output / "bg3_tiles.bin").write_bytes(bg3_tiles)
-    (output / "bg_palette.bin").write_bytes(palette_bytes)
-    (output / "bg1_map.bin").write_bytes(bg1_map)
-    (output / "bg2_map.bin").write_bytes(bg2_map)
-    (output / "bg3_map.bin").write_bytes(bg3_map)
-    save_initial_background_preview(
-        preview / "bg1_start_gba.png",
-        bg1_tiles,
-        bg1_map,
-        palette_bytes,
-        GBA_BG1_INITIAL_SCROLL,
-        GBA_BG12_INITIAL_HOFS,
-    )
-    save_initial_background_preview(
-        preview / "bg2_start_gba.png",
-        bg2_tiles,
-        bg2_map,
-        palette_bytes,
-        GBA_BG23_INITIAL_SCROLL,
-        GBA_BG12_INITIAL_HOFS,
-    )
-    save_initial_background_preview(
-        preview / "bg3_start_gba.png",
-        bg3_tiles,
-        bg3_map,
-        palette_bytes,
-        GBA_BG23_INITIAL_SCROLL,
-        GBA_BG3_INITIAL_HOFS,
-    )
-
-    (
-        shared_level_events,
-        spawn_count,
-        control_count,
-        reward_report,
-        projectile_audit_lines,
-    ) = encode_gba_level_events(
-        nes,
-        snes,
-        source_events,
-        data_root / "tyrian.hdt",
-    )
-    level_events, background_control_count, dynamic_reward_report = (
-        add_background_motion_events(
-            nes,
-            shared_level_events,
-            source_events,
-            data_root / "tyrian.hdt",
-        )
-    )
-    (output / "reward_drop_audit.txt").write_text(
-        "\n".join((
-            "policy=PC evalue direct cash plus event33 physical score items",
-            f"static_eenemydie_reward_records={reward_report['eligible']}",
-            f"direct_value_spawn_records={reward_report['direct_value_records']}",
-            (
-                "direct_value_authored_total="
-                f"{reward_report['direct_value_authored_total']}"
-            ),
-            f"static_value_25_records={reward_report['value_25']}",
-            f"static_value_50_records={reward_report['value_50']}",
-            f"static_value_75_records={reward_report['value_75']}",
-            f"static_value_100_records={reward_report['value_100']}",
-            f"static_value_250_records={reward_report['value_250']}",
-            f"explicit_eenemydie_records={reward_report['explicit_hdt']}",
-            (
-                "dynamic_event33_records="
-                f"{dynamic_reward_report['dynamic_records']}"
-            ),
-            (
-                "dynamic_cash_reward_records="
-                f"{dynamic_reward_report['dynamic_cash_records']}"
-            ),
-            (
-                "dynamic_non_cash_target_records="
-                f"{dynamic_reward_report['dynamic_non_cash_records']}"
-            ),
-            f"dynamic_value_25_records={dynamic_reward_report['dynamic_value_25']}",
-            f"dynamic_value_50_records={dynamic_reward_report['dynamic_value_50']}",
-            f"dynamic_value_75_records={dynamic_reward_report['dynamic_value_75']}",
-            (
-                "dynamic_value_100_records="
-                f"{dynamic_reward_report['dynamic_value_100']}"
-            ),
-            (
-                "dynamic_value_250_records="
-                f"{dynamic_reward_report['dynamic_value_250']}"
-            ),
-        )) + "\n",
-        encoding="utf-8",
-    )
-    (output / "reward_event33_audit.csv").write_text(
-        str(dynamic_reward_report["audit"]),
-        encoding="utf-8",
-    )
-    (output / "enemy_projectile_audit.txt").write_text(
-        "\n".join(projectile_audit_lines) + "\n",
-        encoding="utf-8",
-    )
-
-    sprite_audit_lines, sprite_audit = snes.audit_sprite_mapping(
-        nes, source_events, data_root / "tyrian.hdt"
-    )
-    (output / "sprite_mapping_audit.txt").write_text(
-        "\n".join(sprite_audit_lines) + "\n",
-        encoding="utf-8",
-    )
+    # Level-specific LVL/HDT/SHP preprocessing intentionally stops here.
+    # Every selected level is parsed from the stock files in cartridge
+    # ROMFS by src/opentyrian_data.c and src/opentyrian_level_port.c.
     player_shot_source, player_shot_report = load_default_player_shot(
         data_root / "tyrian.hdt",
         image_root,
@@ -4033,12 +3808,6 @@ def main() -> None:
     if game_over_palette != pause_palette:
         raise ValueError("PAUSED and GAME OVER must share one OBJ palette")
     (
-        projectile_tiles,
-        projectile_palettes,
-        projectile_preview,
-        projectile_layouts,
-    ) = build_enemy_projectiles(snes, image_root)
-    (
         boss_bar_tiles,
         boss_bar_palette,
         boss_bar_preview,
@@ -4048,9 +3817,6 @@ def main() -> None:
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
     obj_palette[9 * 32 : 10 * 32] = digit_palette
-    if len(projectile_palettes) != 3 * 32:
-        raise ValueError("enemy projectile palette bank count changed")
-    obj_palette[10 * 32 : 13 * 32] = projectile_palettes
     obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
     obj_palette[14 * 32 : 15 * 32] = pause_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
@@ -4064,8 +3830,6 @@ def main() -> None:
         pause_advances,
         game_over_tiles,
         game_over_advances,
-        projectile_tiles,
-        projectile_layouts,
         boss_bar_tiles,
     )
     obj_metadata.update(frontend_metadata)
@@ -4079,6 +3843,11 @@ def main() -> None:
         output / "enemy_frame_tiles.bin",
         output / "enemy_frame_catalog.bin",
         output / "enemy_frame_audit.csv",
+        output / "opentyrian_level1_source_audit.txt",
+        output / "reward_drop_audit.txt",
+        output / "reward_event33_audit.csv",
+        output / "enemy_projectile_audit.txt",
+        output / "sprite_mapping_audit.txt",
         preview / "enemy_frames_exact_catalog.png",
     ):
         obsolete.unlink(missing_ok=True)
@@ -4113,10 +3882,7 @@ def main() -> None:
         (game_over_preview.width * 8, game_over_preview.height * 8),
         Image.Resampling.NEAREST,
     ).save(preview / "game_over_font_shapes.png")
-    projectile_preview.resize(
-        (projectile_preview.width * 6, projectile_preview.height * 6),
-        Image.Resampling.NEAREST,
-    ).save(preview / "enemy_projectiles_pc_source.png")
+    (preview / "enemy_projectiles_pc_source.png").unlink(missing_ok=True)
     boss_bar_preview.resize(
         (boss_bar_preview.width * 6, boss_bar_preview.height * 6),
         Image.Resampling.NEAREST,
@@ -4209,131 +3975,23 @@ def main() -> None:
     for name, pcm, rate, _ in sfx:
         write_signed_pcm_wav(output / f"{name}.wav", pcm, rate)
 
-    write_meta_header(
-        output,
-        obj_metadata,
-        bg1_rows=GBA_BG1_ROWS,
-        bg2_rows=GBA_BG23_ROWS,
-        bg3_rows=GBA_BG23_ROWS,
-        event_bytes=len(level_events),
-        boss_tick=snes.LEVEL_BOSS_TICK,
-        end_tick=snes.LEVEL_END_TICK,
-    )
+    write_meta_header(output, obj_metadata)
     report_lines = [
-        "profile=GBA Mode 0 / complete Tyrian MAP1 + MAP2 + MAP3",
+        "profile=GBA runtime ROMFS Tyrian MAP1 + MAP2 + MAP3",
         f"opentyrian_source_commit={source_commit}",
         *frontend_report,
         *jukebox_report,
         "display_hz=59.7275",
         "logic_hz=34.7826",
-        "background_layers=3 (Tyrian MAP1 + MAP2 + MAP3)",
-        f"bg1_rows={GBA_BG1_ROWS}",
-        f"bg1_initial_scroll={GBA_BG1_INITIAL_SCROLL}",
-        f"bg1_tiles={len(bg1_tiles) // 32}",
-        f"bg1_source_unique_tiles={bg1_report['source_unique_tiles']}",
-        f"bg1_approximated_tiles={bg1_report['approximated_tiles']}",
-        f"bg2_rows={GBA_BG23_ROWS}",
-        f"bg2_initial_scroll={GBA_BG23_INITIAL_SCROLL}",
-        f"bg2_tiles={len(bg2_tiles) // 32}",
-        f"bg2_nonblank_source_cells={layer2_nonblank}",
-        f"bg2_source_unique_tiles={bg2_report['source_unique_tiles']}",
-        f"bg2_approximated_tiles={bg2_report['approximated_tiles']}",
-        f"bg3_rows={GBA_BG23_ROWS}",
-        f"bg3_initial_scroll={GBA_BG23_INITIAL_SCROLL}",
-        f"bg3_tiles={len(bg3_tiles) // 32}",
-        f"bg3_nonblank_source_cells={layer3_nonblank}",
-        f"bg3_source_unique_tiles={bg3_report['source_unique_tiles']}",
-        f"bg3_approximated_tiles={bg3_report['approximated_tiles']}",
-        f"level_event_source_records={len(source_events)}",
-        (
-            "source_parity_event_record_bytes="
-            f"{source_parity_report['event_record_bytes']}"
-        ),
-        (
-            "source_parity_event_bytes="
-            f"{source_parity_report['event_bytes']}"
-        ),
-        (
-            "source_parity_event_sha256="
-            f"{source_parity_report['event_sha256']}"
-        ),
-        (
-            "source_parity_enemy_dependency_records="
-            f"{source_parity_report['enemy_count']}"
-        ),
-        (
-            "source_parity_enemy_bytes="
-            f"{source_parity_report['enemy_bytes']}"
-        ),
-        (
-            "source_parity_enemy_sha256="
-            f"{source_parity_report['enemy_sha256']}"
-        ),
-        f"level_event_spawn_records={spawn_count}",
-        f"level_event_control_records={control_count}",
-        f"level_background_control_records={background_control_count}",
-        f"legacy_level_event_audit_bytes={len(level_events)}",
-        "level_event_clock=PC curLoc / MAP1 effective scroll",
+        "background_layers=3 (runtime tyrianN.lvl + shapes?.dat + palette.dat)",
+        "background_generated_files=0",
+        "level_event_source=runtime ROMFS tyrianN.lvl",
+        "level_event_generated_files=0",
+        "level_enemy_source=runtime ROMFS tyrian.hdt",
+        "level_enemy_generated_catalogs=0",
+        "level_route_source=runtime ROMFS levelsN.dat",
         "spawn_coordinate_mode=PC initial Y + HDT motion + source pool scroll",
-        (
-            "spawn_world_coordinate_records="
-            f"{reward_report['world_spawn_records']}"
-        ),
-        (
-            "destructible_2x2_assemblies="
-            f"{reward_report['destructible_assemblies']}"
-        ),
-        (
-            "small_tank_component_records="
-            f"{reward_report['tank_component_records']}"
-        ),
-        f"reward_static_spawn_records={reward_report['eligible']}",
-        (
-            "reward_direct_value_spawn_records="
-            f"{reward_report['direct_value_records']}"
-        ),
-        (
-            "reward_direct_value_authored_total="
-            f"{reward_report['direct_value_authored_total']}"
-        ),
-        f"reward_static_value_25_records={reward_report['value_25']}",
-        f"reward_static_value_50_records={reward_report['value_50']}",
-        f"reward_static_value_75_records={reward_report['value_75']}",
-        f"reward_static_value_100_records={reward_report['value_100']}",
-        f"reward_static_value_250_records={reward_report['value_250']}",
-        f"reward_explicit_eenemydie_records={reward_report['explicit_hdt']}",
-        (
-            "reward_dynamic_event33_records="
-            f"{dynamic_reward_report['dynamic_records']}"
-        ),
-        (
-            "reward_dynamic_cash_records="
-            f"{dynamic_reward_report['dynamic_cash_records']}"
-        ),
-        (
-            "reward_dynamic_non_cash_records="
-            f"{dynamic_reward_report['dynamic_non_cash_records']}"
-        ),
-        (
-            "reward_dynamic_value_25_records="
-            f"{dynamic_reward_report['dynamic_value_25']}"
-        ),
-        (
-            "reward_dynamic_value_50_records="
-            f"{dynamic_reward_report['dynamic_value_50']}"
-        ),
-        (
-            "reward_dynamic_value_75_records="
-            f"{dynamic_reward_report['dynamic_value_75']}"
-        ),
-        (
-            "reward_dynamic_value_100_records="
-            f"{dynamic_reward_report['dynamic_value_100']}"
-        ),
-        (
-            "reward_dynamic_value_250_records="
-            f"{dynamic_reward_report['dynamic_value_250']}"
-        ),
+        "reward_source=runtime HDT evalue/eenemydie plus LVL event33",
         f"obj_tiles={len(obj_tiles) // 32}",
         "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
         "obj_enemy_preconverted_frames=0",
@@ -4372,17 +4030,12 @@ def main() -> None:
         "pause_text_source_sprites=15,0,20,18,4,3",
         "pause_text_anchor=PC game_screen (120,90) -> GBA crop (84,78)",
         f"pause_text_tiles={len(pause_tiles) // 32}",
-        "enemy_projectile_source_graphics="
-        + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
-        "enemy_projectile_weapon_records="
-        + str(reward_report["weapon_records"]),
-        "boss_projectile_weapon_records="
-        + ",".join(str(value) for value in BOSS_PROJECTILE_WEAPON_IDS),
-        f"enemy_projectile_tiles={len(projectile_tiles) // 32}",
-        "enemy_projectile_palette_banks=10:red,11:dart,12:laser",
-        "enemy_projectile_anchor=PC top-left canvas via generated crop offsets",
+        "enemy_projectile_source=runtime ROMFS tyrian.shp sections 8/12",
+        "enemy_projectile_weapon_source=runtime ROMFS tyrian.hdt",
+        "enemy_projectile_generated_tiles=0",
+        "enemy_projectile_cache=8 runtime 8bpp 16x16 slots",
+        "enemy_projectile_anchor=PC Sprite2 top-left",
         "enemy_fire_slots=HDT tur[3]/freq[3] plus event31 three-slot overrides",
-        f"enemy_fire_override_records={reward_report['fire_override_records']}",
         f"player_shot_port={player_shot_report['port_name']}",
         f"player_shot_weapon_record={player_shot_report['weapon_record']}",
         f"player_shot_graphic={player_shot_report['graphic']}",
@@ -4392,10 +4045,6 @@ def main() -> None:
         f"player_shot_repeat={player_shot_report['shot_repeat']}",
         f"player_shot_vertical_speed={player_shot_report['vertical_speed']}",
         f"player_shot_animation_frames={player_shot_report['animation_frames']}",
-        f"sprite_source_ids={sprite_audit['source_ids']}",
-        f"sprite_unknown_spawns={sprite_audit['unknown_spawns']}",
-        f"sprite_bank_mismatch_spawns={sprite_audit['bank_mismatch_spawns']}",
-        f"sprite_exact_graphic_spawns={sprite_audit['exact_graphic_spawns']}",
         f"music_catalog_modules={len(music_modules)}",
         f"music_catalog_it_bytes={sum(map(len, music_modules))}",
         "music_catalog_profile=SuperNintendo calibrated tracker adapter",

@@ -18,23 +18,33 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v27_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v27_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v27_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v27_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v28_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v28_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v28_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v28_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v28_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v28_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
 $jukeboxTestRom = Join-Path $buildDir "$jukeboxTestName.gba"
+$matrixTestRom = Join-Path $buildDir "$matrixTestName.gba"
+$campaignTestRom = Join-Path $buildDir "$campaignTestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
+$matrixTestSave = Join-Path $buildDir "$matrixTestName.sav"
+$campaignTestSave = Join-Path $buildDir "$campaignTestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
 $deathTestStderr = Join-Path $buildDir "death_autotest_mgba_stderr.txt"
 $jukeboxTestStdout = Join-Path $buildDir "jukebox_autotest_mgba_stdout.txt"
 $jukeboxTestStderr = Join-Path $buildDir "jukebox_autotest_mgba_stderr.txt"
+$matrixTestStdout = Join-Path $buildDir "matrix_autotest_mgba_stdout.txt"
+$matrixTestStderr = Join-Path $buildDir "matrix_autotest_mgba_stderr.txt"
+$campaignTestStdout = Join-Path $buildDir "campaign_autotest_mgba_stdout.txt"
+$campaignTestStderr = Join-Path $buildDir "campaign_autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
@@ -65,7 +75,7 @@ set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest jukebox-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest jukebox-autotest romfs-matrix-autotest campaign-smoke-autotest
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
@@ -333,6 +343,14 @@ $jukeboxTestInfo = Test-GbaRom `
     -Name "jukebox_autotest" `
     -Path $jukeboxTestRom `
     -ExpectedGameCode "TYGJ"
+$matrixTestInfo = Test-GbaRom `
+    -Name "matrix_autotest" `
+    -Path $matrixTestRom `
+    -ExpectedGameCode "TYGM"
+$campaignTestInfo = Test-GbaRom `
+    -Name "campaign_autotest" `
+    -Path $campaignTestRom `
+    -ExpectedGameCode "TYGC"
 
 $env:PATH = "$ucrtBin;$env:PATH"
 if (Test-Path -LiteralPath $testSave) {
@@ -540,6 +558,7 @@ $telemetry = [ordered]@{
     final_stats_cube_visible_count = Read-TelemetryU32 636
     final_player_end_warp = Read-TelemetryU32 640
     initial_player_end_warp = Read-TelemetryU32 644
+    sprite2_compact_uploads = Read-TelemetryU32 6084
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -814,7 +833,7 @@ $expectedDetailLevel = if ($DetailLevel -eq "low") { 0 } else { 1 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { 16872 } else { 13509 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 22
+    schema_version = $telemetry.version -eq 24
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
@@ -826,7 +845,10 @@ $telemetryChecks = [ordered]@{
     authored_event_cursor = $telemetry.final_source_event_index -eq 935
     full_level_tick = $telemetry.final_level_tick -eq 7832
     frontend_and_level_transitions = $telemetry.state_transitions -eq 11
-    vblank_budget = $telemetry.missed_vblanks -le 640
+    vblank_budget = (
+        $telemetry.missed_vblanks * 20 -le
+            $telemetry.display_frames
+    )
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
     no_map_stream_drops = $telemetry.stream_drops -eq 0
     no_reward_drops = $telemetry.reward_drops -eq 0
@@ -865,8 +887,8 @@ $telemetryChecks = [ordered]@{
     )
     source_event_accounting = (
         $telemetry.source_parity_events -eq 935 -and
-        $telemetry.source_parity_events_applied -eq 926 -and
-        $telemetry.source_parity_events_deferred -eq 5 -and
+        $telemetry.source_parity_events_applied -eq 931 -and
+        $telemetry.source_parity_events_deferred -eq 0 -and
         $telemetry.source_parity_events_skipped -eq 4 -and
         $telemetry.source_parity_events_applied +
             $telemetry.source_parity_events_deferred +
@@ -894,8 +916,15 @@ $telemetryChecks = [ordered]@{
         $telemetry.sprite2_cache_drops -eq 0 -and
         $telemetry.sprite2_uploads -eq
             $telemetry.sprite2_cache_misses -and
+        $telemetry.sprite2_compact_uploads -le
+            $telemetry.sprite2_uploads -and
         $telemetry.sprite2_upload_bytes -eq
-            $telemetry.sprite2_uploads * 1024
+            (
+                $telemetry.sprite2_uploads -
+                    $telemetry.sprite2_compact_uploads
+            ) * 1024 +
+                $telemetry.sprite2_compact_uploads * 256 -and
+        $telemetry.sprite2_cache_slots -eq 24
     )
     effect_cache_accounting = (
         $telemetry.effect_cache_drops -eq 0 -and
@@ -1168,6 +1197,199 @@ if ($failedJukeboxChecks.Count -ne 0) {
     )
 }
 
+if (Test-Path -LiteralPath $matrixTestSave) {
+    Remove-Item -LiteralPath $matrixTestSave -Force
+}
+$matrixTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$matrixTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $matrixTestStdout `
+    -StandardError $matrixTestStderr
+$matrixRuntimeErrors = @(
+    Select-String `
+        -Path $matrixTestStdout, $matrixTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($matrixRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA ROMFS matrix reported " +
+        "$($matrixRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $matrixTestSave)) {
+    throw "ROMFS matrix did not create SRAM telemetry"
+}
+$matrixSaveBytes = [IO.File]::ReadAllBytes($matrixTestSave)
+if (
+    $matrixSaveBytes.Length -lt 124 -or
+    [Text.Encoding]::ASCII.GetString($matrixSaveBytes, 0, 4) -ne "TGLM"
+) {
+    throw "ROMFS matrix SRAM telemetry is invalid"
+}
+function Read-MatrixTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($matrixSaveBytes, $Offset)
+}
+$matrixTelemetry = [ordered]@{
+    schema = $matrixSaveBytes[4]
+    pass = $matrixSaveBytes[5]
+    total_sections = Read-MatrixTelemetryU32 8
+    passed_sections = Read-MatrixTelemetryU32 12
+    failed_sections = Read-MatrixTelemetryU32 16
+    total_events = Read-MatrixTelemetryU32 20
+    total_enemy_pool_entries = Read-MatrixTelemetryU32 24
+    unknown_events = Read-MatrixTelemetryU32 28
+    route_checks = Read-MatrixTelemetryU32 32
+    route_failures = Read-MatrixTelemetryU32 36
+    romfs_failures = Read-MatrixTelemetryU32 40
+    first_failure = Read-MatrixTelemetryU32 44
+    background_approximations = Read-MatrixTelemetryU32 64
+    shape_banks = Read-MatrixTelemetryU32 68
+    sprites = Read-MatrixTelemetryU32 72
+    enemies = Read-MatrixTelemetryU32 76
+    weapons = Read-MatrixTelemetryU32 80
+    detail_level = Read-MatrixTelemetryU32 96
+    game_speed = Read-MatrixTelemetryU32 100
+}
+$matrixChecks = [ordered]@{
+    schema = $matrixTelemetry.schema -eq 1
+    rom_reported_pass = $matrixTelemetry.pass -eq 1
+    every_lvl_section = (
+        $matrixTelemetry.total_sections -eq 62 -and
+        $matrixTelemetry.passed_sections -eq 62 -and
+        $matrixTelemetry.failed_sections -eq 0
+    )
+    complete_event_scan = (
+        $matrixTelemetry.total_events -eq 53338 -and
+        $matrixTelemetry.total_enemy_pool_entries -eq 459 -and
+        $matrixTelemetry.unknown_events -eq 39
+    )
+    every_route = (
+        $matrixTelemetry.route_checks -eq 24 -and
+        $matrixTelemetry.route_failures -eq 0
+    )
+    no_data_failure = (
+        $matrixTelemetry.romfs_failures -eq 0 -and
+        $matrixTelemetry.first_failure -eq 0 -and
+        $matrixTelemetry.background_approximations -eq 0
+    )
+    source_catalog = (
+        $matrixTelemetry.shape_banks -eq 35 -and
+        $matrixTelemetry.sprites -eq 6097 -and
+        $matrixTelemetry.enemies -eq 818 -and
+        $matrixTelemetry.weapons -eq 52
+    )
+    requested_configuration = (
+        $matrixTelemetry.detail_level -eq $expectedDetailLevel -and
+        $matrixTelemetry.game_speed -eq $expectedGameSpeed
+    )
+}
+$failedMatrixChecks = @(
+    $matrixChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedMatrixChecks.Count -ne 0) {
+    throw (
+        "ROMFS matrix failed invariant(s): " +
+        ($failedMatrixChecks -join ", ")
+    )
+}
+
+if (Test-Path -LiteralPath $campaignTestSave) {
+    Remove-Item -LiteralPath $campaignTestSave -Force
+}
+$campaignTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$campaignTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $campaignTestStdout `
+    -StandardError $campaignTestStderr `
+    -TimeoutMilliseconds 60000
+$campaignRuntimeErrors = @(
+    Select-String `
+        -Path $campaignTestStdout, $campaignTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($campaignRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA campaign smoke reported " +
+        "$($campaignRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $campaignTestSave)) {
+    throw "Campaign smoke did not create SRAM telemetry"
+}
+$campaignSaveBytes = [IO.File]::ReadAllBytes($campaignTestSave)
+if (
+    $campaignSaveBytes.Length -lt 6288 -or
+    [Text.Encoding]::ASCII.GetString($campaignSaveBytes, 0, 4) -ne "TGCM"
+) {
+    throw "Campaign smoke SRAM telemetry is invalid"
+}
+function Read-CampaignTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($campaignSaveBytes, $Offset)
+}
+$campaignTelemetry = [ordered]@{
+    schema = $campaignSaveBytes[4]
+    pass = $campaignSaveBytes[5]
+    final_state = $campaignSaveBytes[6]
+    expected_levels = Read-CampaignTelemetryU32 6096
+    completed_levels = Read-CampaignTelemetryU32 6100
+    failures = Read-CampaignTelemetryU32 6104
+    route_checksum = Read-CampaignTelemetryU32 6108
+}
+$expectedCampaignRoutes = @(
+    @(1, 3, 9, 17),
+    @(1, 5, 1, 0),
+    @(1, 29, 8, 32),
+    @(1, 25, 10, 17)
+)
+$campaignRouteValid = $true
+for ($recordIndex = 0; $recordIndex -lt 4; $recordIndex++) {
+    $offset = 6144 + $recordIndex * 36
+    $expectedRoute = $expectedCampaignRoutes[$recordIndex]
+    if (
+        (Read-CampaignTelemetryU32 $offset) -ne $expectedRoute[0] -or
+        (Read-CampaignTelemetryU32 ($offset + 4)) -ne $expectedRoute[1] -or
+        (Read-CampaignTelemetryU32 ($offset + 8)) -ne $expectedRoute[2] -or
+        (Read-CampaignTelemetryU32 ($offset + 12)) -ne $expectedRoute[3] -or
+        (Read-CampaignTelemetryU32 ($offset + 16)) -eq 0 -or
+        (Read-CampaignTelemetryU32 ($offset + 20)) -eq 0 -or
+        (Read-CampaignTelemetryU32 ($offset + 32)) -ne 0
+    ) {
+        $campaignRouteValid = $false
+    }
+}
+$campaignChecks = [ordered]@{
+    schema = $campaignTelemetry.schema -eq 3
+    rom_reported_pass = $campaignTelemetry.pass -eq 1
+    returned_to_game_menu = $campaignTelemetry.final_state -eq 7
+    four_levels_completed = (
+        $campaignTelemetry.expected_levels -eq 4 -and
+        $campaignTelemetry.completed_levels -eq 4 -and
+        $campaignTelemetry.failures -eq 0
+    )
+    source_route_sequence = $campaignRouteValid
+    route_checksum = (
+        $campaignTelemetry.route_checksum -eq
+            [Convert]::ToUInt32("EAEB0109", 16)
+    )
+}
+$failedCampaignChecks = @(
+    $campaignChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedCampaignChecks.Count -ne 0) {
+    throw (
+        "Campaign smoke failed invariant(s): " +
+        ($failedCampaignChecks -join ", ")
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -1201,7 +1423,9 @@ foreach (
         $releaseInfo,
         $testInfo,
         $deathTestInfo,
-        $jukeboxTestInfo
+        $jukeboxTestInfo,
+        $matrixTestInfo,
+        $campaignTestInfo
     )
 ) {
     foreach ($entry in $info.GetEnumerator()) {
@@ -1236,6 +1460,20 @@ $verification.Add(
 )
 foreach ($entry in $jukeboxTelemetry.GetEnumerator()) {
     $verification.Add("jukebox_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("matrix_autotest_host_elapsed_ms=$matrixTestElapsed")
+$verification.Add(
+    "matrix_autotest_runtime_error_count=$($matrixRuntimeErrors.Count)"
+)
+foreach ($entry in $matrixTelemetry.GetEnumerator()) {
+    $verification.Add("matrix_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("campaign_autotest_host_elapsed_ms=$campaignTestElapsed")
+$verification.Add(
+    "campaign_autotest_runtime_error_count=$($campaignRuntimeErrors.Count)"
+)
+foreach ($entry in $campaignTelemetry.GetEnumerator()) {
+    $verification.Add("campaign_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

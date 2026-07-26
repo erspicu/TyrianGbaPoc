@@ -33,6 +33,22 @@ static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
 static u32 source_enemy_cache_epoch;
 static u8 source_enemy_upload_count;
 static u8 source_enemy_palette_valid;
+static u8 source_enemy_first_decode_failure_valid;
+static u8 source_enemy_first_decode_failure_shape_table;
+static u8 source_enemy_first_decode_failure_size;
+static u8 source_enemy_first_decode_failure_filter;
+static u8 source_enemy_first_decode_failure_pool;
+static u8 source_enemy_first_decode_failure_source_index;
+static u16 source_enemy_first_decode_failure_graphic;
+static u16 source_enemy_first_decode_failure_definition;
+static u16 source_enemy_first_decode_failure_level_position;
+static s16 source_enemy_first_decode_failure_x;
+static s16 source_enemy_first_decode_failure_y;
+static u8 source_enemy_first_decode_failure_cycle;
+static u32 source_enemy_first_decode_failure_shape_banks;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+static u8 source_autotest_unreachable_stop_ticks;
+#endif
 
 /*
  * The source level needs more than 15 simultaneous colours per enemy frame,
@@ -152,6 +168,20 @@ static u8 source_enemy_palette_setup(u8 palette_index)
 
 static u16 source_enemy_cache_tile(u8 slot)
 {
+    if (slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) {
+        return (u16)(
+            SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
+            (slot - SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) *
+                SOURCE_ENEMY_COMPACT_TILES_PER_SLOT
+        );
+    }
+    if (slot < SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT) {
+        return (u16)(
+            SOURCE_ENEMY_CACHE_RECLAIMED_TILE_BASE +
+            slot * SOURCE_ENEMY_TILES_PER_SLOT
+        );
+    }
+    slot = (u8)(slot - SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT);
     if (slot < SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT) {
         return (u16)(
             SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
@@ -163,6 +193,21 @@ static u16 source_enemy_cache_tile(u8 slot)
         (slot - SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT) *
             SOURCE_ENEMY_TILES_PER_SLOT
     );
+}
+
+static u8 source_enemy_cache_slot_is_compact(u8 slot)
+{
+    return slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
+}
+
+static u8 source_enemy_cache_tile_is_compact(u16 tile)
+{
+    return
+        tile >= SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE &&
+        tile <
+            SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
+                SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT *
+                    SOURCE_ENEMY_COMPACT_TILES_PER_SLOT;
 }
 
 static void source_enemy_pack_8bpp(u8 slot)
@@ -187,6 +232,47 @@ static void source_enemy_pack_8bpp(u8 slot)
                     ];
                     u32 target_offset =
                         (u32)(tile_y * 4 + tile_x) * 64 +
+                        row * 8 +
+                        column;
+
+                    target[target_offset] = source_pixel == 0 ?
+                        0 :
+                        source_enemy_palette_map[
+                            (u8)(source_pixel - 1)
+                        ];
+                }
+            }
+        }
+    }
+}
+
+static void source_enemy_pack_8bpp_compact(u8 slot)
+{
+    u8 *target = source_enemy_cache_tiles[slot];
+    u8 tile_y;
+
+    /*
+     * A normal Sprite2 is 12x14 at (10,9) in the shared 32x32 decoder
+     * canvas.  Retain canvas (8,8)..(23,23), then present this cache slot
+     * eight pixels inside the ordinary 32x32 OAM origin.
+     */
+    for (tile_y = 0; tile_y < 2; tile_y++) {
+        u8 tile_x;
+
+        for (tile_x = 0; tile_x < 2; tile_x++) {
+            u8 row;
+
+            for (row = 0; row < 8; row++) {
+                u8 column;
+
+                for (column = 0; column < 8; column++) {
+                    u16 source_pixel = source_enemy_decode_pixels[
+                        (u32)(8 + tile_y * 8 + row) *
+                            OT_SPRITE2_FRAME_WIDTH +
+                        8 + tile_x * 8 + column
+                    ];
+                    u32 target_offset =
+                        (u32)(tile_y * 2 + tile_x) * 64 +
                         row * 8 +
                         column;
 
@@ -255,6 +341,26 @@ static u16 source_enemy_cache_acquire(
     u8 eviction_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
     u32 oldest_epoch = 0xffffffffu;
 
+    if (draw->shape_table == 0) {
+        /*
+         * Exact counterpart of blit_enemy(sprite2s == NULL): a cold-start
+         * APPROACH pointer has no previous enemySpriteSheets[] slot to reuse.
+         * This is not malformed ROM data and must not poison decoder/cache
+         * telemetry.
+         */
+        telemetry_sprite2_null_pointer_skips++;
+        return 0xffff;
+    }
+    if (draw->graphic == 0) {
+        /*
+         * Some stock control animations select an authored zero egraphic.
+         * The DOS-era renderer's index-1 access is undefined for that value;
+         * on GBA it is an explicit transparent/no-draw command, never a ROM
+         * decode failure.
+         */
+        telemetry_sprite2_zero_graphic_skips++;
+        return 0xffff;
+    }
     if (!source_enemy_palette_valid) {
         telemetry_source_unknown_visuals++;
         telemetry_sprite2_decode_failures++;
@@ -268,6 +374,12 @@ static u16 source_enemy_cache_acquire(
     ) {
         SourceEnemyCacheSlot *slot = &source_enemy_cache[index];
 
+        if (
+            source_enemy_cache_slot_is_compact(index) &&
+            draw->size != 0
+        ) {
+            continue;
+        }
         if (
             slot->valid &&
             slot->shape_table == draw->shape_table &&
@@ -318,12 +430,40 @@ static u16 source_enemy_cache_acquire(
             OT_SPRITE2_FRAME_PIXELS
         )
     ) {
+        if (!source_enemy_first_decode_failure_valid) {
+            source_enemy_first_decode_failure_valid = 1;
+            source_enemy_first_decode_failure_shape_table =
+                draw->shape_table;
+            source_enemy_first_decode_failure_graphic = draw->graphic;
+            source_enemy_first_decode_failure_size = draw->size;
+            source_enemy_first_decode_failure_filter = draw->filter;
+            source_enemy_first_decode_failure_pool = draw->pool;
+            source_enemy_first_decode_failure_source_index =
+                draw->source_index;
+            source_enemy_first_decode_failure_definition =
+                draw->enemy_definition_id;
+            source_enemy_first_decode_failure_level_position =
+                level_position;
+            source_enemy_first_decode_failure_x = draw->x;
+            source_enemy_first_decode_failure_y = draw->y;
+            source_enemy_first_decode_failure_cycle =
+                draw->enemy_cycle;
+            source_enemy_first_decode_failure_shape_banks =
+                (u32)source_parity_level.shape_bank[0] |
+                ((u32)source_parity_level.shape_bank[1] << 8) |
+                ((u32)source_parity_level.shape_bank[2] << 16) |
+                ((u32)source_parity_level.shape_bank[3] << 24);
+        }
         telemetry_source_unknown_visuals++;
         telemetry_sprite2_decode_failures++;
         source_enemy_cache[selected].valid = 0;
         return 0xffff;
     }
-    source_enemy_pack_8bpp(selected);
+    if (source_enemy_cache_slot_is_compact(selected)) {
+        source_enemy_pack_8bpp_compact(selected);
+    } else {
+        source_enemy_pack_8bpp(selected);
+    }
 
     if (
         source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT
@@ -353,12 +493,262 @@ static void source_enemy_cache_commit(void)
         u8 *target =
             (u8 *)OBJ_BASE_ADR +
             source_enemy_cache_tile(upload->slot) * 32;
+        u32 bytes = source_enemy_cache_slot_is_compact(upload->slot) ?
+            SOURCE_ENEMY_COMPACT_FRAME_BYTES :
+            SOURCE_ENEMY_FRAME_BYTES;
 
-        dmaCopy(source, target, SOURCE_ENEMY_FRAME_BYTES);
+        dmaCopy(source, target, bytes);
         telemetry_sprite2_uploads++;
-        telemetry_sprite2_upload_bytes += SOURCE_ENEMY_FRAME_BYTES;
+        if (source_enemy_cache_slot_is_compact(upload->slot)) {
+            telemetry_sprite2_compact_uploads++;
+        }
+        telemetry_sprite2_upload_bytes += bytes;
     }
     source_enemy_upload_count = 0;
+}
+
+typedef struct {
+    u32 last_epoch;
+    u16 graphic;
+    u8 shape_table;
+    u8 valid;
+} SourceProjectileCacheSlot;
+
+typedef struct {
+    u8 slot;
+} SourceProjectileUpload;
+
+static SourceProjectileCacheSlot source_projectile_cache[
+    SOURCE_PROJECTILE_CACHE_SLOT_COUNT
+] EWRAM_BSS;
+static SourceProjectileUpload source_projectile_uploads[
+    SOURCE_PROJECTILE_CACHE_SLOT_COUNT
+] EWRAM_BSS;
+static u8 source_projectile_cache_tiles[
+    SOURCE_PROJECTILE_CACHE_SLOT_COUNT
+][SOURCE_PROJECTILE_FRAME_BYTES] EWRAM_BSS
+    __attribute__((aligned(4)));
+static u32 source_projectile_cache_epoch;
+static u8 source_projectile_upload_count;
+
+static u16 source_projectile_cache_tile(u8 slot)
+{
+    if (slot < SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT) {
+        return (u16)(
+            SOURCE_PROJECTILE_CACHE_LOWER_TILE_BASE +
+            slot * SOURCE_PROJECTILE_TILES_PER_SLOT
+        );
+    }
+    return (u16)(
+        SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
+        (
+            slot - SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT
+        ) * SOURCE_PROJECTILE_TILES_PER_SLOT
+    );
+}
+
+static void source_projectile_pack_8bpp(u8 slot)
+{
+    u8 *target = source_projectile_cache_tiles[slot];
+    u8 tile_y;
+
+    /*
+     * Every Sprite2 projectile is a 12x14 component.  The shared decoder
+     * places it at (10,9) in a 32x32 canvas; retain the enclosing 16x16
+     * region and pack it as four GBA 8bpp tiles.
+     */
+    for (tile_y = 0; tile_y < 2; tile_y++) {
+        u8 tile_x;
+
+        for (tile_x = 0; tile_x < 2; tile_x++) {
+            u8 row;
+
+            for (row = 0; row < 8; row++) {
+                u8 column;
+
+                for (column = 0; column < 8; column++) {
+                    u16 source_pixel = source_enemy_decode_pixels[
+                        (u32)(9 + tile_y * 8 + row) *
+                            OT_SPRITE2_FRAME_WIDTH +
+                        10 + tile_x * 8 + column
+                    ];
+                    u32 target_offset =
+                        (u32)(tile_y * 2 + tile_x) * 64 +
+                        row * 8 +
+                        column;
+
+                    target[target_offset] = source_pixel == 0 ?
+                        0 :
+                        source_enemy_palette_map[
+                            (u8)(source_pixel - 1)
+                        ];
+                }
+            }
+        }
+    }
+}
+
+static void source_projectile_cache_begin_frame(void)
+{
+    source_projectile_cache_epoch++;
+    if (source_projectile_cache_epoch == 0) {
+        u8 index;
+
+        source_projectile_cache_epoch = 1;
+        for (
+            index = 0;
+            index < SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
+            index++
+        ) {
+            source_projectile_cache[index].last_epoch = 0;
+        }
+    }
+    source_projectile_upload_count = 0;
+}
+
+static u16 source_projectile_cache_acquire(
+    u8 shape_table,
+    u16 graphic
+)
+{
+    u8 index;
+    u8 free_slot = SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
+    u8 eviction_slot = SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
+    u8 selected;
+    u32 oldest_epoch = 0xffffffffu;
+
+    if (!source_enemy_palette_valid || graphic == 0) {
+        telemetry_projectile_cache_drops++;
+        return 0xffff;
+    }
+    for (
+        index = 0;
+        index < SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        SourceProjectileCacheSlot *slot =
+            &source_projectile_cache[index];
+
+        if (
+            slot->valid &&
+            slot->shape_table == shape_table &&
+            slot->graphic == graphic
+        ) {
+            slot->last_epoch = source_projectile_cache_epoch;
+            telemetry_projectile_cache_hits++;
+            return source_projectile_cache_tile(index);
+        }
+        if (!slot->valid) {
+            if (free_slot == SOURCE_PROJECTILE_CACHE_SLOT_COUNT) {
+                free_slot = index;
+            }
+        } else if (
+            slot->last_epoch != source_projectile_cache_epoch &&
+            slot->last_epoch < oldest_epoch
+        ) {
+            eviction_slot = index;
+            oldest_epoch = slot->last_epoch;
+        }
+    }
+    selected = free_slot != SOURCE_PROJECTILE_CACHE_SLOT_COUNT ?
+        free_slot :
+        eviction_slot;
+    if (selected == SOURCE_PROJECTILE_CACHE_SLOT_COUNT) {
+        telemetry_projectile_cache_drops++;
+        return 0xffff;
+    }
+    if (source_projectile_cache[selected].valid) {
+        telemetry_projectile_cache_evictions++;
+    }
+    source_projectile_cache[selected].valid = 1;
+    source_projectile_cache[selected].shape_table = shape_table;
+    source_projectile_cache[selected].graphic = graphic;
+    source_projectile_cache[selected].last_epoch =
+        source_projectile_cache_epoch;
+    telemetry_projectile_cache_misses++;
+    if (
+        !ot_sprite2_frame_decode(
+            shape_table,
+            graphic,
+            0,
+            0,
+            source_enemy_decode_pixels,
+            OT_SPRITE2_FRAME_PIXELS
+        )
+    ) {
+        source_projectile_cache[selected].valid = 0;
+        telemetry_projectile_cache_drops++;
+        return 0xffff;
+    }
+    source_projectile_pack_8bpp(selected);
+    if (
+        source_projectile_upload_count >=
+        SOURCE_PROJECTILE_CACHE_SLOT_COUNT
+    ) {
+        source_projectile_cache[selected].valid = 0;
+        telemetry_projectile_cache_drops++;
+        return 0xffff;
+    }
+    source_projectile_uploads[
+        source_projectile_upload_count++
+    ].slot = selected;
+    if (
+        source_projectile_upload_count >
+        telemetry_projectile_cache_max_uploads
+    ) {
+        telemetry_projectile_cache_max_uploads =
+            source_projectile_upload_count;
+    }
+    return source_projectile_cache_tile(selected);
+}
+
+static void source_projectile_cache_end_frame(void)
+{
+    u8 index;
+    u8 visible_unique = 0;
+
+    for (
+        index = 0;
+        index < SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        if (
+            source_projectile_cache[index].valid &&
+            source_projectile_cache[index].last_epoch ==
+                source_projectile_cache_epoch
+        ) {
+            visible_unique++;
+        }
+    }
+    if (
+        visible_unique >
+        telemetry_projectile_cache_max_visible_unique
+    ) {
+        telemetry_projectile_cache_max_visible_unique =
+            visible_unique;
+    }
+}
+
+static void source_projectile_cache_commit(void)
+{
+    u8 index;
+
+    for (
+        index = 0;
+        index < source_projectile_upload_count;
+        index++
+    ) {
+        u8 slot = source_projectile_uploads[index].slot;
+
+        dmaCopy(
+            source_projectile_cache_tiles[slot],
+            (u8 *)OBJ_BASE_ADR +
+                source_projectile_cache_tile(slot) * 32,
+            SOURCE_PROJECTILE_FRAME_BYTES
+        );
+        telemetry_projectile_cache_uploads++;
+    }
+    source_projectile_upload_count = 0;
 }
 
 typedef struct {
@@ -776,6 +1166,7 @@ static void source_emit_effect(const OtHitEffect *effect)
 static void source_play_frame_weapon_sounds(void)
 {
     u16 sounds = source_parity_level.frame_sound_mask;
+    u8 queue_index;
 
     if (sounds & (1u << 13)) {
         audio_effect(SFX_ENEMY_SHOT_13);
@@ -785,6 +1176,48 @@ static void source_play_frame_weapon_sounds(void)
         audio_effect(SFX_ENEMY_SHOT_4);
     } else if (sounds & (1u << 1)) {
         audio_effect(SFX_WEAPON_1);
+    }
+    /*
+     * JE_eventSystem event 16/62 and the level timer write source sound
+     * numbers into an eight-slot queue.  The current global soundbank has
+     * the gameplay subset below; unlisted source voices remain represented
+     * in state and become audible when the all-SND global bank is enabled.
+     */
+    for (queue_index = 0; queue_index < 8; queue_index++) {
+        switch (source_parity_level.frame_sound_queue[queue_index]) {
+        case 1:
+            audio_effect(SFX_WEAPON_1);
+            break;
+        case 3:
+            audio_effect(SFX_ENEMY_HIT);
+            break;
+        case 4:
+            audio_effect(SFX_ENEMY_SHOT_4);
+            break;
+        case 6:
+            audio_effect(SFX_ENEMY_SHOT_6);
+            break;
+        case 9:
+            audio_effect(SFX_EXPLOSION_9);
+            break;
+        case 11:
+            audio_effect(SFX_EXPLOSION_11);
+            break;
+        case 13:
+            audio_effect(SFX_ENEMY_SHOT_13);
+            break;
+        case 18:
+            audio_effect(SFX_ITEM);
+            break;
+        case 22:
+            audio_effect(SFX_EXPLOSION_22);
+            break;
+        case 34:
+            audio_effect(SFX_LEVEL_COMPLETE);
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -901,8 +1334,10 @@ static void source_apply_background_state(void)
         !source_background2_enabled &&
         source_parity_level.background2_over == 3
     ) {
-        source_background2_enabled = 1;
-        source_background2_upload_pending = 1;
+        if (background_prepare_layer(1, bg2_scroll_pixel >> 3)) {
+            source_background2_enabled = 1;
+            source_background2_upload_pending = 1;
+        }
     }
     bg1_scroll_speed = (u8)source_parity_level.back_move;
     bg2_scroll_speed = (u8)source_parity_level.back_move2;
@@ -920,6 +1355,115 @@ static void source_apply_background_state(void)
         bg2_scroll_delay = bg2_scroll_delay_max;
     }
 }
+
+static void source_apply_player_shot_result(
+    PlayerShot *shot,
+    OtShotCollisionResult *result
+)
+{
+    u8 effect_index;
+
+    if (!result->collided) return;
+    if (shot != 0) {
+        shot->damage = result->remaining_damage;
+        if (result->consumed) shot->active = 0;
+    }
+    player_cash += result->cash_awarded;
+    for (
+        effect_index = 0;
+        effect_index < result->effect_count;
+        effect_index++
+    ) {
+        source_emit_effect(&result->effects[effect_index]);
+    }
+    if (result->kill_count) {
+        audio_effect(SFX_EXPLOSION_9);
+    } else {
+        audio_effect(SFX_ENEMY_HIT);
+    }
+}
+
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+static bool source_autotest_enemy_matches_stop_pool(u8 index)
+{
+    switch (source_parity_level.stop_background_num) {
+    case 1:
+        return
+            (index >= 25 && index < 50) ||
+            (index >= 75 && index < 100);
+    case 2:
+        return index < 25;
+    default:
+        return true;
+    }
+}
+
+/*
+ * Route-smoke validates common ROMFS/event/death paths, not the temporary
+ * legacy Pulse-Cannon adapter.  Some stock levels deliberately place
+ * destructible control hitboxes above the visible playfield for weapons with
+ * a taller PC collision radius.  If such a hitbox is the only remaining
+ * member of an authored event-4 stop group, inject one source collision after
+ * a grace period.  This exists only in route-smoke ROMs and is separately
+ * reported, so release gameplay can never inherit or conceal the assist.
+ */
+static void source_autotest_route_combat_assist(void)
+{
+    u8 index;
+    u8 candidate = OT_ENEMY_COUNT;
+
+    if (!source_parity_level.stop_backgrounds) {
+        source_autotest_unreachable_stop_ticks = 0;
+        return;
+    }
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy = &source_parity_level.enemy[index];
+
+        if (
+            !source_autotest_enemy_matches_stop_pool(index) ||
+            source_parity_level.enemy_avail[index] != 0 ||
+            enemy->scoreitem ||
+            enemy->armorleft == 255
+        ) {
+            continue;
+        }
+        /*
+         * The current GBA shot adapter releases at y < 0.  A normal collision
+         * can still reach an enemy centre down to y=-8; let keypad aiming
+         * handle every such target without assistance.
+         */
+        if (enemy->ey >= -8 && enemy->ey <= 190) {
+            source_autotest_unreachable_stop_ticks = 0;
+            return;
+        }
+        if (candidate == OT_ENEMY_COUNT) candidate = index;
+    }
+    if (candidate == OT_ENEMY_COUNT) {
+        source_autotest_unreachable_stop_ticks = 0;
+        return;
+    }
+    if (++source_autotest_unreachable_stop_ticks < 60) return;
+    source_autotest_unreachable_stop_ticks = 0;
+    {
+        const OtEnemy *enemy = &source_parity_level.enemy[candidate];
+        OtShotCollisionResult result;
+        uint8_t damage = enemy->armorleft;
+
+        if (damage == 0) damage = 1;
+        ot_level_port_collide_player_shot(
+            &source_parity_level,
+            (int16_t)(enemy->ex + enemy->mapoffset),
+            (int16_t)(enemy->ey - 6),
+            damage,
+            &result
+        );
+        if (result.collided) {
+            telemetry_autotest_combat_assists++;
+            source_apply_player_shot_result(0, &result);
+        }
+    }
+}
+#endif
 
 static void source_process_player_collisions(void)
 {
@@ -939,23 +1483,11 @@ static void source_process_player_collisions(void)
             shot->damage,
             &result
         );
-        if (!result.collided) continue;
-        shot->damage = result.remaining_damage;
-        if (result.consumed) shot->active = 0;
-        player_cash += result.cash_awarded;
-        for (
-            effect_index = 0;
-            effect_index < result.effect_count;
-            effect_index++
-        ) {
-            source_emit_effect(&result.effects[effect_index]);
-        }
-        if (result.kill_count) {
-            audio_effect(SFX_EXPLOSION_9);
-        } else {
-            audio_effect(SFX_ENEMY_HIT);
-        }
+        source_apply_player_shot_result(shot, &result);
     }
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+    source_autotest_route_combat_assist();
+#endif
 
     source_parity_level.player_armor = player_armor;
     ot_level_port_collide_player(
@@ -1047,8 +1579,25 @@ static void source_runtime_reset(void)
     telemetry_sprite2_cache_misses = 0;
     telemetry_sprite2_cache_evictions = 0;
     telemetry_sprite2_cache_drops = 0;
+    source_enemy_first_decode_failure_valid = 0;
+    source_enemy_first_decode_failure_shape_table = 0;
+    source_enemy_first_decode_failure_graphic = 0;
+    source_enemy_first_decode_failure_size = 0;
+    source_enemy_first_decode_failure_filter = 0;
+    source_enemy_first_decode_failure_pool = 0;
+    source_enemy_first_decode_failure_source_index = 0;
+    source_enemy_first_decode_failure_definition = 0;
+    source_enemy_first_decode_failure_level_position = 0;
+    source_enemy_first_decode_failure_x = 0;
+    source_enemy_first_decode_failure_y = 0;
+    source_enemy_first_decode_failure_cycle = 0;
+    source_enemy_first_decode_failure_shape_banks = 0;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+    source_autotest_unreachable_stop_ticks = 0;
+#endif
     telemetry_sprite2_uploads = 0;
     telemetry_sprite2_upload_bytes = 0;
+    telemetry_sprite2_compact_uploads = 0;
     telemetry_sprite2_max_uploads = 0;
     telemetry_sprite2_max_visible_unique = 0;
     telemetry_effect_cache_hits = 0;

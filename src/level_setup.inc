@@ -21,36 +21,6 @@ static void clear_entities(void)
     active_pickup_explosion_count = 0;
 }
 
-static const u8 *map_row(const u8 *map, u16 row)
-{
-    return map + (u32)row * MAP_ROW_BYTES;
-}
-
-static void load_ring(const u8 *map, u16 rows, u16 top_row, u16 screen_block)
-{
-    u16 row;
-    u16 first = top_row;
-    u16 last = first + MAP_RING_ROWS;
-    u16 *left = (u16 *)SCREEN_BASE_BLOCK(screen_block);
-    u16 *right = (u16 *)SCREEN_BASE_BLOCK(screen_block + 1);
-
-    if (last > rows) {
-        last = rows;
-        first = last - MAP_RING_ROWS;
-    }
-    for (row = first; row < last; row++) {
-        const u8 *source = map_row(map, row);
-        u16 row_slot = (u16)((row & 31) * 32);
-
-        dmaCopy(source, left + row_slot, MAP_HALF_ROW_BYTES);
-        dmaCopy(
-            source + MAP_HALF_ROW_BYTES,
-            right + row_slot,
-            MAP_HALF_ROW_BYTES
-        );
-    }
-}
-
 static u16 title_palette_colour(const OtDataView *palette, u8 index)
 {
     const u8 *rgb = palette->data + (u32)index * 3;
@@ -63,8 +33,35 @@ static u16 title_palette_colour(const OtDataView *palette, u8 index)
     );
 }
 
-static void enter_level(void)
+static u8 enter_level(u16 selected_section)
 {
+    OtEpisodeLevel selected_level;
+
+    if (
+        selected_section == 0 ||
+        !ot_data_episode_level_resolve(
+            (u8)(frontend_episode + 1u),
+            selected_section,
+            frontend_play_mode,
+            frontend_difficulty,
+            &selected_level
+        ) ||
+        selected_level.episode_complete ||
+        !ot_data_level_select(
+            selected_level.episode,
+            selected_level.lvl_file_number
+        )
+    ) {
+        frontend_level_ready = 0;
+        return 0;
+    }
+    frontend_level = selected_level;
+    frontend_level_ready = 1;
+    if (!background_bind_selected_level()) {
+        frontend_level_ready = 0;
+        return 0;
+    }
+
     REG_DISPCNT = LCDC_OFF;
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
@@ -79,12 +76,6 @@ static void enter_level(void)
     clear_entities();
     hide_all_sprites();
 
-    dmaCopy(bg1_tiles, CHAR_BASE_BLOCK(0), 512 * 32);
-    if (source_background2_enabled) {
-        dmaCopy(bg2_tiles, CHAR_BASE_BLOCK(1), 512 * 32);
-    }
-    dmaCopy(bg3_tiles, CHAR_BASE_BLOCK(2), 512 * 32);
-    dmaCopy(bg_palette, BG_PALETTE, 512);
     dmaCopy(obj_tiles, OBJ_BASE_ADR, OBJ_TILE_COUNT * 32);
     dmaCopy(obj_palette, SPRITE_PALETTE, 512);
     /*
@@ -109,16 +100,34 @@ static void enter_level(void)
     bg1_presentation_scroll_pixel = bg1_scroll_pixel;
     bg2_presentation_scroll_pixel = bg2_scroll_pixel;
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
-    load_ring(bg1_map, BG1_ROWS, bg1_scroll_pixel >> 3, BG0_SCREEN_BLOCK);
+    if (
+        !background_prepare_layer(0, bg1_scroll_pixel >> 3) ||
+        !background_prepare_layer(2, bg3_scroll_pixel >> 3) ||
+        (
+            source_background2_enabled &&
+            !background_prepare_layer(1, bg2_scroll_pixel >> 3)
+        )
+    ) {
+        frontend_level_ready = 0;
+        return 0;
+    }
+    background_commit_full_layer(
+        0,
+        bg1_scroll_pixel >> 3,
+        BG0_SCREEN_BLOCK
+    );
     if (source_background2_enabled) {
-        load_ring(
-            bg2_map,
-            BG2_ROWS,
+        background_commit_full_layer(
+            1,
             bg2_scroll_pixel >> 3,
             BG1_SCREEN_BLOCK
         );
     }
-    load_ring(bg3_map, BG3_ROWS, bg3_scroll_pixel >> 3, BG2_SCREEN_BLOCK);
+    background_commit_full_layer(
+        2,
+        bg3_scroll_pixel >> 3,
+        BG2_SCREEN_BLOCK
+    );
     /* First-level event 0 selects the original 1:2:0 opening motion. */
     bg1_scroll_speed = 1;
     bg2_scroll_speed = 2;
@@ -163,8 +172,11 @@ static void enter_level(void)
     level_exit_music_started = 0;
     ot_level_port_init(
         &source_parity_level,
-        frontend_difficulty
+        frontend_difficulty,
+        frontend_play_mode == FRONTEND_PLAY_ARCADE,
+        source_enemy_shape_history_valid != 0
     );
+    source_enemy_shape_history_valid = 1;
     source_runtime_reset();
 
     telemetry_display_frames = 0;
@@ -215,6 +227,7 @@ static void enter_level(void)
     telemetry_source_player_shot_hits = 0;
     telemetry_source_enemy_kills = 0;
     telemetry_source_direct_cash = 0;
+    telemetry_autotest_combat_assists = 0;
     telemetry_source_score_item_spawns = 0;
     telemetry_source_score_item_pickups = 0;
     telemetry_source_score_item_max_active = 0;
@@ -225,6 +238,15 @@ static void enter_level(void)
     telemetry_source_visible_enemies = 0;
     telemetry_source_max_visible_enemies = 0;
     telemetry_source_unknown_visuals = 0;
+    telemetry_sprite2_null_pointer_skips = 0;
+    telemetry_sprite2_zero_graphic_skips = 0;
+    telemetry_projectile_cache_hits = 0;
+    telemetry_projectile_cache_misses = 0;
+    telemetry_projectile_cache_evictions = 0;
+    telemetry_projectile_cache_drops = 0;
+    telemetry_projectile_cache_uploads = 0;
+    telemetry_projectile_cache_max_uploads = 0;
+    telemetry_projectile_cache_max_visible_unique = 0;
     telemetry_source_launch_attempts = 0;
     telemetry_source_launch_successes = 0;
     telemetry_source_random_attempts = 0;
@@ -257,7 +279,8 @@ static void enter_level(void)
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
         (source_background2_enabled ? BG1_ON : 0);
-    audio_load_source_song(17);
+    audio_load_source_song(frontend_level.source_song);
     game_state = STATE_PLAY;
     telemetry_state_transitions++;
+    return 1;
 }

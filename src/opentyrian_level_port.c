@@ -1,7 +1,7 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * Direct translation staging area for OpenTyrian's first-level game loop.
+ * Direct translation staging area for OpenTyrian's selected-level game loop.
  * The field assignments below follow JE_main() and JE_eventSystem() in
  * src/tyrian2.c at revision
  * 1c34d1bddac8c8f2de834229d04b5a729525c944.
@@ -18,7 +18,7 @@ _Static_assert(sizeof(int8_t) == 1, "OpenTyrian shortint width changed");
 _Static_assert(sizeof(uint16_t) == 2, "OpenTyrian word width changed");
 _Static_assert(sizeof(int16_t) == 2, "OpenTyrian integer width changed");
 _Static_assert(
-    OT_LEVEL1_EVENT_RECORD_BYTES == 11,
+    OT_LEVEL_EVENT_RECORD_BYTES == 11,
     "OpenTyrian event record width changed"
 );
 _Static_assert(
@@ -28,12 +28,12 @@ _Static_assert(
 _Static_assert(OT_ENEMY_COUNT == 100, "OpenTyrian enemy pool size changed");
 _Static_assert(OT_ENEMY_POOL_SIZE == 25, "OpenTyrian pool group size changed");
 
-bool ot_level1_event_read(uint16_t index, OtEventRecord *event)
+bool ot_level_event_read(uint16_t index, OtEventRecord *event)
 {
-    return ot_data_level1_event_read(index, event);
+    return ot_data_level_event_read(index, event);
 }
 
-bool ot_level1_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy)
+bool ot_level_enemy_read(uint16_t enemy_id, OtEnemyDefinition *enemy)
 {
     return ot_data_hdt_enemy_read(enemy_id, enemy);
 }
@@ -137,18 +137,38 @@ static int16_t ot_abs_s16(int16_t value)
     return (int16_t)(value < 0 ? -value : value);
 }
 
-static bool shape_table_is_loaded(
+enum {
+    OT_ENEMY_SHAPE_SLOT_FIXED_21 = 0xfd,
+    OT_ENEMY_SHAPE_SLOT_FIXED_26 = 0xfe,
+    OT_ENEMY_SHAPE_SLOT_NULL = 0xff,
+};
+
+static uint8_t shape_table_slot(
     const OtLevelPortState *state,
     uint8_t shape_table
 )
 {
     uint8_t index;
 
-    if (shape_table == 21 || shape_table == 26) return true;
+    if (shape_table == 21) return OT_ENEMY_SHAPE_SLOT_FIXED_21;
+    if (shape_table == 26) return OT_ENEMY_SHAPE_SLOT_FIXED_26;
     for (index = 0; index < 4; index++) {
-        if (state->shape_bank[index] == shape_table) return true;
+        if (state->shape_bank[index] == shape_table) return index;
     }
-    return false;
+    return OT_ENEMY_SHAPE_SLOT_NULL;
+}
+
+static uint8_t ot_enemy_resolved_shape_table(
+    const OtLevelPortState *state,
+    const OtEnemy *enemy
+)
+{
+    if (enemy->shape_slot < 4) {
+        return state->shape_bank[enemy->shape_slot];
+    }
+    if (enemy->shape_slot == OT_ENEMY_SHAPE_SLOT_FIXED_21) return 21;
+    if (enemy->shape_slot == OT_ENEMY_SHAPE_SLOT_FIXED_26) return 26;
+    return 0;
 }
 
 /* Direct single-player translation of JE_makeEnemy(). */
@@ -157,14 +177,18 @@ static bool ot_make_enemy(
     OtEnemy *enemy,
     uint16_t enemy_definition_id,
     int16_t unique_shape_table,
+    const OtEnemyDefinition *definition_override,
     uint8_t *avail
 )
 {
     OtEnemyDefinition definition;
     uint8_t shape_table;
+    uint8_t shape_slot;
     uint8_t index;
 
-    if (!ot_level1_enemy_read(enemy_definition_id, &definition)) {
+    if (definition_override != 0) {
+        definition = *definition_override;
+    } else if (!ot_level_enemy_read(enemy_definition_id, &definition)) {
         return false;
     }
 
@@ -175,11 +199,14 @@ static bool ot_make_enemy(
     }
 
     /*
-     * GBA_PORT: loaded PC Sprite2_array pointers become stable bank IDs.
-     * As in JE_makeEnemy(), an unavailable bank leaves the previous slot's
-     * value untouched (the APPROACH behavior).
+     * Direct JE_makeEnemy() pointer semantics.  Dynamic bank IDs resolve to
+     * one of enemySpriteSheets[4].  An unavailable bank leaves that pointer
+     * untouched (APPROACH); a later event-5 reload of the same slot is then
+     * observed automatically by every enemy retaining the slot identity.
      */
-    if (shape_table_is_loaded(state, shape_table)) {
+    shape_slot = shape_table_slot(state, shape_table);
+    if (shape_slot != OT_ENEMY_SHAPE_SLOT_NULL) {
+        enemy->shape_slot = shape_slot;
         enemy->shape_table = shape_table;
     }
     enemy->enemy_definition_id = enemy_definition_id;
@@ -465,6 +492,15 @@ static uint8_t ot_new_enemy(
     uint16_t enemy_definition_id,
     int16_t unique_shape_table,
     OtSpawnOrigin origin
+);
+
+static uint8_t ot_new_enemy_with_definition(
+    OtLevelPortState *state,
+    uint8_t enemy_offset,
+    uint16_t enemy_definition_id,
+    int16_t unique_shape_table,
+    OtSpawnOrigin origin,
+    const OtEnemyDefinition *definition_override
 )
 {
     uint8_t index;
@@ -492,6 +528,7 @@ static uint8_t ot_new_enemy(
         &state->enemy[slot],
         enemy_definition_id,
         unique_shape_table,
+        definition_override,
         &avail
     )) {
         ot_record_spawn_missing(state, origin);
@@ -520,12 +557,31 @@ static uint8_t ot_new_enemy(
     return state->last_created_slot;
 }
 
-static uint8_t ot_create_new_event_enemy(
+static uint8_t ot_new_enemy(
+    OtLevelPortState *state,
+    uint8_t enemy_offset,
+    uint16_t enemy_definition_id,
+    int16_t unique_shape_table,
+    OtSpawnOrigin origin
+)
+{
+    return ot_new_enemy_with_definition(
+        state,
+        enemy_offset,
+        enemy_definition_id,
+        unique_shape_table,
+        origin,
+        0
+    );
+}
+
+static uint8_t ot_create_new_event_enemy_with_definition(
     OtLevelPortState *state,
     OtEventRecord *event,
     uint8_t enemy_type_offset,
     uint8_t enemy_offset,
-    int16_t unique_shape_table
+    int16_t unique_shape_table,
+    const OtEnemyDefinition *definition_override
 )
 {
     uint8_t created;
@@ -534,12 +590,13 @@ static uint8_t ot_create_new_event_enemy(
 
     enemy_definition_id =
         (uint16_t)(event->eventdat + enemy_type_offset);
-    created = ot_new_enemy(
+    created = ot_new_enemy_with_definition(
         state,
         enemy_offset,
         enemy_definition_id,
         unique_shape_table,
-        OT_SPAWN_EVENT
+        OT_SPAWN_EVENT,
+        definition_override
     );
     if (created == 0) return 0;
     enemy = &state->enemy[created - 1];
@@ -591,21 +648,54 @@ static uint8_t ot_create_new_event_enemy(
     return state->last_created_slot;
 }
 
+static uint8_t ot_create_new_event_enemy(
+    OtLevelPortState *state,
+    OtEventRecord *event,
+    uint8_t enemy_type_offset,
+    uint8_t enemy_offset,
+    int16_t unique_shape_table
+)
+{
+    return ot_create_new_event_enemy_with_definition(
+        state,
+        event,
+        enemy_type_offset,
+        enemy_offset,
+        unique_shape_table,
+        0
+    );
+}
+
 void ot_level_port_init(
     OtLevelPortState *state,
-    uint8_t difficulty_level
+    uint8_t difficulty_level,
+    bool arcade_mode,
+    bool preserve_shape_history
 )
 {
     const OtDataCatalog *data_catalog;
     OtEnemyDefinition first_spawn_definition;
-    OtWeaponDefinition first_level_weapon;
-    OtLevel1Info level_info;
+    OtLevelInfo level_info;
     OtDataView data_view;
-    OtShpSprite title_logo;
-    OtMusSongInfo song_info;
+    uint16_t first_spawn_id;
+    uint8_t inherited_shape_bank[4];
+    uint8_t inherited_shape_slot[OT_ENEMY_COUNT];
     uint8_t index;
 
+    if (preserve_shape_history) {
+        for (index = 0; index < 4; index++) {
+            inherited_shape_bank[index] = state->shape_bank[index];
+        }
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            inherited_shape_slot[index] = state->enemy[index].shape_slot;
+        }
+    }
     *state = (OtLevelPortState){0};
+    if (preserve_shape_history) {
+        for (index = 0; index < 4; index++) {
+            state->shape_bank[index] = inherited_shape_bank[index];
+        }
+    }
 
     /*
      * JE_main(), start_level_first initialization.  UI, SDL, demo, network
@@ -630,6 +720,21 @@ void ot_level_port_init(
         difficulty_level >= 1 && difficulty_level <= 3 ?
             difficulty_level :
             2;
+    state->initial_difficulty = state->difficulty_level;
+    state->damage_rate = 2;
+    state->arcade_mode = arcade_mode;
+    state->map1_pointer_offset =
+        (
+            OT_LEVEL_MAP1_ROWS -
+            OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS
+        ) * OT_LEVEL_MAP1_COLUMNS - 1;
+    state->map2_pointer_offset =
+        (
+            OT_LEVEL_MAP2_ROWS -
+            OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS
+        ) * OT_LEVEL_MAP2_COLUMNS - 1;
+    state->background2_wrap_offset = OT_LEVEL_MAP2_COLUMNS;
+    state->background2_wrap_to_offset = OT_LEVEL_MAP2_COLUMNS;
     state->map_x = 1;
     state->map_x3 = 1;
     /* JE_initPlayerData(): USP Talon, Pulse-Cannon, no rear weapon. */
@@ -642,6 +747,10 @@ void ot_level_port_init(
     state->player_purple_balls_needed = 1;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         state->enemy_avail[index] = 1;
+        state->enemy[index].shape_slot =
+            preserve_shape_history ?
+                inherited_shape_slot[index] :
+                OT_ENEMY_SHAPE_SLOT_NULL;
     }
     ot_mt_seed(&state->rng, OT_SOURCE_PARITY_TEST_SEED);
 
@@ -649,33 +758,20 @@ void ot_level_port_init(
         ot_data_init() &&
         (data_catalog = ot_data_catalog()) != 0 &&
         data_catalog->initialized &&
-        ot_data_level1_info(&level_info) &&
-        level_info.map_file == 'Z' &&
-        level_info.shape_file == 'Z' &&
-        level_info.enemy_count == 7 &&
-        level_info.event_count == OT_LEVEL1_EXPECTED_EVENT_COUNT &&
-        ot_level1_enemy_read(10, &first_spawn_definition) &&
-        first_spawn_definition.ani == 8 &&
-        first_spawn_definition.armor == 3 &&
-        first_spawn_definition.esize == 1 &&
-        first_spawn_definition.shapebank == 1 &&
-        first_spawn_definition.value == 15 &&
-        ot_data_hdt_weapon_read(59, &first_level_weapon) &&
-        first_level_weapon.multi == 1 &&
-        ot_data_pic_view(4, &data_view) &&
-        ot_data_pic_palette_view(4, &data_view) &&
-        ot_data_shp_sprite_read(3, 146, &title_logo) &&
-        title_logo.populated &&
-        ot_data_comp_shape_bank_view(1, &data_view) &&
-        ot_data_comp_shape_bank_view(2, &data_view) &&
-        ot_data_comp_shape_bank_view(9, &data_view) &&
-        ot_data_comp_shape_bank_view(20, &data_view) &&
-        ot_data_mus_song_read(17, &data_view, &song_info) &&
-        song_info.patch_count > 0 &&
-        song_info.position_count > 0 &&
-        ot_data_mus_song_read(29, &data_view, &song_info) &&
-        song_info.patch_count > 0 &&
-        song_info.position_count > 0;
+        ot_data_level_info(&level_info) &&
+        level_info.event_count > 0 &&
+        level_info.enemy_count > 0 &&
+        ot_data_level_enemy_pool_read(0, &first_spawn_id) &&
+        ot_level_enemy_read(first_spawn_id, &first_spawn_definition) &&
+        ot_data_level_map_view(0, &data_view) &&
+        ot_data_level_map_view(1, &data_view) &&
+        ot_data_level_map_view(2, &data_view) &&
+        ot_data_background_shape_file_view(
+            level_info.shape_file,
+            &data_view
+        );
+    state->event_count =
+        state->assets_valid ? level_info.event_count : 0;
 }
 
 static void resolve_new_pl_link(
@@ -688,15 +784,97 @@ static void resolve_new_pl_link(
     }
 }
 
+/*
+ * Direct zero-based adapter for JE_eventJump().  OpenTyrian assigns
+ * eventLoc to one slot before the first event at or after curLoc because
+ * JE_eventSystem() performs its unconditional eventLoc++ on return.  This
+ * port owns the next zero-based record directly, so no compensating
+ * decrement/increment is needed.
+ */
+static bool ot_event_jump(OtLevelPortState *state, uint16_t jump)
+{
+    OtEventRecord event;
+    uint16_t index;
+    uint16_t destination;
+
+    if (jump == UINT16_MAX) {
+        destination = state->return_loc;
+    } else {
+        state->return_loc = (uint16_t)(state->cur_loc + 1u);
+        destination = jump;
+    }
+    state->cur_loc = destination;
+    for (index = 0; index < state->event_count; index++) {
+        if (!ot_level_event_read(index, &event)) {
+            state->assets_valid = false;
+            return false;
+        }
+        if (event.eventtime >= destination) {
+            state->event_index = index;
+            return true;
+        }
+    }
+    state->event_index = state->event_count;
+    return true;
+}
+
+static bool ot_search_for_enemy(
+    const OtLevelPortState *state,
+    uint8_t link_number,
+    uint8_t *found_index
+)
+{
+    int16_t found = -1;
+    uint8_t index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (
+            state->enemy_avail[index] == 0 &&
+            state->enemy[index].linknum == link_number
+        ) {
+            found = index;
+        }
+    }
+    if (found < 0) return false;
+    if (found_index != 0) *found_index = (uint8_t)found;
+    return true;
+}
+
+static void ot_clear_enemy_range(
+    OtLevelPortState *state,
+    uint8_t first,
+    uint8_t count
+)
+{
+    uint8_t index;
+
+    for (index = first; index < (uint8_t)(first + count); index++) {
+        if (state->enemy_avail[index] == 1) continue;
+        if (
+            state->enemy[index].scoreitem &&
+            state->score_item_active_count > 0
+        ) {
+            state->score_item_active_count--;
+        }
+        state->enemy_avail[index] = 1;
+        state->enemy_draw[index].active = false;
+        if (state->active_enemy_count > 0) {
+            state->active_enemy_count--;
+        }
+    }
+}
+
 static bool apply_event(
     OtLevelPortState *state,
     OtEventRecord *event,
-    uint16_t *skip_events
+    int16_t *skip_events,
+    bool *jumped
 )
 {
     uint8_t index;
 
     *skip_events = 0;
+    *jumped = false;
     switch (event->eventtype) {
     case 1:
         state->starfield_speed = event->eventdat;
@@ -723,6 +901,24 @@ static bool apply_event(
         state->map2_y_delay = 2;
         state->map2_y_delay_max = 2;
         state->back_move3 = 1;
+        return true;
+
+    case 4:
+        state->stop_backgrounds = true;
+        switch (event->eventdat) {
+        case 0:
+        case 1:
+            state->stop_background_num = 1;
+            break;
+        case 2:
+            state->stop_background_num = 2;
+            break;
+        case 3:
+            state->stop_background_num = 3;
+            break;
+        default:
+            break;
+        }
         return true;
 
     case 5:
@@ -818,6 +1014,24 @@ static bool apply_event(
     case 15: /* Sky Enemy */
         ot_create_new_event_enemy(state, event, 0, 0, 0);
         return true;
+
+    case 16: {
+        static const uint8_t window_text_samples[9] = {
+            35, 31, 32, 30, 35, 36, 38, 35, 32,
+        };
+
+        /*
+         * JE_drawTextWindow() is a presentation call.  Retain the exact
+         * source output index and voice queue request so the GBA frontend
+         * can present it without changing event/gameplay control flow.
+         */
+        if (event->eventdat >= 1 && event->eventdat <= 9) {
+            state->pending_text_window = (uint8_t)event->eventdat;
+            state->frame_sound_queue[3] =
+                window_text_samples[event->eventdat - 1];
+        }
+        return true;
+    }
 
     case 17: { /* Ground Bottom */
         uint8_t created =
@@ -970,6 +1184,50 @@ static bool apply_event(
         return true;
     }
 
+    case 24: /* Enemy Global Animate */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            OtEnemy *enemy = &state->enemy[index];
+
+            if (enemy->linknum != event->eventdat4) continue;
+            enemy->aniactive = 1;
+            enemy->aniwhenfire = 0;
+            if (event->eventdat2 > 0) {
+                enemy->enemycycle = (uint8_t)event->eventdat2;
+                enemy->animin = enemy->enemycycle;
+            } else {
+                enemy->enemycycle = 0;
+            }
+            if (event->eventdat > 0) {
+                enemy->ani = (uint8_t)event->eventdat;
+            }
+            if (event->eventdat3 == 1) {
+                enemy->animax = enemy->ani;
+            } else if (event->eventdat3 == 2) {
+                enemy->aniactive = 2;
+                enemy->animax = enemy->ani;
+                enemy->aniwhenfire = 2;
+            }
+            state->enemy_control_write_count += 4;
+        }
+        return true;
+
+    case 25: /* Enemy Global Damage change */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            if (
+                event->eventdat4 == 0 ||
+                state->enemy[index].linknum == event->eventdat4
+            ) {
+                /*
+                 * galagaMode is false in both supported one-player modes,
+                 * matching the ordinary OpenTyrian branch.
+                 */
+                state->enemy[index].armorleft =
+                    (uint8_t)event->eventdat;
+                state->enemy_control_write_count++;
+            }
+        }
+        return true;
+
     case 26:
         state->small_enemy_adjust = event->eventdat != 0;
         return true;
@@ -1055,10 +1313,13 @@ static bool apply_event(
         uint16_t enemy_die = (uint16_t)event->eventdat;
 
         state->death_control_event_count++;
-        /*
-         * Fixed scope: single-player Normal, SA_NONE, !superTyrian.
-         * player[0].lives aliases the initial front-weapon power (1).
-         */
+        if (
+            state->arcade_mode &&
+            (event->eventdat == 512 || event->eventdat == 513)
+        ) {
+            return true;
+        }
+        /* SA_NONE, !superTyrian, one life in both supported modes. */
         if (
             event->eventdat == 533 &&
             (ot_mt_rand(state) % 15u) < 1u
@@ -1092,8 +1353,53 @@ static bool apply_event(
         state->level_enemy_frequency = (uint16_t)event->eventdat;
         return true;
 
+    case 38: {
+        /*
+         * Preserve the unusual original event-38 search exactly.  The
+         * source stores the zero-based last record at/before curLoc in its
+         * one-based eventLoc and then performs the common eventLoc++.
+         */
+        uint16_t next_index = 1;
+        OtEventRecord candidate;
+
+        state->cur_loc = (uint16_t)event->eventdat;
+        for (index = 0; index < state->event_count; index++) {
+            if (!ot_level_event_read(index, &candidate)) {
+                state->assets_valid = false;
+                return false;
+            }
+            if (candidate.eventtime <= state->cur_loc) {
+                next_index = index;
+            }
+        }
+        if (next_index > state->event_count) {
+            next_index = state->event_count;
+        }
+        state->event_index = next_index;
+        *jumped = true;
+        return true;
+    }
+
+    case 39: /* Enemy Global Linknum Change */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            if (state->enemy[index].linknum == (uint8_t)event->eventdat) {
+                state->enemy[index].linknum =
+                    (uint8_t)event->eventdat2;
+                state->enemy_control_write_count++;
+            }
+        }
+        return true;
+
     case 40:
         state->enemy_continual_damage = true;
+        return true;
+
+    case 41:
+        if (event->eventdat == 0) {
+            ot_clear_enemy_range(state, 0, OT_ENEMY_COUNT);
+        } else {
+            ot_clear_enemy_range(state, 0, OT_ENEMY_POOL_SIZE);
+        }
         return true;
 
     case 42:
@@ -1104,18 +1410,67 @@ static bool apply_event(
         state->background2_over = (uint8_t)event->eventdat;
         return true;
 
-    case 45: /* arcade-only enemy from other enemies */
-        /*
-         * The single-player, non-action mode performs no enemy assignment,
-         * but event 533 still consumes/mutates RNG before that mode check.
-         * First-level records use 602..628, so this branch is normally idle.
-         */
+    case 44:
+        state->filter_active = event->eventdat > 0;
+        state->filter_fade = event->eventdat == 2;
+        state->level_filter = (int8_t)event->eventdat2;
+        state->level_brightness = event->eventdat3;
+        state->level_filter_new = (int8_t)event->eventdat4;
+        state->level_brightness_change = event->eventdat5;
+        state->filter_fade_start = event->eventdat6 == 0;
+        return true;
+
+    case 45: { /* arcade-only enemy from other enemies */
+        uint16_t enemy_die = (uint16_t)event->eventdat;
+
         if (
             event->eventdat == 533 &&
             (ot_mt_rand(state) % 15u) < 1u
         ) {
-            event->eventdat =
-                (int16_t)(829u + ot_mt_rand(state) % 6u);
+            enemy_die =
+                (uint16_t)(829u + ot_mt_rand(state) % 6u);
+        }
+        if (state->arcade_mode) {
+            for (index = 0; index < OT_ENEMY_COUNT; index++) {
+                if (
+                    state->enemy[index].linknum ==
+                    event->eventdat4
+                ) {
+                    state->enemy[index].enemydie = enemy_die;
+                    state->enemy_control_write_count++;
+                    state->death_assignment_count++;
+                }
+            }
+        }
+        return true;
+    }
+
+    case 46: { /* change difficulty */
+        int16_t difficulty;
+
+        if (event->eventdat3 != 0) {
+            state->damage_rate = (uint8_t)event->eventdat3;
+        }
+        if (event->eventdat2 == 0 || state->arcade_mode) {
+            difficulty =
+                (int16_t)state->difficulty_level + event->eventdat;
+            if (difficulty < 1) difficulty = 1;
+            if (difficulty > 10) difficulty = 10;
+            state->difficulty_level = (uint8_t)difficulty;
+        }
+        return true;
+    }
+
+    case 47: /* Enemy Global armor change */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            if (
+                event->eventdat4 == 0 ||
+                state->enemy[index].linknum == event->eventdat4
+            ) {
+                state->enemy[index].armorleft =
+                    (uint8_t)event->eventdat;
+                state->enemy_control_write_count++;
+            }
         }
         return true;
 
@@ -1123,8 +1478,77 @@ static bool apply_event(
         state->background2_not_transparent = true;
         return true;
 
+    case 49:
+    case 50:
+    case 51:
+    case 52: {
+        OtEnemyDefinition custom_definition;
+        OtEventRecord custom_event = *event;
+        int16_t unique_shape_table = event->eventdat3;
+        uint8_t enemy_offset;
+
+        if (!ot_level_enemy_read(0, &custom_definition)) {
+            state->assets_valid = false;
+            return false;
+        }
+        custom_definition.armor = (uint8_t)event->eventdat6;
+        custom_definition.egraphic[0] = (uint16_t)event->eventdat;
+        custom_event.eventdat = 0;
+        custom_event.eventdat3 = 0;
+        custom_event.eventdat6 = 0;
+        switch (event->eventtype - 48u) {
+        case 1:
+            enemy_offset = 25;
+            break;
+        case 2:
+            enemy_offset = 0;
+            break;
+        case 3:
+            enemy_offset = 50;
+            break;
+        default:
+            enemy_offset = 75;
+            break;
+        }
+        ot_create_new_event_enemy_with_definition(
+            state,
+            &custom_event,
+            0,
+            enemy_offset,
+            unique_shape_table,
+            &custom_definition
+        );
+        return true;
+    }
+
     case 53:
         state->force_events = event->eventdat != 99;
+        return true;
+
+    case 54:
+        *jumped = true;
+        return ot_event_jump(state, (uint16_t)event->eventdat);
+
+    case 55: /* Enemy Global player-seeking acceleration */
+        resolve_new_pl_link(state, event);
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            OtEnemy *enemy = &state->enemy[index];
+
+            if (
+                event->eventdat4 != 0 &&
+                enemy->linknum != event->eventdat4
+            ) {
+                continue;
+            }
+            if (event->eventdat != -99) {
+                enemy->xaccel = (uint8_t)event->eventdat;
+                state->enemy_control_write_count++;
+            }
+            if (event->eventdat2 != -99) {
+                enemy->yaccel = (uint8_t)event->eventdat2;
+                state->enemy_control_write_count++;
+            }
+        }
         return true;
 
     case 56: { /* Ground2 Bottom */
@@ -1160,17 +1584,35 @@ static bool apply_event(
             state->global_flags[flag_index] ==
             (uint8_t)event->eventdat2
         ) {
-            /*
-             * First-level source records only contain positive skip counts.
-             * A negative value would require the not-yet-used backward event
-             * control-flow adapter and is deliberately rejected.
-             */
-            if (event->eventdat3 < 0) {
-                state->assets_valid = false;
-                return false;
-            }
-            *skip_events = (uint8_t)event->eventdat3;
+            *skip_events = event->eventdat3;
         }
+        return true;
+    }
+
+    case 62: /* Play sound effect in source soundQueue[3]. */
+        state->frame_sound_queue[3] = (uint8_t)event->eventdat;
+        return true;
+
+    case 63: /* skip events outside two-player/one-player-action */
+        if (!state->arcade_mode) {
+            *skip_events = event->eventdat;
+        }
+        return true;
+
+    case 64: {
+        int16_t smoothie = event->eventdat;
+        int16_t data_index;
+
+        /*
+         * The GBA port has no two-player exception.  Stock files address
+         * only the source's one-based nine-entry arrays.
+         */
+        if (smoothie < 1 || smoothie > 9) return true;
+        state->smoothies[smoothie - 1] =
+            event->eventdat2 != 0;
+        data_index = smoothie == 5 ? 3 : smoothie;
+        state->smoothie_data[data_index - 1] =
+            (uint8_t)event->eventdat3;
         return true;
     }
 
@@ -1178,8 +1620,86 @@ static bool apply_event(
         state->background3_x1 = event->eventdat == 0;
         return true;
 
+    case 66: /* difficulty-gated event skip */
+        if (state->initial_difficulty <= event->eventdat) {
+            *skip_events = event->eventdat2;
+        }
+        return true;
+
+    case 67:
+        state->level_timer = event->eventdat == 1;
+        state->level_timer_countdown =
+            (uint16_t)((int16_t)event->eventdat3 * 100);
+        state->level_timer_jump_to = (uint16_t)event->eventdat2;
+        return true;
+
     case 68:
         state->random_explosions = event->eventdat == 1;
+        return true;
+
+    case 69:
+        state->frame_player_invulnerable_ticks =
+            (uint16_t)event->eventdat;
+        return true;
+
+    case 70: {
+        bool should_jump;
+
+        if (event->eventdat2 == 0) {
+            uint8_t link;
+
+            should_jump = true;
+            for (link = 1; link <= 19; link++) {
+                if (ot_search_for_enemy(state, link, 0)) {
+                    should_jump = false;
+                    break;
+                }
+            }
+        } else {
+            should_jump =
+                !ot_search_for_enemy(
+                    state,
+                    (uint8_t)event->eventdat2,
+                    0
+                ) &&
+                (
+                    event->eventdat3 == 0 ||
+                    !ot_search_for_enemy(
+                        state,
+                        (uint8_t)event->eventdat3,
+                        0
+                    )
+                ) &&
+                (
+                    event->eventdat4 == 0 ||
+                    !ot_search_for_enemy(
+                        state,
+                        event->eventdat4,
+                        0
+                    )
+                );
+        }
+        if (should_jump) {
+            *jumped = true;
+            return ot_event_jump(
+                state,
+                (uint16_t)event->eventdat
+            );
+        }
+        return true;
+    }
+
+    case 71:
+        if (
+            (uint32_t)state->map1_pointer_offset * 2u <=
+            (uint32_t)(int32_t)event->eventdat2
+        ) {
+            *jumped = true;
+            return ot_event_jump(
+                state,
+                (uint16_t)event->eventdat
+            );
+        }
         return true;
 
     case 72:
@@ -1190,16 +1710,161 @@ static bool apply_event(
         state->sky_enemy_over_all = event->eventdat == 1;
         return true;
 
+    case 74: /* Enemy Global BounceParams */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            OtEnemy *enemy = &state->enemy[index];
+
+            if (
+                event->eventdat4 != 0 &&
+                enemy->linknum != event->eventdat4
+            ) {
+                continue;
+            }
+            if (event->eventdat5 != -99) {
+                enemy->xminbounce = event->eventdat5;
+                state->enemy_control_write_count++;
+            }
+            if (event->eventdat6 != -99) {
+                enemy->yminbounce = event->eventdat6;
+                state->enemy_control_write_count++;
+            }
+            if (event->eventdat != -99) {
+                enemy->xmaxbounce = event->eventdat;
+                state->enemy_control_write_count++;
+            }
+            if (event->eventdat2 != -99) {
+                enemy->ymaxbounce = event->eventdat2;
+                state->enemy_control_write_count++;
+            }
+        }
+        return true;
+
+    case 75: {
+        bool stationary_enemy_found = false;
+        int16_t first_link = event->eventdat;
+        int16_t last_link = event->eventdat2;
+        int16_t new_pl_index = (int16_t)event->eventdat3 - 80;
+
+        if (
+            new_pl_index < 0 ||
+            new_pl_index >= OT_NEW_PL_COUNT ||
+            first_link > last_link
+        ) {
+            state->assets_valid = false;
+            return false;
+        }
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            const OtEnemy *enemy = &state->enemy[index];
+
+            if (
+                state->enemy_avail[index] == 0 &&
+                enemy->eyc == 0 &&
+                enemy->linknum >= first_link &&
+                enemy->linknum <= last_link
+            ) {
+                stationary_enemy_found = true;
+                break;
+            }
+        }
+        if (stationary_enemy_found) {
+            uint16_t range =
+                (uint16_t)(last_link + 1 - first_link);
+            uint8_t selected_link;
+            uint8_t selected_enemy;
+
+            do {
+                selected_link = (uint8_t)(
+                    ot_mt_rand(state) % range + first_link
+                );
+            } while (
+                !ot_search_for_enemy(
+                    state,
+                    selected_link,
+                    &selected_enemy
+                ) ||
+                state->enemy[selected_enemy].eyc != 0
+            );
+            state->new_pl[new_pl_index] = selected_link;
+        } else {
+            state->new_pl[new_pl_index] = 255;
+            if (event->eventdat4 > 0) {
+                uint32_t target =
+                    (uint32_t)state->event_index +
+                    event->eventdat4;
+                OtEventRecord target_event;
+
+                if (target >= state->event_count) {
+                    target = state->event_count;
+                } else if (
+                    ot_level_event_read(
+                        (uint16_t)target,
+                        &target_event
+                    )
+                ) {
+                    state->cur_loc =
+                        (uint16_t)(target_event.eventtime - 1u);
+                } else {
+                    state->assets_valid = false;
+                    return false;
+                }
+                state->event_index = (uint16_t)target;
+                *jumped = true;
+                state->skipped_event_count +=
+                    event->eventdat4 > 0 ?
+                        event->eventdat4 - 1u :
+                        0u;
+            }
+        }
+        return true;
+    }
+
+    case 76:
+        state->return_active = true;
+        return true;
+
+    case 77:
+        state->map1_pointer_offset =
+            (uint16_t)(event->eventdat / 2);
+        state->map2_pointer_offset = (uint16_t)(
+            (event->eventdat2 > 0 ?
+                event->eventdat2 :
+                event->eventdat) / 2
+        );
+        state->map_position_override_pending = true;
+        return true;
+
+    case 78:
+        if (state->galaga_shot_frequency < 10) {
+            state->galaga_shot_frequency++;
+        }
+        return true;
+
     case 79:
         state->boss_bar_link[0] = (uint8_t)event->eventdat;
         state->boss_bar_link[1] = (uint8_t)event->eventdat2;
         return true;
 
+    case 80:
+        /* GBA has no two-player mode, so the source branch is a no-op. */
+        return true;
+
+    case 81:
+        state->background2_wrap_offset =
+            (uint16_t)(event->eventdat / 2);
+        state->background2_wrap_to_offset =
+            (uint16_t)(event->eventdat2 / 2);
+        state->background2_wrap_pending = true;
+        return true;
+
+    case 82:
+        state->player_special = (uint8_t)event->eventdat;
+        return true;
+
     default:
         /*
-         * Menu, episode-transition and unsupported special-mode cases remain
-         * outside the first-level proof.  Count their exact source records as
-         * deferred instead of inventing approximate behavior here.
+         * OpenTyrian warns and ignores unknown records.  Stock LVL data has
+         * a few such values in special/bonus sections; count them as
+         * deferred without invalidating an otherwise valid ROMFS section.
          */
         return false;
     }
@@ -1638,10 +2303,15 @@ static void ot_draw_enemy_pool(
                 draw->x = (int16_t)(enemy->ex + enemy->mapoffset);
                 draw->y = enemy->ey;
                 draw->graphic = enemy->egr[enemy->enemycycle - 1];
-                draw->shape_table = enemy->shape_table;
+                draw->shape_table =
+                    ot_enemy_resolved_shape_table(state, enemy);
                 draw->size = enemy->size;
                 draw->filter = enemy->filter;
                 draw->pool = pool;
+                draw->source_index = index;
+                draw->enemy_cycle = enemy->enemycycle;
+                draw->enemy_definition_id =
+                    enemy->enemy_definition_id;
             }
             enemy->filter = 0;
         }
@@ -1703,6 +2373,12 @@ static void ot_draw_enemy_pool(
             continue;
         }
         if (enemy->edamaged) continue;
+        state->frame_enemy_on_screen++;
+        if (pool == 25 || pool == 75) {
+            state->frame_ground_enemy_on_screen++;
+        } else if (pool == 0) {
+            state->frame_sky_enemy_on_screen++;
+        }
         if (enemy->iced != 0) {
             enemy->iced--;
             if (enemy->enemyground) enemy->filter = 0x09;
@@ -1725,14 +2401,14 @@ static void ot_spawn_continual_enemy(OtLevelPortState *state)
     ) {
         return;
     }
-    if (ot_data_catalog()->level1_enemy_count == 0) {
+    if (ot_data_catalog()->level_enemy_count == 0) {
         state->assets_valid = false;
         return;
     }
     enemy_index = (uint16_t)(
-        ot_mt_rand(state) % ot_data_catalog()->level1_enemy_count
+        ot_mt_rand(state) % ot_data_catalog()->level_enemy_count
     );
-    if (!ot_data_level1_enemy_pool_read(enemy_index, &enemy_id)) {
+    if (!ot_data_level_enemy_pool_read(enemy_index, &enemy_id)) {
         state->assets_valid = false;
         return;
     }
@@ -1824,7 +2500,7 @@ static void ot_spawn_death_enemy(
 
     if (
         enemy_definition_id == 0 ||
-        !ot_level1_enemy_read(enemy_definition_id, &definition)
+        !ot_level_enemy_read(enemy_definition_id, &definition)
     ) {
         if (enemy_definition_id != 0) {
             state->death_spawn_attempt_count++;
@@ -2462,6 +3138,75 @@ void ot_level_port_update_parallax(
     state->parallax_initialized = true;
 }
 
+static void ot_apply_relative_event_offset(
+    OtLevelPortState *state,
+    int16_t skip_events
+)
+{
+    int32_t next_index =
+        (int32_t)state->event_index + 1 + skip_events;
+
+    if (next_index < 0) next_index = 0;
+    if (next_index > state->event_count) {
+        next_index = state->event_count;
+    }
+    state->event_index = (uint16_t)next_index;
+    if (skip_events > 0) {
+        state->skipped_event_count += (uint16_t)skip_events;
+    }
+}
+
+static void ot_update_filter_fade(OtLevelPortState *state)
+{
+    if (!state->filter_active || !state->filter_fade) return;
+
+    state->level_brightness = (int8_t)(
+        state->level_brightness +
+        state->level_brightness_change
+    );
+    if (
+        (
+            state->filter_fade_start &&
+            state->level_brightness < -14
+        ) ||
+        state->level_brightness > 14
+    ) {
+        state->level_brightness_change =
+            (int8_t)-state->level_brightness_change;
+        state->filter_fade_start = false;
+        state->level_filter = state->level_filter_new;
+    }
+    if (
+        !state->filter_fade_start &&
+        state->level_brightness == 0
+    ) {
+        state->filter_fade = false;
+        state->level_brightness = -99;
+    }
+}
+
+static void ot_update_level_timer(OtLevelPortState *state)
+{
+    if (!state->level_timer || state->level_timer_countdown == 0) {
+        return;
+    }
+    state->level_timer_countdown--;
+    if (state->level_timer_countdown == 0) {
+        ot_event_jump(state, state->level_timer_jump_to);
+        return;
+    }
+    if (state->level_timer_countdown > 200) {
+        if (state->level_timer_countdown % 100u == 0) {
+            state->frame_sound_queue[7] = 17; /* S_WARNING */
+        }
+        if (state->level_timer_countdown % 10u == 0) {
+            state->frame_sound_queue[6] = 24; /* S_CLICK */
+        }
+    } else if (state->level_timer_countdown % 20u == 0) {
+        state->frame_sound_queue[7] = 17; /* S_WARNING */
+    }
+}
+
 void ot_level_port_advance(
     OtLevelPortState *state,
     uint16_t cur_loc,
@@ -2470,38 +3215,51 @@ void ot_level_port_advance(
 )
 {
     OtEventRecord event;
+    uint32_t event_guard = 0;
+    uint32_t event_guard_limit;
     uint8_t index;
 
     state->frame_sound_mask = 0;
+    for (index = 0; index < 8; index++) {
+        state->frame_sound_queue[index] = 0;
+    }
     state->frame_player_damage = 0;
+    state->frame_player_invulnerable_ticks = 0;
+    state->pending_text_window = 0;
+    state->map_position_override_pending = false;
+    state->background2_wrap_pending = false;
+    state->frame_enemy_on_screen = 0;
+    state->frame_ground_enemy_on_screen = 0;
+    state->frame_sky_enemy_on_screen = 0;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         state->enemy_draw[index].active = false;
     }
     state->cur_loc = cur_loc;
     state->player_x = player_x;
     state->player_y = player_y;
-    while (
-        state->event_index < OT_LEVEL1_EXPECTED_EVENT_COUNT &&
-        ot_level1_event_read(state->event_index, &event) &&
-        event.eventtime <= state->cur_loc
-    ) {
-        uint16_t skip_events;
-        uint16_t remaining;
+    event_guard_limit = (uint32_t)state->event_count * 4u + 32u;
+    while (state->event_index < state->event_count) {
+        int16_t skip_events;
+        bool jumped;
 
-        if (apply_event(state, &event, &skip_events)) {
+        if (!ot_level_event_read(state->event_index, &event)) {
+            state->assets_valid = false;
+            break;
+        }
+        if (event.eventtime > state->cur_loc) break;
+        if (apply_event(state, &event, &skip_events, &jumped)) {
             state->applied_event_count++;
         } else {
             state->deferred_event_count++;
         }
-        state->event_index++;
-
-        remaining =
-            (uint16_t)(
-                OT_LEVEL1_EXPECTED_EVENT_COUNT - state->event_index
-            );
-        if (skip_events > remaining) skip_events = remaining;
-        state->event_index = (uint16_t)(state->event_index + skip_events);
-        state->skipped_event_count += skip_events;
+        if (!jumped) {
+            ot_apply_relative_event_offset(state, skip_events);
+        }
+        event_guard++;
+        if (event_guard > event_guard_limit) {
+            state->assets_valid = false;
+            break;
+        }
     }
     /*
      * Backgrounds and enemies use the offsets calculated after the preceding
@@ -2516,4 +3274,36 @@ void ot_level_port_advance(
         state->parallax_initialized;
     state->presentation_background3_x1 = state->background3_x1;
     ot_advance_enemies(state);
+    if (
+        state->stop_background_num == 1 &&
+        state->frame_ground_enemy_on_screen == 0
+    ) {
+        state->stop_background_num = 9;
+    }
+    if (
+        state->stop_background_num == 2 &&
+        state->frame_sky_enemy_on_screen == 0
+    ) {
+        state->stop_background_num = 9;
+    }
+    if (
+        !state->end_level &&
+        state->frame_enemy_on_screen == 0 &&
+        state->stop_backgrounds
+    ) {
+        state->stop_backgrounds = false;
+        state->back_move = 1;
+        state->back_move2 = 2;
+        state->back_move3 = 3;
+        state->explode_move = 2;
+    }
+    if (
+        state->return_active &&
+        state->frame_enemy_on_screen == 0
+    ) {
+        ot_event_jump(state, UINT16_MAX);
+        state->return_active = false;
+    }
+    ot_update_filter_fade(state);
+    ot_update_level_timer(state);
 }
