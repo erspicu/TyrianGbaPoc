@@ -92,8 +92,6 @@
 #define REWARD_SEQUENCE_COUNT 5
 #define CASH_COUNTER_X 22
 #define CASH_COUNTER_Y 140
-#define TITLE_SHP_SCRATCH_PIXELS 40000
-
 /*
  * Runtime Sprite2 presentation.  The original PC 256-colour indices are
  * decoded from ROMFS and presented through eight time-shared OBJ banks.
@@ -266,10 +264,27 @@ _Static_assert(
     "generated background X phase no longer matches OpenTyrian pointers"
 );
 
-#define STATE_TITLE 0
-#define STATE_PLAY 1
-#define STATE_BOSS 2
-#define STATE_CLEAR 3
+enum {
+    STATE_TITLE = 0,
+    STATE_PLAY = 1,
+    STATE_INTRO_LOGO_1 = 2,
+    STATE_INTRO_LOGO_2 = 3,
+    STATE_PLAY_MODE_MENU = 4,
+    STATE_EPISODE_MENU = 5,
+    STATE_DIFFICULTY_MENU = 6,
+    STATE_GAME_MENU = 7,
+    STATE_NEXT_LEVEL_MENU = 8,
+    STATE_LEVEL_STATS = 9,
+    STATE_GAME_OVER = 10,
+};
+
+enum {
+    FRONTEND_PLAY_FULL_GAME = 0,
+    FRONTEND_PLAY_ARCADE = 1,
+    FRONTEND_DIFFICULTY_EASY = 1,
+    FRONTEND_DIFFICULTY_NORMAL = 2,
+    FRONTEND_DIFFICULTY_HARD = 3,
+};
 
 #define BOX_OVERLAPS(ax, ay, aw, ah, bx, by, bw, bh) \
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
@@ -284,6 +299,9 @@ extern const u8 bg2_map[];
 extern const u8 bg3_map[];
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
+extern const u8 frontend_frames[];
+extern const u8 frontend_palettes[];
+extern const u8 frontend_glyphs[];
 extern const u8 soundbank[];
 
 typedef struct {
@@ -306,24 +324,6 @@ typedef struct {
 } EnemyShot;
 
 typedef struct {
-    u8 graphic;
-    s8 bx;
-    s8 by;
-    s8 sx;
-    s8 sy;
-} WeaponShot;
-
-typedef struct {
-    u8 id;
-    u8 first;
-    u8 multi;
-    u8 maximum;
-    u8 aim;
-    u8 animax;
-    u16 sound;
-} WeaponDef;
-
-typedef struct {
     u8 active;
     s16 x;
     s16 y;
@@ -342,52 +342,11 @@ typedef struct {
 } Reward;
 
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
-static EnemyShot enemy_shots[MAX_ENEMY_SHOTS] EWRAM_DATA;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
 static u8 active_effect_count;
 static u8 active_reward_count;
 static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
-
-/*
- * Exact tyrian.hdt WeaponType entries referenced by first-level enemies and
- * the 46..65 boss component grid. Field order is graphic, bx, by, sx, sy.
- * Slot rotation and aim are applied below exactly as JE_drawEnemy does. Every
- * used position has del=255; acceleration/accelerationx and tx/ty are zero.
- */
-static const WeaponShot weapon_shots[] = {
-    {PC_SHOT_GRAPHIC_LASER_DOWN,   0,  0,  0, 4}, /* W2 */
-    {PC_SHOT_GRAPHIC_LASER_RIGHT,  0,  0, -3, 3}, /* W3 */
-    {PC_SHOT_GRAPHIC_LASER_LEFT,   0,  0, -3, 3}, /* W4 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 0}, /* W59 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 0}, /* W62 */
-    {PC_SHOT_GRAPHIC_DART,         0,  0,  0, 8}, /* W78 pos 1 */
-    {PC_SHOT_GRAPHIC_DART_LEFT,    0,  0, -2, 7}, /* W78 pos 2 */
-    {PC_SHOT_GRAPHIC_DART_RIGHT,   0,  0,  2, 7}, /* W78 pos 3 */
-    {PC_SHOT_GRAPHIC_RED,         -8, -2,  0, 0}, /* W115 */
-    {PC_SHOT_GRAPHIC_RED,          8, -2,  0, 0}, /* W116 */
-    {PC_SHOT_GRAPHIC_DART,        -8,  0,  0, 6}, /* W125 */
-    {PC_SHOT_GRAPHIC_DART,         8,  0,  0, 6}, /* W126 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0,  0, 3}, /* W127 pos 1 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0, -1, 2}, /* W127 pos 2 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0,  1, 2}, /* W127 pos 3 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0, -2, 1}, /* W127 pos 4 */
-    {PC_SHOT_GRAPHIC_RED,          0,  0,  2, 1}, /* W127 pos 5 */
-};
-
-static const WeaponDef weapon_defs[] = {
-    {  2,  0, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
-    {  3,  1, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
-    {  4,  2, 1, 1, 0, 0, SFX_ENEMY_SHOT_4},
-    { 59,  3, 1, 1, 2, 2, SFX_ENEMY_SHOT_13},
-    { 62,  4, 1, 1, 2, 2, SFX_ENEMY_SHOT_13},
-    { 78,  5, 3, 3, 0, 0, SFX_ENEMY_SHOT_6},
-    {115,  8, 1, 1, 3, 2, SFX_ENEMY_SHOT_13},
-    {116,  9, 1, 1, 3, 2, SFX_ENEMY_SHOT_13},
-    {125, 10, 1, 1, 0, 0, SFX_WEAPON_1},
-    {126, 11, 1, 1, 0, 0, SFX_WEAPON_1},
-    {127, 12, 5, 5, 0, 2, SFX_ENEMY_SHOT_6},
-};
 
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
@@ -425,6 +384,22 @@ static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
 static u16 pad_pressed;
+static u8 frontend_selection;
+static u8 frontend_play_mode;
+static u8 frontend_episode;
+static u8 frontend_difficulty;
+static u16 frontend_timer;
+static u8 frontend_level_completed;
+static u8 frontend_mode4_active;
+static u8 frontend_display_page;
+static u8 frontend_frame_pending;
+static u8 frontend_pending_kind;
+static u8 frontend_patch_state;
+static u8 frontend_patch_old_selection;
+static u8 frontend_patch_new_selection;
+static const u8 *frontend_pending_frame;
+static const u8 *frontend_pending_palette;
+static u8 frontend_frame_scratch[FRONTEND_FRAME_BYTES] EWRAM_BSS;
 /* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
 static s16 player_source_x;
 static s16 player_source_y;
@@ -433,31 +408,24 @@ static s8 player_source_velocity_y;
 static u8 player_source_x_friction_ticks;
 static u8 player_source_y_friction_ticks;
 static u8 player_invulnerable;
+static u8 player_alive;
+static u8 player_exploding_ticks;
+static u8 player_armor;
+static u8 player_shield;
+static u8 player_shield_max;
+static u8 player_lives;
+static u8 player_end_warp;
 static u8 fire_cooldown;
 static s8 player_bank;
 static u32 player_cash;
 
-static s16 boss_x;
-static s16 boss_y;
-static s8 boss_dx;
-static s8 boss_dy;
-static u8 boss_hp;
-static u8 boss_phase;
 static u8 boss_bar_flash;
 static u8 boss_bar_palette_dirty;
-static u8 boss_aim_fire_wait;
-static u8 boss_spread_fire_wait;
-static u8 boss_aim_left_pos;
-static u8 boss_aim_right_pos;
-static u8 boss_spread_pos;
-static u8 clear_timer;
 static u8 boss_obj_palette_restore_pending;
 
 static u16 level_tick;
 static u16 level_position;
 static u32 logic_accumulator;
-static u8 title_pic_pixels[OT_PIC_DECODED_BYTES] EWRAM_BSS;
-static u8 title_shp_pixels[TITLE_SHP_SCRATCH_PIXELS] EWRAM_BSS;
 static OtLevelPortState source_parity_level EWRAM_BSS;
 
 static u16 bg1_scroll_pixel;
@@ -621,6 +589,7 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
+static u8 autotest_frontend_finish_pending;
 static const char save_type_marker[] __attribute__((used)) = "SRAM_V121";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
@@ -634,10 +603,12 @@ static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
 static void source_effect_cache_commit(void);
+static void frontend_commit_vblank(void);
 
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"
+#include "src/frontend_runtime.inc"
 #include "src/entity_runtime.inc"
 #include "src/combat_runtime.inc"
 #include "src/source_runtime.inc"
@@ -680,7 +651,7 @@ int main(void)
     telemetry_vblank_irqs = 0;
     telemetry_state_transitions = 0;
     hide_all_sprites();
-    enter_title();
+    frontend_begin();
 
     for (;;) {
         VBlankIntrWait();
@@ -702,10 +673,26 @@ int main(void)
         pad_now = keysHeld();
         pad_pressed = keysDown();
 #ifdef AUTOTEST
-        if (game_state == STATE_TITLE && !autotest_running) {
-            autotest_running = 1;
-            pad_pressed = KEY_START;
-        } else if (game_state != STATE_TITLE) {
+        if (game_state != STATE_PLAY) {
+            if (!autotest_running) autotest_running = 1;
+            pad_now = 0;
+#ifdef AUTOTEST_FRONTEND_STRESS
+            pad_pressed =
+                game_state == STATE_TITLE ?
+                    0 :
+                    KEY_A;
+#elif defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
+            pad_pressed =
+                game_state == AUTOTEST_FRONTEND_CAPTURE_STATE ?
+                    0 :
+                    KEY_A;
+#else
+            pad_pressed =
+                autotest_frontend_finish_pending ?
+                    0 :
+                    KEY_A;
+#endif
+        } else {
             pad_now = autotest_input();
             pad_pressed = 0;
             if (
@@ -717,16 +704,98 @@ int main(void)
         }
 #endif
 
-        if (game_state == STATE_TITLE) {
-            if (pad_pressed & KEY_START) {
-                enter_level();
+        if (game_state != STATE_PLAY) {
 #ifdef AUTOTEST_BOOT_ONLY
-                __asm__ volatile("swi 3");
+            u8 old_state = game_state;
 #endif
+            frontend_update();
+#ifdef AUTOTEST_FRONTEND_CAPTURE_STATE
+            static u8 frontend_capture_armed;
+
+            if (
+                game_state == AUTOTEST_FRONTEND_CAPTURE_STATE
+            ) {
+                if (!frontend_capture_armed) {
+#ifdef AUTOTEST_FRONTEND_CAPTURE_SELECTION
+                    frontend_selection =
+                        AUTOTEST_FRONTEND_CAPTURE_SELECTION;
+                    frontend_redraw();
+#endif
+                    frontend_capture_armed = 1;
+                } else if (
+                    frontend_capture_armed == 1 &&
+                    !frontend_frame_pending
+                ) {
+                    /*
+                     * The page-select write happens during this VBlank.
+                     * Let the PPU rasterize one complete frame before the
+                     * headless screenshot hook stops execution.
+                     */
+                    frontend_capture_armed = 2;
+                } else if (frontend_capture_armed == 2) {
+                    __asm__ volatile("swi 3");
+                }
             }
+#endif
+#ifdef AUTOTEST_FRONTEND_STRESS
+            {
+                static u8 frontend_stress_started;
+                static u16 frontend_stress_frames;
+
+                if (game_state == STATE_TITLE) {
+                    if (!frontend_stress_started) {
+                        frontend_stress_started = 1;
+                        telemetry_missed_vblanks = 0;
+                        last_vblank_seen = current_vblank;
+                    }
+                    {
+                        u8 old_selection = frontend_selection;
+
+#ifndef AUTOTEST_FRONTEND_STRESS_NO_REDRAW
+                        frontend_selection ^= 1u;
+                        frontend_redraw_selection(old_selection);
+#else
+                        (void)old_selection;
+#endif
+                    }
+                    frontend_stress_frames++;
+                    if (frontend_stress_frames == 600) {
+                        volatile u8 *sram =
+                            (volatile u8 *)0x0E000000;
+
+                        sram[0] = 'T';
+                        sram[1] = 'G';
+                        sram[2] = 'F';
+                        sram[3] = '4';
+                        sram_write_u32(4, frontend_stress_frames);
+                        sram_write_u32(8, telemetry_missed_vblanks);
+                        sram_write_u32(12, telemetry_vblank_irqs);
+                        sram_write_u32(
+                            16,
+                            frontend_frame_pending
+                        );
+                        __asm__ volatile("swi 3");
+                    }
+                }
+            }
+#endif
+#ifdef AUTOTEST
+            if (
+                autotest_frontend_finish_pending &&
+                !frontend_frame_pending
+            ) {
+                autotest_finish();
+            }
+#endif
+#ifdef AUTOTEST_BOOT_ONLY
+            if (old_state == STATE_NEXT_LEVEL_MENU &&
+                game_state == STATE_PLAY) {
+                __asm__ volatile("swi 3");
+            }
+#endif
         } else {
             if (
-                (game_state == STATE_PLAY || game_state == STATE_BOSS) &&
+                game_state == STATE_PLAY &&
                 (pad_pressed & KEY_START)
             ) {
                 toggle_pause();
@@ -744,12 +813,12 @@ int main(void)
                 if (logic_accumulator >= ORIGINAL_LOGIC_DENOMINATOR) {
                     logic_accumulator -= ORIGINAL_LOGIC_DENOMINATOR;
                     update_logic();
-                    if (game_state != STATE_TITLE) {
+                    if (game_state == STATE_PLAY) {
                         render_game();
 #ifdef AUTOTEST_SCREENSHOT_TICK
                         if (
                             !autotest_screenshot_delay &&
-                            game_state != STATE_TITLE &&
+                            game_state == STATE_PLAY &&
                             level_tick >= AUTOTEST_SCREENSHOT_TICK
                         ) {
                             autotest_screenshot_delay = 3;
@@ -799,7 +868,7 @@ int main(void)
             if (
                 autotest_running &&
                 telemetry_display_frames >= 20000 &&
-                game_state != STATE_TITLE
+                game_state == STATE_PLAY
             ) {
                 /*
                  * Deterministic deadlock watchdog: commit partial telemetry

@@ -2,6 +2,7 @@
 
 static void render_player_sprite(u8 priority)
 {
+    if (!player_alive) return;
     put_sprite_with_attr1(
         source_player_screen_x(), source_player_screen_y(),
         player_bank ? OBJ_TILE_PLAYER_1 : OBJ_TILE_PLAYER_0,
@@ -134,22 +135,12 @@ static void render_source_enemy_shots(u8 priority)
     }
 }
 
-static void render_legacy_enemy_shots(u8 priority)
-{
-    s16 index;
-
-    for (index = MAX_ENEMY_SHOTS - 1; index >= 0; index--) {
-        if (enemy_shots[index].active) {
-            render_enemy_shot(&enemy_shots[index], priority);
-        }
-    }
-}
-
 static void render_source_play_scene(void)
 {
     u8 visible_source_enemies = 0;
 
     source_enemy_cache_begin_frame();
+    render_source_boss_bars();
 
     /*
      * PC is a software renderer: the last blit is in front.  GBA resolves
@@ -222,28 +213,6 @@ static void render_source_play_scene(void)
     }
 }
 
-static void render_boss_scene(void)
-{
-    render_boss_bar();
-    render_effect_sprites(0);
-    render_legacy_rewards(0);
-    render_legacy_enemy_shots(0);
-    render_player_sprite(0);
-    render_player_shots(0);
-    put_sprite(
-        boss_x, boss_y, OBJ_TILE_BOSS_0, OBJ_PAL_BOSS_0,
-        ATTR1_SIZE_64, 0
-    );
-}
-
-static void render_clear_scene(void)
-{
-    render_effect_sprites(0);
-    render_legacy_rewards(0);
-    render_player_sprite(0);
-    render_player_shots(0);
-}
-
 static void render_game(void)
 {
     u8 old_count = previous_oam_count;
@@ -261,13 +230,7 @@ static void render_game(void)
     }
     render_cash_counter();
 
-    if (game_state == STATE_PLAY) {
-        render_source_play_scene();
-    } else if (game_state == STATE_BOSS) {
-        render_boss_scene();
-    } else if (game_state == STATE_CLEAR) {
-        render_clear_scene();
-    }
+    if (game_state == STATE_PLAY) render_source_play_scene();
     source_effect_cache_end_frame();
 
     visible_count = oam_count;

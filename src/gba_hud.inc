@@ -55,7 +55,32 @@ static void render_pause_text(void)
     }
 }
 
-static void render_boss_bar(void)
+static u8 source_boss_bar_armor(u8 bar)
+{
+    u8 link = source_parity_level.boss_bar_link[bar];
+    u16 armor = 256;
+    u8 index;
+
+    if (link == 0) return 0;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy = &source_parity_level.enemy[index];
+
+        if (
+            source_parity_level.enemy_avail[index] != 1 &&
+            enemy->linknum == link &&
+            enemy->armorleft < armor
+        ) {
+            armor = enemy->armorleft;
+        }
+    }
+    if (armor == 0 || armor == 256) {
+        source_parity_level.boss_bar_link[bar] = 0;
+        return 0;
+    }
+    return armor == 255 ? 254 : (u8)armor;
+}
+
+static void render_boss_bar_at(u8 armor, s16 centre_x)
 {
     u8 index;
     u8 full_segments;
@@ -71,15 +96,15 @@ static void render_boss_bar(void)
      * Draw fill first because lower OAM indices win same-priority OBJ ties.
      */
     pc_width = (u8)(
-        boss_hp / 10u +
-        (boss_hp + 5u) / 10u +
+        armor / 10u +
+        (armor + 5u) / 10u +
         1u
     );
     gba_width = (u8)((pc_width * 3u + 2u) / 4u);
     gba_width = (u8)((gba_width + 3u) & ~3u);
     if (gba_width > 40) gba_width = 40;
     if (gba_width < 4) gba_width = 4;
-    fill_x = 116 - gba_width / 2;
+    fill_x = (s16)(centre_x - gba_width / 2);
     full_segments = gba_width >> 3;
     for (index = 0; index < full_segments; index++) {
         put_sprite(
@@ -97,9 +122,28 @@ static void render_boss_bar(void)
     }
     for (index = 0; index < 5; index++) {
         put_sprite(
-            96 + ((u16)index << 3), 6,
+            centre_x - 20 + ((u16)index << 3), 6,
             OBJ_TILE_BOSS_BAR, OBJ_PAL_BOSS_BAR,
             ATTR1_SIZE_8, 0
         );
+    }
+}
+
+static void render_source_boss_bars(void)
+{
+    u8 armor[2];
+    u8 count = 0;
+    u8 index;
+
+    for (index = 0; index < 2; index++) {
+        u8 value = source_boss_bar_armor(index);
+
+        if (value != 0) armor[count++] = value;
+    }
+    if (count == 1) {
+        render_boss_bar_at(armor[0], 116);
+    } else if (count == 2) {
+        render_boss_bar_at(armor[0], 94);
+        render_boss_bar_at(armor[1], 139);
     }
 }

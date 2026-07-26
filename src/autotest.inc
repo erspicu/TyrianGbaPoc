@@ -2,27 +2,32 @@
 
 #ifdef AUTOTEST
 enum {
-    SOURCE_STAGE4_EXPECTED_EVENTS = 878,
-    SOURCE_STAGE4_EXPECTED_APPLIED = 869,
+    /*
+     * Deterministic first-level run through the authored boss group and
+     * OpenTyrian end-level flight.  These replace the old position-5400
+     * POC handoff values.
+     */
+    SOURCE_STAGE4_EXPECTED_EVENTS = 935,
+    SOURCE_STAGE4_EXPECTED_APPLIED = 926,
     SOURCE_STAGE4_EXPECTED_DEFERRED = 5,
     SOURCE_STAGE4_EXPECTED_SKIPPED = 4,
     SOURCE_STAGE4_EXPECTED_SPAWN_ATTEMPTS = 473,
     SOURCE_STAGE4_EXPECTED_SPAWN_SUCCESSES = 473,
     SOURCE_STAGE4_EXPECTED_POOL_FULL = 0,
-    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 2509,
-    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 1838,
-    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 57890,
-    SOURCE_STAGE4_EXPECTED_RELEASES = 456,
-    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 185,
-    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 185,
-    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 9,
-    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 9163,
-    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 185,
-    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 11,
-    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 341,
-    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 39,
-    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 73,
-    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1121,
+    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 7199,
+    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 2471,
+    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 78100,
+    SOURCE_STAGE4_EXPECTED_RELEASES = 483,
+    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 428,
+    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 428,
+    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 32,
+    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 17466,
+    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 426,
+    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 33,
+    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 585,
+    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 255,
+    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 100,
+    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1406,
     SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 3,
     SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 2,
     SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 3,
@@ -46,11 +51,15 @@ static void autotest_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;
     u8 pass = (
-        game_state == STATE_TITLE &&
+        game_state == STATE_GAME_MENU &&
+        frontend_selection == 4 &&
+        frontend_level_completed &&
+        frontend_mode4_active &&
+        !frontend_frame_pending &&
         !game_paused &&
         level_position >= LEVEL_BOSS_TICK &&
         telemetry_max_oam <= SPRITE_LIMIT &&
-        telemetry_effect_drops == 0 &&
+        telemetry_effect_drops == 33 &&
         telemetry_reward_drops == 0 &&
         telemetry_enemy_replacements == 0 &&
         telemetry_pause_toggles == 2 &&
@@ -129,7 +138,7 @@ static void autotest_finish(void)
         source_parity_level.death_spawn_pool_full_count == 0 &&
         source_parity_level.death_spawn_missing_definition_count == 0 &&
         source_parity_level.score_item_unsupported_pickup_count == 0 &&
-        source_parity_level.data_cube_pickup_count == 0 &&
+        source_parity_level.data_cube_pickup_count == 1 &&
         source_parity_level.front_weapon_powerup_count == 0 &&
         source_parity_level.rear_weapon_powerup_count == 0 &&
         telemetry_source_death_control_events ==
@@ -160,12 +169,12 @@ static void autotest_finish(void)
             SOURCE_EFFECT_CACHE_SLOT_COUNT &&
         telemetry_effect_cache_max_visible_unique <=
             SOURCE_EFFECT_CACHE_SLOT_COUNT &&
-        source_parity_level.enemy_shot_active_count == 0 &&
-        source_parity_level.active_enemy_count == 20 &&
-        player_cash == 1171 &&
-        telemetry_missed_vblanks <= 160 &&
-        telemetry_source_launch_attempts == 0 &&
-        telemetry_source_launch_successes == 0 &&
+        source_parity_level.enemy_shot_active_count == 2 &&
+        source_parity_level.active_enemy_count == 0 &&
+        player_cash == 1456 &&
+        telemetry_missed_vblanks <= 640 &&
+        telemetry_source_launch_attempts == 7 &&
+        telemetry_source_launch_successes == 7 &&
         telemetry_source_random_attempts == 0 &&
         telemetry_source_random_successes == 0 &&
         source_world_to_screen_x(SOURCE_PRESENTATION_X_ORIGIN) == 0 &&
@@ -191,7 +200,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 19;
+    sram[4] = 20;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -422,10 +431,27 @@ static u16 autotest_input(void)
      */
     return 0;
 #endif
-    if (game_state == STATE_BOSS) {
-        if (player_screen_x + 16 < boss_x + 32) keys |= KEY_RIGHT;
-        if (player_screen_x + 16 > boss_x + 32) keys |= KEY_LEFT;
-        return keys;
+    if (source_parity_level.boss_bar_link[0] != 0) {
+        for (
+            source_index = 0;
+            source_index < OT_ENEMY_COUNT;
+            source_index++
+        ) {
+            const OtEnemy *enemy =
+                &source_parity_level.enemy[source_index];
+
+            if (
+                source_parity_level.enemy_avail[source_index] == 1 ||
+                enemy->linknum !=
+                    source_parity_level.boss_bar_link[0]
+            ) {
+                continue;
+            }
+            if (player_source_x < enemy->ex - 2) keys |= KEY_RIGHT;
+            if (player_source_x > enemy->ex + 2) keys |= KEY_LEFT;
+            if (player_source_y < 140) keys |= KEY_DOWN;
+            return keys;
+        }
     }
     /*
      * Event-33 data cubes are physical score-item enemies (evalue==1), not

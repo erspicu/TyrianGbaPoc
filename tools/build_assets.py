@@ -9,6 +9,7 @@ import hashlib
 import importlib.util
 import struct
 import wave
+import zlib
 from pathlib import Path
 from types import ModuleType
 
@@ -104,6 +105,14 @@ ENEMY_FRAME_VERSION = 1
 ENEMY_FRAME_RECORD_BYTES = 8
 ENEMY_FRAME_TILES = 16
 ENEMY_FRAME_BYTES = ENEMY_FRAME_TILES * 32
+
+FRONTEND_FRAME_WIDTH = 240
+FRONTEND_FRAME_HEIGHT = 160
+FRONTEND_FRAME_BYTES = FRONTEND_FRAME_WIDTH * FRONTEND_FRAME_HEIGHT
+FRONTEND_GLYPH_WIDTH = 8
+FRONTEND_GLYPH_HEIGHT = 8
+FRONTEND_GLYPH_CHARACTERS = "0123456789%"
+FRONTEND_PCX_PALETTES = (0, 7, 5, 8, 10, 5, 18, 19, 19, 20, 21, 22, 5)
 
 assert GBA_VIEW_CROP_X == 12
 assert GBA_VIEW_CROP_Y == 12
@@ -263,6 +272,808 @@ def build_title(nes: ModuleType, image_root: Path) -> Image.Image:
     centred(116, "PRESS START", 15, (255, 255, 255))
     centred(145, "GBA LEVEL 1 HARDWARE DEMO", 8, (104, 208, 255))
     return output
+
+
+def frontend_glyph_id(character: str) -> int:
+    if "A" <= character <= "Z":
+        return ord(character) - ord("A")
+    if "a" <= character <= "z":
+        return 34 + ord(character) - ord("a")
+    if "1" <= character <= "9":
+        return 69 + ord(character) - ord("0")
+    return {
+        "0": 79,
+        "!": 26,
+        '"': 33,
+        "#": 60,
+        "$": 61,
+        "%": 62,
+        "'": 32,
+        "(": 64,
+        ")": 65,
+        "*": 63,
+        "+": 84,
+        ",": 29,
+        "-": 83,
+        ".": 28,
+        "/": 80,
+        ":": 31,
+        ";": 30,
+        "=": 85,
+        "?": 27,
+        "[": 68,
+        "\\": 82,
+        "]": 69,
+        "{": 66,
+        "|": 81,
+        "}": 67,
+    }.get(character, -1)
+
+
+def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
+    data = hdt_path.read_bytes()
+    crypt_key = (204, 129, 63, 255, 71, 19, 25, 62, 1, 99)
+    position = 4
+
+    def skip() -> None:
+        nonlocal position
+        if position >= len(data):
+            raise ValueError("tyrian.hdt text table is truncated")
+        length = data[position]
+        position += 1
+        if position + length > len(data):
+            raise ValueError("tyrian.hdt Pascal string is truncated")
+        position += length
+
+    def read() -> str:
+        nonlocal position
+        if position >= len(data):
+            raise ValueError("tyrian.hdt text table is truncated")
+        length = data[position]
+        position += 1
+        encrypted = bytearray(data[position : position + length])
+        if len(encrypted) != length:
+            raise ValueError("tyrian.hdt Pascal string is truncated")
+        position += length
+        for index in range(length - 1, -1, -1):
+            encrypted[index] ^= crypt_key[index % len(crypt_key)]
+            if index:
+                encrypted[index] ^= encrypted[index - 1]
+        return encrypted.decode("latin1")
+
+    def skip_group(entry_count: int) -> None:
+        skip()
+        for _ in range(entry_count):
+            skip()
+        skip()
+
+    def read_group(entry_count: int) -> list[str]:
+        skip()
+        values = [read() for _ in range(entry_count)]
+        skip()
+        return values
+
+    # OpenTyrian JE_loadHelpText(), in source/file order.
+    skip_group(39)
+    planet_name = read_group(21)
+    misc_text = read_group(68)
+    skip_group(5)
+    skip_group(11)
+    title_menu = read_group(7)
+    skip_group(9)
+    skip_group(6)
+    skip_group(34)
+    full_game_menu = read_group(7)
+    skip_group(9)
+    skip_group(8)
+    skip_group(6)
+    skip_group(6)
+    skip_group(5)
+    episode_name = read_group(6)
+    difficulty_name = read_group(7)
+    gameplay_name = read_group(5)
+    return {
+        "planet_name": planet_name,
+        "misc_text": misc_text,
+        "title_menu": title_menu,
+        "full_game_menu": full_game_menu,
+        "episode_name": episode_name,
+        "difficulty_name": difficulty_name,
+        "gameplay_name": gameplay_name,
+    }
+
+
+class FrontendSourceRenderer:
+    """Build-time counterpart of the OpenTyrian PIC/SHP menu renderer."""
+
+    def __init__(self, data_root: Path):
+        self.pic_data = (data_root / "tyrian.pic").read_bytes()
+        self.shp_data = (data_root / "tyrian.shp").read_bytes()
+        self.palette_data = (data_root / "palette.dat").read_bytes()
+        self.text = decode_frontend_text(data_root / "tyrian.hdt")
+        self.pic_count = struct.unpack_from("<H", self.pic_data, 0)[0]
+        self.shp_count = struct.unpack_from("<H", self.shp_data, 0)[0]
+        if self.pic_count != 13 or self.shp_count != 12:
+            raise ValueError(
+                "unexpected Tyrian PIC/SHP table count: "
+                f"{self.pic_count=}, {self.shp_count=}"
+            )
+        if len(self.palette_data) != 23 * 256 * 3:
+            raise ValueError("unexpected palette.dat size")
+        self._picture_cache: dict[int, np.ndarray] = {}
+        self._sprite_cache: dict[tuple[int, int], np.ndarray | None] = {}
+
+    @staticmethod
+    def scale_x(source_x: int) -> int:
+        return max(0, source_x * FRONTEND_FRAME_WIDTH // 320)
+
+    @staticmethod
+    def scale_y(source_y: int) -> int:
+        return max(0, source_y * FRONTEND_FRAME_HEIGHT // 200)
+
+    def palette_rgb(self, picture_number: int) -> np.ndarray:
+        palette_number = FRONTEND_PCX_PALETTES[picture_number - 1]
+        offset = palette_number * 256 * 3
+        return np.frombuffer(
+            self.palette_data[offset : offset + 256 * 3],
+            dtype=np.uint8,
+        ).reshape(256, 3)
+
+    def palette_gba(self, picture_number: int) -> bytes:
+        rgb = self.palette_rgb(picture_number).astype(np.uint16)
+        words = (
+            (rgb[:, 0] >> 1)
+            | ((rgb[:, 1] >> 1) << 5)
+            | ((rgb[:, 2] >> 1) << 10)
+        ).astype("<u2")
+        return words.tobytes()
+
+    def decode_picture(self, picture_number: int) -> np.ndarray:
+        cached = self._picture_cache.get(picture_number)
+        if cached is not None:
+            return cached.copy()
+        index = picture_number - 1
+        if not 0 <= index < self.pic_count:
+            raise ValueError(f"PIC number outside source table: {picture_number}")
+        start = struct.unpack_from("<I", self.pic_data, 2 + index * 4)[0]
+        end = (
+            struct.unpack_from("<I", self.pic_data, 2 + (index + 1) * 4)[0]
+            if index + 1 < self.pic_count
+            else len(self.pic_data)
+        )
+        stream = self.pic_data[start:end]
+        output = bytearray()
+        position = 0
+        while len(output) < 320 * 200:
+            if position >= len(stream):
+                raise ValueError(f"PIC {picture_number} RLE stream is truncated")
+            code = stream[position]
+            position += 1
+            if code & 0xC0 == 0xC0:
+                count = code & 0x3F
+                if count == 0 or position >= len(stream):
+                    raise ValueError(f"PIC {picture_number} has invalid RLE")
+                output.extend(bytes((stream[position],)) * count)
+                position += 1
+            else:
+                output.append(code)
+        if len(output) != 320 * 200:
+            raise ValueError(f"PIC {picture_number} RLE overruns its canvas")
+        picture = np.frombuffer(bytes(output), dtype=np.uint8).reshape(200, 320)
+        self._picture_cache[picture_number] = picture
+        return picture.copy()
+
+    def picture_frame(self, picture_number: int) -> np.ndarray:
+        picture = self.decode_picture(picture_number)
+        source_x = np.arange(FRONTEND_FRAME_WIDTH) * 320 // FRONTEND_FRAME_WIDTH
+        source_y = np.arange(FRONTEND_FRAME_HEIGHT) * 200 // FRONTEND_FRAME_HEIGHT
+        return picture[np.ix_(source_y, source_x)].copy()
+
+    def sprite(self, table: int, sprite_index: int) -> np.ndarray | None:
+        key = (table, sprite_index)
+        if key in self._sprite_cache:
+            sprite = self._sprite_cache[key]
+            return None if sprite is None else sprite.copy()
+        if not 0 <= table < 7:
+            raise ValueError(f"SHP table outside source file: {table}")
+        start = struct.unpack_from("<I", self.shp_data, 2 + table * 4)[0]
+        position = start
+        count = struct.unpack_from("<H", self.shp_data, position)[0]
+        position += 2
+        if not 0 <= sprite_index < count:
+            raise ValueError(
+                f"SHP sprite outside table: {table=}, {sprite_index=}, {count=}"
+            )
+        for index in range(sprite_index + 1):
+            populated = self.shp_data[position] != 0
+            position += 1
+            if not populated:
+                if index == sprite_index:
+                    self._sprite_cache[key] = None
+                    return None
+                continue
+            width, height, encoded_bytes = struct.unpack_from(
+                "<HHH", self.shp_data, position
+            )
+            position += 6
+            encoded = self.shp_data[position : position + encoded_bytes]
+            position += encoded_bytes
+            if index != sprite_index:
+                continue
+            pixels = np.full((height, width), 0xFF, dtype=np.uint8)
+            source = 0
+            x = 0
+            y = 0
+            while source < len(encoded):
+                code = encoded[source]
+                source += 1
+                if code == 255:
+                    if source >= len(encoded):
+                        raise ValueError("SHP skip opcode is truncated")
+                    x += encoded[source]
+                    source += 1
+                elif code == 254:
+                    x = width
+                elif code == 253:
+                    x += 1
+                else:
+                    if x < width and y < height:
+                        pixels[y, x] = code
+                    x += 1
+                while x >= width:
+                    x -= width
+                    y += 1
+            self._sprite_cache[key] = pixels
+            return pixels.copy()
+        raise AssertionError("SHP sprite iterator did not reach its target")
+
+    def text_width(self, text: str, font: int) -> int:
+        width = 0
+        for character in text:
+            glyph_id = frontend_glyph_id(character)
+            if character == " ":
+                width += 6
+            elif character != "~" and glyph_id >= 0:
+                glyph = self.sprite(font, glyph_id)
+                if glyph is not None:
+                    width += glyph.shape[1] + 1
+        return width
+
+    def draw_glyph(
+        self,
+        frame: np.ndarray,
+        glyph: np.ndarray,
+        source_x: int,
+        source_y: int,
+        hue: int,
+        value: int,
+        shadow: bool = False,
+    ) -> None:
+        glyph_height, glyph_width = glyph.shape
+        output_x0 = self.scale_x(source_x)
+        output_y0 = self.scale_y(source_y)
+        output_x1 = self.scale_x(source_x + glyph_width)
+        output_y1 = self.scale_y(source_y + glyph_height)
+        output_width = max(1, output_x1 - output_x0)
+        output_height = max(1, output_y1 - output_y0)
+        for output_y in range(output_height):
+            target_y = output_y0 + output_y
+            if not 0 <= target_y < FRONTEND_FRAME_HEIGHT:
+                continue
+            source_y0 = output_y * glyph_height // output_height
+            source_y1 = min(
+                glyph_height,
+                (
+                    (output_y + 1) * glyph_height +
+                    output_height - 1
+                ) // output_height,
+            )
+            for output_x in range(output_width):
+                target_x = output_x0 + output_x
+                if not 0 <= target_x < FRONTEND_FRAME_WIDTH:
+                    continue
+                source_x0 = output_x * glyph_width // output_width
+                source_x1 = min(
+                    glyph_width,
+                    (
+                        (output_x + 1) * glyph_width +
+                        output_width - 1
+                    ) // output_width,
+                )
+                footprint = glyph[
+                    source_y0:source_y1,
+                    source_x0:source_x1,
+                ]
+                opaque = footprint[footprint != 0xFF]
+                if not opaque.size:
+                    continue
+                pixel = int(opaque[np.argmax(opaque & 15)])
+                if shadow:
+                    frame[target_y, target_x] = 0
+                else:
+                    brightness = min(15, max(0, (pixel & 15) + value))
+                    frame[target_y, target_x] = (hue << 4) | brightness
+
+    def draw_text(
+        self,
+        frame: np.ndarray,
+        text: str,
+        source_x: int,
+        source_y: int,
+        font: int,
+        align: str,
+        hue: int,
+        value: int,
+        shadow_distance: int,
+    ) -> None:
+        x = source_x
+        if align == "center":
+            x -= self.text_width(text, font) // 2
+        elif align == "right":
+            x -= self.text_width(text, font)
+
+        def pass_text(start_x: int, y: int, shadow: bool) -> None:
+            cursor_x = start_x
+            bright = 0
+            for character in text:
+                glyph_id = frontend_glyph_id(character)
+                if character == " ":
+                    cursor_x += 6
+                elif character == "~":
+                    bright = 4 if bright == 0 else 0
+                elif glyph_id >= 0:
+                    glyph = self.sprite(font, glyph_id)
+                    if glyph is not None:
+                        self.draw_glyph(
+                            frame,
+                            glyph,
+                            cursor_x,
+                            y,
+                            hue,
+                            value + bright,
+                            shadow,
+                        )
+                        cursor_x += glyph.shape[1] + 1
+
+        if shadow_distance:
+            pass_text(
+                x + shadow_distance,
+                source_y + shadow_distance,
+                True,
+            )
+        pass_text(x, source_y, False)
+
+    def draw_logo(self, frame: np.ndarray) -> None:
+        logo = self.sprite(3, 146)
+        if logo is None or logo.shape != (121, 304):
+            raise ValueError(
+                "Tyrian title logo shape changed: "
+                f"{None if logo is None else logo.shape}"
+            )
+        for y in range(91):
+            source_y = y * logo.shape[0] // 91
+            for x in range(228):
+                pixel = int(logo[source_y, x * logo.shape[1] // 228])
+                if pixel != 0xFF:
+                    frame[6 + y, 6 + x] = pixel
+
+
+def build_frontend_mode4_assets(
+    data_root: Path,
+    preview: Path,
+) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+    source = FrontendSourceRenderer(data_root)
+    frames: list[np.ndarray] = []
+    palettes: list[bytes] = []
+    names: list[str] = []
+    metadata: dict[str, int] = {
+        "FRONTEND_FRAME_BYTES": FRONTEND_FRAME_BYTES,
+        "FRONTEND_GLYPH_BYTES":
+            FRONTEND_GLYPH_WIDTH * FRONTEND_GLYPH_HEIGHT,
+        "FRONTEND_GLYPH_COUNT": len(FRONTEND_GLYPH_CHARACTERS),
+    }
+    frontend_preview = preview / "frontend_mode4"
+    frontend_preview.mkdir(parents=True, exist_ok=True)
+
+    def add(name: str, frame: np.ndarray, picture_number: int) -> int:
+        if frame.shape != (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH):
+            raise ValueError(f"front-end frame has invalid shape: {frame.shape}")
+        index = len(frames)
+        frames.append(frame.copy())
+        palettes.append(source.palette_gba(picture_number))
+        names.append(name)
+        metadata[f"FRONTEND_FRAME_{name.upper()}"] = index
+        rgb = np.minimum(
+            source.palette_rgb(picture_number).astype(np.uint16) * 4,
+            255,
+        ).astype(np.uint8)
+        Image.fromarray(rgb[frame], "RGB").save(
+            frontend_preview / f"{index:02d}_{name}.png"
+        )
+        return index
+
+    def render_title(selection: int) -> np.ndarray:
+        frame = source.picture_frame(4)
+        source.draw_logo(frame)
+        source.draw_text(
+            frame, "Start New Game", 160, 108, 1, "center",
+            15, -1 if selection == 0 else -4, 2,
+        )
+        source.draw_text(
+            frame, "JukeBox", 160, 132, 1, "center",
+            15, -6 if selection == 1 else -8, 2,
+        )
+        return frame
+
+    def render_select_menu(
+        title: str,
+        items: list[str],
+        selection: int,
+        source_y: int,
+        source_dy: int,
+        left_aligned: bool,
+    ) -> np.ndarray:
+        frame = source.picture_frame(2)
+        source.draw_text(
+            frame, title, 160, 20, 0, "center", 15, -3, 2
+        )
+        for index, item in enumerate(items):
+            source.draw_text(
+                frame,
+                item,
+                20 if left_aligned else 160,
+                source_y + source_dy * index,
+                1,
+                "left" if left_aligned else "center",
+                15,
+                -2 if selection == index else -4,
+                2,
+            )
+        return frame
+
+    def render_game_menu(selection: int) -> np.ndarray:
+        frame = source.picture_frame(1)
+        items = source.text["full_game_menu"]
+        source.draw_text(
+            frame, items[0] or "Game Menu",
+            234, 10, 0, "center", 15, -3, 2,
+        )
+        for index in range(6):
+            source_y = 38 + index * 16 + (16 if index == 5 else 0)
+            disabled = index < 4
+            value = -8 if disabled else -3
+            if selection == index:
+                value += 2
+            source.draw_text(
+                frame,
+                items[index + 1],
+                166,
+                source_y,
+                2,
+                "left",
+                15,
+                value,
+                2,
+            )
+        return frame
+
+    def render_next_level(selection: int) -> np.ndarray:
+        frame = source.picture_frame(1)
+        source.draw_text(
+            frame, "Next Level", 234, 10, 0, "center", 15, -3, 2
+        )
+        source.draw_text(
+            frame,
+            source.text["planet_name"][0] or "Tyrian",
+            166,
+            38,
+            2,
+            "left",
+            15,
+            -1 if selection == 0 else -3,
+            2,
+        )
+        source.draw_text(
+            frame,
+            "Exit to Game Menu",
+            166,
+            150,
+            2,
+            "left",
+            15,
+            -1 if selection == 1 else -3,
+            2,
+        )
+        return frame
+
+    def render_stats(collected: bool, arcade: bool) -> np.ndarray:
+        frame = np.zeros(
+            (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+            dtype=np.uint8,
+        )
+        misc = source.text["misc_text"]
+        source.draw_text(
+            frame, (misc[26] or "Completed") + " Tyrian",
+            20, 20, 2, "left", 15, 2, 2,
+        )
+        cash_label = misc[27] or "Cash"
+        source.draw_text(
+            frame, cash_label,
+            30, 50, 2, "left", 15, 2, 2,
+        )
+        enemy_label = misc[62] or "Enemies Destroyed"
+        source.draw_text(
+            frame, enemy_label,
+            40, 90, 2, "left", 15, 2, 2,
+        )
+        if not arcade:
+            source.draw_text(
+                frame, misc[3] or "Cubes",
+                30, 120, 2, "left", 15, 2, 2,
+            )
+            source.draw_text(
+                frame,
+                "Collected" if collected else (misc[14] or "None"),
+                50,
+                135,
+                2,
+                "left",
+                15,
+                2,
+                2,
+            )
+        source.draw_text(
+            frame, misc[4] or "Press a key",
+            90, 160, 2, "left", 15, 2, 2,
+        )
+        metadata["FRONTEND_STATS_CASH_X"] = source.scale_x(
+            30 + source.text_width(cash_label, 2) + 6
+        )
+        metadata["FRONTEND_STATS_CASH_Y"] = source.scale_y(50)
+        metadata["FRONTEND_STATS_KILLED_X"] = source.scale_x(
+            40 + source.text_width(enemy_label, 2) + 6
+        )
+        metadata["FRONTEND_STATS_KILLED_Y"] = source.scale_y(90)
+        return frame
+
+    add("intro_logo_1", source.picture_frame(10), 10)
+    add("intro_logo_2", source.picture_frame(12), 12)
+    metadata["FRONTEND_FRAME_TITLE_BASE"] = len(frames)
+    for selection in range(2):
+        add(f"title_{selection}", render_title(selection), 4)
+
+    metadata["FRONTEND_FRAME_PLAY_MODE_BASE"] = len(frames)
+    for selection in range(2):
+        add(
+            f"play_mode_{selection}",
+            render_select_menu(
+                "Play Mode",
+                ["Full Game", "Arcade"],
+                selection,
+                54,
+                24,
+                False,
+            ),
+            2,
+        )
+
+    episode_items = [
+        source.text["episode_name"][index + 1]
+        for index in range(4)
+    ]
+    metadata["FRONTEND_FRAME_EPISODE_BASE"] = len(frames)
+    for selection in range(4):
+        add(
+            f"episode_{selection}",
+            render_select_menu(
+                source.text["episode_name"][0] or "Select an Episode",
+                episode_items,
+                selection,
+                50,
+                30,
+                True,
+            ),
+            2,
+        )
+
+    metadata["FRONTEND_FRAME_DIFFICULTY_BASE"] = len(frames)
+    for selection in range(3):
+        add(
+            f"difficulty_{selection}",
+            render_select_menu(
+                source.text["difficulty_name"][0] or "Difficulty Level",
+                ["Easy", "Normal", "Hard"],
+                selection,
+                54,
+                24,
+                False,
+            ),
+            2,
+        )
+
+    metadata["FRONTEND_FRAME_GAME_MENU_BASE"] = len(frames)
+    for selection in range(6):
+        add(f"game_menu_{selection}", render_game_menu(selection), 1)
+
+    metadata["FRONTEND_FRAME_NEXT_LEVEL_BASE"] = len(frames)
+    for selection in range(2):
+        add(f"next_level_{selection}", render_next_level(selection), 1)
+
+    add("stats_full_none", render_stats(False, False), 1)
+    add("stats_full_collected", render_stats(True, False), 1)
+    add("stats_arcade", render_stats(False, True), 1)
+
+    game_over = np.zeros(
+        (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+        dtype=np.uint8,
+    )
+    source.draw_text(
+        game_over, "GAME OVER", 160, 74, 0, "center", 15, 2, 2
+    )
+    source.draw_text(
+        game_over,
+        source.text["misc_text"][4] or "Press a key",
+        160,
+        120,
+        2,
+        "center",
+        15,
+        0,
+        2,
+    )
+    add("game_over", game_over, 1)
+
+    glyphs = bytearray()
+    for character_index, character in enumerate(FRONTEND_GLYPH_CHARACTERS):
+        glyph = source.sprite(2, frontend_glyph_id(character))
+        if glyph is None:
+            raise ValueError(f"front-end dynamic glyph is empty: {character!r}")
+        canvas = np.full(
+            (FRONTEND_GLYPH_HEIGHT, FRONTEND_GLYPH_WIDTH),
+            0xFF,
+            dtype=np.uint8,
+        )
+        source.draw_glyph(canvas, glyph, 0, 0, 15, 2)
+        glyphs.extend(canvas.tobytes())
+        metadata[f"FRONTEND_GLYPH_{character_index}_ADVANCE"] = max(
+            1,
+            source.scale_x(glyph.shape[1] + 1),
+        )
+
+    metadata["FRONTEND_FRAME_COUNT"] = len(frames)
+    frame_bytes = b"".join(frame.tobytes() for frame in frames)
+    palette_bytes = b"".join(palettes)
+    if len(frame_bytes) != len(frames) * FRONTEND_FRAME_BYTES:
+        raise AssertionError("Mode 4 front-end frame packing changed")
+    if len(palette_bytes) != len(frames) * 512:
+        raise AssertionError("Mode 4 front-end palette packing changed")
+
+    unique_counts: list[int] = []
+    tile_mode_bytes: list[int] = []
+    global_tiles: set[bytes] = set()
+    for frame in frames:
+        tiles = {
+            frame[y : y + 8, x : x + 8].tobytes()
+            for y in range(0, FRONTEND_FRAME_HEIGHT, 8)
+            for x in range(0, FRONTEND_FRAME_WIDTH, 8)
+        }
+        unique_counts.append(len(tiles))
+        global_tiles.update(tiles)
+        tile_mode_bytes.append(len(tiles) * 64 + 600 * 2)
+
+    selection_groups = (
+        (
+            "title", metadata["FRONTEND_FRAME_TITLE_BASE"], 2,
+            lambda selection: (
+                0, (108 + selection * 24) * 160 // 200, 240, 12
+            ),
+        ),
+        (
+            "play_mode", metadata["FRONTEND_FRAME_PLAY_MODE_BASE"], 2,
+            lambda selection: (
+                0, (54 + selection * 24) * 160 // 200, 240, 12
+            ),
+        ),
+        (
+            "episode", metadata["FRONTEND_FRAME_EPISODE_BASE"], 4,
+            lambda selection: (
+                0, (50 + selection * 30) * 160 // 200, 240, 12
+            ),
+        ),
+        (
+            "difficulty", metadata["FRONTEND_FRAME_DIFFICULTY_BASE"], 3,
+            lambda selection: (
+                0, (54 + selection * 24) * 160 // 200, 240, 12
+            ),
+        ),
+        (
+            "game_menu", metadata["FRONTEND_FRAME_GAME_MENU_BASE"], 6,
+            lambda selection: (
+                120,
+                (
+                    38 + selection * 16 +
+                    (16 if selection == 5 else 0)
+                ) * 160 // 200,
+                120,
+                9,
+            ),
+        ),
+        (
+            "next_level", metadata["FRONTEND_FRAME_NEXT_LEVEL_BASE"], 2,
+            lambda selection: (
+                120,
+                (38 if selection == 0 else 150) * 160 // 200,
+                120,
+                9,
+            ),
+        ),
+    )
+    patch_transitions = 0
+    patch_max_bytes = 0
+    for group_name, base, count, rectangle in selection_groups:
+        for old_selection in range(count):
+            for new_selection in range(count):
+                if old_selection == new_selection:
+                    continue
+                coverage = np.zeros(
+                    (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+                    dtype=bool,
+                )
+                transfer_bytes = 0
+                for selection in (old_selection, new_selection):
+                    x, y, width, height = rectangle(selection)
+                    coverage[y : y + height, x : x + width] = True
+                    transfer_bytes += width * height
+                changed = (
+                    frames[base + old_selection] !=
+                    frames[base + new_selection]
+                )
+                uncovered = changed & ~coverage
+                if uncovered.any():
+                    y_values, x_values = np.where(uncovered)
+                    raise ValueError(
+                        "Mode 4 selection rectangle misses changed pixels: "
+                        f"{group_name=}, {old_selection=}, "
+                        f"{new_selection=}, pixels={uncovered.sum()}, "
+                        f"bbox=({x_values.min()},{y_values.min()},"
+                        f"{x_values.max() + 1},{y_values.max() + 1})"
+                    )
+                patch_transitions += 1
+                patch_max_bytes = max(patch_max_bytes, transfer_bytes)
+    report = [
+        "frontend_renderer=build-time OpenTyrian PIC/SHP/HDT",
+        (
+            "frontend_runtime=GBA Mode 4 full-state DMA/page flip "
+            "+ selection-row patches"
+        ),
+        f"frontend_frame_count={len(frames)}",
+        f"frontend_frame_bytes={FRONTEND_FRAME_BYTES}",
+        f"frontend_frames_raw_bytes={len(frame_bytes)}",
+        f"frontend_palettes_bytes={len(palette_bytes)}",
+        f"frontend_dynamic_glyph_bytes={len(glyphs)}",
+        f"frontend_full_state_transfer_bytes={FRONTEND_FRAME_BYTES + 512}",
+        f"frontend_zlib_reference_bytes={len(zlib.compress(frame_bytes, 9))}",
+        f"frontend_tile_unique_min={min(unique_counts)}",
+        f"frontend_tile_unique_max={max(unique_counts)}",
+        (
+            "frontend_tile_unique_mean="
+            f"{sum(unique_counts) / len(unique_counts):.2f}"
+        ),
+        f"frontend_tile_global_unique={len(global_tiles)}",
+        f"frontend_tile_per_state_min_bytes={min(tile_mode_bytes)}",
+        f"frontend_tile_per_state_max_bytes={max(tile_mode_bytes)}",
+        f"frontend_selection_patch_transitions={patch_transitions}",
+        "frontend_selection_patch_uncovered_pixels=0",
+        f"frontend_selection_patch_max_bytes={patch_max_bytes}",
+        "frontend_decision=Mode4 avoids runtime decode and 4bpp palette partitioning",
+        "frontend_invalid_key_redraw=none",
+        *(
+            f"frame_{index:02d}={name},unique_tiles={unique_counts[index]},"
+            f"crc32={zlib.crc32(frames[index].tobytes()):08x}"
+            for index, name in enumerate(names)
+        ),
+    ]
+    return frame_bytes, palette_bytes, bytes(glyphs), metadata, report
 
 
 def bitmap_555(image: Image.Image) -> bytes:
@@ -2369,6 +3180,21 @@ def main() -> None:
             f"updating {OPENTYRIAN_SOURCE_COMMIT} to {source_commit}"
         )
 
+    (
+        frontend_frames,
+        frontend_palettes,
+        frontend_glyphs,
+        frontend_metadata,
+        frontend_report,
+    ) = build_frontend_mode4_assets(data_root, preview)
+    (output / "frontend_frames.bin").write_bytes(frontend_frames)
+    (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
+    (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
+    (output / "frontend_mode4_audit.txt").write_text(
+        "\n".join(frontend_report) + "\n",
+        encoding="utf-8",
+    )
+
     title = build_title(nes, image_root)
     title.save(preview / "title_gba.png")
 
@@ -2633,6 +3459,7 @@ def main() -> None:
         projectile_layouts,
         boss_bar_tiles,
     )
+    obj_metadata.update(frontend_metadata)
     for flash, (bottom, middle, top) in enumerate(boss_bar_flash_colours):
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
@@ -2726,6 +3553,7 @@ def main() -> None:
     report_lines = [
         "profile=GBA Mode 0 / complete Tyrian MAP1 + MAP2 + MAP3",
         f"opentyrian_source_commit={source_commit}",
+        *frontend_report,
         "display_hz=59.7275",
         "logic_hz=34.7826",
         "background_layers=3 (Tyrian MAP1 + MAP2 + MAP3)",

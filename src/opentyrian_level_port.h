@@ -162,6 +162,7 @@ typedef struct {
 typedef struct {
     uint8_t pickup_count;
     uint8_t contact_count;
+    uint16_t damage;
     uint8_t effect_count;
     uint8_t data_cubes_awarded;
     uint8_t front_powerups;
@@ -205,6 +206,8 @@ typedef struct {
 
     uint8_t shape_bank[4];
     uint8_t boss_bar_link[2];
+    uint8_t boss_bar_color[2];
+    uint8_t difficulty_level;
     uint8_t stop_background_num;
     uint8_t background3_over;
     uint8_t background2_over;
@@ -244,6 +247,7 @@ typedef struct {
     bool music_fade;
     bool ready_to_end_level;
     bool end_level;
+    bool really_end_level;
     bool random_explosions;
     bool small_enemy_adjust;
     bool assets_valid;
@@ -259,6 +263,7 @@ typedef struct {
     uint8_t new_pl[OT_NEW_PL_COUNT];
     OtMt19937 rng;
     uint16_t frame_sound_mask;
+    uint16_t frame_player_damage;
 
     /*
      * Fixed single-player state required by the directly translated
@@ -333,7 +338,10 @@ typedef struct {
     uint32_t death_assignment_count;
 } OtLevelPortState;
 
-void ot_level_port_init(OtLevelPortState *state);
+void ot_level_port_init(
+    OtLevelPortState *state,
+    uint8_t difficulty_level
+);
 void ot_level_port_advance(
     OtLevelPortState *state,
     uint16_t cur_loc,

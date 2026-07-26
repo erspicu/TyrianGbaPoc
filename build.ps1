@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21"
-$testName = "tyrian_gba_level1_source_parity_runtime_sprite2_autotest_romfs_v21"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v22"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v22"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -500,7 +500,7 @@ $telemetry = [ordered]@{
     effect_cache_max_visible_unique = Read-TelemetryU32 584
 }
 
-$telemetryChecks = [ordered]@{
+$legacyStage4TelemetryChecks = [ordered]@{
     schema_version = $telemetry.version -eq 19
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_title = $telemetry.final_state -eq 0
@@ -763,6 +763,97 @@ $telemetryChecks = [ordered]@{
         $telemetry.romfs_manifest_crc32 -eq $romfsManifestCrc32
     )
     state_transitions = $telemetry.state_transitions -eq 5
+}
+
+# The legacy block above remains as an audit record for the position-5400
+# proof.  The active regression contract follows the authored boss, end
+# flight, stats screen and return to the PC-style Game Menu.
+$telemetryChecks = [ordered]@{
+    schema_version = $telemetry.version -eq 20
+    rom_reported_pass = $telemetry.pass -eq 1
+    returned_to_game_menu = $telemetry.final_state -eq 7
+    title_music_active = $telemetry.title_music_active -eq 1
+    full_level_logic_updates = $telemetry.logic_updates -eq 7828
+    full_level_display_frames = $telemetry.display_frames -eq 13502
+    authored_boss_exit_position = $telemetry.final_level_position -eq 6477
+    authored_event_cursor = $telemetry.final_source_event_index -eq 935
+    full_level_tick = $telemetry.final_level_tick -eq 7828
+    frontend_and_level_transitions = $telemetry.state_transitions -eq 11
+    vblank_budget = $telemetry.missed_vblanks -le 640
+    hardware_oam_limit = $telemetry.max_hardware_oam -le 128
+    no_map_stream_drops = $telemetry.stream_drops -eq 0
+    no_reward_drops = $telemetry.reward_drops -eq 0
+    no_enemy_pool_replacements = $telemetry.enemy_pool_replacements -eq 0
+    pause_round_trip = (
+        $telemetry.pause_toggles -eq 2 -and
+        $telemetry.paused_display_frames -eq 60 -and
+        $telemetry.final_game_paused -eq 0
+    )
+    source_event_accounting = (
+        $telemetry.source_parity_events -eq 935 -and
+        $telemetry.source_parity_events_applied -eq 926 -and
+        $telemetry.source_parity_events_deferred -eq 5 -and
+        $telemetry.source_parity_events_skipped -eq 4 -and
+        $telemetry.source_parity_events_applied +
+            $telemetry.source_parity_events_deferred +
+            $telemetry.source_parity_events_skipped -eq
+            $telemetry.source_parity_events
+    )
+    source_spawn_accounting = (
+        $telemetry.source_parity_spawn_attempts -eq 473 -and
+        $telemetry.source_parity_spawn_successes -eq 473 -and
+        $telemetry.source_parity_spawn_pool_full -eq 0 -and
+        $telemetry.source_parity_spawn_missing -eq 0
+    )
+    authored_enemy_kills = $telemetry.source_parity_enemy_kills -eq 100
+    authored_boss_group_cleared = (
+        $telemetry.source_parity_final_active_enemies -eq 0
+    )
+    data_cube_pickup = $telemetry.source_parity_data_cube_pickups -eq 1
+    final_cash = $telemetry.final_cash -eq 1456
+    source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
+    no_unknown_enemy_visuals = (
+        $telemetry.source_parity_unknown_visuals -eq 0
+    )
+    sprite2_cache_accounting = (
+        $telemetry.sprite2_decode_failures -eq 0 -and
+        $telemetry.sprite2_cache_drops -eq 0 -and
+        $telemetry.sprite2_uploads -eq
+            $telemetry.sprite2_cache_misses -and
+        $telemetry.sprite2_upload_bytes -eq
+            $telemetry.sprite2_uploads * 1024
+    )
+    effect_cache_accounting = (
+        $telemetry.effect_cache_drops -eq 0 -and
+        $telemetry.effect_cache_uploads -eq
+            $telemetry.effect_cache_misses -and
+        $telemetry.effect_cache_upload_bytes -eq
+            $telemetry.effect_cache_uploads * 128
+    )
+    presentation_is_central_1to1_crop = (
+        $telemetry.presentation_crop_x -eq 36 -and
+        $telemetry.presentation_crop_y -eq 12
+    )
+    layer_priority_exhaustive_checks = (
+        $telemetry.layer_rule_checks -eq 252 -and
+        $telemetry.layer_rule_failures -eq 0
+    )
+    final_gba_background_priorities = (
+        $telemetry.final_background2_priority -eq 2 -and
+        $telemetry.final_background3_priority -eq 1
+    )
+    romfs_entries = $telemetry.romfs_entries -eq $romfsAudit.entry_count
+    romfs_image_bytes = $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes
+    romfs_payload_bytes = (
+        $telemetry.romfs_payload_bytes -eq $romfsAudit.payload_bytes
+    )
+    romfs_self_test_checks = (
+        $telemetry.romfs_self_test_checks -eq $romfsExpectedSelfTestChecks
+    )
+    romfs_self_test_failures = $telemetry.romfs_self_test_failures -eq 0
+    romfs_manifest_crc32 = (
+        $telemetry.romfs_manifest_crc32 -eq $romfsManifestCrc32
+    )
 }
 $failedTelemetryChecks = @(
     $telemetryChecks.GetEnumerator() |

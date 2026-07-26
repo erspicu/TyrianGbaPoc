@@ -141,11 +141,7 @@ static bool shape_table_is_loaded(
     return false;
 }
 
-/*
- * Direct fixed-Normal/single-player translation of JE_makeEnemy().
- * Difficulty scaling collapses to the original JE_EnemyDat armor/value at
- * Normal, while every slot field assignment remains in source order.
- */
+/* Direct single-player translation of JE_makeEnemy(). */
 static bool ot_make_enemy(
     OtLevelPortState *state,
     OtEnemy *enemy,
@@ -315,11 +311,32 @@ static bool ot_make_enemy(
     enemy->fixedmovey = 0;
     enemy->filter = 0;
 
-    /* DIFFICULTY_NORMAL is an identity transform in the source switches. */
-    enemy->evalue = definition.value;
+    if (definition.value > 1 && definition.value < 10000) {
+        if (state->difficulty_level == 3) {
+            enemy->evalue = (int16_t)(
+                (int32_t)definition.value * 9 / 8
+            );
+        } else {
+            /* Easy and Normal share the source identity branch. */
+            enemy->evalue = definition.value;
+        }
+        if (enemy->evalue > 10000) enemy->evalue = 10000;
+    } else {
+        enemy->evalue = definition.value;
+    }
 
     if (definition.armor > 0) {
-        enemy->armorleft = definition.armor;
+        uint16_t armor = definition.armor;
+
+        if (definition.armor != 255) {
+            if (state->difficulty_level == 1) {
+                armor = (uint16_t)(definition.armor * 3u / 4u + 1u);
+            } else if (state->difficulty_level == 3) {
+                armor = (uint16_t)(definition.armor * 6u / 5u);
+            }
+            if (armor > 254) armor = 254;
+        }
+        enemy->armorleft = (uint8_t)armor;
         *avail = 0;
         enemy->scoreitem = false;
     } else {
@@ -564,7 +581,10 @@ static uint8_t ot_create_new_event_enemy(
     return state->last_created_slot;
 }
 
-void ot_level_port_init(OtLevelPortState *state)
+void ot_level_port_init(
+    OtLevelPortState *state,
+    uint8_t difficulty_level
+)
 {
     const OtDataCatalog *data_catalog;
     OtEnemyDefinition first_spawn_definition;
@@ -596,6 +616,10 @@ void ot_level_port_init(OtLevelPortState *state)
     state->level_enemy_frequency = 96;
     state->current_song = -1;
     state->level_end = 255;
+    state->difficulty_level =
+        difficulty_level >= 1 && difficulty_level <= 3 ?
+            difficulty_level :
+            2;
     state->map_x = 1;
     state->map_x3 = 1;
     /* JE_initPlayerData(): USP Talon, Pulse-Cannon, no rear weapon. */
@@ -720,6 +744,16 @@ static bool apply_event(
 
     case 10: /* Ground Enemy 2 */
         ot_create_new_event_enemy(state, event, 0, 75, 0);
+        return true;
+
+    case 11:
+        if (event->eventdat == 1) {
+            state->really_end_level = true;
+        } else if (!state->end_level) {
+            state->ready_to_end_level = false;
+            state->end_level = true;
+            state->level_end = 40;
+        }
         return true;
 
     case 12: { /* Custom 4x4 Ground Enemy */
@@ -2019,6 +2053,14 @@ void ot_level_port_collide_player_shot(
         armor = enemy->armorleft;
         target_link = enemy->linknum;
         if (target_link == 0) target_link = 255;
+        for (uint8_t bar = 0; bar < 2; bar++) {
+            if (
+                target_link != 255 &&
+                target_link == state->boss_bar_link[bar]
+            ) {
+                state->boss_bar_color[bar] = 6;
+            }
+        }
 
         if (armor > result->remaining_damage) {
             uint8_t damage_before = result->remaining_damage;
@@ -2273,8 +2315,12 @@ void ot_level_port_collide_player(
             availability == 0 &&
             enemy->enemyground
         ) {
+            uint8_t damage = enemy->armorleft;
+
+            if (damage > 2) damage = 2;
             state->player_enemy_contact_count++;
             result->contact_count++;
+            result->damage = (uint16_t)(result->damage + damage);
         }
     }
 }
@@ -2327,6 +2373,8 @@ void ot_level_port_update_enemy_shots(OtLevelPortState *state)
             shot->sy > state->player_y - 14 &&
             shot->sy < state->player_y + 14
         ) {
+            state->frame_player_damage =
+                (uint16_t)(state->frame_player_damage + shot->sdmg);
             ot_release_enemy_shot(state, shot);
             state->enemy_shot_player_hit_count++;
             continue;
@@ -2383,6 +2431,7 @@ void ot_level_port_advance(
     uint8_t index;
 
     state->frame_sound_mask = 0;
+    state->frame_player_damage = 0;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         state->enemy_draw[index].active = false;
     }

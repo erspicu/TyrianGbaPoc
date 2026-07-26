@@ -99,121 +99,73 @@ static void advance_backgrounds(void)
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
 }
 
-static void enter_boss(void)
-{
-    ot_level_port_clear_projectiles(&source_parity_level);
-    source_sync_runtime_telemetry();
-    boss_obj_palette_restore_pending = 1;
-    boss_x = 88;
-    boss_y = 8;
-    boss_dx = 1;
-    boss_dy = 1;
-    /* PC event 79 links this bar to boss components whose armor is 254. */
-    boss_hp = 254;
-    boss_phase = 0;
-    boss_bar_flash = 0;
-    boss_bar_palette_dirty = 1;
-    /*
-     * PC boss records 52/54 use W59 from slot 2; record 53 uses W127
-     * from slot 1. JE_makeEnemy initializes every populated turret to 20.
-     */
-    boss_aim_fire_wait = 20;
-    boss_spread_fire_wait = 20;
-    boss_aim_left_pos = 0;
-    boss_aim_right_pos = 0;
-    boss_spread_pos = 0;
-    game_state = STATE_BOSS;
-    telemetry_state_transitions++;
-}
-
-static void finish_boss(void)
+static u8 source_enemy_on_screen_count(void)
 {
     u8 index;
-    game_state = STATE_CLEAR;
-    clear_timer = 100;
-    for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
-        enemy_shots[index].active = 0;
+    u8 count = 0;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (
+            source_parity_level.enemy_avail[index] == 0 &&
+            source_parity_level.enemy_draw[index].active
+        ) {
+            count++;
+        }
     }
-    spawn_large_effect(boss_x + 16, boss_y + 16, 0);
-    spawn_large_effect(boss_x + 48, boss_y + 16, 0);
-    spawn_large_effect(boss_x + 32, boss_y + 48, 0);
-    audio_effect(SFX_EXPLOSION_9);
-    telemetry_state_transitions++;
+    return count;
 }
 
-static void update_boss(void)
+static u8 source_enemy_still_exploding(void)
 {
     u8 index;
-    PlayerShot *shot;
 
-    update_player();
-    update_shots();
-    update_effects();
-    update_rewards();
+    for (index = 0; index < MAX_EFFECTS; index++) {
+        if (effects[index].active) return 1;
+    }
+    return 0;
+}
 
-    boss_phase++;
-    if (boss_bar_flash) {
-        boss_bar_flash--;
+static void source_update_end_level_condition(void)
+{
+    /*
+     * tyrian2.c level_loop tail: event 36 arms the gate; it becomes
+     * endLevel/levelEnd=40 only when no authored enemy remains visible and
+     * the final death explosion has completed.  Event 11 is handled inside
+     * the translated event switch and reaches the same state explicitly.
+     */
+    if (
+        !source_parity_level.end_level &&
+        source_parity_level.ready_to_end_level &&
+        source_enemy_on_screen_count() == 0 &&
+        !source_enemy_still_exploding()
+    ) {
+        source_parity_level.ready_to_end_level = false;
+        source_parity_level.end_level = true;
+        source_parity_level.level_end = 40;
+    }
+}
+
+static void source_update_boss_bar_colour(void)
+{
+    u8 index;
+    u8 colour = 0;
+
+    for (index = 0; index < 2; index++) {
+        if (
+            source_parity_level.boss_bar_color[index] > colour
+        ) {
+            colour = source_parity_level.boss_bar_color[index];
+        }
+    }
+    if (boss_bar_flash != colour) {
+        boss_bar_flash = colour;
         boss_bar_palette_dirty = 1;
     }
-    boss_x += boss_dx;
-    if (boss_x < 4 || boss_x > 172) {
-        boss_dx = -boss_dx;
-        boss_x += boss_dx;
-    }
-    if ((boss_phase & 3) == 0) {
-        boss_y += boss_dy;
-        if (boss_y < 4 || boss_y > 34) {
-            boss_dy = -boss_dy;
-            boss_y += boss_dy;
+    for (index = 0; index < 2; index++) {
+        if (source_parity_level.boss_bar_color[index] > 0) {
+            source_parity_level.boss_bar_color[index]--;
         }
     }
-    if (--boss_aim_fire_wait == 0) {
-        /*
-         * Original component anchors are x=24/72, y=28 inside the
-         * 120x112 PC boss. The POC's 64x64 composite scales those to
-         * x=13/38, y=16.
-         */
-        fire_enemy_weapon(
-            boss_x + 13, boss_y + 16, 59, 1, &boss_aim_left_pos
-        );
-        fire_enemy_weapon(
-            boss_x + 38, boss_y + 16, 59, 1, &boss_aim_right_pos
-        );
-        boss_aim_fire_wait = 10;
-    }
-    if (--boss_spread_fire_wait == 0) {
-        fire_enemy_weapon(
-            boss_x + 26, boss_y + 16, 127, 0, &boss_spread_pos
-        );
-        boss_spread_fire_wait = 60;
-    }
-    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
-        shot = &player_shots[index];
-        if (!shot->active) continue;
-        if (BOX_OVERLAPS(
-                source_player_shot_screen_x(shot) +
-                    PLAYER_SHOT_HIT_X,
-                source_player_shot_screen_y(shot) +
-                    PLAYER_SHOT_HIT_Y,
-                PLAYER_SHOT_HIT_WIDTH,
-                PLAYER_SHOT_HIT_HEIGHT,
-                boss_x + 4, boss_y + 4, 56, 56)) {
-            shot->active = 0;
-            if (boss_hp) {
-                boss_hp--;
-                boss_bar_flash = 6;
-                boss_bar_palette_dirty = 1;
-            }
-            telemetry_collision_count++;
-            audio_effect(SFX_ENEMY_HIT);
-        }
-    }
-    if (pad_pressed & KEY_R) boss_hp = 0;
-#ifdef AUTOTEST
-    if (boss_phase > 240) boss_hp = 0;
-#endif
-    if (!boss_hp) finish_boss();
 }
 
 static void update_logic(void)
@@ -225,62 +177,45 @@ static void update_logic(void)
      * for the first-level body.  The keypad adapter also stores the player in
      * unchanged OpenTyrian coordinates; only render_game() crops presentation.
      */
-    if (game_state == STATE_PLAY) {
-        ot_level_port_advance(
-            &source_parity_level,
-            level_position,
-            player_source_x,
-            player_source_y
-        );
-        source_apply_background_state();
-        source_play_frame_weapon_sounds();
-        source_sync_runtime_telemetry();
-    }
+    ot_level_port_advance(
+        &source_parity_level,
+        level_position,
+        player_source_x,
+        player_source_y
+    );
+    source_apply_background_state();
+    source_play_frame_weapon_sounds();
+    source_sync_runtime_telemetry();
     advance_backgrounds();
 
-    if (game_state == STATE_PLAY) {
-        level_position += bg1_step;
-        /*
-         * OpenTyrian advances and collides existing player shots before
-         * JE_mainGamePlayerFunctions moves the ship and creates new shots.
-         * Keeping that phase boundary prevents a newly fired shot from
-         * travelling and damaging an enemy in its creation tick.
-         */
-        update_shots();
-        /*
-         * Advance existing explosions before collision handling so a newly
-         * spawned effect renders source frame 122 for one complete tick.
-         */
-        update_effects();
+    level_position += bg1_step;
+    /*
+     * OpenTyrian advances and collides existing player shots before
+     * JE_mainGamePlayerFunctions moves the ship and creates new shots.
+     * Keeping that phase boundary prevents a newly fired shot from
+     * travelling and damaging an enemy in its creation tick.
+     */
+    update_shots();
+    /*
+     * Advance existing explosions before collision handling so a newly
+     * spawned effect renders source frame 122 for one complete tick.
+     */
+    update_effects();
 #ifdef AUTOTEST_EXPLOSION_SEAM_TEST
-        if (level_tick == 2) spawn_large_effect(120, 72, 0);
+    if (level_tick == 2) spawn_large_effect(120, 72, 0);
 #endif
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
-        if (level_tick == 2) spawn_reward(112, 70, 1);
+    if (level_tick == 2) spawn_reward(112, 70, 1);
 #endif
-        update_rewards();
+    update_rewards();
+    if (player_alive && !source_parity_level.end_level) {
         source_process_player_collisions();
-        update_player();
-        source_update_enemy_projectiles();
-        if ((pad_pressed & (KEY_SELECT | KEY_L)) ||
-            level_position >= LEVEL_BOSS_TICK) {
-            enter_boss();
-        }
-    } else if (game_state == STATE_BOSS) {
-        update_boss();
-    } else if (game_state == STATE_CLEAR) {
-        update_effects();
-        update_rewards();
-        if (clear_timer) {
-            clear_timer--;
-        } else {
-            enter_title();
-#ifdef AUTOTEST
-            if (autotest_running) {
-                /* The test shuts down only after the complete return path. */
-                autotest_finish();
-            }
-#endif
-        }
     }
+    update_player();
+    if (game_state != STATE_PLAY) return;
+    if (player_alive) {
+        source_update_enemy_projectiles();
+    }
+    source_update_end_level_condition();
+    source_update_boss_bar_colour();
 }

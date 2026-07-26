@@ -851,11 +851,13 @@ static void source_process_player_collisions(void)
         }
     }
 
+    source_parity_level.player_armor = player_armor;
     ot_level_port_collide_player(
         &source_parity_level,
-        player_invulnerable == 0,
+        player_alive && player_invulnerable == 0,
         &player_result
     );
+    player_armor = source_parity_level.player_armor;
     player_cash += player_result.cash_awarded;
     for (
         effect_index = 0;
@@ -865,7 +867,7 @@ static void source_process_player_collisions(void)
         source_emit_effect(&player_result.effects[effect_index]);
     }
     if (player_result.pickup_count) audio_effect(SFX_ITEM);
-    if (player_result.contact_count) player_hit();
+    if (player_result.damage) player_damage(player_result.damage);
 }
 
 static void source_update_enemy_projectiles(void)
@@ -884,9 +886,10 @@ static void source_update_enemy_projectiles(void)
     ot_level_port_update_enemy_shots(&source_parity_level);
     if (
         source_parity_level.enemy_shot_player_hit_count >
-        old_enemy_shot_hits
+        old_enemy_shot_hits &&
+        source_parity_level.frame_player_damage > 0
     ) {
-        player_hit();
+        player_damage(source_parity_level.frame_player_damage);
     }
     telemetry_collision_count =
         source_parity_level.player_shot_collision_count +

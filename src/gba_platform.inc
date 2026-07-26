@@ -37,6 +37,15 @@ static void commit_vblank_work(void)
 {
     volatile u16 *boss_palette =
         (volatile u16 *)SPRITE_PALETTE + OBJ_PAL_BOSS_BAR * 16;
+
+    if (frontend_mode4_active) {
+        frontend_commit_vblank();
+        if (oam_dirty) {
+            dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
+            oam_dirty = 0;
+        }
+        return;
+    }
     if (bg1_row_pending) {
         commit_background_row(bg1_row_source, bg1_row_target);
         bg1_row_pending = 0;
@@ -49,7 +58,7 @@ static void commit_vblank_work(void)
         commit_background_row(bg3_row_source, bg3_row_target);
         bg3_row_pending = 0;
     }
-    if (game_state != STATE_TITLE) {
+    if (game_state == STATE_PLAY) {
         u8 background2_priority = 2;
         u8 background3_priority = 1;
 

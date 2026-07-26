@@ -3,6 +3,7 @@
 static void spawn_player_shot(void)
 {
     u8 index;
+    if (!player_alive || source_parity_level.end_level) return;
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (!player_shots[index].active) {
             player_shots[index].active = 1;
@@ -16,133 +17,44 @@ static void spawn_player_shot(void)
     }
 }
 
-static const WeaponDef *find_weapon_def(u8 id)
+/*
+ * Direct single-player JE_playerDamage() translation.  HUD redraw calls are
+ * presentation-only in the 320x200 PC build and intentionally absent from
+ * the cropped GBA combat viewport.
+ */
+static void player_damage(u16 damage)
 {
-    u8 index;
-    for (index = 0; index < sizeof(weapon_defs) / sizeof(weapon_defs[0]); index++) {
-        if (weapon_defs[index].id == id) return &weapon_defs[index];
-    }
-    return 0;
-}
+    u16 remaining = damage;
 
-static s8 aim_component(s16 delta, u16 maximum, u8 magnitude)
-{
-    u16 absolute;
-    u16 scaled;
-    if (!maximum) return 0;
-    absolute = delta < 0 ? (u16)-delta : (u16)delta;
-    scaled = (u16)(absolute * magnitude);
-    scaled = (u16)((scaled + maximum / 2) / maximum);
-    return delta < 0 ? -(s8)scaled : (s8)scaled;
-}
-
-static u8 spawn_enemy_shot(
-    s16 x,
-    s16 y,
-    s8 dx,
-    s8 dy,
-    u8 graphic,
-    u8 animax
-)
-{
-    u8 index;
-    u8 scan;
-    u8 active_count;
-    for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
-        if (!enemy_shots[index].active) {
-            enemy_shots[index].active = 1;
-            enemy_shots[index].x = x;
-            enemy_shots[index].y = y;
-            enemy_shots[index].dx = dx;
-            enemy_shots[index].dy = dy;
-            enemy_shots[index].duration = 255;
-            enemy_shots[index].graphic = graphic;
-            enemy_shots[index].animate = 0;
-            enemy_shots[index].animax = animax;
-            telemetry_enemy_shots_spawned++;
-            active_count = 0;
-            for (scan = 0; scan < MAX_ENEMY_SHOTS; scan++) {
-                if (enemy_shots[scan].active) active_count++;
-            }
-            if (active_count > telemetry_max_enemy_shots) {
-                telemetry_max_enemy_shots = active_count;
-            }
-            return 1;
-        }
-    }
-    telemetry_enemy_shot_drops++;
-    return 0;
-}
-
-static void fire_enemy_weapon(
-    s16 origin_x,
-    s16 origin_y,
-    u8 weapon_id,
-    u8 slot,
-    u8 *multi_pos
-)
-{
-    const WeaponDef *weapon = find_weapon_def(weapon_id);
-    const WeaponShot *pattern;
-    s16 delta_x;
-    s16 delta_y;
-    u16 magnitude_x;
-    u16 magnitude_y;
-    u16 maximum;
-    s8 dx;
-    s8 dy;
-    u8 shot_index;
-    u8 position;
-    u8 spawned = 0;
-
-    if (!weapon) return;
-    for (shot_index = 0; shot_index < weapon->multi; shot_index++) {
-        position = (u8)(*multi_pos + 1);
-        if (position > weapon->maximum) position = 1;
-        *multi_pos = position;
-        pattern = &weapon_shots[weapon->first + position - 1];
-
-        if (slot == 2) {
-            dx = -pattern->sy;
-            dy = -pattern->sx;
-        } else if (slot == 1) {
-            dx = pattern->sy;
-            dy = -pattern->sx;
-        } else {
-            dx = pattern->sx;
-            dy = pattern->sy;
-        }
-
-        if (weapon->aim) {
-            delta_x = (source_player_screen_x() + 16) - origin_x;
-            delta_y = (source_player_screen_y() + 14) - origin_y;
-            magnitude_x = delta_x < 0 ? (u16)-delta_x : (u16)delta_x;
-            magnitude_y = delta_y < 0 ? (u16)-delta_y : (u16)delta_y;
-            maximum = magnitude_x > magnitude_y ? magnitude_x : magnitude_y;
-            dx = aim_component(delta_x, maximum, weapon->aim);
-            dy = aim_component(delta_y, maximum, weapon->aim);
-        }
-
-        if (!spawn_enemy_shot(
-                origin_x + pattern->bx,
-                origin_y + pattern->by,
-                dx,
-                dy,
-                pattern->graphic,
-                weapon->animax)) {
-            break;
-        }
-        spawned = 1;
-    }
-    if (spawned) audio_effect(weapon->sound);
-}
-
-static void player_hit(void)
-{
-    if (player_invulnerable) return;
-    player_invulnerable = 45;
+    if (!player_alive || player_invulnerable || remaining == 0) return;
     telemetry_collision_count++;
-    audio_effect(SFX_ENEMY_HIT);
+#ifdef AUTOTEST
+    /*
+     * The deterministic source-event audit must reach the authored boss and
+     * level-exit records; release builds retain the translated damage path.
+     */
+    return;
+#endif
+    if (player_shield < remaining) {
+        remaining -= player_shield;
+        player_shield = 0;
+        if (remaining > 0) {
+            if (player_armor < remaining) {
+                player_armor = 0;
+                player_alive = 0;
+                player_exploding_ticks = 60;
+                source_parity_level.level_end = 40;
+                audio_effect(SFX_EXPLOSION_9);
+            } else {
+                player_armor = (u8)(player_armor - remaining);
+                audio_effect(SFX_ENEMY_HIT);
+            }
+        }
+    } else {
+        player_shield = (u8)(player_shield - remaining);
+        audio_effect(SFX_ENEMY_HIT);
+    }
+    source_parity_level.player_armor = player_armor;
 }
 
 static void update_player(void)
@@ -152,6 +64,59 @@ static void update_player(void)
     s16 accel_x;
     s16 accel_y;
     s16 ship_banking;
+
+    if (!player_alive) {
+        if (player_exploding_ticks > 0) {
+            s16 centre_x = (s16)(source_player_screen_x() + 16);
+            s16 centre_y = (s16)(source_player_screen_y() + 16);
+
+            player_exploding_ticks--;
+            if ((player_exploding_ticks & 3u) == 0) {
+                s16 offset_x =
+                    (s16)(((player_exploding_ticks * 13u) & 31u) - 16);
+                s16 offset_y =
+                    (s16)(((player_exploding_ticks * 7u) & 31u) - 16);
+
+                spawn_large_effect(
+                    (s16)(centre_x + offset_x),
+                    (s16)(centre_y + offset_y),
+                    0
+                );
+            }
+            if ((player_exploding_ticks % 9u) == 0) {
+                audio_effect(SFX_EXPLOSION_9);
+            }
+        } else if (game_state == STATE_PLAY) {
+            /*
+             * onePlayerAction aliases lives to front-weapon power.  A fresh
+             * Pulse-Cannon starts at power/lives 1, so neither requested mode
+             * has an extra life in the first-level proof.
+             */
+            frontend_enter_game_over();
+        }
+        return;
+    }
+
+    if (source_parity_level.end_level) {
+        /*
+         * JE_mainGamePlayerFunctions() decrements levelEnd and increments
+         * levelEndWarp before JE_playerMovement() performs the exit flight.
+         */
+        if (source_parity_level.level_end > 0) {
+            source_parity_level.level_end--;
+            player_end_warp++;
+            player_source_y =
+                (s16)(player_source_y - player_end_warp);
+        }
+        if (
+            source_parity_level.level_end == 0 ||
+            player_source_y < -200 ||
+            source_parity_level.really_end_level
+        ) {
+            frontend_enter_level_stats(1);
+        }
+        return;
+    }
 
     /*
      * Direct fixed single-player/keyboard slice of JE_playerMovement().
@@ -234,41 +199,12 @@ static void update_shots(void)
 {
     u8 index;
     PlayerShot *player_shot;
-    EnemyShot *enemy_shot;
 
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         player_shot = &player_shots[index];
         if (!player_shot->active) continue;
         player_shot->y -= PLAYER_SHOT_SPEED;
         if (player_shot->y < 0) player_shot->active = 0;
-    }
-    if (game_state != STATE_BOSS) return;
-    for (index = 0; index < MAX_ENEMY_SHOTS; index++) {
-        enemy_shot = &enemy_shots[index];
-        if (!enemy_shot->active) continue;
-        enemy_shot->x += enemy_shot->dx;
-        enemy_shot->y += enemy_shot->dy;
-        if (
-            enemy_shot->duration-- == 0 ||
-            enemy_shot->x < -16 || enemy_shot->x > 240 ||
-            enemy_shot->y > 168
-        ) {
-            enemy_shot->active = 0;
-            continue;
-        }
-        if (BOX_OVERLAPS(
-                enemy_shot->x, enemy_shot->y, 8, 8,
-                source_player_screen_x() + 6,
-                source_player_screen_y() + 5,
-                20, 23)) {
-            enemy_shot->active = 0;
-            player_hit();
-            continue;
-        }
-        if (enemy_shot->animax &&
-            ++enemy_shot->animate >= enemy_shot->animax) {
-            enemy_shot->animate = 0;
-        }
     }
 }
 

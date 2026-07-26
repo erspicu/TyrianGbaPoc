@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21
-TEST_TARGET := tyrian_gba_level1_source_parity_runtime_sprite2_autotest_romfs_v21
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v22
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v22
 BUILD := build
 RES := res
 
@@ -20,6 +20,7 @@ ARCH := -mcpu=arm7tdmi -mtune=arm7tdmi -mthumb -mthumb-interwork
 CFLAGS := $(ARCH) -std=gnu17 -O3 -g -Wall -Wextra \
 	-ffunction-sections -fdata-sections \
 	-I. -Isrc -I$(LIBGBA)/include -I$(MAXMOD)/include
+CFLAGS += $(EXTRA_CFLAGS)
 ASFLAGS := $(ARCH) -x assembler-with-cpp
 LINKFLAGS := $(ARCH) -specs=gba.specs -Wl,--gc-sections \
 	-L$(LIBGBA)/lib -L$(MAXMOD)/lib
@@ -42,6 +43,8 @@ ASSET_INPUTS := \
 	../../org/TyrianNesPoc/tools/build_assets.py \
 	../../org/AprCSTyrian/Build/data/tyrian1.lvl \
 	../../org/AprCSTyrian/Build/data/tyrian.hdt \
+	../../org/AprCSTyrian/Build/data/tyrian.pic \
+	../../org/AprCSTyrian/Build/data/tyrian.shp \
 	../../org/AprCSTyrian/Build/data/palette.dat \
 	../../org/AprCSTyrian/Build/data/tyrian.snd \
 	$(wildcard ../../org/AprCSTyrian/image/sheets/10_powerups/*.png) \
@@ -62,7 +65,10 @@ ASSET_BINARIES := \
 	$(RES)/bg2_map.bin \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
-	$(RES)/obj_palette.bin
+	$(RES)/obj_palette.bin \
+	$(RES)/frontend_frames.bin \
+	$(RES)/frontend_palettes.bin \
+	$(RES)/frontend_glyphs.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \

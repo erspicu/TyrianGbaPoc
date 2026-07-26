@@ -46,6 +46,21 @@ obj_palette:
 	.incbin "res/obj_palette.bin"
 
 	.balign 4
+	.global frontend_frames
+frontend_frames:
+	.incbin "res/frontend_frames.bin"
+
+	.balign 4
+	.global frontend_palettes
+frontend_palettes:
+	.incbin "res/frontend_palettes.bin"
+
+	.balign 4
+	.global frontend_glyphs
+frontend_glyphs:
+	.incbin "res/frontend_glyphs.bin"
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

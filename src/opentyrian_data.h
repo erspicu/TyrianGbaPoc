@@ -160,8 +160,25 @@ typedef struct {
     uint32_t raw_bytes_referenced;
 } OtDataCatalog;
 
+/*
+ * Direct ROMFS counterpart of the text tables populated by
+ * OpenTyrian JE_loadHelpText().  Only tables used by the GBA front-end and
+ * level-completion screen are retained; all strings are decrypted from the
+ * stock tyrian.hdt at runtime.
+ */
+typedef struct {
+    char planet_name[21][16];
+    char misc_text[68][42];
+    char title_menu[7][21];
+    char full_game_menu[7][18];
+    char episode_name[6][31];
+    char difficulty_name[7][21];
+    char gameplay_name[5][26];
+} OtFrontendText;
+
 bool ot_data_init(void);
 const OtDataCatalog *ot_data_catalog(void);
+bool ot_data_frontend_text_load(OtFrontendText *text);
 bool ot_data_level1_info(OtLevel1Info *info);
 bool ot_data_level1_event_read(uint16_t index, OtEventRecord *event);
 bool ot_data_level1_enemy_pool_read(uint16_t index, uint16_t *enemy_id);

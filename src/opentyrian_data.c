@@ -306,6 +306,207 @@ static bool parse_hdt(void)
     return true;
 }
 
+static bool hdt_pascal_read(
+    uint32_t *position,
+    char *destination,
+    uint32_t destination_size
+)
+{
+    static const uint8_t crypt_key[10] = {
+        204, 129, 63, 255, 71, 19, 25, 62, 1, 99
+    };
+    uint8_t length;
+    uint32_t index;
+
+    if (
+        position == 0 ||
+        destination == 0 ||
+        destination_size == 0 ||
+        !span_is_valid(data_state.hdt.size, *position, 1)
+    ) {
+        return false;
+    }
+    length = data_state.hdt.data[(*position)++];
+    if (
+        length >= destination_size ||
+        !span_is_valid(data_state.hdt.size, *position, length)
+    ) {
+        return false;
+    }
+    memcpy(destination, data_state.hdt.data + *position, length);
+    *position += length;
+
+    /*
+     * OpenTyrian helptext.c decrypt_string(), kept in the same reverse
+     * dependency order.  The preceding encrypted byte must be consumed
+     * before the crypt-key XOR for every character except the first.
+     */
+    for (index = length; index > 0; index--) {
+        uint32_t i = index - 1;
+
+        destination[i] = (char)(
+            (uint8_t)destination[i] ^ crypt_key[i % 10]
+        );
+        if (i != 0) {
+            destination[i] = (char)(
+                (uint8_t)destination[i] ^
+                (uint8_t)destination[i - 1]
+            );
+        }
+    }
+    destination[length] = '\0';
+    return true;
+}
+
+static bool hdt_pascal_skip(uint32_t *position)
+{
+    uint8_t length;
+
+    if (
+        position == 0 ||
+        !span_is_valid(data_state.hdt.size, *position, 1)
+    ) {
+        return false;
+    }
+    length = data_state.hdt.data[(*position)++];
+    if (!span_is_valid(data_state.hdt.size, *position, length)) {
+        return false;
+    }
+    *position += length;
+    return true;
+}
+
+static bool hdt_pascal_skip_many(uint32_t *position, uint16_t count)
+{
+    uint16_t index;
+
+    for (index = 0; index < count; index++) {
+        if (!hdt_pascal_skip(position)) return false;
+    }
+    return true;
+}
+
+static bool hdt_group_skip(uint32_t *position, uint16_t entry_count)
+{
+    return hdt_pascal_skip(position) &&
+           hdt_pascal_skip_many(position, entry_count) &&
+           hdt_pascal_skip(position);
+}
+
+bool ot_data_frontend_text_load(OtFrontendText *text)
+{
+    uint32_t position = 4;
+    uint16_t index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (!catalog.hdt_valid || text == 0) return false;
+    memset(text, 0, sizeof(*text));
+
+    /*
+     * This is JE_loadHelpText() in file order.  Groups not needed by this
+     * platform adapter are advanced as Pascal records, never re-encoded by
+     * the host asset pipeline.
+     */
+    if (!hdt_group_skip(&position, 39)) return false; /* Online Help */
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 21; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->planet_name[index],
+                sizeof(text->planet_name[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 68; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->misc_text[index],
+                sizeof(text->misc_text[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_group_skip(&position, 5)) return false;  /* Misc B */
+    if (!hdt_group_skip(&position, 11)) return false; /* Key names */
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 7; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->title_menu[index],
+                sizeof(text->title_menu[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_group_skip(&position, 9)) return false;  /* Event text */
+    if (!hdt_group_skip(&position, 6)) return false;  /* Help topics */
+    if (!hdt_group_skip(&position, 34)) return false; /* Main menu help */
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 7; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->full_game_menu[index],
+                sizeof(text->full_game_menu[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_group_skip(&position, 9)) return false; /* Menu 2 */
+    if (!hdt_group_skip(&position, 8)) return false; /* Menu 3 */
+    if (!hdt_group_skip(&position, 6)) return false; /* In-game menu */
+    if (!hdt_group_skip(&position, 6)) return false; /* Detail level */
+    if (!hdt_group_skip(&position, 5)) return false; /* Game speed */
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 6; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->episode_name[index],
+                sizeof(text->episode_name[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 7; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->difficulty_name[index],
+                sizeof(text->difficulty_name[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
+
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 5; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->gameplay_name[index],
+                sizeof(text->gameplay_name[index])
+            )) {
+            return false;
+        }
+    }
+    return hdt_pascal_skip(&position);
+}
+
 static bool pic_stream_is_valid(const OtDataView *view)
 {
     uint32_t source_offset = 0;
