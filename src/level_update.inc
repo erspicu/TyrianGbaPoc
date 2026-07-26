@@ -129,6 +129,20 @@ static u8 source_enemy_still_exploding(void)
     return 0;
 }
 
+static void source_begin_end_level_audio(void)
+{
+    if (level_exit_music_started) return;
+    level_exit_music_started = 1;
+    /*
+     * tyrian2.c selects zero-based source song 9 as soon as an alive player
+     * enters endLevel.  Keep it running through JE_endLevelAni(), where the
+     * "Level completed" voice and cube effects are mixed over the module.
+     */
+    audio_load_music_preserve_effects(MOD_TYRIAN_END_LEVEL_FULL);
+    telemetry_end_level_music_starts++;
+    telemetry_end_level_initial_warp = (u8)player_end_warp;
+}
+
 static void source_update_end_level_condition(void)
 {
     /*
@@ -146,6 +160,7 @@ static void source_update_end_level_condition(void)
         source_parity_level.ready_to_end_level = false;
         source_parity_level.end_level = true;
         source_parity_level.level_end = 40;
+        source_begin_end_level_audio();
     }
 }
 
@@ -174,6 +189,8 @@ static void source_update_boss_bar_colour(void)
 
 static void update_logic(void)
 {
+    u8 end_level_before = source_parity_level.end_level;
+
     level_tick++;
     telemetry_logic_updates++;
     /*
@@ -188,6 +205,9 @@ static void update_logic(void)
         player_source_y
     );
     source_apply_background_state();
+    if (!end_level_before && source_parity_level.end_level) {
+        source_begin_end_level_audio();
+    }
     source_play_frame_weapon_sounds();
     source_sync_runtime_telemetry();
     advance_backgrounds();

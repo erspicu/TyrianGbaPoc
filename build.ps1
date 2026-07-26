@@ -18,8 +18,8 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v24_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v24_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v25_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v25_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -344,7 +344,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 612) {
+if ($saveBytes.Length -lt 648) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -513,6 +513,15 @@ $telemetry = [ordered]@{
     configured_detail_level = Read-TelemetryU32 600
     configured_game_speed = Read-TelemetryU32 604
     final_background2_enabled = Read-TelemetryU32 608
+    end_level_music_starts = Read-TelemetryU32 612
+    end_level_trail_max = Read-TelemetryU32 616
+    level_complete_voice_starts = Read-TelemetryU32 620
+    stats_stage_advances = Read-TelemetryU32 624
+    stats_cube_reveals = Read-TelemetryU32 628
+    final_stats_stage = Read-TelemetryU32 632
+    final_stats_cube_visible_count = Read-TelemetryU32 636
+    final_player_end_warp = Read-TelemetryU32 640
+    initial_player_end_warp = Read-TelemetryU32 644
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -785,19 +794,19 @@ $legacyStage4TelemetryChecks = [ordered]@{
 # flight, stats screen and return to the PC-style Game Menu.
 $expectedDetailLevel = if ($DetailLevel -eq "low") { 0 } else { 1 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
-$expectedDisplayFrames = if ($GameSpeed -eq "low") { 16863 } else { 13502 }
+$expectedDisplayFrames = if ($GameSpeed -eq "low") { 16872 } else { 13509 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 21
+    schema_version = $telemetry.version -eq 22
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
-    full_level_logic_updates = $telemetry.logic_updates -eq 7828
+    full_level_logic_updates = $telemetry.logic_updates -eq 7832
     full_level_display_frames = (
         $telemetry.display_frames -eq $expectedDisplayFrames
     )
-    authored_boss_exit_position = $telemetry.final_level_position -eq 6477
+    authored_boss_exit_position = $telemetry.final_level_position -eq 6481
     authored_event_cursor = $telemetry.final_source_event_index -eq 935
-    full_level_tick = $telemetry.final_level_tick -eq 7828
+    full_level_tick = $telemetry.final_level_tick -eq 7832
     frontend_and_level_transitions = $telemetry.state_transitions -eq 11
     vblank_budget = $telemetry.missed_vblanks -le 640
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
@@ -808,6 +817,19 @@ $telemetryChecks = [ordered]@{
             $telemetry.source_parity_score_item_pickups -and
         $telemetry.pickup_explosion_drops -eq 0 -and
         $telemetry.pickup_explosion_max_active -le 32
+    )
+    source_end_level_flight = (
+        $telemetry.end_level_music_starts -eq 1 -and
+        $telemetry.initial_player_end_warp -eq 252 -and
+        $telemetry.end_level_trail_max -eq 16 -and
+        $telemetry.final_player_end_warp -eq 27
+    )
+    source_end_level_stats = (
+        $telemetry.level_complete_voice_starts -eq 1 -and
+        $telemetry.stats_stage_advances -eq 4 -and
+        $telemetry.stats_cube_reveals -eq 1 -and
+        $telemetry.final_stats_stage -eq 4 -and
+        $telemetry.final_stats_cube_visible_count -eq 1
     )
     requested_port_configuration = (
         $telemetry.configured_detail_level -eq $expectedDetailLevel -and

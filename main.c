@@ -318,6 +318,7 @@ extern const u8 obj_palette[];
 extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
+extern const u8 frontend_cube[];
 extern const u8 soundbank[];
 
 typedef struct {
@@ -420,6 +421,9 @@ static u8 frontend_play_mode;
 static u8 frontend_episode;
 static u8 frontend_difficulty;
 static u16 frontend_timer;
+static u8 frontend_stats_stage;
+static u8 frontend_stats_cube_visible_count;
+static u16 frontend_stats_timer;
 static u8 frontend_level_completed;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page;
@@ -445,7 +449,7 @@ static u8 player_armor;
 static u8 player_shield;
 static u8 player_shield_max;
 static u8 player_lives;
-static u8 player_end_warp;
+static s8 player_end_warp;
 static u8 fire_cooldown;
 static s8 player_bank;
 static u32 player_cash;
@@ -457,6 +461,7 @@ static u8 boss_obj_palette_restore_pending;
 static u16 level_tick;
 static u16 level_position;
 static u32 logic_accumulator;
+static u8 level_exit_music_started;
 static OtLevelPortState source_parity_level EWRAM_BSS;
 
 static u16 bg1_scroll_pixel;
@@ -584,6 +589,12 @@ volatile u32 telemetry_layer_rule_failures;
 volatile u32 telemetry_pickup_explosion_spawns;
 volatile u32 telemetry_pickup_explosion_drops;
 volatile u32 telemetry_pickup_explosion_max_active;
+volatile u32 telemetry_end_level_music_starts;
+volatile u32 telemetry_end_level_initial_warp;
+volatile u32 telemetry_end_level_trail_max;
+volatile u32 telemetry_level_complete_voice_starts;
+volatile u32 telemetry_stats_stage_advances;
+volatile u32 telemetry_stats_cube_reveals;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -730,9 +741,18 @@ int main(void)
                     KEY_A;
 #else
             pad_pressed =
-                autotest_frontend_finish_pending ?
-                    0 :
-                    KEY_A;
+                game_state == STATE_LEVEL_STATS ?
+                    (
+                        frontend_stats_stage >=
+                            FRONTEND_STATS_STAGE_FINAL ?
+                                KEY_A :
+                                0
+                    ) :
+                    (
+                        autotest_frontend_finish_pending ?
+                            0 :
+                            KEY_A
+                    );
 #endif
         } else {
             pad_now = autotest_input();

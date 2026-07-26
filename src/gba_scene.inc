@@ -1,14 +1,88 @@
 /* Scene-to-OAM renderer; contains no gameplay updates. */
 
+static void render_player_at_source_y(
+    s16 source_y,
+    u8 priority,
+    u8 exit_flight
+)
+{
+    put_sprite_with_attr1(
+        source_player_screen_x(),
+        (s16)(
+            source_world_to_screen_y(
+                (s16)(
+                    source_y +
+                    SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+                )
+            ) - 16
+        ),
+        exit_flight || !player_bank ?
+            OBJ_TILE_PLAYER_0 :
+            OBJ_TILE_PLAYER_1,
+        OBJ_PAL_PLAYER_0, ATTR1_SIZE_32, priority,
+        !exit_flight && player_bank < 0 ? OBJ_HFLIP : 0
+    );
+}
+
 static void render_player_sprite(u8 priority)
 {
+    s16 trail_positions[19];
+    s16 trail_y;
+    s16 delta;
+    s8 render_index;
+    u8 trail_count = 0;
+    u8 trail_spacing;
+    u8 trail_index;
+    u8 num_trails;
+
     if (!player_alive) return;
-    put_sprite_with_attr1(
-        source_player_screen_x(), source_player_screen_y(),
-        player_bank ? OBJ_TILE_PLAYER_1 : OBJ_TILE_PLAYER_0,
-        OBJ_PAL_PLAYER_0, ATTR1_SIZE_32, priority,
-        player_bank < 0 ? OBJ_HFLIP : 0
-    );
+    if (
+        !source_parity_level.end_level ||
+        source_parity_level.level_end == 0
+    ) {
+        render_player_at_source_y(player_source_y, priority, 0);
+        return;
+    }
+
+    /*
+     * Direct JE_playerMovement() end-flight trail. The PC does not draw a
+     * separate ordinary player sprite in endLevel; it draws up to nineteen
+     * copies along this triangular-spacing history instead.
+     */
+    delta = (s16)(41 - source_parity_level.level_end);
+    if (delta < 0) delta = (s16)-delta;
+    num_trails = delta > 20 ? 20 : (u8)delta;
+    trail_spacing = 1;
+    trail_y = player_source_y;
+    for (trail_index = 0; trail_index < num_trails; trail_index++) {
+        trail_y = (s16)(trail_y + trail_spacing);
+        trail_spacing++;
+    }
+    for (trail_index = 1; trail_index < num_trails; trail_index++) {
+        trail_y = (s16)(trail_y - trail_spacing);
+        trail_spacing--;
+        if (trail_y > 0 && trail_y < 170) {
+            trail_positions[trail_count++] = trail_y;
+        }
+    }
+    /*
+     * Later PC blits win. Lower GBA OAM indices win equal-priority overlap,
+     * so emit the stored source sequence in reverse.
+     */
+    for (
+        render_index = (s8)trail_count - 1;
+        render_index >= 0;
+        render_index--
+    ) {
+        render_player_at_source_y(
+            trail_positions[(u8)render_index],
+            priority,
+            1
+        );
+    }
+    if (trail_count > telemetry_end_level_trail_max) {
+        telemetry_end_level_trail_max = trail_count;
+    }
 }
 
 static void render_player_shots(u8 priority)

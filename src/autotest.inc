@@ -21,7 +21,7 @@ enum {
     SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 428,
     SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 428,
     SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 32,
-    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 17466,
+    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 17504,
     SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 426,
     SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 33,
     SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 585,
@@ -174,6 +174,15 @@ static void autotest_finish(void)
         telemetry_pickup_explosion_drops == 0 &&
         telemetry_pickup_explosion_max_active <=
             MAX_PICKUP_EXPLOSIONS &&
+        telemetry_end_level_music_starts == 1 &&
+        telemetry_end_level_initial_warp == (u8)-4 &&
+        telemetry_end_level_trail_max == 16 &&
+        player_end_warp == 27 &&
+        telemetry_level_complete_voice_starts == 1 &&
+        telemetry_stats_stage_advances == 4 &&
+        telemetry_stats_cube_reveals == 1 &&
+        frontend_stats_stage == FRONTEND_STATS_STAGE_FINAL &&
+        frontend_stats_cube_visible_count == 1 &&
         source_parity_level.enemy_shot_active_count == 2 &&
         source_parity_level.active_enemy_count == 0 &&
         player_cash == 1456 &&
@@ -205,7 +214,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 21;
+    sram[4] = 22;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -406,6 +415,15 @@ static void autotest_finish(void)
     sram_write_u32(600, TYRIAN_GBA_DETAIL_LEVEL);
     sram_write_u32(604, TYRIAN_GBA_GAME_SPEED);
     sram_write_u32(608, source_background2_enabled);
+    sram_write_u32(612, telemetry_end_level_music_starts);
+    sram_write_u32(616, telemetry_end_level_trail_max);
+    sram_write_u32(620, telemetry_level_complete_voice_starts);
+    sram_write_u32(624, telemetry_stats_stage_advances);
+    sram_write_u32(628, telemetry_stats_cube_reveals);
+    sram_write_u32(632, frontend_stats_stage);
+    sram_write_u32(636, frontend_stats_cube_visible_count);
+    sram_write_u32(640, (u8)player_end_warp);
+    sram_write_u32(644, telemetry_end_level_initial_warp);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }

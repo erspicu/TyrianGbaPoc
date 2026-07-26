@@ -125,13 +125,27 @@ static void commit_vblank_work(void)
     }
 }
 
-static void audio_load_music(u16 module)
+static void audio_load_music_internal(
+    u16 module,
+    u8 cancel_effects
+)
 {
-    uint16_t source_song =
-        module == MOD_TYRIAN_TITLE_FULL ? 29u : 17u;
+    uint16_t source_song;
+
+    switch (module) {
+    case MOD_TYRIAN_TITLE_FULL:
+        source_song = 29u;
+        break;
+    case MOD_TYRIAN_END_LEVEL_FULL:
+        source_song = 9u;
+        break;
+    default:
+        source_song = 17u;
+        break;
+    }
 
     mmStop();
-    mmEffectCancelAll();
+    if (cancel_effects) mmEffectCancelAll();
     /*
      * The authoritative song selection and LDS structure now come directly
      * from ROMFS music.mus.  Maxmod remains the temporary GBA synthesis
@@ -142,6 +156,16 @@ static void audio_load_music(u16 module)
     mmStart(module, MM_PLAY_LOOP);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
+}
+
+static void audio_load_music(u16 module)
+{
+    audio_load_music_internal(module, 1);
+}
+
+static void audio_load_music_preserve_effects(u16 module)
+{
+    audio_load_music_internal(module, 0);
 }
 
 static void audio_effect(u16 effect)

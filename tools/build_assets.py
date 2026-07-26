@@ -7,6 +7,7 @@ import argparse
 import collections
 import hashlib
 import importlib.util
+import json
 import struct
 import wave
 import zlib
@@ -661,7 +662,7 @@ class FrontendSourceRenderer:
 def build_frontend_mode4_assets(
     data_root: Path,
     preview: Path,
-) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+) -> tuple[bytes, bytes, bytes, bytes, dict[str, int], list[str]]:
     source = FrontendSourceRenderer(data_root)
     frames: list[np.ndarray] = []
     palettes: list[bytes] = []
@@ -786,7 +787,11 @@ def build_frontend_mode4_assets(
         )
         return frame
 
-    def render_stats(collected: bool, arcade: bool) -> np.ndarray:
+    def render_stats(
+        stage: int,
+        collected: bool,
+        arcade: bool,
+    ) -> np.ndarray:
         frame = np.zeros(
             (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
             dtype=np.uint8,
@@ -797,35 +802,39 @@ def build_frontend_mode4_assets(
             20, 20, 2, "left", 15, 2, 2,
         )
         cash_label = misc[27] or "Cash"
-        source.draw_text(
-            frame, cash_label,
-            30, 50, 2, "left", 15, 2, 2,
-        )
+        if stage >= 1:
+            source.draw_text(
+                frame, cash_label,
+                30, 50, 2, "left", 15, 2, 2,
+            )
         enemy_label = misc[62] or "Enemies Destroyed"
-        source.draw_text(
-            frame, enemy_label,
-            40, 90, 2, "left", 15, 2, 2,
-        )
-        if not arcade:
+        if stage >= 2:
+            source.draw_text(
+                frame, enemy_label,
+                40, 90, 2, "left", 15, 2, 2,
+            )
+        if not arcade and stage >= 3:
             source.draw_text(
                 frame, misc[3] or "Cubes",
                 30, 120, 2, "left", 15, 2, 2,
             )
+            if not collected:
+                source.draw_text(
+                    frame,
+                    misc[14] or "None",
+                    50,
+                    135,
+                    2,
+                    "left",
+                    15,
+                    2,
+                    2,
+                )
+        if stage >= 4:
             source.draw_text(
-                frame,
-                "Collected" if collected else (misc[14] or "None"),
-                50,
-                135,
-                2,
-                "left",
-                15,
-                2,
-                2,
+                frame, misc[4] or "Press a key",
+                90, 160, 2, "left", 15, 2, 2,
             )
-        source.draw_text(
-            frame, misc[4] or "Press a key",
-            90, 160, 2, "left", 15, 2, 2,
-        )
         metadata["FRONTEND_STATS_CASH_X"] = source.scale_x(
             30 + source.text_width(cash_label, 2) + 6
         )
@@ -899,9 +908,14 @@ def build_frontend_mode4_assets(
     for selection in range(2):
         add(f"next_level_{selection}", render_next_level(selection), 1)
 
-    add("stats_full_none", render_stats(False, False), 1)
-    add("stats_full_collected", render_stats(True, False), 1)
-    add("stats_arcade", render_stats(False, True), 1)
+    add("stats_completed", render_stats(0, False, False), 1)
+    add("stats_cash", render_stats(1, False, False), 1)
+    add("stats_enemies", render_stats(2, False, False), 1)
+    add("stats_full_none", render_stats(3, False, False), 1)
+    add("stats_full_cubes", render_stats(3, True, False), 1)
+    add("stats_full_final_none", render_stats(4, False, False), 1)
+    add("stats_full_final_cubes", render_stats(4, True, False), 1)
+    add("stats_arcade_final", render_stats(4, False, True), 1)
 
     game_over = np.zeros(
         (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
@@ -939,6 +953,47 @@ def build_frontend_mode4_assets(
             1,
             source.scale_x(glyph.shape[1] + 1),
         )
+
+    # JE_drawCube() draws OPTION_SHAPES sprite 25 twice as a dark offset
+    # shadow, followed by its hue-9 foreground.  Store one transparent
+    # Mode-4 stamp so runtime can reveal the PC cube sprites one by one.
+    cube = source.sprite(5, 25)
+    if cube is None:
+        raise ValueError("OPTION_SHAPES data cube sprite 25 is empty")
+    cube_canvas = np.full(
+        (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+        0xFF,
+        dtype=np.uint8,
+    )
+    source.draw_glyph(cube_canvas, cube, 4, 4, 9, 0, True)
+    source.draw_glyph(cube_canvas, cube, 3, 3, 9, 0, True)
+    source.draw_glyph(cube_canvas, cube, 0, 0, 9, 0)
+    cube_width = source.scale_x(cube.shape[1] + 4)
+    cube_height = source.scale_y(cube.shape[0] + 4)
+    cube_stamp = cube_canvas[:cube_height, :cube_width].copy()
+    metadata["FRONTEND_CUBE_WIDTH"] = cube_width
+    metadata["FRONTEND_CUBE_HEIGHT"] = cube_height
+    metadata["FRONTEND_CUBE_BYTES"] = cube_width * cube_height
+    metadata["FRONTEND_STATS_CUBE_Y"] = source.scale_y(135)
+    for cube_index in range(4):
+        metadata[f"FRONTEND_STATS_CUBE_X_{cube_index}"] = source.scale_x(
+            20 + 30 * (cube_index + 1)
+        )
+    cube_rgb = np.minimum(
+        source.palette_rgb(1).astype(np.uint16) * 4,
+        255,
+    ).astype(np.uint8)
+    cube_preview = np.zeros(
+        (cube_height, cube_width, 4),
+        dtype=np.uint8,
+    )
+    cube_opaque = cube_stamp != 0xFF
+    cube_preview[cube_opaque, :3] = cube_rgb[cube_stamp[cube_opaque]]
+    cube_preview[cube_opaque, 3] = 255
+    Image.fromarray(cube_preview, "RGBA").resize(
+        (cube_width * 8, cube_height * 8),
+        Image.Resampling.NEAREST,
+    ).save(frontend_preview / "stats_data_cube_option_shape_25.png")
 
     metadata["FRONTEND_FRAME_COUNT"] = len(frames)
     frame_bytes = b"".join(frame.tobytes() for frame in frames)
@@ -1051,6 +1106,7 @@ def build_frontend_mode4_assets(
         f"frontend_frames_raw_bytes={len(frame_bytes)}",
         f"frontend_palettes_bytes={len(palette_bytes)}",
         f"frontend_dynamic_glyph_bytes={len(glyphs)}",
+        f"frontend_data_cube_stamp_bytes={cube_stamp.size}",
         f"frontend_full_state_transfer_bytes={FRONTEND_FRAME_BYTES + 512}",
         f"frontend_zlib_reference_bytes={len(zlib.compress(frame_bytes, 9))}",
         f"frontend_tile_unique_min={min(unique_counts)}",
@@ -1073,7 +1129,14 @@ def build_frontend_mode4_assets(
             for index, name in enumerate(names)
         ),
     ]
-    return frame_bytes, palette_bytes, bytes(glyphs), metadata, report
+    return (
+        frame_bytes,
+        palette_bytes,
+        bytes(glyphs),
+        cube_stamp.tobytes(),
+        metadata,
+        report,
+    )
 
 
 def bitmap_555(image: Image.Image) -> bytes:
@@ -1992,6 +2055,72 @@ def extract_tyrian_sfx_entry(sound_file: Path, index: int) -> bytes:
     offsets = list(struct.unpack_from(f"<{count}I", data, 2))
     offsets.append(len(data))
     return data[offsets[index] : offsets[index + 1]]
+
+
+def build_sparse_tym_tracker_it(
+    snes: ModuleType,
+    workspace: Path,
+    tym_path: Path,
+) -> tuple[bytes, dict[str, object]]:
+    """Use the SNES tracker writer with fewer than eight audible channels.
+
+    Its original calibration loader requires exactly eight non-null sources,
+    but short Tyrian cues legitimately use fewer (End of Level uses seven).
+    Preserve every calibrated source/gain pair and append sentinel sources
+    that can never match a TYM event. This changes no audible mapping while
+    satisfying the writer's fixed eight-voice interface.
+    """
+    original_loader = snes.load_snes_calibration
+
+    def load_sparse_calibration(
+        inner_workspace: Path,
+        track_number: int,
+    ) -> tuple[list[int], list[float]]:
+        calibration_path = (
+            inner_workspace /
+            "org" /
+            "TyrianAudioLab" /
+            "Music" /
+            "channel-calibration.json"
+        )
+        catalog = json.loads(
+            calibration_path.read_text(encoding="utf-8")
+        )
+        track = next(
+            item for item in catalog["tracks"]
+            if item["trackNumber"] == track_number
+        )
+        profile = next(
+            item for item in track["profiles"]
+            if item["profile"] == "SuperNintendo"
+        )
+        pairs = [
+            (int(source), 10.0 ** (float(db) / 20.0))
+            for source, db in zip(
+                profile["sourceChannels"][:8],
+                profile["gainDb"][:8],
+                strict=True,
+            )
+            if source is not None
+        ]
+        if not 1 <= len(pairs) <= 8:
+            raise ValueError(
+                f"track {track_number} has no usable SNES calibration"
+            )
+        sources = [source for source, _ in pairs]
+        gains = [gain for _, gain in pairs]
+        sentinel = 0x100
+        while len(sources) < 8:
+            sources.append(sentinel)
+            gains.append(1.0)
+            sentinel += 1
+        return sources, gains
+
+    snes.load_snes_calibration = load_sparse_calibration
+    try:
+        return snes.build_tym_tracker_it(workspace, tym_path)
+    finally:
+        snes.load_snes_calibration = original_loader
 
 
 def load_default_player_shot(
@@ -3184,12 +3313,14 @@ def main() -> None:
         frontend_frames,
         frontend_palettes,
         frontend_glyphs,
+        frontend_cube,
         frontend_metadata,
         frontend_report,
     ) = build_frontend_mode4_assets(data_root, preview)
     (output / "frontend_frames.bin").write_bytes(frontend_frames)
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
+    (output / "frontend_cube.bin").write_bytes(frontend_cube)
     (output / "frontend_mode4_audit.txt").write_text(
         "\n".join(frontend_report) + "\n",
         encoding="utf-8",
@@ -3516,9 +3647,16 @@ def main() -> None:
         workspace,
         workspace / "org" / "TyrianAudioLab" / "Music" / "18_tyrian_the_level.tym",
     )
+    end_level_music, end_level_report = build_sparse_tym_tracker_it(
+        snes,
+        workspace,
+        workspace / "org" / "TyrianAudioLab" / "Music" / "10_end_of_level.tym",
+    )
     (output / "tyrian_title_full.it").write_bytes(title_music)
     (output / "tyrian_level_full.it").write_bytes(level_music)
+    (output / "tyrian_end_level_full.it").write_bytes(end_level_music)
     sound_file = data_root / "tyrian.snd"
+    voice_file = data_root / "voices.snd"
     sfx = snes.extract_tyrian_sfx(sound_file)
     # S_ITEM is one-based sample 18 in OpenTyrian, hence archive index 17.
     sfx.append((
@@ -3537,6 +3675,17 @@ def main() -> None:
             11_025,
             False,
         ))
+    # V_LEVEL_END is soundSamples[33], therefore voices.snd entry 4 after
+    # the 29 ordinary SFX. OpenTyrian discards 100 bytes of bad voice tail.
+    level_complete = extract_tyrian_sfx_entry(voice_file, 4)
+    if len(level_complete) < 100:
+        raise ValueError("V_LEVEL_END voice is shorter than its trim")
+    sfx.append((
+        "level_complete",
+        level_complete[:-100],
+        11_025,
+        False,
+    ))
     for name, pcm, rate, _ in sfx:
         write_signed_pcm_wav(output / f"{name}.wav", pcm, rate)
 
@@ -3731,6 +3880,12 @@ def main() -> None:
         f"level_music_it_bytes={len(level_music)}",
         f"level_music_pass_seconds={level_report['tracker_duration_seconds']:.6f}",
         f"level_music_laid_out_seconds={level_report['module_play_seconds']:.6f}",
+        f"end_level_music_it_bytes={len(end_level_music)}",
+        (
+            "end_level_music_seconds="
+            f"{end_level_report['tracker_duration_seconds']:.6f}"
+        ),
+        f"level_complete_voice_pcm_bytes={len(level_complete) - 100}",
         f"audio_sfx_samples={len(sfx)}",
     ]
     (output / "asset_report.txt").write_text(

@@ -61,6 +61,11 @@ frontend_glyphs:
 	.incbin "res/frontend_glyphs.bin"
 
 	.balign 4
+	.global frontend_cube
+frontend_cube:
+	.incbin "res/frontend_cube.bin"
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

@@ -144,7 +144,7 @@ static void enter_level(void)
     player_shield = 5;
     player_shield_max = 10;
     player_lives = 1;
-    player_end_warp = 0;
+    player_end_warp = -4;
     fire_cooldown = 0;
     player_bank = 0;
     player_cash = 0;
@@ -155,6 +155,7 @@ static void enter_level(void)
     level_tick = 0;
     level_position = 0;
     logic_accumulator = 0;
+    level_exit_music_started = 0;
     ot_level_port_init(
         &source_parity_level,
         frontend_difficulty
@@ -226,6 +227,12 @@ static void enter_level(void)
     telemetry_pickup_explosion_spawns = 0;
     telemetry_pickup_explosion_drops = 0;
     telemetry_pickup_explosion_max_active = 0;
+    telemetry_end_level_music_starts = 0;
+    telemetry_end_level_initial_warp = 0;
+    telemetry_end_level_trail_max = 0;
+    telemetry_level_complete_voice_starts = 0;
+    telemetry_stats_stage_advances = 0;
+    telemetry_stats_cube_reveals = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = source_background_hofs(0);

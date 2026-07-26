@@ -92,7 +92,7 @@ Game Speed   = Normal
 
 ## 後續 Updated Plan
 
-### P1：Boss 擊破與過關
+### P1：Boss 擊破與過關（v25 已完成）
 
 1. 將 `levelEndWarp` 改回原始 signed 狀態並以 `-4` 起始。
 2. 逐行翻寫玩家離場的加速、殘影與終止條件。

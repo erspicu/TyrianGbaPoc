@@ -20,8 +20,8 @@ $(error GAME_SPEED must be low or normal)
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v24_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v24_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v25_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v25_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -70,6 +70,7 @@ ASSET_INPUTS := \
 	../../org/AprCSTyrian/Build/data/tyrian.shp \
 	../../org/AprCSTyrian/Build/data/palette.dat \
 	../../org/AprCSTyrian/Build/data/tyrian.snd \
+	../../org/AprCSTyrian/Build/data/voices.snd \
 	$(wildcard ../../org/AprCSTyrian/image/sheets/10_powerups/*.png) \
 	$(wildcard ../../org/AprCSTyrian/image/sheets/11_coins_cubes/*.png) \
 	$(wildcard ../../org/AprCSTyrian/image/sheets_newsh/newsh_*/*.png) \
@@ -77,7 +78,8 @@ ASSET_INPUTS := \
 	../../org/opentyrian/src/varz.h \
 	../../org/opentyrian/src/episodes.h \
 	../../org/TyrianAudioLab/Music/30_tyrian_the_song.tym \
-	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym
+	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym \
+	../../org/TyrianAudioLab/Music/10_end_of_level.tym
 
 ASSET_BINARIES := \
 	$(RES)/bg1_tiles.bin \
@@ -91,18 +93,21 @@ ASSET_BINARIES := \
 	$(RES)/obj_palette.bin \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
-	$(RES)/frontend_glyphs.bin
+	$(RES)/frontend_glyphs.bin \
+	$(RES)/frontend_cube.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \
 	$(RES)/tyrian_level_full.it \
+	$(RES)/tyrian_end_level_full.it \
 	$(RES)/weapon_1.wav \
 	$(RES)/enemy_hit.wav \
 	$(RES)/explosion_9.wav \
 	$(RES)/item.wav \
 	$(RES)/enemy_shot_4.wav \
 	$(RES)/enemy_shot_6.wav \
-	$(RES)/enemy_shot_13.wav
+	$(RES)/enemy_shot_13.wav \
+	$(RES)/level_complete.wav
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
