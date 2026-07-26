@@ -356,13 +356,40 @@ HUD，data cube／weapon power-up 只保存 gameplay counter，不開啟 PC
 個同時 effect 在少數 frame 會跨過單一 VBlank。此數字作為 GBA 技術展示
 的效能量測保留，不用降低 logic rate 或刪除音樂掩蓋。
 
-### Stage 4 已知邊界
+## v17 敵人圖像與獎賞逐行直譯
+
+v17 把使用者指定的兩項問題納入 source-parity runtime，而不是繼續修補
+舊 POC：
+
+- `JE_playerCollide()`、`power_up_weapon()` 與
+  `handle_got_purple_ball()` 依固定 single-player／Normal 模式保留原分支
+  順序與 gameplay state。
+- 玩家彈死亡路徑補齊直接 data-cube credit；`eenemydie`、linked death、
+  cash 與 `dlevel=-1` 殘骸仍使用同一份 source enemy slot。
+- 移除 24 個 GBA 自訂 enemy archetype 及 fallback。
+- 在 `JE_drawEnemy()` 的原始 `blit_enemy()` phase 保存
+  `shape_table/egr[enemycycle-1]/size/filter` draw command。
+- 對第一關全部 1,009 event 做 spawn／launch／death closure，建立 113
+  個 definition、198 個原始 Sprite2 畫格的完整 catalog。
+- `size==1` 依原碼用 `graphic + 0/+1/+19/+20` 組成 24×28 圖，不重畫
+  silhouette；金幣、寶石與 cube 也走 shape table 21 source object。
+- 使用 24-slot true-LRU OBJ cache，在 VBlank 上傳 32×32 4bpp container。
+
+固定 route 的 catalog miss／cache drop／fallback visual 都是 0。
+153 次 frame upload 共 78,336 bytes；cache hit／miss／eviction 為
+44,509／153／129，單一 frame 最高七次 upload。完整 mGBA route 仍維持
+5/5 death-spawn、5/5 score-item、2 data cube、1,785 direct cash 與
+1,960 final cash。
+
+詳細逐行對照、GBA palette 限制與 telemetry 見
+[Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md](Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md)。
+
+### v17 已知邊界
 
 - `curLoc=5400` 轉入既有簡化 Boss；Boss body、Boss damage lifecycle 及
   結束事件尚未逐行移植。
-- 24-archetype atlas 完整涵蓋既有第一關主體，但 4912..5384 的大型結構
-  與 Boss component 有 32 個唯一 enemy ID 尚無正確 GBA 圖像，目前使用
-  fallback。Gameplay ID、armor、link 與時機仍是 source 值。
+- 4912..5384 的大型結構與 Boss component 畫格已進入 198-frame
+  catalog；但 5400 handoff 尚未讓原始 Boss event/lifecycle 實際接管。
 - 五筆 deferred event 是不影響本展示流程的 type-16 text/audio UI。
 - turret 251..255 magnet／特殊 render opcode 尚只保存 wait/animation
   狀態；本次測試路線沒有需要其完整玩家物理效果的 discharge。
@@ -453,14 +480,12 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 
 ## 下一個直譯階段
 
-1. 解出 4912..5384 結構與 46..65／468..473 Boss component 的正確
-   Sprite2 組合，移除 32 個 fallback ID。
-2. 不在 5400 提前切換，逐行移植 event 79 Boss link、component armor、
+1. 不在 5400 提前切換，逐行移植 event 79 Boss link、component armor、
    weapon、movement、damage bar 與 level-end path。
-3. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
+2. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
    build option。
-4. 完成 turret 251..255 magnet／special effects 與剩餘 pickup gameplay。
-5. 量測 13 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
+3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
+4. 量測 101 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
    rate、不刪音樂／圖層的前提下優化。
 
 ## 建置
@@ -469,10 +494,10 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 .\build.ps1
 ```
 
-目前 ROMFS v16 ROM：
+目前 ROMFS v17 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v16.gba
+build/tyrian_gba_level1_source_parity_romfs_v17.gba
 ```
 
 ROM 與中間產物不納入 Git。

@@ -52,6 +52,27 @@ ENEMY_PROJECTILE_PALETTE_GROUPS = (
     (12, (145, 146, 147)),  # purple left/down/right laser variants
 )
 OPENTYRIAN_SOURCE_COMMIT = "1c34d1bddac8c8f2de834229d04b5a729525c944"
+FIRST_LEVEL_EVENT_LIMIT = 5400
+ENEMY_FRAME_MAGIC = b"OTEF"
+ENEMY_FRAME_VERSION = 1
+ENEMY_FRAME_RECORD_BYTES = 8
+ENEMY_FRAME_TILES = 16
+ENEMY_FRAME_BYTES = ENEMY_FRAME_TILES * 32
+
+# OBJ palettes 0/5/7..14 remain assigned to the player, simplified boss,
+# explosions, rewards, digits, projectiles, boss bar and PAUSED.  Exact
+# source frames use the six free banks.  The two rare one-frame shape tables
+# share a palette; bank 15 reproduces the source filter/ice flash.
+ENEMY_FRAME_PALETTE_GROUPS = {
+    1: 1,
+    2: 2,
+    9: 3,
+    21: 4,
+    10: 6,
+    20: 6,
+}
+ENEMY_FILTER_PALETTE_BANK = 15
+SHAPE_TABLE_CHARACTERS = "2478ABCDEFGHIJKLMNOPQRSTU5#V0@3^59"
 
 
 def load_snes_builder(workspace: Path) -> ModuleType:
@@ -807,8 +828,6 @@ def repack_obj_tiles(
 
     append_asset("PLAYER_0", 4, 4)
     append_asset("PLAYER_1", 4, 4)
-    for index in range(24):
-        append_asset(f"ENEMY_{index}", 4, 4)
     append_asset("BOSS_0", 8, 8)
 
     explosion_frame_bytes = 4 * 32
@@ -893,9 +912,39 @@ def repack_obj_tiles(
     metadata["OBJ_PAL_BOSS_BAR"] = 13
     output.extend(boss_bar_tiles)
 
+    static_tile_count = len(output) // 32
+    dynamic_tile_base = (
+        (static_tile_count + ENEMY_FRAME_TILES - 1) //
+        ENEMY_FRAME_TILES *
+        ENEMY_FRAME_TILES
+    )
+    dynamic_slot_count = (
+        1024 - dynamic_tile_base
+    ) // ENEMY_FRAME_TILES
+    if dynamic_slot_count < 16:
+        raise ValueError(
+            "exact enemy-frame cache is too small: "
+            f"static={static_tile_count}, base={dynamic_tile_base}, "
+            f"slots={dynamic_slot_count}"
+        )
+    output.extend(
+        b"\0" * (dynamic_tile_base * 32 - len(output))
+    )
+    output.extend(
+        b"\0" * (
+            dynamic_slot_count *
+            ENEMY_FRAME_TILES *
+            32
+        )
+    )
     tile_count = len(output) // 32
     if tile_count > 1024:
         raise ValueError(f"GBA OBJ atlas exceeds 1024 tiles: {tile_count}")
+    metadata["OBJ_STATIC_TILE_COUNT"] = static_tile_count
+    metadata["OBJ_DYNAMIC_TILE_BASE"] = dynamic_tile_base
+    metadata["OBJ_DYNAMIC_SLOT_COUNT"] = dynamic_slot_count
+    metadata["OBJ_DYNAMIC_TILES_PER_SLOT"] = ENEMY_FRAME_TILES
+    metadata["OBJ_PAL_ENEMY_FILTER"] = ENEMY_FILTER_PALETTE_BANK
     metadata["OBJ_TILE_COUNT"] = tile_count
     return bytes(output), metadata
 
@@ -1071,6 +1120,322 @@ def hdt_enemy_table_offset(data: bytes) -> int:
     if offset + 851 * 77 != len(data):
         raise ValueError("unexpected tyrian.hdt item/enemy table layout")
     return offset
+
+
+def read_hdt_enemy_for_frames(
+    data: bytes,
+    enemy_table: int,
+    enemy_id: int,
+) -> dict[str, int | tuple[int, ...]]:
+    if not 0 <= enemy_id < 851:
+        raise ValueError(f"enemy definition outside HDT: {enemy_id}")
+    record = data[
+        enemy_table + enemy_id * 77 :
+        enemy_table + (enemy_id + 1) * 77
+    ]
+    return {
+        "id": enemy_id,
+        "animation": record[0],
+        "size": record[20],
+        "graphics": struct.unpack_from("<20H", record, 21),
+        "shape_table": record[63],
+        "damaged_graphic": struct.unpack_from("<H", record, 66)[0],
+        "launch_type": struct.unpack_from("<H", record, 71)[0] % 1000,
+        "value": struct.unpack_from("<h", record, 73)[0],
+        "enemy_die": struct.unpack_from("<H", record, 75)[0],
+    }
+
+
+def first_level_random_enemy_ids(level_path: Path) -> tuple[int, ...]:
+    data = level_path.read_bytes()
+    # OpenTyrian lvlPos[(lvlFileNum - 1) * 2], with first level file number 9.
+    table_index = (9 - 1) * 2
+    table_offset = 2 + table_index * 4
+    if table_offset + 4 > len(data):
+        raise ValueError("tyrian1.lvl offset table is truncated")
+    level_offset = struct.unpack_from("<I", data, table_offset)[0]
+    if level_offset + 10 > len(data):
+        raise ValueError("tyrian1.lvl first-level section is truncated")
+    enemy_count = struct.unpack_from("<H", data, level_offset + 8)[0]
+    start = level_offset + 10
+    end = start + enemy_count * 2
+    if end > len(data):
+        raise ValueError("tyrian1.lvl random enemy pool is truncated")
+    return struct.unpack_from(f"<{enemy_count}H", data, start)
+
+
+def collect_first_level_enemy_definitions(
+    nes: ModuleType,
+    events: list[tuple[int, int, int, int, int, int, int, int]],
+    level_path: Path,
+    hdt_data: bytes,
+    enemy_table: int,
+) -> tuple[list[dict[str, int | tuple[int, ...]]], list[tuple[int, int, int]]]:
+    """Close every first-level spawn, launch and death edge over HDT.
+
+    This deliberately scans all 1,009 source records, not only the current
+    position-5400 handoff.  The resulting catalog therefore already contains
+    the source boss/end-section graphics needed by the next direct-port step.
+    """
+    enemy_ids = set(first_level_random_enemy_ids(level_path))
+    for event in events:
+        _, event_type, event_data, _, _, _, _, _ = event
+        if event_type in nes.LEVEL_SPAWN_TYPES:
+            if event_type == 12:
+                enemy_ids.update(event_data + offset for offset in range(4))
+            else:
+                enemy_ids.add(event_data)
+        elif event_type == 33:
+            enemy_ids.add(event_data)
+            if event_data == 533:
+                enemy_ids.update(range(829, 835))
+
+    queue = list(enemy_ids)
+    definitions: dict[int, dict[str, int | tuple[int, ...]]] = {}
+    while queue:
+        enemy_id = queue.pop()
+        if not 0 <= enemy_id < 851 or enemy_id in definitions:
+            continue
+        definition = read_hdt_enemy_for_frames(
+            hdt_data, enemy_table, enemy_id
+        )
+        definitions[enemy_id] = definition
+        for child_key in ("launch_type", "enemy_die"):
+            child = int(definition[child_key])
+            if child and child not in definitions:
+                enemy_ids.add(child)
+                queue.append(child)
+
+    frame_keys: set[tuple[int, int, int]] = set()
+    for definition in definitions.values():
+        shape_table = int(definition["shape_table"])
+        size = int(definition["size"])
+        for graphic in definition["graphics"]:
+            graphic = int(graphic)
+            if graphic not in (0, 999):
+                frame_keys.add((shape_table, graphic, size))
+        damaged = int(definition["damaged_graphic"])
+        if damaged not in (0, 999):
+            frame_keys.add((shape_table, damaged, size))
+    return (
+        [definitions[key] for key in sorted(definitions)],
+        sorted(frame_keys),
+    )
+
+
+def enemy_component_path(
+    image_root: Path,
+    shape_table: int,
+    graphic: int,
+) -> Path:
+    if shape_table == 21:
+        directory = image_root / "sheets" / "11_coins_cubes"
+    elif shape_table == 26:
+        directory = image_root / "sheets" / "10_powerups"
+    else:
+        if not 1 <= shape_table <= len(SHAPE_TABLE_CHARACTERS):
+            raise ValueError(f"shape table outside OpenTyrian table: {shape_table}")
+        character = SHAPE_TABLE_CHARACTERS[shape_table - 1].lower()
+        directory = image_root / "sheets_newsh" / f"newsh_{character}"
+    path = directory / f"{graphic:03d}.png"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"source Sprite2 component is missing: table={shape_table}, "
+            f"graphic={graphic}, path={path}"
+        )
+    return path
+
+
+def compose_exact_enemy_frame(
+    snes: ModuleType,
+    image_root: Path,
+    shape_table: int,
+    graphic: int,
+    size: int,
+) -> Image.Image:
+    """Translate JE_drawEnemy()/blit_enemy's exact Sprite2 composition."""
+    if size == 1:
+        frame = Image.new("RGBA", (24, 28), (0, 0, 0, 0))
+        for component, x, y in (
+            (graphic, 0, 0),
+            (graphic + 1, 12, 0),
+            (graphic + 19, 0, 14),
+            (graphic + 20, 12, 14),
+        ):
+            source = snes.normalize_sprite(
+                Image.open(
+                    enemy_component_path(
+                        image_root, shape_table, component
+                    )
+                ).convert("RGBA")
+            )
+            frame.alpha_composite(source, (x, y))
+    else:
+        frame = snes.normalize_sprite(
+            Image.open(
+                enemy_component_path(image_root, shape_table, graphic)
+            ).convert("RGBA")
+        )
+    # A 32x32 GBA OBJ is only the presentation container.  fit_sprite never
+    # enlarges these 12x14/24x28 source pixels, so their silhouette remains
+    # the source Sprite2 artwork rather than the old archetype substitute.
+    return snes.fit_sprite(frame, (32, 32))
+
+
+def build_exact_enemy_frame_catalog(
+    snes: ModuleType,
+    nes: ModuleType,
+    events: list[tuple[int, int, int, int, int, int, int, int]],
+    level_path: Path,
+    hdt_path: Path,
+    palette_path: Path,
+    image_root: Path,
+) -> tuple[
+    bytes,
+    bytes,
+    dict[int, bytes],
+    list[str],
+    Image.Image,
+]:
+    hdt_data = hdt_path.read_bytes()
+    enemy_table = hdt_enemy_table_offset(hdt_data)
+    definitions, frame_keys = collect_first_level_enemy_definitions(
+        nes, events, level_path, hdt_data, enemy_table
+    )
+    unsupported_tables = sorted(
+        {
+            shape_table
+            for shape_table, _, _ in frame_keys
+            if shape_table not in ENEMY_FRAME_PALETTE_GROUPS
+        }
+    )
+    if unsupported_tables:
+        raise ValueError(
+            f"first-level frame palette mapping is missing: {unsupported_tables}"
+        )
+
+    images = {
+        key: compose_exact_enemy_frame(snes, image_root, *key)
+        for key in frame_keys
+    }
+    grouped_pixels: dict[int, list[np.ndarray]] = collections.defaultdict(list)
+    for key, image in images.items():
+        palette_bank = ENEMY_FRAME_PALETTE_GROUPS[key[0]]
+        rgba = np.asarray(image, dtype=np.uint8)
+        mask = rgba[:, :, 3] >= 80
+        if mask.any():
+            grouped_pixels[palette_bank].append(rgba[mask, :3])
+
+    palette_colours: dict[int, list[tuple[int, int, int]]] = {}
+    palette_bytes: dict[int, bytes] = {}
+    for palette_bank in sorted(set(ENEMY_FRAME_PALETTE_GROUPS.values())):
+        pixels = np.concatenate(grouped_pixels[palette_bank], axis=0)
+        colours = snes.adaptive_palette(pixels)
+        palette = ([(0, 0, 0)] + colours)[:16]
+        palette.extend([(0, 0, 0)] * (16 - len(palette)))
+        palette_colours[palette_bank] = palette
+        palette_bytes[palette_bank] = snes.snes_palette_bytes([palette])
+
+    tyrian_palette = load_tyrian_palette(palette_path)
+    filter_palette = [
+        (0, 0, 0),
+        *[tyrian_palette[0x70 | index] for index in range(1, 16)],
+    ]
+    palette_bytes[ENEMY_FILTER_PALETTE_BANK] = (
+        snes.snes_palette_bytes([filter_palette])
+    )
+
+    tiles = bytearray()
+    records = bytearray()
+    quantized_previews: list[Image.Image] = []
+    audit = [
+        "OpenTyrian first-level exact enemy frame catalog",
+        f"source_commit={OPENTYRIAN_SOURCE_COMMIT}",
+        f"enemy_definitions={len(definitions)}",
+        f"frame_count={len(frame_keys)}",
+        "frame_index,shape_table,graphic,size,palette_bank",
+    ]
+    for frame_index, key in enumerate(frame_keys):
+        shape_table, graphic, size = key
+        palette_bank = ENEMY_FRAME_PALETTE_GROUPS[shape_table]
+        palette = palette_colours[palette_bank]
+        palette_array = np.asarray(palette[1:], dtype=np.int32)
+        rgba = np.asarray(images[key], dtype=np.uint8)
+        mask = rgba[:, :, 3] >= 80
+        values = np.zeros((32, 32), dtype=np.uint8)
+        if mask.any():
+            pixels = rgba[mask, :3].astype(np.int32)
+            values[mask] = (
+                ((pixels[:, None, :] - palette_array[None, :, :]) ** 2)
+                .sum(axis=2)
+                .argmin(axis=1)
+                .astype(np.uint8)
+                + 1
+            )
+        for tile_y in range(4):
+            for tile_x in range(4):
+                tiles.extend(
+                    encode_gba_4bpp(
+                        values[
+                            tile_y * 8 : tile_y * 8 + 8,
+                            tile_x * 8 : tile_x * 8 + 8,
+                        ]
+                    )
+                )
+        preview = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+        preview_pixels = preview.load()
+        for y in range(32):
+            for x in range(32):
+                value = int(values[y, x])
+                if value:
+                    preview_pixels[x, y] = (*palette[value], 255)
+        quantized_previews.append(preview)
+        records.extend(
+            struct.pack(
+                "<BBHBBH",
+                shape_table,
+                size,
+                graphic,
+                palette_bank,
+                0,
+                frame_index,
+            )
+        )
+        audit.append(
+            f"{frame_index},{shape_table},{graphic},{size},{palette_bank}"
+        )
+
+    if len(tiles) != len(frame_keys) * ENEMY_FRAME_BYTES:
+        raise AssertionError("exact enemy frame tile packing changed")
+    header = struct.pack(
+        "<4sHHHHI",
+        ENEMY_FRAME_MAGIC,
+        ENEMY_FRAME_VERSION,
+        len(frame_keys),
+        ENEMY_FRAME_RECORD_BYTES,
+        ENEMY_FRAME_TILES,
+        len(tiles),
+    )
+    catalog = header + bytes(records)
+
+    columns = 8
+    rows = (len(frame_keys) + columns - 1) // columns
+    preview_sheet = Image.new(
+        "RGBA", (columns * 64, rows * 48), (16, 16, 20, 255)
+    )
+    draw = ImageDraw.Draw(preview_sheet)
+    for index, (key, preview) in enumerate(
+        zip(frame_keys, quantized_previews, strict=True)
+    ):
+        x = (index % columns) * 64
+        y = (index // columns) * 48
+        preview_sheet.alpha_composite(preview, (x + 16, y))
+        draw.text(
+            (x + 1, y + 33),
+            f"{key[0]}:{key[1]}/{key[2]}",
+            fill=(220, 220, 224, 255),
+        )
+    return bytes(tiles), catalog, palette_bytes, audit, preview_sheet
 
 
 def reward_code_for_value(value: int) -> int:
@@ -1909,6 +2274,21 @@ def main() -> None:
         snes.build_obj_assets(nes, image_root, player_shot_source)
     )
     (
+        enemy_frame_tiles,
+        enemy_frame_catalog,
+        enemy_frame_palettes,
+        enemy_frame_audit,
+        enemy_frame_preview,
+    ) = build_exact_enemy_frame_catalog(
+        snes,
+        nes,
+        source_events,
+        data_root / "tyrian1.lvl",
+        data_root / "tyrian.hdt",
+        data_root / "palette.dat",
+        image_root,
+    )
+    (
         explosion_tiles,
         explosion_palette,
         explosion_preview,
@@ -1944,6 +2324,14 @@ def main() -> None:
         boss_bar_flash_colours,
     ) = build_boss_bar_assets(snes, data_root / "palette.dat")
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
+    for palette_bank, palette_data in enemy_frame_palettes.items():
+        if len(palette_data) != 32:
+            raise ValueError(
+                f"enemy OBJ palette {palette_bank} is not 16 colours"
+            )
+        obj_palette[
+            palette_bank * 32 : (palette_bank + 1) * 32
+        ] = palette_data
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
     obj_palette[9 * 32 : 10 * 32] = digit_palette
@@ -1969,10 +2357,31 @@ def main() -> None:
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
+    obj_metadata["OBJ_ENEMY_FRAME_COUNT"] = (
+        (len(enemy_frame_catalog) - 16) // ENEMY_FRAME_RECORD_BYTES
+    )
+    obj_metadata["OBJ_ENEMY_FRAME_RECORD_BYTES"] = (
+        ENEMY_FRAME_RECORD_BYTES
+    )
+    obj_metadata["OBJ_ENEMY_FRAME_TILES"] = ENEMY_FRAME_TILES
+    obj_metadata["OBJ_ENEMY_FRAME_BYTES"] = ENEMY_FRAME_BYTES
+    obj_metadata["OBJ_ENEMY_FRAME_CATALOG_BYTES"] = len(
+        enemy_frame_catalog
+    )
+    obj_metadata["OBJ_ENEMY_FRAME_TILE_BYTES"] = len(enemy_frame_tiles)
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
+    (output / "enemy_frame_tiles.bin").write_bytes(enemy_frame_tiles)
+    (output / "enemy_frame_catalog.bin").write_bytes(enemy_frame_catalog)
+    (output / "enemy_frame_audit.csv").write_text(
+        "\n".join(enemy_frame_audit) + "\n",
+        encoding="utf-8",
+    )
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
         preview / "obj_gba_source_atlas.png"
+    )
+    enemy_frame_preview.save(
+        preview / "enemy_frames_exact_catalog.png"
     )
     explosion_preview.resize((384, 288), Image.Resampling.NEAREST).save(
         preview / "explosion_animations_small_air_ground.png"
@@ -2158,7 +2567,26 @@ def main() -> None:
             f"{dynamic_reward_report['dynamic_value_250']}"
         ),
         f"obj_tiles={len(obj_tiles) // 32}",
-        "obj_enemy_archetypes=24",
+        "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
+        (
+            "obj_enemy_exact_frame_count="
+            f"{obj_metadata['OBJ_ENEMY_FRAME_COUNT']}"
+        ),
+        (
+            "obj_enemy_exact_frame_tile_bytes="
+            f"{len(enemy_frame_tiles)}"
+        ),
+        (
+            "obj_enemy_dynamic_cache_slots="
+            f"{obj_metadata['OBJ_DYNAMIC_SLOT_COUNT']}"
+        ),
+        (
+            "obj_enemy_dynamic_tile_base="
+            f"{obj_metadata['OBJ_DYNAMIC_TILE_BASE']}"
+        ),
+        "obj_enemy_frame_key=shape_table/egr[enemycycle-1]/size",
+        "obj_enemy_large_composition=graphic+0,+1,+19,+20",
+        "obj_enemy_source_scope=all 1009 first-level event records",
         "boss_bar_source=OpenTyrian event79/draw_boss_bar",
         "boss_bar_pc_geometry=single x155 y7 width51 height6 armor254",
         "boss_bar_gba_geometry=single x96..135 y6..11 centered fill",

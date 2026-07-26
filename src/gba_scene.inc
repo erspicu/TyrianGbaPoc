@@ -39,62 +39,55 @@ static void render_game(void)
         }
     }
     if (game_state == STATE_PLAY) {
+        /*
+         * PC software blits later objects over earlier ones.  GBA resolves
+         * equal-priority OBJ overlap in favour of the lower OAM index, so
+         * emit the translated draw sequence in reverse:
+         * top, sky, ground2, ground; and descending slot order per pool.
+         */
+        static const u8 source_pool_oam_order[4] = {
+            50, 0, 75, 25
+        };
         u8 visible_source_enemies = 0;
+        u8 pool_order;
 
-        for (index = 0; index < OT_ENEMY_COUNT; index++) {
-            OtEnemy *enemy;
-            s16 screen_x;
-            s16 screen_y;
+        source_enemy_cache_begin_frame();
+        for (pool_order = 0; pool_order < 4; pool_order++) {
+            s16 slot;
 
-            if (source_parity_level.enemy_avail[index] == 1) continue;
-            enemy = &source_parity_level.enemy[index];
-            if (enemy->scoreitem) {
-                screen_x = source_score_item_screen_x(enemy);
-                screen_y = source_score_item_screen_y(enemy);
-                put_sprite(
-                    screen_x,
-                    screen_y,
-                    OBJ_TILE_REWARD +
-                        (
-                            source_reward_sequence(enemy) *
-                                REWARD_FRAME_COUNT +
-                            source_reward_frame(enemy)
-                        ) * REWARD_TILES_PER_FRAME,
-                    OBJ_PAL_REWARD,
-                    ATTR1_SIZE_16,
-                    0
-                );
-            } else {
-                u8 known;
-                u8 archetype = source_enemy_visual_archetype(
-                    enemy->enemy_definition_id,
-                    &known
-                );
-                u8 priority =
-                    index >= 50 && index < 75 ? 0 :
-                    (index < 25 ? 1 : 2);
+            for (slot = OT_ENEMY_POOL_SIZE - 1; slot >= 0; slot--) {
+                const OtEnemyDrawCommand *draw;
+                s16 screen_x;
+                s16 screen_y;
+                u16 tile;
+                u8 palette;
+                u8 priority;
 
-                if (!known) {
-                    source_note_unknown_visual(
-                        enemy->enemy_definition_id
-                    );
+                index = (u8)(source_pool_oam_order[pool_order] + slot);
+                draw = &source_parity_level.enemy_draw[index];
+                if (!draw->active) continue;
+                screen_x = source_enemy_draw_screen_x(draw);
+                screen_y = source_enemy_draw_screen_y(draw);
+                if (
+                    screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
+                    screen_y <= -32 || screen_y >= SCREEN_HEIGHT
+                ) {
+                    continue;
                 }
-                screen_x = source_enemy_screen_x(enemy);
-                screen_y = source_enemy_screen_y(enemy);
+                visible_source_enemies++;
+                tile = source_enemy_cache_acquire(draw, &palette);
+                if (tile == 0xffff) continue;
+                priority =
+                    draw->pool >= 50 && draw->pool < 75 ? 0 :
+                    (draw->pool < 25 ? 1 : 2);
                 put_sprite(
                     screen_x,
                     screen_y,
-                    enemy_tiles[archetype],
-                    enemy_palettes[archetype],
+                    tile,
+                    palette,
                     ATTR1_SIZE_32,
                     priority
                 );
-            }
-            if (
-                screen_x > -32 && screen_x < SCREEN_WIDTH &&
-                screen_y > -32 && screen_y < SCREEN_HEIGHT
-            ) {
-                visible_source_enemies++;
             }
         }
         telemetry_source_visible_enemies = visible_source_enemies;

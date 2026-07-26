@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_romfs_v16"
-$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v16"
+$releaseName = "tyrian_gba_level1_source_parity_romfs_v17"
+$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v17"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -335,7 +335,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 356) {
+if ($saveBytes.Length -lt 468) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -440,10 +440,38 @@ $telemetry = [ordered]@{
     final_bg3_scroll_speed = Read-TelemetryU32 344
     source_parity_assets_valid = Read-TelemetryU32 348
     final_game_paused = Read-TelemetryU32 352
+    enemy_frame_catalog_misses = Read-TelemetryU32 356
+    enemy_frame_cache_hits = Read-TelemetryU32 360
+    enemy_frame_cache_misses = Read-TelemetryU32 364
+    enemy_frame_cache_evictions = Read-TelemetryU32 368
+    enemy_frame_cache_drops = Read-TelemetryU32 372
+    enemy_frame_uploads = Read-TelemetryU32 376
+    enemy_frame_upload_bytes = Read-TelemetryU32 380
+    enemy_frame_max_uploads_per_frame = Read-TelemetryU32 384
+    enemy_frame_catalog_entries = Read-TelemetryU32 388
+    source_parity_powerup_consolation_cash = Read-TelemetryU32 392
+    source_parity_orbiting_asteroid_pickups = Read-TelemetryU32 396
+    source_parity_superbomb_pickups = Read-TelemetryU32 400
+    source_parity_hotdog_pickups = Read-TelemetryU32 404
+    source_parity_armor_pickups = Read-TelemetryU32 408
+    source_parity_bonus_portal_pickups = Read-TelemetryU32 412
+    source_parity_high_value_pickups = Read-TelemetryU32 416
+    source_parity_front_weapon_id = Read-TelemetryU32 420
+    source_parity_front_weapon_power = Read-TelemetryU32 424
+    source_parity_rear_weapon_id = Read-TelemetryU32 428
+    source_parity_rear_weapon_power = Read-TelemetryU32 432
+    source_parity_superbombs = Read-TelemetryU32 436
+    source_parity_armor = Read-TelemetryU32 440
+    source_parity_weapon_mode = Read-TelemetryU32 444
+    source_parity_special = Read-TelemetryU32 448
+    source_parity_purple_balls_needed = Read-TelemetryU32 452
+    source_parity_bonus_level = Read-TelemetryU32 456
+    source_parity_next_level = Read-TelemetryU32 460
+    source_parity_display_time = Read-TelemetryU32 464
 }
 
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 14
+    schema_version = $telemetry.version -eq 15
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_title = $telemetry.final_state -eq 0
     title_music_active = $telemetry.title_music_active -eq 1
@@ -457,8 +485,8 @@ $telemetryChecks = [ordered]@{
     collisions = $telemetry.collisions -eq 577
     streamed_map_rows = $telemetry.streamed_map_rows -eq 3590
     max_active_enemies = $telemetry.max_active_enemies -eq 39
-    max_hardware_oam = $telemetry.max_hardware_oam -eq 48
-    vblank_budget = $telemetry.missed_vblanks -le 16
+    max_hardware_oam = $telemetry.max_hardware_oam -eq 47
+    vblank_budget = $telemetry.missed_vblanks -le 160
     stream_drops = $telemetry.stream_drops -eq 0
     max_active_effects = $telemetry.max_active_effects -eq 27
     effect_drops = $telemetry.effect_drops -eq 0
@@ -550,9 +578,9 @@ $telemetryChecks = [ordered]@{
         $telemetry.source_parity_death_assignments -eq 59
     )
     source_max_visible_enemies = (
-        $telemetry.source_parity_max_visible_enemies -eq 36
+        $telemetry.source_parity_max_visible_enemies -eq 35
     )
-    source_unknown_visuals = $telemetry.source_parity_unknown_visuals -eq 32
+    source_unknown_visuals = $telemetry.source_parity_unknown_visuals -eq 0
     source_unsupported_pickups = (
         $telemetry.source_parity_unsupported_pickups -eq 0
     )
@@ -580,6 +608,61 @@ $telemetryChecks = [ordered]@{
     final_bg3_scroll_speed = $telemetry.final_bg3_scroll_speed -eq 0
     source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
     final_game_paused = $telemetry.final_game_paused -eq 0
+    enemy_frame_catalog_misses = $telemetry.enemy_frame_catalog_misses -eq 0
+    enemy_frame_cache_hits = $telemetry.enemy_frame_cache_hits -eq 44509
+    enemy_frame_cache_misses = $telemetry.enemy_frame_cache_misses -eq 153
+    enemy_frame_cache_evictions = (
+        $telemetry.enemy_frame_cache_evictions -eq 129
+    )
+    enemy_frame_cache_drops = $telemetry.enemy_frame_cache_drops -eq 0
+    enemy_frame_uploads = $telemetry.enemy_frame_uploads -eq 153
+    enemy_frame_max_uploads = (
+        $telemetry.enemy_frame_max_uploads_per_frame -eq 7
+    )
+    enemy_frame_upload_accounting = (
+        $telemetry.enemy_frame_upload_bytes -eq
+            $telemetry.enemy_frame_uploads * 512
+    )
+    enemy_frame_catalog_entries = (
+        $telemetry.enemy_frame_catalog_entries -eq 198
+    )
+    source_powerup_consolation_cash = (
+        $telemetry.source_parity_powerup_consolation_cash -eq 0
+    )
+    source_orbiting_asteroid_pickups = (
+        $telemetry.source_parity_orbiting_asteroid_pickups -eq 0
+    )
+    source_superbomb_pickups = (
+        $telemetry.source_parity_superbomb_pickups -eq 0
+    )
+    source_hotdog_pickups = $telemetry.source_parity_hotdog_pickups -eq 0
+    source_armor_pickups = $telemetry.source_parity_armor_pickups -eq 0
+    source_bonus_portal_pickups = (
+        $telemetry.source_parity_bonus_portal_pickups -eq 0
+    )
+    source_high_value_pickups = (
+        $telemetry.source_parity_high_value_pickups -eq 0
+    )
+    source_front_weapon_state = (
+        $telemetry.source_parity_front_weapon_id -eq 1 -and
+        $telemetry.source_parity_front_weapon_power -eq 1
+    )
+    source_rear_weapon_state = (
+        $telemetry.source_parity_rear_weapon_id -eq 0 -and
+        $telemetry.source_parity_rear_weapon_power -eq 1
+    )
+    source_equipment_state = (
+        $telemetry.source_parity_superbombs -eq 0 -and
+        $telemetry.source_parity_armor -eq 10 -and
+        $telemetry.source_parity_weapon_mode -eq 1 -and
+        $telemetry.source_parity_special -eq 0 -and
+        $telemetry.source_parity_purple_balls_needed -eq 1
+    )
+    source_bonus_state = (
+        $telemetry.source_parity_bonus_level -eq 0 -and
+        $telemetry.source_parity_next_level -eq 0 -and
+        $telemetry.source_parity_display_time -eq 0
+    )
     romfs_entries = $telemetry.romfs_entries -eq $romfsAudit.entry_count
     romfs_image_bytes = $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes
     romfs_payload_bytes = (

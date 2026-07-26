@@ -131,6 +131,22 @@ typedef struct {
     bool ground;
 } OtHitEffect;
 
+/*
+ * Presentation command captured at the exact blit_enemy() point inside the
+ * translated JE_drawEnemy() phase.  Gameplay may move or release the slot
+ * later in the same tick; retaining this command preserves the PC draw order.
+ */
+typedef struct {
+    bool active;
+    int16_t x;
+    int16_t y;
+    uint16_t graphic;
+    uint8_t shape_table;
+    uint8_t size;
+    uint8_t filter;
+    uint8_t pool;
+} OtEnemyDrawCommand;
+
 typedef struct {
     bool collided;
     bool consumed;
@@ -138,6 +154,7 @@ typedef struct {
     uint8_t hit_count;
     uint8_t kill_count;
     uint8_t effect_count;
+    uint8_t data_cubes_awarded;
     uint32_t cash_awarded;
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
 } OtShotCollisionResult;
@@ -146,6 +163,12 @@ typedef struct {
     uint8_t pickup_count;
     uint8_t contact_count;
     uint8_t effect_count;
+    uint8_t data_cubes_awarded;
+    uint8_t front_powerups;
+    uint8_t rear_powerups;
+    uint8_t superbombs_awarded;
+    bool bonus_level_triggered;
+    uint16_t next_level;
     uint32_t cash_awarded;
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
 } OtPlayerCollisionResult;
@@ -216,11 +239,29 @@ typedef struct {
 
     OtEnemy enemy[OT_ENEMY_COUNT];
     uint8_t enemy_avail[OT_ENEMY_COUNT];
+    OtEnemyDrawCommand enemy_draw[OT_ENEMY_COUNT];
     OtEnemyShot enemy_shot[OT_ENEMY_SHOT_COUNT];
     uint8_t global_flags[OT_GLOBAL_FLAG_COUNT];
     uint8_t new_pl[OT_NEW_PL_COUNT];
     OtMt19937 rng;
     uint16_t frame_sound_mask;
+
+    /*
+     * Fixed single-player state required by the directly translated
+     * JE_playerCollide()/power_up_weapon() score-item branches.
+     */
+    uint8_t player_front_weapon_id;
+    uint8_t player_front_weapon_power;
+    uint8_t player_rear_weapon_id;
+    uint8_t player_rear_weapon_power;
+    uint8_t player_superbombs;
+    uint8_t player_armor;
+    uint8_t player_weapon_mode;
+    uint8_t player_special;
+    uint8_t player_purple_balls_needed;
+    bool bonus_level;
+    uint16_t next_level;
+    uint16_t display_time;
 
     uint32_t applied_event_count;
     uint32_t deferred_event_count;
@@ -267,6 +308,13 @@ typedef struct {
     uint32_t data_cube_pickup_count;
     uint32_t front_weapon_powerup_count;
     uint32_t rear_weapon_powerup_count;
+    uint32_t powerup_consolation_cash;
+    uint32_t orbiting_asteroid_pickup_count;
+    uint32_t superbomb_pickup_count;
+    uint32_t hotdog_pickup_count;
+    uint32_t armor_pickup_count;
+    uint32_t bonus_portal_pickup_count;
+    uint32_t high_value_pickup_count;
     uint32_t death_control_event_count;
     uint32_t death_assignment_count;
 } OtLevelPortState;

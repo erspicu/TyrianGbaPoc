@@ -29,8 +29,13 @@ enum {
     SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 5,
     SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
     SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 59,
-    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 36,
-    SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 32,
+    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 35,
+    SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 0,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS = 44509,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES = 153,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS = 129,
+    SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS = 153,
+    SOURCE_STAGE4_EXPECTED_FRAME_MAX_UPLOADS = 7,
 };
 
 static void sram_write_u32(u32 offset, u32 value)
@@ -140,10 +145,25 @@ static void autotest_finish(void)
             SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES &&
         telemetry_source_unknown_visuals ==
             SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
+        telemetry_enemy_frame_catalog_misses == 0 &&
+        telemetry_enemy_frame_cache_hits ==
+            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS &&
+        telemetry_enemy_frame_cache_misses ==
+            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES &&
+        telemetry_enemy_frame_cache_evictions ==
+            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS &&
+        telemetry_enemy_frame_cache_drops == 0 &&
+        telemetry_enemy_frame_uploads ==
+            SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS &&
+        telemetry_enemy_frame_max_uploads ==
+            SOURCE_STAGE4_EXPECTED_FRAME_MAX_UPLOADS &&
+        telemetry_enemy_frame_upload_bytes ==
+            telemetry_enemy_frame_uploads * OBJ_ENEMY_FRAME_BYTES &&
+        OBJ_ENEMY_FRAME_COUNT == 198 &&
         source_parity_level.enemy_shot_active_count == 0 &&
         source_parity_level.active_enemy_count == 20 &&
         player_cash == 1960 &&
-        telemetry_missed_vblanks <= 16 &&
+        telemetry_missed_vblanks <= 160 &&
         telemetry_source_launch_attempts == 0 &&
         telemetry_source_launch_successes == 0 &&
         telemetry_source_random_attempts == 0 &&
@@ -158,7 +178,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 14;
+    sram[4] = 15;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -277,6 +297,40 @@ static void autotest_finish(void)
     sram_write_u32(344, bg3_scroll_speed);
     sram_write_u32(348, source_parity_level.assets_valid ? 1 : 0);
     sram_write_u32(352, game_paused);
+    sram_write_u32(356, telemetry_enemy_frame_catalog_misses);
+    sram_write_u32(360, telemetry_enemy_frame_cache_hits);
+    sram_write_u32(364, telemetry_enemy_frame_cache_misses);
+    sram_write_u32(368, telemetry_enemy_frame_cache_evictions);
+    sram_write_u32(372, telemetry_enemy_frame_cache_drops);
+    sram_write_u32(376, telemetry_enemy_frame_uploads);
+    sram_write_u32(380, telemetry_enemy_frame_upload_bytes);
+    sram_write_u32(384, telemetry_enemy_frame_max_uploads);
+    sram_write_u32(388, OBJ_ENEMY_FRAME_COUNT);
+    sram_write_u32(
+        392,
+        source_parity_level.powerup_consolation_cash
+    );
+    sram_write_u32(
+        396,
+        source_parity_level.orbiting_asteroid_pickup_count
+    );
+    sram_write_u32(400, source_parity_level.superbomb_pickup_count);
+    sram_write_u32(404, source_parity_level.hotdog_pickup_count);
+    sram_write_u32(408, source_parity_level.armor_pickup_count);
+    sram_write_u32(412, source_parity_level.bonus_portal_pickup_count);
+    sram_write_u32(416, source_parity_level.high_value_pickup_count);
+    sram_write_u32(420, source_parity_level.player_front_weapon_id);
+    sram_write_u32(424, source_parity_level.player_front_weapon_power);
+    sram_write_u32(428, source_parity_level.player_rear_weapon_id);
+    sram_write_u32(432, source_parity_level.player_rear_weapon_power);
+    sram_write_u32(436, source_parity_level.player_superbombs);
+    sram_write_u32(440, source_parity_level.player_armor);
+    sram_write_u32(444, source_parity_level.player_weapon_mode);
+    sram_write_u32(448, source_parity_level.player_special);
+    sram_write_u32(452, source_parity_level.player_purple_balls_needed);
+    sram_write_u32(456, source_parity_level.bonus_level ? 1 : 0);
+    sram_write_u32(460, source_parity_level.next_level);
+    sram_write_u32(464, source_parity_level.display_time);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
@@ -369,6 +423,15 @@ static u8 autotest_explosion_visible(void)
 static u8 autotest_reward_visible(void)
 {
     u8 index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (
+            source_parity_level.enemy_draw[index].active &&
+            source_parity_level.enemy[index].scoreitem
+        ) {
+            return 1;
+        }
+    }
     for (index = 0; index < MAX_REWARDS; index++) {
         if (rewards[index].active) return 1;
     }

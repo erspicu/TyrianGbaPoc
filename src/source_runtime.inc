@@ -6,9 +6,219 @@
 
 #define SOURCE_VIEW_X_OFFSET 34
 #define SOURCE_VIEW_Y_OFFSET (-10)
+#define SOURCE_ENEMY_CATALOG_HEADER_BYTES 16
 
-static u8 source_unknown_visual_bits[(OT_HDT_ENEMY_COUNT + 7) / 8]
-    EWRAM_DATA;
+typedef struct {
+    u16 frame_index;
+    u32 last_epoch;
+    u8 valid;
+} SourceEnemyCacheSlot;
+
+typedef struct {
+    u8 slot;
+    u16 frame_index;
+} SourceEnemyUpload;
+
+static SourceEnemyCacheSlot
+    source_enemy_cache[OBJ_DYNAMIC_SLOT_COUNT] EWRAM_DATA;
+static SourceEnemyUpload
+    source_enemy_uploads[OBJ_DYNAMIC_SLOT_COUNT] EWRAM_DATA;
+static u32 source_enemy_cache_epoch;
+static u8 source_enemy_upload_count;
+static u8 source_enemy_catalog_valid;
+
+static u16 source_read_u16(const u8 *source)
+{
+    return (u16)(source[0] | ((u16)source[1] << 8));
+}
+
+static u32 source_read_u32(const u8 *source)
+{
+    return
+        (u32)source[0] |
+        ((u32)source[1] << 8) |
+        ((u32)source[2] << 16) |
+        ((u32)source[3] << 24);
+}
+
+static const u8 *source_enemy_catalog_record(u16 index)
+{
+    return enemy_frame_catalog +
+        SOURCE_ENEMY_CATALOG_HEADER_BYTES +
+        (u32)index * OBJ_ENEMY_FRAME_RECORD_BYTES;
+}
+
+static const u8 *source_find_enemy_frame(
+    u8 shape_table,
+    u16 graphic,
+    u8 size
+)
+{
+    s16 low = 0;
+    s16 high = (s16)OBJ_ENEMY_FRAME_COUNT - 1;
+
+    if (!source_enemy_catalog_valid) return 0;
+    while (low <= high) {
+        s16 middle = (s16)(low + (high - low) / 2);
+        const u8 *record = source_enemy_catalog_record((u16)middle);
+        u8 record_shape = record[0];
+        u8 record_size = record[1];
+        u16 record_graphic = source_read_u16(record + 2);
+
+        if (
+            record_shape < shape_table ||
+            (
+                record_shape == shape_table &&
+                record_graphic < graphic
+            ) ||
+            (
+                record_shape == shape_table &&
+                record_graphic == graphic &&
+                record_size < size
+            )
+        ) {
+            low = (s16)(middle + 1);
+        } else if (
+            record_shape > shape_table ||
+            (
+                record_shape == shape_table &&
+                record_graphic > graphic
+            ) ||
+            (
+                record_shape == shape_table &&
+                record_graphic == graphic &&
+                record_size > size
+            )
+        ) {
+            high = (s16)(middle - 1);
+        } else {
+            return record;
+        }
+    }
+    return 0;
+}
+
+static void source_enemy_cache_begin_frame(void)
+{
+    source_enemy_cache_epoch++;
+    if (source_enemy_cache_epoch == 0) {
+        u8 index;
+
+        source_enemy_cache_epoch = 1;
+        for (index = 0; index < OBJ_DYNAMIC_SLOT_COUNT; index++) {
+            source_enemy_cache[index].last_epoch = 0;
+        }
+    }
+    source_enemy_upload_count = 0;
+}
+
+static u16 source_enemy_cache_acquire(
+    const OtEnemyDrawCommand *draw,
+    u8 *palette
+)
+{
+    const u8 *record = source_find_enemy_frame(
+        draw->shape_table,
+        draw->graphic,
+        draw->size
+    );
+    u16 frame_index;
+    u8 index;
+    u8 selected = OBJ_DYNAMIC_SLOT_COUNT;
+    u8 free_slot = OBJ_DYNAMIC_SLOT_COUNT;
+    u8 eviction_slot = OBJ_DYNAMIC_SLOT_COUNT;
+    u32 oldest_epoch = 0xffffffffu;
+
+    if (record == 0) {
+        telemetry_source_unknown_visuals++;
+        telemetry_enemy_frame_catalog_misses++;
+        return 0xffff;
+    }
+    frame_index = source_read_u16(record + 6);
+    *palette = draw->filter ?
+        OBJ_PAL_ENEMY_FILTER :
+        record[4];
+
+    for (index = 0; index < OBJ_DYNAMIC_SLOT_COUNT; index++) {
+        SourceEnemyCacheSlot *slot = &source_enemy_cache[index];
+
+        if (slot->valid && slot->frame_index == frame_index) {
+            slot->last_epoch = source_enemy_cache_epoch;
+            telemetry_enemy_frame_cache_hits++;
+            return (u16)(
+                OBJ_DYNAMIC_TILE_BASE +
+                index * OBJ_DYNAMIC_TILES_PER_SLOT
+            );
+        }
+        if (!slot->valid) {
+            if (free_slot == OBJ_DYNAMIC_SLOT_COUNT) {
+                free_slot = index;
+            }
+        } else if (
+            slot->last_epoch != source_enemy_cache_epoch &&
+            slot->last_epoch < oldest_epoch
+        ) {
+            eviction_slot = index;
+            oldest_epoch = slot->last_epoch;
+        }
+    }
+    selected = free_slot != OBJ_DYNAMIC_SLOT_COUNT ?
+        free_slot :
+        eviction_slot;
+    if (selected == OBJ_DYNAMIC_SLOT_COUNT) {
+        telemetry_enemy_frame_cache_drops++;
+        return 0xffff;
+    }
+    if (source_enemy_cache[selected].valid) {
+        telemetry_enemy_frame_cache_evictions++;
+    }
+    source_enemy_cache[selected].valid = 1;
+    source_enemy_cache[selected].frame_index = frame_index;
+    source_enemy_cache[selected].last_epoch = source_enemy_cache_epoch;
+    telemetry_enemy_frame_cache_misses++;
+    if (source_enemy_upload_count >= OBJ_DYNAMIC_SLOT_COUNT) {
+        telemetry_enemy_frame_cache_drops++;
+        source_enemy_cache[selected].valid = 0;
+        return 0xffff;
+    }
+    source_enemy_uploads[source_enemy_upload_count].slot = selected;
+    source_enemy_uploads[source_enemy_upload_count].frame_index =
+        frame_index;
+    source_enemy_upload_count++;
+    if (
+        source_enemy_upload_count >
+        telemetry_enemy_frame_max_uploads
+    ) {
+        telemetry_enemy_frame_max_uploads = source_enemy_upload_count;
+    }
+    return (u16)(
+        OBJ_DYNAMIC_TILE_BASE +
+        selected * OBJ_DYNAMIC_TILES_PER_SLOT
+    );
+}
+
+static void source_enemy_cache_commit(void)
+{
+    u8 index;
+
+    for (index = 0; index < source_enemy_upload_count; index++) {
+        const SourceEnemyUpload *upload = &source_enemy_uploads[index];
+        const u8 *source =
+            enemy_frame_tiles +
+            (u32)upload->frame_index * OBJ_ENEMY_FRAME_BYTES;
+        u8 *target =
+            (u8 *)OBJ_BASE_ADR +
+            (
+                OBJ_DYNAMIC_TILE_BASE +
+                upload->slot * OBJ_DYNAMIC_TILES_PER_SLOT
+            ) * 32;
+
+        dmaCopy(source, target, OBJ_ENEMY_FRAME_BYTES);
+        telemetry_enemy_frame_uploads++;
+        telemetry_enemy_frame_upload_bytes += OBJ_ENEMY_FRAME_BYTES;
+    }
+    source_enemy_upload_count = 0;
+}
 
 static s16 source_scale_4_5(s16 value)
 {
@@ -58,20 +268,30 @@ static s16 source_player_y_from_gba(void)
     );
 }
 
-static s16 source_enemy_screen_x(const OtEnemy *enemy)
+static s16 source_enemy_draw_screen_x(
+    const OtEnemyDrawCommand *draw
+)
 {
     return (s16)(
-        source_world_to_screen_x((s16)(enemy->ex + 6)) - 16
+        source_world_to_screen_x((s16)(draw->x + 6)) - 16
     );
 }
 
-static s16 source_enemy_screen_y(const OtEnemy *enemy)
+static s16 source_enemy_draw_screen_y(
+    const OtEnemyDrawCommand *draw
+)
 {
     return (s16)(
-        source_world_to_screen_y((s16)(enemy->ey + 7)) - 16
+        source_world_to_screen_y((s16)(draw->y + 7)) - 16
     );
 }
 
+#ifdef AUTOTEST
+/*
+ * The deterministic test pilot steers toward the live translated enemy slot,
+ * after JE_drawEnemy has advanced it.  Presentation itself never uses these
+ * helpers: it consumes the pre-update OtEnemyDrawCommand above.
+ */
 static s16 source_score_item_screen_x(const OtEnemy *enemy)
 {
     return (s16)(
@@ -85,6 +305,7 @@ static s16 source_score_item_screen_y(const OtEnemy *enemy)
         source_world_to_screen_y((s16)(enemy->ey + 7)) - 8
     );
 }
+#endif
 
 static s16 source_player_shot_screen_x(const PlayerShot *shot)
 {
@@ -104,108 +325,6 @@ static s16 source_enemy_shot_screen_x(const OtEnemyShot *shot)
 static s16 source_enemy_shot_screen_y(const OtEnemyShot *shot)
 {
     return source_world_to_screen_y(shot->sy);
-}
-
-static u8 source_reward_sequence(const OtEnemy *enemy)
-{
-    switch (enemy->enemy_definition_id) {
-    case 391: return 0;
-    case 392: return 1;
-    case 393: return 2;
-    case 394: return 3;
-    case 395: return 4;
-    default:
-        /*
-         * GBA_PORT: the first-stage atlas does not yet include data cubes,
-         * weapon power-ups or bonus portals.  Keep their source lifecycle
-         * and use the closest existing pickup silhouette temporarily.
-         */
-        return enemy->evalue < 0 ? 3 : 4;
-    }
-}
-
-static u8 source_reward_frame(const OtEnemy *enemy)
-{
-    u8 cycle = enemy->enemycycle > 0 ?
-        (u8)(enemy->enemycycle - 1) : 0;
-
-    if (
-        enemy->enemy_definition_id == 394 ||
-        enemy->enemy_definition_id == 395
-    ) {
-        u8 phase = cycle >> 1;
-
-        if (phase > 4) phase = (u8)(8 - phase);
-        if (phase >= 4) return 2;
-        if (phase >= 2) return 1;
-        return 0;
-    }
-    return (u8)((cycle >> 1) % REWARD_FRAME_COUNT);
-}
-
-static u8 source_enemy_visual_archetype(
-    u16 enemy_id,
-    u8 *known
-)
-{
-    *known = 1;
-    if (enemy_id >= 66 && enemy_id <= 79) return 21;
-    if (enemy_id >= 121 && enemy_id <= 128) return 20;
-    if (enemy_id >= 516 && enemy_id <= 527) return 22;
-    switch (enemy_id) {
-    case 4: return 0;
-    case 3: return 1;
-    case 5:
-    case 38: return 2;
-    case 10:
-    case 12:
-    case 39: return 3;
-    case 15: return 4;
-    case 6:
-    case 13: return 5;
-    case 7:
-    case 14: return 6;
-    case 8: return 7;
-    case 9: return 8;
-    case 17: return 9;
-    case 24: return 10;
-    case 25: return 11;
-    case 26:
-    case 28: return 12;
-    case 27:
-    case 29: return 13;
-    case 30: return 14;
-    case 31: return 15;
-    case 32:
-    case 33: return 16;
-    case 34:
-    case 35: return 17;
-    case 36:
-    case 37: return 18;
-    case 40: return 19;
-    case 41:
-    case 42:
-    case 43:
-    case 44:
-    case 45: return 23;
-    default:
-        *known = 0;
-        return 0;
-    }
-}
-
-static void source_note_unknown_visual(u16 enemy_id)
-{
-    u16 byte_index;
-    u8 mask;
-
-    if (enemy_id >= OT_HDT_ENEMY_COUNT) return;
-    byte_index = enemy_id >> 3;
-    mask = (u8)(1u << (enemy_id & 7));
-    if ((source_unknown_visual_bits[byte_index] & mask) == 0) {
-        source_unknown_visual_bits[byte_index] |= mask;
-        telemetry_source_unknown_visuals++;
-    }
 }
 
 static void source_emit_effect(const OtHitEffect *effect)
@@ -443,12 +562,36 @@ static void source_update_enemy_projectiles(void)
 
 static void source_runtime_reset(void)
 {
-    memset(
-        source_unknown_visual_bits,
-        0,
-        sizeof(source_unknown_visual_bits)
-    );
+    memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
+    memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
+    source_enemy_cache_epoch = 0;
+    source_enemy_upload_count = 0;
+    source_enemy_catalog_valid =
+        enemy_frame_catalog[0] == 'O' &&
+        enemy_frame_catalog[1] == 'T' &&
+        enemy_frame_catalog[2] == 'E' &&
+        enemy_frame_catalog[3] == 'F' &&
+        source_read_u16(enemy_frame_catalog + 4) == 1 &&
+        source_read_u16(enemy_frame_catalog + 6) ==
+            OBJ_ENEMY_FRAME_COUNT &&
+        source_read_u16(enemy_frame_catalog + 8) ==
+            OBJ_ENEMY_FRAME_RECORD_BYTES &&
+        source_read_u16(enemy_frame_catalog + 10) ==
+            OBJ_ENEMY_FRAME_TILES &&
+        source_read_u32(enemy_frame_catalog + 12) ==
+            OBJ_ENEMY_FRAME_TILE_BYTES;
+    if (!source_enemy_catalog_valid) {
+        source_parity_level.assets_valid = false;
+    }
     telemetry_source_visible_enemies = 0;
     telemetry_source_max_visible_enemies = 0;
     telemetry_source_unknown_visuals = 0;
+    telemetry_enemy_frame_catalog_misses = 0;
+    telemetry_enemy_frame_cache_hits = 0;
+    telemetry_enemy_frame_cache_misses = 0;
+    telemetry_enemy_frame_cache_evictions = 0;
+    telemetry_enemy_frame_cache_drops = 0;
+    telemetry_enemy_frame_uploads = 0;
+    telemetry_enemy_frame_upload_bytes = 0;
+    telemetry_enemy_frame_max_uploads = 0;
 }

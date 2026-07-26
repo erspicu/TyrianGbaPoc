@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_romfs_v16
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v16
+TARGET := tyrian_gba_level1_source_parity_romfs_v17
+TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v17
 BUILD := build
 RES := res
 
@@ -42,7 +42,11 @@ ASSET_INPUTS := \
 	../../org/TyrianNesPoc/tools/build_assets.py \
 	../../org/AprCSTyrian/Build/data/tyrian1.lvl \
 	../../org/AprCSTyrian/Build/data/tyrian.hdt \
+	../../org/AprCSTyrian/Build/data/palette.dat \
 	../../org/AprCSTyrian/Build/data/tyrian.snd \
+	$(wildcard ../../org/AprCSTyrian/image/sheets/10_powerups/*.png) \
+	$(wildcard ../../org/AprCSTyrian/image/sheets/11_coins_cubes/*.png) \
+	$(wildcard ../../org/AprCSTyrian/image/sheets_newsh/newsh_*/*.png) \
 	../../org/opentyrian/src/tyrian2.c \
 	../../org/opentyrian/src/varz.h \
 	../../org/opentyrian/src/episodes.h \
@@ -58,7 +62,9 @@ ASSET_BINARIES := \
 	$(RES)/bg2_map.bin \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
-	$(RES)/obj_palette.bin
+	$(RES)/obj_palette.bin \
+	$(RES)/enemy_frame_catalog.bin \
+	$(RES)/enemy_frame_tiles.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \

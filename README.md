@@ -37,10 +37,13 @@ The current scope is deliberately narrow:
   `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
   `eenemydie` children
 - five physical pickups collected by the regression route, including two data
-  cubes and three cash items; no unsupported pickup semantics
-- 24 audited GBA visual archetypes selected only at presentation time, without
-  changing source gameplay identity
-- all 128 GBA OAM entries, with a measured peak of 48
+  cubes and three cash items; `JE_playerCollide()` reward branches now retain
+  their fixed-single-player gameplay state
+- 198 exact source Sprite2 frames keyed by
+  `(shape_table, egr[enemycycle - 1], size)`; the old 24-archetype aliases and
+  all fallback visuals are removed
+- a 24-slot VBlank-uploaded OBJ frame cache with zero catalog misses or cache
+  drops, plus all 128 GBA OAM entries with a measured peak of 47
 - original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
   poses, original explosion and reward animation assets, TINY_FONT cash and
   FONT_SHAPES `PAUSED`
@@ -50,11 +53,11 @@ The current scope is deliberately narrow:
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
 
-The deterministic v16 route has no stream, effect, reward or projectile-pool
-drops. It records 13 missed VBlanks over 12,239 displayed frames (about 0.11%);
-this remains visible as a measured GBA workload result. The 32 unmapped visual
-IDs are all in the position-4912..5384 structure/boss-component window
-immediately before the simplified boss handoff.
+The deterministic v17 route has no stream, effect, reward, projectile-pool,
+catalog or frame-cache drops. It records 101 missed VBlanks over 12,239
+displayed frames (about 0.83%); this includes 153 exact-frame uploads and
+remains visible as a measured GBA workload result. All 198 catalogued first-
+level enemy/reward frames resolve without fallback.
 
 ## Controls
 
@@ -75,7 +78,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v16.gba
+build/tyrian_gba_level1_source_parity_romfs_v17.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -92,6 +95,7 @@ under `Backup`, and the reproducible source asset conversions are
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [v17 enemy/reward source-parity translation](MD/Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md)
 - [Cartridge ROMFS format and porting API](MD/Tyrian-GBA-ROMFS.md)
 - [First-level technical demo](MD/Tyrian-GBA-First-Level-Tech-Demo.md)
 - [GBA toolchain and runtime setup](MD/Tyrian-GBA-Toolchain-Setup.md)

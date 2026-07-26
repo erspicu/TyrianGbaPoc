@@ -50,6 +50,13 @@ static void commit_vblank_work(void)
                      CHAR_BASE(2) | SCREEN_BASE(BG2_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_2;
     }
+    /*
+     * Source Sprite2 frames are copied into the reserved OBJ tile cache only
+     * during VBlank.  The shadow OAM written below may then safely point at
+     * the freshly uploaded frame, exactly one presentation frame after the
+     * translated JE_drawEnemy selected it.
+     */
+    source_enemy_cache_commit();
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;

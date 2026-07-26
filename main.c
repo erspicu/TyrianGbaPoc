@@ -32,7 +32,6 @@
 #define MAX_ENEMY_SHOTS 60
 #define MAX_EFFECTS 48
 #define MAX_REWARDS 32
-#define ENEMY_ARCHETYPES 24
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
 #define PLAYER_SHOT_SPEED 10
@@ -119,6 +118,20 @@ _Static_assert(
     "PC red projectile animation frames must share a palette"
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
+_Static_assert(
+    OBJ_DYNAMIC_TILES_PER_SLOT == OBJ_ENEMY_FRAME_TILES,
+    "dynamic OBJ slot must contain one exact enemy frame"
+);
+_Static_assert(
+    OBJ_ENEMY_FRAME_BYTES == OBJ_ENEMY_FRAME_TILES * 32,
+    "exact enemy frame byte stride changed"
+);
+_Static_assert(
+    OBJ_DYNAMIC_TILE_BASE +
+        OBJ_DYNAMIC_SLOT_COUNT * OBJ_DYNAMIC_TILES_PER_SLOT <=
+        OBJ_TILE_COUNT,
+    "dynamic enemy frame cache exceeds OBJ VRAM"
+);
 
 #define STATE_TITLE 0
 #define STATE_PLAY 1
@@ -138,6 +151,8 @@ extern const u8 bg2_map[];
 extern const u8 bg3_map[];
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
+extern const u8 enemy_frame_catalog[];
+extern const u8 enemy_frame_tiles[];
 extern const u8 soundbank[];
 
 typedef struct {
@@ -202,36 +217,6 @@ static Reward rewards[MAX_REWARDS] EWRAM_DATA;
 static u8 active_effect_count;
 static u8 active_reward_count;
 static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
-
-static const u16 enemy_tiles[ENEMY_ARCHETYPES] = {
-    OBJ_TILE_ENEMY_0, OBJ_TILE_ENEMY_1,
-    OBJ_TILE_ENEMY_2, OBJ_TILE_ENEMY_3,
-    OBJ_TILE_ENEMY_4, OBJ_TILE_ENEMY_5,
-    OBJ_TILE_ENEMY_6, OBJ_TILE_ENEMY_7,
-    OBJ_TILE_ENEMY_8, OBJ_TILE_ENEMY_9,
-    OBJ_TILE_ENEMY_10, OBJ_TILE_ENEMY_11,
-    OBJ_TILE_ENEMY_12, OBJ_TILE_ENEMY_13,
-    OBJ_TILE_ENEMY_14, OBJ_TILE_ENEMY_15,
-    OBJ_TILE_ENEMY_16, OBJ_TILE_ENEMY_17,
-    OBJ_TILE_ENEMY_18, OBJ_TILE_ENEMY_19,
-    OBJ_TILE_ENEMY_20, OBJ_TILE_ENEMY_21,
-    OBJ_TILE_ENEMY_22, OBJ_TILE_ENEMY_23,
-};
-
-static const u8 enemy_palettes[ENEMY_ARCHETYPES] = {
-    OBJ_PAL_ENEMY_0, OBJ_PAL_ENEMY_1,
-    OBJ_PAL_ENEMY_2, OBJ_PAL_ENEMY_3,
-    OBJ_PAL_ENEMY_4, OBJ_PAL_ENEMY_5,
-    OBJ_PAL_ENEMY_6, OBJ_PAL_ENEMY_7,
-    OBJ_PAL_ENEMY_8, OBJ_PAL_ENEMY_9,
-    OBJ_PAL_ENEMY_10, OBJ_PAL_ENEMY_11,
-    OBJ_PAL_ENEMY_12, OBJ_PAL_ENEMY_13,
-    OBJ_PAL_ENEMY_14, OBJ_PAL_ENEMY_15,
-    OBJ_PAL_ENEMY_16, OBJ_PAL_ENEMY_17,
-    OBJ_PAL_ENEMY_18, OBJ_PAL_ENEMY_19,
-    OBJ_PAL_ENEMY_20, OBJ_PAL_ENEMY_21,
-    OBJ_PAL_ENEMY_22, OBJ_PAL_ENEMY_23,
-};
 
 /*
  * Exact tyrian.hdt WeaponType entries referenced by first-level enemies and
@@ -430,6 +415,14 @@ volatile u32 telemetry_source_launch_attempts;
 volatile u32 telemetry_source_launch_successes;
 volatile u32 telemetry_source_random_attempts;
 volatile u32 telemetry_source_random_successes;
+volatile u32 telemetry_enemy_frame_catalog_misses;
+volatile u32 telemetry_enemy_frame_cache_hits;
+volatile u32 telemetry_enemy_frame_cache_misses;
+volatile u32 telemetry_enemy_frame_cache_evictions;
+volatile u32 telemetry_enemy_frame_cache_drops;
+volatile u32 telemetry_enemy_frame_uploads;
+volatile u32 telemetry_enemy_frame_upload_bytes;
+volatile u32 telemetry_enemy_frame_max_uploads;
 volatile u32 telemetry_state_transitions;
 volatile u32 telemetry_romfs_entries;
 volatile u32 telemetry_romfs_image_bytes;
@@ -478,7 +471,7 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V116";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V117";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;
@@ -488,6 +481,7 @@ static u8 autotest_screenshot_delay;
 static s16 source_player_x_from_gba(void);
 static s16 source_player_y_from_gba(void);
 static void source_runtime_reset(void);
+static void source_enemy_cache_commit(void);
 
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"

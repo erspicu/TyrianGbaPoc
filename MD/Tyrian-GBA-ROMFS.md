@@ -15,11 +15,11 @@ cartridge ROM 的 memory-mapped 位址。
 | 原始 payload | 9,849,648 bytes |
 | ROMFS image | 9,853,080 bytes |
 | 索引、路徑與 alignment overhead | 3,432 bytes |
-| 完整 release ROM | 10,453,364 bytes |
-| 32 MiB ROM 使用率 | 31.1535% |
-| 尚餘標準 ROM 空間 | 23,101,068 bytes（約 22.03 MiB） |
+| 完整 release ROM | 10,550,344 bytes |
+| 32 MiB ROM 使用率 | 約 31.44% |
+| 尚餘標準 ROM 空間 | 23,004,088 bytes（約 21.94 MiB） |
 | 開機 ROMFS 自我檢查 | 93／93 PASS |
-| Missed VBlank／runtime errors | 0／0 |
+| Missed VBlank／runtime errors | 101／0 |
 
 封裝內容包含 stock 遊戲所需的 MUS、SND、SHP、PIC、HDT、CDT、LVL、
 palette、episode level table、文字及 demo 資料。DOS executable、安裝程式、
@@ -183,7 +183,7 @@ OpenTyrian 原有的 file helper boundary：
 這樣後續逐行翻寫時，資料 parser 不需要先全部改成生成式 C array，也不會
 把 GBA storage 細節滲入 game loop。
 
-## v16 原始格式 reader
+## v16／v17 原始格式 reader
 
 `src/opentyrian_data.c/.h` 是 ROMFS 與 gameplay 間的格式層。所有 view 都
 直接指向 cartridge ROM；只有 PIC 的 320×200 解碼輸出與 SHP sprite
@@ -325,7 +325,7 @@ SRAM telemetry。
 
 - v1 是唯讀；save game、設定及 high score 應使用 SRAM／Flash 的另一套
   storage adapter，不能假裝寫入 ROMFS。
-- v1 不壓縮。現在仍有約 21.95 MiB 空間，直接 mapping 能讓 parser seek
+- v1 不壓縮。現在仍有約 21.94 MiB 空間，直接 mapping 能讓 parser seek
   且避免解壓 RAM／CPU 成本。接近 32 MiB 時再新增 per-file compressed
   flag，適合圖形或文字；不要破壞 v1 stored entry。
 - v1 不提供 directory enumeration，因為 OpenTyrian 以已知檔名讀取。
@@ -336,13 +336,13 @@ SRAM telemetry。
 - 若未來 ROM 超過標準 32 MiB，不能只改 linker；需先減少資料、加入壓縮
   或設計非標準 bank switching，並重新確認實機及 flash cartridge 支援。
 
-## v16 驗證識別
+## v17 驗證識別
 
 ```text
 Release ROM:
-  build/tyrian_gba_level1_source_parity_romfs_v16.gba
-  10,446,824 bytes
-  SHA-256 c683626bd441970fa71a8694ec7800a74f7771dc2e0a4046a67d8a6bf22882f2
+  build/tyrian_gba_level1_source_parity_romfs_v17.gba
+  10,550,344 bytes
+  SHA-256 2f8308b49ffcd95a0758dffd84ed3042a45849cb66a61228457484f31bacfa38
 
 ROMFS:
   9,853,080 bytes
@@ -350,7 +350,8 @@ ROMFS:
   manifest CRC32 764b1e68
 ```
 
-Build 以 telemetry schema 14 同時取得 ROM 內與 host verifier PASS：
+Build 以 telemetry schema 15 同時取得 ROM 內與 host verifier PASS：
 93 項 ROMFS self-test 全通過，並鎖定 Stage 4 authoritative runtime 的
 878 個 source events、473/473 event spawns、168/168 projectile
-spawn/release、0 projectile drop。
+spawn/release、198 個 exact enemy/reward frame、0 catalog miss 與
+0 cache/projectile drop。

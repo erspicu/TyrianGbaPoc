@@ -598,6 +598,14 @@ void ot_level_port_init(OtLevelPortState *state)
     state->level_end = 255;
     state->map_x = 1;
     state->map_x3 = 1;
+    /* JE_initPlayerData(): USP Talon, Pulse-Cannon, no rear weapon. */
+    state->player_front_weapon_id = 1;
+    state->player_front_weapon_power = 1;
+    state->player_rear_weapon_id = 0;
+    state->player_rear_weapon_power = 1;
+    state->player_armor = 10;
+    state->player_weapon_mode = 1;
+    state->player_purple_balls_needed = 1;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         state->enemy_avail[index] = 1;
     }
@@ -1546,6 +1554,8 @@ static void ot_draw_enemy_pool(
         }
 
         if (enemy->ex > -29 && enemy->ex < 300) {
+            OtEnemyDrawCommand *draw = &state->enemy_draw[index];
+
             if (enemy->aniactive == 1) {
                 enemy->enemycycle++;
                 if (enemy->enemycycle == enemy->animax) {
@@ -1565,6 +1575,25 @@ static void ot_draw_enemy_pool(
             if (enemy->egr[enemy->enemycycle - 1] == 999) {
                 ot_release_enemy(state, index);
                 continue;
+            }
+            /*
+             * This is the exact source blit point.  JE_drawEnemy() draws
+             * before movement, firing and the later player-shot collision
+             * phase, so the GBA renderer consumes this immutable command
+             * instead of re-reading a potentially moved/released slot.
+             */
+            if (
+                (enemy->size == 1 && enemy->ey > -26) ||
+                (enemy->size != 1 && enemy->ey > -13)
+            ) {
+                draw->active = true;
+                draw->x = (int16_t)(enemy->ex + enemy->mapoffset);
+                draw->y = enemy->ey;
+                draw->graphic = enemy->egr[enemy->enemycycle - 1];
+                draw->shape_table = enemy->shape_table;
+                draw->size = enemy->size;
+                draw->filter = enemy->filter;
+                draw->pool = pool;
             }
             enemy->filter = 0;
         }
@@ -1732,7 +1761,15 @@ static void ot_credit_destroyed_enemy(
     OtShotCollisionResult *result
 )
 {
-    if (enemy->evalue > 1 && enemy->evalue < 10000) {
+    if (enemy->evalue == 1) {
+        /*
+         * Direct translation of the cubeMax++ branch in the player-shot
+         * death path.  A data cube can be credited by destruction without
+         * becoming a separate score-item object.
+         */
+        state->data_cube_pickup_count++;
+        result->data_cubes_awarded++;
+    } else if (enemy->evalue > 1 && enemy->evalue < 10000) {
         uint32_t value = (uint16_t)enemy->evalue;
 
         state->direct_cash_awarded += value;
@@ -1997,6 +2034,56 @@ void ot_level_port_collide_player_shot(
     }
 }
 
+static void ot_recalculate_purple_balls(OtLevelPortState *state)
+{
+    static const uint8_t required[12] = {
+        1, 1, 2, 4, 8, 12, 16, 20, 25, 30, 40, 50
+    };
+    uint8_t power = state->player_front_weapon_power;
+
+    if (power > 11) power = 11;
+    state->player_purple_balls_needed = required[power];
+}
+
+static bool ot_power_up_weapon(
+    OtLevelPortState *state,
+    bool front,
+    OtPlayerCollisionResult *result
+)
+{
+    uint8_t *weapon_id = front ?
+        &state->player_front_weapon_id :
+        &state->player_rear_weapon_id;
+    uint8_t *weapon_power = front ?
+        &state->player_front_weapon_power :
+        &state->player_rear_weapon_power;
+
+    /*
+     * player.c:power_up_weapon(), specialized only by replacing the PC
+     * shotMultiPos reset with source-state ownership in this GBA proof.
+     */
+    if (*weapon_id != 0 && *weapon_power < 11) {
+        (*weapon_power)++;
+        ot_recalculate_purple_balls(state);
+        return true;
+    }
+    result->cash_awarded += 1000;
+    state->powerup_consolation_cash += 1000;
+    return false;
+}
+
+static void ot_handle_purple_ball(
+    OtLevelPortState *state,
+    OtPlayerCollisionResult *result
+)
+{
+    if (state->player_purple_balls_needed > 1) {
+        state->player_purple_balls_needed--;
+    } else {
+        (void)ot_power_up_weapon(state, true, result);
+    }
+}
+
 void ot_level_port_collide_player(
     OtLevelPortState *state,
     bool player_vulnerable,
@@ -2011,6 +2098,11 @@ void ot_level_port_collide_player(
 
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         OtEnemy *enemy;
+        uint8_t availability;
+        int16_t value;
+        bool was_score_item;
+        bool consumed = false;
+        bool suppress_contact = false;
 
         if (state->enemy_avail[index] == 1) continue;
         enemy = &state->enemy[index];
@@ -2027,20 +2119,110 @@ void ot_level_port_collide_player(
         ) {
             continue;
         }
-        if (enemy->scoreitem) {
-            int16_t value = enemy->evalue;
+        availability = state->enemy_avail[index];
+        value = enemy->evalue;
+        was_score_item = enemy->scoreitem;
 
+        /*
+         * Direct fixed-single-player translation of JE_playerCollide().
+         * Keep the source branch order: high-value equipment, armor, bonus
+         * portals, ordinary score items, then damaging enemy contact.
+         */
+        if (value > 29999) {
+            suppress_contact = true;
+            if (value == 30000) {
+                result->cash_awarded += 100;
+                ot_handle_purple_ball(state, result);
+                state->high_value_pickup_count++;
+                consumed = true;
+            } else if (value > 32100) {
+                result->cash_awarded += 250;
+                state->player_special = (uint8_t)(value - 32100);
+                state->high_value_pickup_count++;
+                consumed = true;
+            } else if (value > 32000) {
+                /*
+                 * Standard one-player mode does not own player-2 sidekicks;
+                 * OpenTyrian deliberately leaves this object in the world.
+                 */
+            } else if (value > 31000) {
+                /*
+                 * Preserve the source's unconditional 250-credit award
+                 * before its player-2/onePlayerAction ownership checks.
+                 */
+                result->cash_awarded += 250;
+            } else {
+                /*
+                 * Front-weapon items above 30000 are only consumed by
+                 * two-player or onePlayerAction modes, both outside this
+                 * fixed single-player first-level translation.
+                 */
+            }
+        } else if (value > 20000) {
+            suppress_contact = true;
+            uint16_t armor = (uint16_t)(
+                state->player_armor + value - 20000
+            );
+
+            state->player_armor = armor > 28 ? 28 : (uint8_t)armor;
+            state->armor_pickup_count++;
+            consumed = true;
+        } else if (value > 10000 && availability == 2) {
+            suppress_contact = true;
+            if (!state->bonus_level) {
+                state->bonus_level = true;
+                state->next_level = (uint16_t)(value - 10000);
+                state->display_time = 150;
+                state->bonus_portal_pickup_count++;
+                result->bonus_level_triggered = true;
+                result->next_level = state->next_level;
+                consumed = true;
+            }
+        } else if (enemy->scoreitem) {
+            suppress_contact = true;
+            consumed = true;
             if (value == 1) {
                 state->data_cube_pickup_count++;
+                result->data_cubes_awarded++;
             } else if (value == -1) {
                 state->front_weapon_powerup_count++;
+                result->front_powerups++;
+                (void)ot_power_up_weapon(state, true, result);
             } else if (value == -2) {
                 state->rear_weapon_powerup_count++;
-            } else if (value > 1 && value < 10000) {
-                result->cash_awarded += (uint16_t)value;
+                result->rear_powerups++;
+                (void)ot_power_up_weapon(state, false, result);
+            } else if (value == -3) {
+                /*
+                 * The source creates special player shot 104.  The current
+                 * fixed Pulse-Cannon adapter has no misc-shot pool, so retain
+                 * the exact acquired gameplay state for the forthcoming
+                 * player-weapon translation.
+                 */
+                state->orbiting_asteroid_pickup_count++;
+            } else if (value == -4) {
+                if (state->player_superbombs < 10) {
+                    state->player_superbombs++;
+                    result->superbombs_awarded++;
+                }
+                state->superbomb_pickup_count++;
+            } else if (value == -5) {
+                state->player_front_weapon_id = 25;
+                state->player_rear_weapon_id = 26;
+                state->player_front_weapon_power = 1;
+                state->player_rear_weapon_power = 1;
+                state->player_weapon_mode = 1;
+                state->hotdog_pickup_count++;
             } else {
-                state->score_item_unsupported_pickup_count++;
+                /*
+                 * Literal source fallback: this_player->cash += evalue.
+                 * Known special negative values have already branched.
+                 */
+                result->cash_awarded += (uint32_t)(int32_t)value;
             }
+        }
+
+        if (consumed) {
             ot_add_hit_effect(
                 result->effects,
                 &result->effect_count,
@@ -2050,11 +2232,16 @@ void ot_level_port_collide_player(
                 enemy->enemyground
             );
             ot_release_enemy(state, index);
-            state->score_item_pickup_count++;
+            if (was_score_item) {
+                state->score_item_pickup_count++;
+            }
             result->pickup_count++;
-        } else if (
+            continue;
+        }
+        if (
+            !suppress_contact &&
             player_vulnerable &&
-            state->enemy_avail[index] == 0 &&
+            availability == 0 &&
             enemy->enemyground
         ) {
             state->player_enemy_contact_count++;
@@ -2140,8 +2327,12 @@ void ot_level_port_advance(
 )
 {
     OtEventRecord event;
+    uint8_t index;
 
     state->frame_sound_mask = 0;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        state->enemy_draw[index].active = false;
+    }
     state->cur_loc = cur_loc;
     state->player_x = player_x;
     state->player_y = player_y;
