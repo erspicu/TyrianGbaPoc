@@ -20,8 +20,10 @@
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
-#define MAP_RING_ROWS 64
-#define MAP_ROW_BYTES 64
+#define MAP_RING_ROWS 32
+#define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
+#define MAP_HALF_ROW_BYTES (32 * sizeof(u16))
+#define MAP_SCREEN_BLOCK_WORDS (32 * 32)
 
 /*
  * GBA has 128 hardware OBJ entries and substantially more CPU time than the
@@ -34,6 +36,26 @@
 #define MAX_REWARDS 32
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
+/*
+ * OpenTyrian presents the 264x184 gameplay viewport by copying game_screen
+ * from x=24.  GBA keeps the centre 240x160 pixels at 1:1, so presentation
+ * discards twelve pixels on every side and never rescales source geometry.
+ */
+#define SOURCE_GAME_SCREEN_VISIBLE_X 24
+#define SOURCE_VIEW_CROP_X ((OT_GAME_VIEW_WIDTH - SCREEN_WIDTH) / 2)
+#define SOURCE_VIEW_CROP_Y ((OT_GAME_VIEW_HEIGHT - SCREEN_HEIGHT) / 2)
+#define SOURCE_PRESENTATION_X_ORIGIN \
+    (SOURCE_GAME_SCREEN_VISIBLE_X + SOURCE_VIEW_CROP_X)
+#define SOURCE_PRESENTATION_Y_ORIGIN SOURCE_VIEW_CROP_Y
+#define SOURCE_MAP_CELL_WIDTH 24
+#define SOURCE_BG12_PARALLAX_BASE_X \
+    (2 * SOURCE_MAP_CELL_WIDTH + SOURCE_PRESENTATION_X_ORIGIN)
+#define SOURCE_BG3_PARALLAX_BASE_X \
+    (3 * SOURCE_MAP_CELL_WIDTH + SOURCE_PRESENTATION_X_ORIGIN)
+#define SOURCE_PLAYER_MIN_X 40
+#define SOURCE_PLAYER_MAX_X 256
+#define SOURCE_PLAYER_MIN_Y 10
+#define SOURCE_PLAYER_MAX_Y 160
 #define PLAYER_SHOT_SPEED 10
 #define PLAYER_SHOT_COOLDOWN 4
 #define PLAYER_SHOT_X_OFFSET 8
@@ -131,6 +153,33 @@ _Static_assert(
         OBJ_DYNAMIC_SLOT_COUNT * OBJ_DYNAMIC_TILES_PER_SLOT <=
         OBJ_TILE_COUNT,
     "dynamic enemy frame cache exceeds OBJ VRAM"
+);
+_Static_assert(
+    OT_GAME_VIEW_WIDTH - SCREEN_WIDTH == 24,
+    "GBA viewport must crop 24 source pixels horizontally"
+);
+_Static_assert(
+    OT_GAME_VIEW_HEIGHT - SCREEN_HEIGHT == 24,
+    "GBA viewport must crop 24 source pixels vertically"
+);
+_Static_assert(
+    SOURCE_VIEW_CROP_X == 12 && SOURCE_VIEW_CROP_Y == 12,
+    "OpenTyrian gameplay viewport must be centre-cropped by 12 pixels"
+);
+_Static_assert(BG_MAP_COLUMNS == 64, "background map must be 512 pixels wide");
+_Static_assert(
+    MAP_ROW_BYTES == 128,
+    "512-pixel background rows must contain 64 GBA map entries"
+);
+_Static_assert(
+    BG1_INITIAL_SCROLL == 8104 &&
+        BG2_INITIAL_SCROLL == 16196 &&
+        BG3_INITIAL_SCROLL == 16196,
+    "generated background phase no longer matches OpenTyrian mapY setup"
+);
+_Static_assert(
+    BG12_INITIAL_HOFS == 60 && BG3_INITIAL_HOFS == 84,
+    "generated background X phase no longer matches OpenTyrian pointers"
 );
 
 #define STATE_TITLE 0
@@ -294,8 +343,13 @@ static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
 static u16 pad_pressed;
-static s16 player_x;
-static s16 player_y;
+/* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
+static s16 player_source_x;
+static s16 player_source_y;
+static s8 player_source_velocity_x;
+static s8 player_source_velocity_y;
+static u8 player_source_x_friction_ticks;
+static u8 player_source_y_friction_ticks;
 static u8 player_invulnerable;
 static u8 fire_cooldown;
 static s8 player_bank;
@@ -327,6 +381,9 @@ static OtLevelPortState source_parity_level EWRAM_BSS;
 static u16 bg1_scroll_pixel;
 static u16 bg2_scroll_pixel;
 static u16 bg3_scroll_pixel;
+static u16 bg1_presentation_scroll_pixel;
+static u16 bg2_presentation_scroll_pixel;
+static u16 bg3_presentation_scroll_pixel;
 static u8 bg1_scroll_speed;
 static u8 bg2_scroll_speed;
 static u8 bg3_scroll_speed;
@@ -471,15 +528,16 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V117";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V118";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;
 #endif
 #endif
 
-static s16 source_player_x_from_gba(void);
-static s16 source_player_y_from_gba(void);
+static s16 source_player_screen_x(void);
+static s16 source_player_screen_y(void);
+static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
 

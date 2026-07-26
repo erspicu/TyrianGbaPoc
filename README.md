@@ -9,9 +9,10 @@ with a line-oriented translation of the OpenTyrian first-level loop. Stage 4
 makes that translation authoritative for the first-level body: events, four
 25-entry enemy pools, movement, concrete projectiles, collision, damage,
 linked death, death-spawned pickups and cash all run from stock LVL/HDT data.
-A small GBA adapter maps the unchanged 320x200 gameplay coordinates to BG/OAM
-presentation. The boss after source position 5400 intentionally remains the
-existing simplified POC implementation and is the next major port boundary.
+A small GBA adapter takes a final 1:1 central 240x160 crop from the original
+264x184 gameplay viewport; it never rescales or writes presentation positions
+back into gameplay. The boss after source position 5400 intentionally remains
+the existing simplified POC implementation and is the next major port boundary.
 
 ROMFS v1 embeds 68 stock Tyrian runtime files behind a seekable, stdio-like
 read-only API. Runtime loaders now parse MUS, SHP, PIC, HDT and LVL directly
@@ -29,21 +30,23 @@ The current scope is deliberately narrow:
   deferred and four conditionally skipped)
 - PC `curLoc` timing and source enemy identity, pool, position, movement,
   armor, animation, link, turret and death fields
-- the original four 25-slot enemy groups: 473/473 event spawns, five successful
+- the original four 25-slot enemy groups: 473/473 event spawns, six successful
   death spawns, a peak of 39 active objects and no pool-full loss
-- a concrete 60-entry OpenTyrian projectile pool: 168 source shots, peak eight,
-  8,347 movement updates, 17 player contacts and zero drops
+- a concrete 60-entry OpenTyrian projectile pool: 181 source shots, peak nine,
+  8,452 movement updates, 19 player contacts and zero drops
 - source player-shot ordering and collision formulas, armor damage,
   `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
   `eenemydie` children
-- five physical pickups collected by the regression route, including two data
-  cubes and three cash items; `JE_playerCollide()` reward branches now retain
-  their fixed-single-player gameplay state
+- six physical pickups spawned and four collected by the deterministic route;
+  `JE_playerCollide()` reward branches, including the data-cube branch not
+  crossed by this route, retain their fixed-single-player gameplay state
 - 198 exact source Sprite2 frames keyed by
   `(shape_table, egr[enemycycle - 1], size)`; the old 24-archetype aliases and
   all fallback visuals are removed
 - a 24-slot VBlank-uploaded OBJ frame cache with zero catalog misses or cache
-  drops, plus all 128 GBA OAM entries with a measured peak of 47
+  drops, plus all 128 GBA OAM entries with a measured peak of 43
+- exact PC player inertia, clamps, background parallax and enemy map offsets;
+  the GBA only crops `game_screen x=36..275, y=12..171`
 - original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
   poses, original explosion and reward animation assets, TINY_FONT cash and
   FONT_SHAPES `PAUSED`
@@ -53,9 +56,9 @@ The current scope is deliberately narrow:
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
 
-The deterministic v17 route has no stream, effect, reward, projectile-pool,
-catalog or frame-cache drops. It records 101 missed VBlanks over 12,239
-displayed frames (about 0.83%); this includes 153 exact-frame uploads and
+The deterministic v18 route has no stream, effect, reward, projectile-pool,
+catalog or frame-cache drops. It records 58 missed VBlanks over 12,239
+displayed frames (about 0.47%); this includes 145 exact-frame uploads and
 remains visible as a measured GBA workload result. All 198 catalogued first-
 level enemy/reward frames resolve without fallback.
 
@@ -78,7 +81,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v17.gba
+build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -95,6 +98,7 @@ under `Backup`, and the reproducible source asset conversions are
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [v18 PC-coordinate 1:1 crop](MD/Tyrian-GBA-1to1-Crop-Source-Parity-v18.md)
 - [v17 enemy/reward source-parity translation](MD/Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md)
 - [Cartridge ROMFS format and porting API](MD/Tyrian-GBA-ROMFS.md)
 - [First-level technical demo](MD/Tyrian-GBA-First-Level-Tech-Demo.md)

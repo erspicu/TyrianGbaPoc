@@ -10,9 +10,11 @@ static void render_cash_counter(void)
 
     /*
      * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
-     * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  The GBA
-     * position is the proportional 240x160 equivalent.  There is no pickup
-     * icon and no five-digit cap in the original display.
+     * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  That point falls
+     * below the 1:1 gameplay crop, so the deliberately retained minimal GBA
+     * HUD relocates it to (22,140).  Gameplay/world coordinates never use
+     * this exception.  There is no pickup icon and no five-digit cap in the
+     * original display.
      */
     do {
         digits[count++] = value % 10;
@@ -33,16 +35,17 @@ static void render_cash_counter(void)
 static void render_pause_text(void)
 {
     u8 index;
-    s16 x = 90;
+    s16 x = source_world_to_screen_x(120);
+    s16 y = source_world_to_screen_y(90);
 
     /*
-     * PC JE_pauseGame draws FONT_SHAPES at (120,90) on 320x200.  Scale that
-     * anchor to (90,72); generated 8x12 glyphs retain the original hue-15,
-     * brightness -3 JE_dString palette.
+     * PC JE_pauseGame draws FONT_SHAPES at (120,90) on game_screen.  Apply
+     * the same final 1:1 crop as world objects: (84,78).  Generated 8x12
+     * glyphs retain the original hue-15, brightness -3 JE_dString palette.
      */
     for (index = 0; index < OBJ_PAUSE_GLYPH_COUNT; index++) {
         put_sprite_shaped(
-            x, 72,
+            x, y,
             OBJ_TILE_PAUSE_TEXT + index * 2,
             OBJ_PAL_PAUSE_TEXT,
             ATTR0_TALL, ATTR1_SIZE_8,

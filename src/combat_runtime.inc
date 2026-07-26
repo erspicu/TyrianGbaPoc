@@ -6,8 +6,8 @@ static void spawn_player_shot(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (!player_shots[index].active) {
             player_shots[index].active = 1;
-            player_shots[index].x = source_player_x_from_gba();
-            player_shots[index].y = source_player_y_from_gba();
+            player_shots[index].x = player_source_x;
+            player_shots[index].y = player_source_y;
             /* Pulse-Cannon power 1, HDT weapon 155 attack[0]. */
             player_shots[index].damage = 2;
             audio_effect(SFX_WEAPON_1);
@@ -114,8 +114,8 @@ static void fire_enemy_weapon(
         }
 
         if (weapon->aim) {
-            delta_x = (player_x + 16) - origin_x;
-            delta_y = (player_y + 14) - origin_y;
+            delta_x = (source_player_screen_x() + 16) - origin_x;
+            delta_y = (source_player_screen_y() + 14) - origin_y;
             magnitude_x = delta_x < 0 ? (u16)-delta_x : (u16)delta_x;
             magnitude_y = delta_y < 0 ? (u16)-delta_y : (u16)delta_y;
             maximum = magnitude_x > magnitude_y ? magnitude_x : magnitude_y;
@@ -147,10 +147,79 @@ static void player_hit(void)
 
 static void update_player(void)
 {
-    if ((pad_now & KEY_LEFT) && player_x > 0) player_x -= 3;
-    if ((pad_now & KEY_RIGHT) && player_x < 208) player_x += 3;
-    if ((pad_now & KEY_UP) && player_y > 8) player_y -= 3;
-    if ((pad_now & KEY_DOWN) && player_y < 128) player_y += 3;
+    s16 old_x = player_source_x;
+    s16 old_y = player_source_y;
+    s16 accel_x;
+    s16 accel_y;
+    s16 ship_banking;
+
+    /*
+     * Direct fixed single-player/keyboard slice of JE_playerMovement().
+     * GBA D-pad bits replace keysactive[] only; source acceleration,
+     * friction, velocity and clamps remain in PC coordinates.
+     */
+    if (pad_now & KEY_LEFT) player_source_x--;
+    if (pad_now & KEY_RIGHT) player_source_x++;
+    if (pad_now & KEY_UP) player_source_y--;
+    if (pad_now & KEY_DOWN) player_source_y++;
+    accel_x = (s16)(player_source_x - old_x);
+    accel_y = (s16)(player_source_y - old_y);
+
+    if (player_source_x_friction_ticks > 0) {
+        player_source_x_friction_ticks--;
+    } else {
+        player_source_x_friction_ticks = 1;
+        if (player_source_velocity_x < 0) {
+            player_source_velocity_x++;
+        } else if (player_source_velocity_x > 0) {
+            player_source_velocity_x--;
+        }
+    }
+    if (player_source_y_friction_ticks > 0) {
+        player_source_y_friction_ticks--;
+    } else {
+        player_source_y_friction_ticks = 2;
+        if (player_source_velocity_y < 0) {
+            player_source_velocity_y++;
+        } else if (player_source_velocity_y > 0) {
+            player_source_velocity_y--;
+        }
+    }
+    player_source_velocity_x = (s8)(
+        player_source_velocity_x + accel_x
+    );
+    player_source_velocity_y = (s8)(
+        player_source_velocity_y + accel_y
+    );
+    if (player_source_velocity_x < -4) player_source_velocity_x = -4;
+    if (player_source_velocity_x > 4) player_source_velocity_x = 4;
+    if (player_source_velocity_y < -4) player_source_velocity_y = -4;
+    if (player_source_velocity_y > 4) player_source_velocity_y = 4;
+    player_source_x = (s16)(
+        player_source_x + player_source_velocity_x
+    );
+    player_source_y = (s16)(
+        player_source_y + player_source_velocity_y
+    );
+
+    if (player_source_x < SOURCE_PLAYER_MIN_X) {
+        player_source_x = SOURCE_PLAYER_MIN_X;
+    } else if (player_source_x > SOURCE_PLAYER_MAX_X) {
+        player_source_x = SOURCE_PLAYER_MAX_X;
+    }
+    if (player_source_y < SOURCE_PLAYER_MIN_Y) {
+        player_source_y = SOURCE_PLAYER_MIN_Y;
+    } else if (player_source_y > SOURCE_PLAYER_MAX_Y) {
+        player_source_y = SOURCE_PLAYER_MAX_Y;
+    }
+
+    ship_banking = (s16)(
+        player_source_velocity_x / 2 +
+        (player_source_x - old_x) / 6
+    );
+    if (ship_banking < -2) ship_banking = -2;
+    if (ship_banking > 2) ship_banking = 2;
+    player_bank = ship_banking < 0 ? -1 : ship_banking > 0 ? 1 : 0;
 
     if (fire_cooldown) fire_cooldown--;
     if ((pad_now & (KEY_A | KEY_B)) && !fire_cooldown) {
@@ -158,19 +227,7 @@ static void update_player(void)
         fire_cooldown = PLAYER_SHOT_COOLDOWN;
     }
     if (player_invulnerable) player_invulnerable--;
-
-    /*
-     * Tyrian ship graphics 233 and 235 are neutral and right-bank poses,
-     * not alternating animation frames.  Toggling them every logic update
-     * made the player's silhouette flash at about 34.78 Hz.
-     */
-    if ((pad_now & KEY_LEFT) && !(pad_now & KEY_RIGHT)) {
-        player_bank = -1;
-    } else if ((pad_now & KEY_RIGHT) && !(pad_now & KEY_LEFT)) {
-        player_bank = 1;
-    } else {
-        player_bank = 0;
-    }
+    ot_level_port_update_parallax(&source_parity_level, player_source_x);
 }
 
 static void update_shots(void)
@@ -201,7 +258,9 @@ static void update_shots(void)
         }
         if (BOX_OVERLAPS(
                 enemy_shot->x, enemy_shot->y, 8, 8,
-                player_x + 6, player_y + 5, 20, 23)) {
+                source_player_screen_x() + 6,
+                source_player_screen_y() + 5,
+                20, 23)) {
             enemy_shot->active = 0;
             player_hit();
             continue;
@@ -238,7 +297,9 @@ static void update_rewards(void)
         }
         if (BOX_OVERLAPS(
                 reward->x + 2, reward->y + 1, 12, 14,
-                player_x + 6, player_y + 5, 20, 23)) {
+                source_player_screen_x() + 6,
+                source_player_screen_y() + 5,
+                20, 23)) {
             player_cash += reward->value;
             reward->active = 0;
             if (active_reward_count) active_reward_count--;

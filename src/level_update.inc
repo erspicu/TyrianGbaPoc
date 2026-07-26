@@ -14,7 +14,7 @@ static void schedule_row(
         return;
     }
     *source = map_row(map, row);
-    *target = (u16 *)SCREEN_BASE_BLOCK(screen_block) + ((row & 63) * 32);
+    *target = (u16 *)SCREEN_BASE_BLOCK(screen_block) + ((row & 31) * 32);
     *pending = 1;
     telemetry_map_rows++;
 }
@@ -28,6 +28,13 @@ static void advance_backgrounds(void)
     bg1_step = 0;
     bg2_step = 0;
     bg3_step = 0;
+
+    /*
+     * draw_background_1/2 blit first and advance their backPos afterward.
+     * Keep the displayed phase while preparing the next source state.
+     */
+    bg1_presentation_scroll_pixel = bg1_scroll_pixel;
+    bg2_presentation_scroll_pixel = bg2_scroll_pixel;
 
     if (bg1_scroll_delay > 1) {
         bg1_scroll_delay--;
@@ -88,6 +95,8 @@ static void advance_backgrounds(void)
             &bg3_row_pending, &bg3_row_source, &bg3_row_target
         );
     }
+    /* draw_background_3 advances backPos3 before it blits. */
+    bg3_presentation_scroll_pixel = bg3_scroll_pixel;
 }
 
 static void enter_boss(void)
@@ -213,16 +222,15 @@ static void update_logic(void)
     telemetry_logic_updates++;
     /*
      * Stage 4 makes the direct OpenTyrian event/enemy runtime authoritative
-     * for the first-level body.  The GBA player remains a presentation/input
-     * object, so this boundary converts its current screen position back to
-     * the unchanged 320x200 source coordinate system.
+     * for the first-level body.  The keypad adapter also stores the player in
+     * unchanged OpenTyrian coordinates; only render_game() crops presentation.
      */
     if (game_state == STATE_PLAY) {
         ot_level_port_advance(
             &source_parity_level,
             level_position,
-            source_player_x_from_gba(),
-            source_player_y_from_gba()
+            player_source_x,
+            player_source_y
         );
         source_apply_background_state();
         source_play_frame_weapon_sounds();

@@ -23,16 +23,25 @@ static const u8 *map_row(const u8 *map, u16 row)
 static void load_ring(const u8 *map, u16 rows, u16 top_row, u16 screen_block)
 {
     u16 row;
-    u16 first = top_row > 32 ? top_row - 32 : 0;
+    u16 first = top_row;
     u16 last = first + MAP_RING_ROWS;
-    u16 *ring = (u16 *)SCREEN_BASE_BLOCK(screen_block);
+    u16 *left = (u16 *)SCREEN_BASE_BLOCK(screen_block);
+    u16 *right = (u16 *)SCREEN_BASE_BLOCK(screen_block + 1);
 
     if (last > rows) {
         last = rows;
         first = last - MAP_RING_ROWS;
     }
     for (row = first; row < last; row++) {
-        dmaCopy(map_row(map, row), ring + ((row & 63) * 32), MAP_ROW_BYTES);
+        const u8 *source = map_row(map, row);
+        u16 row_slot = (u16)((row & 31) * 32);
+
+        dmaCopy(source, left + row_slot, MAP_HALF_ROW_BYTES);
+        dmaCopy(
+            source + MAP_HALF_ROW_BYTES,
+            right + row_slot,
+            MAP_HALF_ROW_BYTES
+        );
     }
 }
 
@@ -323,15 +332,18 @@ static void enter_level(void)
     dmaCopy(obj_palette, SPRITE_PALETTE, 512);
 
     REG_BG0CNT = BG_PRIORITY(3) | CHAR_BASE(0) |
-                 SCREEN_BASE(BG0_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_2;
+                 SCREEN_BASE(BG0_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
     REG_BG1CNT = BG_PRIORITY(2) | CHAR_BASE(1) |
-                 SCREEN_BASE(BG1_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_2;
+                 SCREEN_BASE(BG1_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
     REG_BG2CNT = BG_PRIORITY(1) | CHAR_BASE(2) |
-                 SCREEN_BASE(BG2_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_2;
+                 SCREEN_BASE(BG2_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
 
-    bg1_scroll_pixel = (BG1_ROWS - 20) * 8;
-    bg2_scroll_pixel = (BG2_ROWS - 20) * 8;
-    bg3_scroll_pixel = (BG3_ROWS - 20) * 8;
+    bg1_scroll_pixel = BG1_INITIAL_SCROLL;
+    bg2_scroll_pixel = BG2_INITIAL_SCROLL;
+    bg3_scroll_pixel = BG3_INITIAL_SCROLL;
+    bg1_presentation_scroll_pixel = bg1_scroll_pixel;
+    bg2_presentation_scroll_pixel = bg2_scroll_pixel;
+    bg3_presentation_scroll_pixel = bg3_scroll_pixel;
     load_ring(bg1_map, BG1_ROWS, bg1_scroll_pixel >> 3, BG0_SCREEN_BLOCK);
     load_ring(bg2_map, BG2_ROWS, bg2_scroll_pixel >> 3, BG1_SCREEN_BLOCK);
     load_ring(bg3_map, BG3_ROWS, bg3_scroll_pixel >> 3, BG2_SCREEN_BLOCK);
@@ -344,8 +356,13 @@ static void enter_level(void)
     bg1_scroll_delay_max = 1;
     bg2_scroll_delay_max = 1;
 
-    player_x = 104;
-    player_y = 124;
+    /* OpenTyrian JE_main() launch position before its first movement clamp. */
+    player_source_x = 100;
+    player_source_y = 180;
+    player_source_velocity_x = 0;
+    player_source_velocity_y = 0;
+    player_source_x_friction_ticks = 0;
+    player_source_y_friction_ticks = 0;
     player_invulnerable = 0;
     fire_cooldown = 0;
     player_bank = 0;
@@ -425,12 +442,12 @@ static void enter_level(void)
     telemetry_source_random_successes = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
-    REG_BG0HOFS = 8;
-    REG_BG1HOFS = 8;
-    REG_BG2HOFS = 8;
-    REG_BG0VOFS = bg1_scroll_pixel & 511;
-    REG_BG1VOFS = bg2_scroll_pixel & 511;
-    REG_BG2VOFS = bg3_scroll_pixel & 511;
+    REG_BG0HOFS = source_background_hofs(0);
+    REG_BG1HOFS = source_background_hofs(1);
+    REG_BG2HOFS = source_background_hofs(2);
+    REG_BG0VOFS = bg1_scroll_pixel & 255;
+    REG_BG1VOFS = bg2_scroll_pixel & 255;
+    REG_BG2VOFS = bg3_scroll_pixel & 255;
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     REG_DISPCNT = MODE_0 | BG0_ON | BG1_ON | BG2_ON |
                   OBJ_ON | OBJ_1D_MAP;

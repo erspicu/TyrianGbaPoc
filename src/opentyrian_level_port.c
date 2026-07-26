@@ -1505,7 +1505,8 @@ static void ot_enemy_launch(
 static void ot_draw_enemy_pool(
     OtLevelPortState *state,
     uint8_t pool,
-    int16_t temp_back_move
+    int16_t temp_back_move,
+    uint16_t temp_map_x_offset
 )
 {
     uint8_t index;
@@ -1516,7 +1517,7 @@ static void ot_draw_enemy_pool(
         if (state->enemy_avail[index] == 1) continue;
         enemy = &state->enemy[index];
         state->enemy_motion_update_count++;
-        enemy->mapoffset = 0;
+        enemy->mapoffset = temp_map_x_offset;
 
         if (
             enemy->xaccel != 0 &&
@@ -1553,7 +1554,10 @@ static void ot_draw_enemy_pool(
             }
         }
 
-        if (enemy->ex > -29 && enemy->ex < 300) {
+        if (
+            enemy->ex + enemy->mapoffset > -29 &&
+            enemy->ex + enemy->mapoffset < 300
+        ) {
             OtEnemyDrawCommand *draw = &state->enemy_draw[index];
 
             if (enemy->aniactive == 1) {
@@ -1648,7 +1652,12 @@ static void ot_draw_enemy_pool(
             if (enemy->ex > 245) enemy->ex--;
         }
         enemy->ey = (int16_t)(enemy->ey + temp_back_move);
-        if (enemy->ex <= -24 || enemy->ex >= 296) continue;
+        if (
+            enemy->ex + enemy->mapoffset <= -24 ||
+            enemy->ex + enemy->mapoffset >= 296
+        ) {
+            continue;
+        }
         if (enemy->edamaged) continue;
         if (enemy->iced != 0) {
             enemy->iced--;
@@ -1689,11 +1698,31 @@ static void ot_spawn_continual_enemy(OtLevelPortState *state)
 static void ot_advance_enemies(OtLevelPortState *state)
 {
     /* JE_main() draw/update order: ground, ground2, continual, sky, top. */
-    ot_draw_enemy_pool(state, 25, (int16_t)state->back_move);
-    ot_draw_enemy_pool(state, 75, (int16_t)state->back_move);
+    ot_draw_enemy_pool(
+        state,
+        25,
+        (int16_t)state->back_move,
+        state->presentation_map_x_offset
+    );
+    ot_draw_enemy_pool(
+        state,
+        75,
+        (int16_t)state->back_move,
+        state->presentation_map_x_offset
+    );
     ot_spawn_continual_enemy(state);
-    ot_draw_enemy_pool(state, 0, 0);
-    ot_draw_enemy_pool(state, 50, (int16_t)state->back_move3);
+    ot_draw_enemy_pool(
+        state,
+        0,
+        0,
+        state->presentation_map_x2_offset
+    );
+    ot_draw_enemy_pool(
+        state,
+        50,
+        (int16_t)state->back_move3,
+        state->presentation_map_x3_offset
+    );
 }
 
 static void ot_add_hit_effect(
@@ -2319,6 +2348,30 @@ void ot_level_port_clear_projectiles(OtLevelPortState *state)
     }
 }
 
+void ot_level_port_update_parallax(
+    OtLevelPortState *state,
+    int16_t player_x
+)
+{
+    uint16_t temp_w;
+
+    if (state == 0) return;
+    if (player_x < 40) player_x = 40;
+    if (player_x > 256) player_x = 256;
+
+    /*
+     * Integer form of the positive-range OpenTyrian expression:
+     * floor((260 - (player.x - 36)) / (260 - 36) * (24 * 3) - 1).
+     */
+    temp_w = (uint16_t)(
+        ((uint32_t)(296 - player_x) * 72u) / 224u - 1u
+    );
+    state->map_x3_offset = temp_w;
+    state->map_x2_offset = (uint16_t)((temp_w * 2u) / 3u);
+    state->map_x_offset = (uint16_t)(state->map_x2_offset / 2u);
+    state->parallax_initialized = true;
+}
+
 void ot_level_port_advance(
     OtLevelPortState *state,
     uint16_t cur_loc,
@@ -2359,5 +2412,17 @@ void ot_level_port_advance(
         state->event_index = (uint16_t)(state->event_index + skip_events);
         state->skipped_event_count += skip_events;
     }
+    /*
+     * Backgrounds and enemies use the offsets calculated after the preceding
+     * player phase.  Snapshot them before the keypad adapter calculates the
+     * next frame's offsets.
+     */
+    state->presentation_map_x_offset = state->map_x_offset;
+    state->presentation_map_x2_offset = state->map_x2_offset;
+    state->presentation_map_x3_offset = state->background3_x1 ?
+        state->map_x_offset : state->map_x3_offset;
+    state->presentation_parallax_initialized =
+        state->parallax_initialized;
+    state->presentation_background3_x1 = state->background3_x1;
     ot_advance_enemies(state);
 }

@@ -19,21 +19,21 @@ Tyrian 開場畫面
 沒有關卡選單、武器選單或右側武器資訊欄。主角在技術展示階段沒有死亡流程，
 但保留移動、射擊、敵彈、命中、爆炸、敵機碰撞與 Boss 碰撞等 game loop 要素。
 
-目前 source-parity／ROMFS v17 正式 ROM：
+目前 source-parity／ROMFS v18 1:1 crop 正式 ROM：
 
 ```text
-repo/TyrianGbaPoc/build/tyrian_gba_level1_source_parity_romfs_v17.gba
+repo/TyrianGbaPoc/build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
 ```
 
 SHA-256：
 
 ```text
-2f8308b49ffcd95a0758dffd84ed3042a45849cb66a61228457484f31bacfa38
+5b608adee2c4a21725e84769d10d455461150fa1a794b244f75713c80b148153
 ```
 
-ROM 大小為 10,550,344 bytes（約 10.06 MiB），其中 9,853,080 bytes 是
+ROM 大小為 10,883,584 bytes（約 10.38 MiB），其中 9,853,080 bytes 是
 68 個 stock Tyrian runtime 檔案的唯讀 ROMFS；使用標準 32 MiB GBA ROM
-視窗的約 31.44%。
+視窗的約 32.44%。
 
 ## 原始資料來源與轉換
 
@@ -57,7 +57,7 @@ ROM 大小為 10,550,344 bytes（約 10.06 MiB），其中 9,853,080 bytes 是
 repo/TyrianGbaPoc/tools/build_assets.py
 ```
 
-v17 的 LVL/HDT/PIC/SHP/MUS loader 由 `src/opentyrian_data.c` 直接讀
+v18 的 LVL/HDT/PIC/SHP/MUS loader 由 `src/opentyrian_data.c` 直接讀
 ROMFS raw bytes。`tools/build_assets.py` 仍負責尚未替換的 GBA
 packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 10,273-byte event bytecode 只在 host 計算資源稽核，不再輸出或連入 ROM。
@@ -68,7 +68,7 @@ packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 |---|---:|
 | Mode 3 開場圖 | 0-byte blob；由 PIC/SHP runtime 解碼 |
 | 三組背景 tile | 49,152 bytes |
-| 三層完整關卡 map | 324,800 bytes |
+| 三層完整關卡 map | 658,176 bytes；64-column 1:1 PC raster |
 | 背景與 OBJ palette | 1,024 bytes |
 | 靜態 OBJ atlas／VRAM image | 32,768 bytes |
 | 198-frame enemy/reward catalog＋tiles | 102,976 bytes |
@@ -82,9 +82,9 @@ packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 
 | GBA 元件 | Tyrian 用途 | 設定 |
 |---|---|---|
-| BG0 | MAP1 地形底層 | 4bpp、char block 0、screen block 24、priority 3 |
-| BG1 | MAP2 中景透明層 | 4bpp、char block 1、screen block 26、priority 2 |
-| BG2 | MAP3 前景透明層 | 4bpp、char block 2、screen block 28、priority 1/0 |
+| BG0 | MAP1 地形底層 | 4bpp、char block 0、screen block 24+25、priority 3 |
+| BG1 | MAP2 中景透明層 | 4bpp、char block 1、screen block 26+27、priority 2 |
+| BG2 | MAP3 前景透明層 | 4bpp、char block 2、screen block 28+29、priority 1/0 |
 | OBJ | 主角、敵機、子彈、爆炸、獎賞、數字、Boss、血條 | 4bpp、1D mapping、priority 0/1/2 |
 | Mode 3 | 開場畫面 | 240×160、15-bit bitmap |
 
@@ -92,14 +92,19 @@ GBA 硬體實際有 128 筆 OAM；每一筆 OAM 本身就是一個 Sprite 描述
 OAM 與 Sprite 各有一套獨立容量。v6 已取消先前的 64 筆軟體限制，可使用
 完整 128 筆硬體 OAM。
 
-v17 不再把 enemy ID 對到 24 個自訂 archetype。第一關 113 個 transitive
+v18 不再把 enemy ID 對到 24 個自訂 archetype。第一關 113 個 transitive
 definition 共 198 個原始 Sprite2 frame，以
 `shape_table/egr[enemycycle-1]/size` 查表；24-slot true-LRU cache 在
 VBlank 將需要的 32×32 4bpp frame 搬入 OBJ VRAM。金幣、寶石與 data cube
 也使用同一套 source enemy draw command，不另套 GBA reward 外框。
+32×32 只是 OAM container；12×14／24×28 PC source cell 使用固定
+top-left anchor，不逐幀裁透明 bbox 後置中，因此動畫不會在相同
+`ex/ey` 上產生 presentation jitter。
 
-三層 map 都完整保留在 ROM；VRAM 只維持每層 64 列的環狀視窗，跨過
-tile row 時才在 VBlank 期間 DMA 新的一列。這避免在遊戲中大量搬動 map。
+三層 map 都完整保留在 ROM；每層完整寬度為 64 tile／512 px，VRAM
+用兩個相鄰 screen block 維持 32 tile-row 的 512×256 環狀視窗。跨過
+tile row 時才在 VBlank 期間把該列的左右各 32 tile DMA 到兩個 block。
+這保留 PC 背景的 1:1 像素寬度，也避免遊戲中大量搬動 map。
 
 v6 已超越先前 Low Detail 的雙層內容邊界，補齊 MAP2，使用 MAP1、MAP2、
 MAP3 三個真正獨立的硬體背景。三層各保留 512 個 tile，共使用 15 組
@@ -272,7 +277,7 @@ OpenTyrian `JE_pauseGame()`：
 - 使用 PC `JE_dString(..., FONT_SHAPES)` 的 P/A/U/S/E/D sprites
   15、0、20、18、4、3。
 - 前景依 hue 15、brightness -3 產生淡橙至黃白漸層，帶右下暗影；
-  PC `(120,90)` 按 320×200→240×160 映射到 GBA `(90,72)`。
+  PC `game_screen (120,90)` 經相同 1:1 crop 顯示在 GBA `(84,78)`。
 
 自動測試在遊戲中暫停 60 個 display frame；前後 logic tick 沒有趕幀，
 暫停／繼續 toggle 均為一次。以下是 mGBA 真正 framebuffer，不是資源
@@ -331,8 +336,8 @@ v7 另外修正四象限中間的十字狀裂縫。Tyrian 的每一塊原圖固�
 總計 9 組 × 12 幀，108 個編碼幀全都非空且互不相同。爆炸使用 432 個
 OBJ tile；靜態內容使用 636 tiles，後方對齊後保留 24×16 tiles 給
 exact-frame cache，完整 VRAM image 為 1,024 / 1,024 tiles，仍符合
-Mode 0 的 32 KiB OBJ VRAM 上限。效果 pool 為 48；完整固定路線峰值為
-27 個同時作用的效果，爆炸象限丟棄數為 0。
+Mode 0 的 32 KiB OBJ VRAM 上限。效果 pool 為 48；v18 固定路線峰值為
+30 個同時作用的效果，爆炸象限丟棄數為 0。
 
 轉換器輸出的 12 幀空中／地面四象限組合預覽：
 
@@ -375,26 +380,29 @@ v8 移除先前為提高辨識度而自行添加的 1 px 淡色輪廓；v11 的�
 - 不使用自製 5×7 黃色數字，也不再限制為五位數。
 - 直接使用 TINY_FONT sprite 79（0）及 70–78（1–9）。
 - 沿用原版 hue 2、brightness 4、四方向黑色 `FULL_SHADE` 與可變字寬。
-- PC 的 `(30,175)`／320×200 座標按比例映射到 GBA 的 `(22,140)`／
-  240×160 左下角。
+- PC 的 `(30,175)` 位於本次 1:1 gameplay crop 下方；因右側 HUD 與
+  底部 banner 都已省略，這個唯一的最小 HUD overlay 明確移到 GBA
+  `(22,140)`。敵人、背景、玩家、彈幕及碰撞不使用這項 UI 例外。
 
 ![25／50／75／100／250 原始獎賞動畫](../build/preview/reward_coins_25_50_75_100_250.png)
 
 ![原版 TINY_FONT 金額數字](../build/preview/cash_tiny_font_digits.png)
 
-完整 auto-test 不注入測試金幣；它從真正 event-33 death spawn 拾取五個
-物件：兩個 data cube 與三個合計 175 的金額獎賞，同時驗證 1,785 的
-直接擊破結算與實體拾取兩條路徑。
+完整 auto-test 不注入測試金幣；v18 的 PC 慣性移動固定路線從真正
+event-33 death spawn 建立六個物件、拾取四個，取得 100 cash，並與
+1,298 direct cash 合計為 1,398。這條路線沒有碰到 data cube，但
+data-cube 分流及 counter 仍留在 source runtime；此數字是測試駕駛路徑
+變更，不是移除功能。
 
 ## 第一關事件與 game loop
 
-第一關來源 route 有 1,009 筆 11-byte 記錄，v17 runtime 直接從
+第一關來源 route 有 1,009 筆 11-byte 記錄，v18 runtime 直接從
 `tyrian1.lvl` 讀取，不先轉為 GBA opcode。簡化 Boss handoff 前實際消耗
 878 筆：869 applied、五筆 type-16 UI/audio deferred、四筆由 type-61
 條件流程跳過。
 
 Enemy gameplay 只保留 OpenTyrian 的四組 25-entry pool，不再另跑
-48-entry POC enemy pool。完整路線有 473 次 event spawn 與五次
+48-entry POC enemy pool。固定回歸路線有 473 次 event spawn 與六次
 `eenemydie` spawn，最高同時 39 個，沒有 pool-full 或 missing definition。
 其餘固定 pool 為 12 發主角彈、60 發 source 敵彈與 48 個 GBA effect。
 
@@ -406,8 +414,18 @@ Enemy gameplay 只保留 OpenTyrian 的四組 25-entry pool，不再另跑
 - `special/globalFlags`、直接 cash、`eenemydie` 及 score-item pickup
 - 玩家撞機與敵彈命中 cadence
 
-內部 gameplay 保持 320×200 source 座標；只有
-`src/source_runtime.inc` 做 240×160 GBA presentation transform。
+內部 gameplay 保持 320×200 source 座標；敵人、玩家、子彈、碰撞與
+背景視差全部執行 PC 演算法。`src/source_runtime.inc` 最後才把原版
+264×184 gameplay viewport 四邊各裁 12 px，不做縮放：
+
+```text
+GBA x = PC game_screen x - 36
+GBA y = PC game_screen y - 12
+```
+
+原版先在 `JE_starShowVGA()` 捨去 framebuffer 左側 24 px，GBA 再捨去
+gameplay viewport 左側 12 px，所以 X origin 是 36；Y origin 是 12。
+背景使用相同來源矩形與玩家相關的 `mapX/mapX2/mapX3` 水平視差。
 `curLoc=5400` 後的 Boss 身體、damage lifecycle 與結束流程仍是 POC
 簡化行為。
 
@@ -488,45 +506,49 @@ VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 | 項目 | 結果 |
 |---|---:|
 | ROM internal／host verifier | PASS／PASS |
-| Telemetry schema | 15 |
+| Telemetry schema | 16 |
 | Logic updates | 7,093 |
 | Final PC `curLoc` | 5,400 |
-| Display frames／VBlank IRQ | 12,239／12,705 |
-| Missed VBlank | 101（約 0.83%） |
+| Display frames／VBlank IRQ | 12,239／12,662 |
+| Missed VBlank | 58（約 0.47%） |
 | Source event index | 878 |
 | Applied／deferred／skipped | 869／5／4 |
 | Event spawn attempt／success／full／missing | 473／473／0／0 |
-| Death spawn attempt／success／full／missing | 5／5／0／0 |
-| Source control writes／RNG calls | 2,444／1,659 |
-| Enemy motion updates／releases | 52,103／458 |
+| Death spawn attempt／success／full／missing | 6／6／0／0 |
+| Source control writes／RNG calls | 2,509／1,785 |
+| Enemy motion updates／releases | 58,176／459 |
 | Peak／handoff active source enemies | 39／20 |
 | Streamed map rows | 3,590 |
 | Map stream drops | 0 |
-| Peak OAM/Sprite | 47 / 128 |
-| Peak active effects | 27 / 48 |
+| Peak OAM/Sprite | 43 / 128 |
+| Peak active effects | 30 / 48 |
 | Dropped explosion components | 0 |
-| Death control／assignments | 32／59 |
-| Spawned／picked source items | 5／5 |
-| Peak active source items | 2 |
-| Data cubes／unsupported pickups | 2／0 |
+| Death control／assignments | 32／60 |
+| Spawned／picked source items | 6／4 |
+| Peak active source items | 3 |
+| Data cubes／unsupported pickups | 0／0 |
 | Dropped reward items | 0 |
-| Direct／pickup／final cash | 1,785／175／1,960 |
+| Direct／pickup／final cash | 1,298／100／1,398 |
 | Pause toggles / frozen display frames | 2 / 60 |
-| Source enemy shots spawn／release／drop | 168／168／0 |
-| Source shot updates／peak | 8,347／8 of 60 |
-| Enemy-shot player hits | 17 |
-| Player-shot enemy hits／enemy contacts／kills | 467／28／137 |
-| Peak visible source enemies | 35 |
+| Source enemy shots spawn／release／drop | 181／181／0 |
+| Source shot updates／peak | 8,452／9 of 60 |
+| Enemy-shot player hits | 19 |
+| Player-shot enemy hits／enemy contacts／kills | 355／36／79 |
+| Peak visible source enemies | 30 |
 | Exact frame catalog／fallback visuals | 198／0 |
-| Frame cache hit／miss／eviction／drop | 44,509／153／129／0 |
-| Frame uploads／bytes／single-frame peak | 153／78,336／7 |
+| Frame cache hit／miss／eviction／drop | 45,248／145／121／0 |
+| Frame uploads／bytes／single-frame peak | 145／74,240／7 |
+| Final PC player x/y | 77／10 |
+| Final MAP1／MAP2／MAP3 x offset | 24／49／74 |
+| Final MAP1／MAP2／MAP3 HOFS | 60／35／34 |
+| Presentation crop origin | 36／12 |
 | State transitions | 5 |
 | ROMFS checks／failures | 93／0 |
 | mGBA memory/runtime errors | 0 |
 
 7,093 個 logic tick 約等於 204 秒的 GBA 遊戲時間。增加的時間來自原作
 MAP1 慢速段現在也同步控制事件 `curLoc`。Headless mGBA 在 PC 以不限速
-模式約 4.6 秒跑完；這個 host 時間不是 GBA 效能數字。101 次 missed
+模式約 4.6 秒跑完；這個 host 時間不是 GBA 效能數字。58 次 missed
 VBlank 包含新的 ROM→OBJ VRAM frame upload，由測試保留並設上限 160；
 沒有透過降 logic rate、刪除音樂或圖層隱藏少數重負載 frame。
 
@@ -584,25 +606,26 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
    與 log 時使用 `.\build.ps1 -KeepIntermediates`。
 
 若 mGBA GUI 正載入要覆寫的同名 ROM，Windows 會鎖住該檔案；重建前請先
-關閉該 ROM 或關閉模擬器。正式交付使用 `_romfs_v17.gba` 檔名，避免與
-先前測試 ROM 混淆。
+關閉該 ROM 或關閉模擬器。正式交付使用
+`_source_parity_crop1to1_romfs_v18.gba` 檔名，避免與先前測試 ROM
+混淆。
 
 ## 現階段結論
 
 以這個三背景圖層、單關流程的範圍來看，GBA 仍有內容擴充空間，但 CPU
 已出現可量測而非理論上的尖峰：
 
-- 100-entry source enemy pool 峰值 39，無 pool-full；OAM 峰值 47 / 128。
+- 100-entry source enemy pool 峰值 39，無 pool-full；OAM 峰值 43 / 128。
 - 三層共串流 3,590 列，0 stream drop。
-- 168 發 source 敵彈峰值 8 / 60，0 projectile drop。
-- 完整 route 有 101 / 12,239 missed VBlank，約 0.83%。
+- 181 發 source 敵彈峰值 9 / 60，0 projectile drop。
+- 完整 route 有 58 / 12,239 missed VBlank，約 0.47%。
 - 含完整 stock ROMFS 與 198-frame catalog 後佔標準 32 MiB 視窗約
-  31.44%。
+  32.44%。
 - 三層背景、完整 tracker 音樂、source event/enemy/projectile/collision
   可以同時運作。
 
 目前 198-frame catalog 已消除第一關 enemy/reward fallback；最大的正確性
 限制改為 5,400 後仍使用簡化 Boss，以及尚未加入的玩家死亡流程。容量不是
-瓶頸。下一階段應讓 source Boss lifecycle 接管，再針對 101 個
+瓶頸。下一階段應讓 source Boss lifecycle 接管，再針對 58 個
 over-budget frame 做定位式優化，而不是先降低 logic rate、縮減關卡或
 刪除音樂。

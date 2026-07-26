@@ -23,32 +23,42 @@ static void hide_all_sprites(void)
     oam_dirty = 1;
 }
 
+static void commit_background_row(const u8 *source, u16 *left_target)
+{
+    dmaCopy(source, left_target, MAP_HALF_ROW_BYTES);
+    dmaCopy(
+        source + MAP_HALF_ROW_BYTES,
+        left_target + MAP_SCREEN_BLOCK_WORDS,
+        MAP_HALF_ROW_BYTES
+    );
+}
+
 static void commit_vblank_work(void)
 {
     volatile u16 *boss_palette =
         (volatile u16 *)SPRITE_PALETTE + OBJ_PAL_BOSS_BAR * 16;
     if (bg1_row_pending) {
-        dmaCopy(bg1_row_source, bg1_row_target, MAP_ROW_BYTES);
+        commit_background_row(bg1_row_source, bg1_row_target);
         bg1_row_pending = 0;
     }
     if (bg2_row_pending) {
-        dmaCopy(bg2_row_source, bg2_row_target, MAP_ROW_BYTES);
+        commit_background_row(bg2_row_source, bg2_row_target);
         bg2_row_pending = 0;
     }
     if (bg3_row_pending) {
-        dmaCopy(bg3_row_source, bg3_row_target, MAP_ROW_BYTES);
+        commit_background_row(bg3_row_source, bg3_row_target);
         bg3_row_pending = 0;
     }
     if (game_state != STATE_TITLE) {
-        REG_BG0HOFS = 8;
-        REG_BG1HOFS = 8;
-        REG_BG2HOFS = 8;
-        REG_BG0VOFS = bg1_scroll_pixel & 511;
-        REG_BG1VOFS = bg2_scroll_pixel & 511;
-        REG_BG2VOFS = bg3_scroll_pixel & 511;
+        REG_BG0HOFS = source_background_hofs(0);
+        REG_BG1HOFS = source_background_hofs(1);
+        REG_BG2HOFS = source_background_hofs(2);
+        REG_BG0VOFS = bg1_presentation_scroll_pixel & 255;
+        REG_BG1VOFS = bg2_presentation_scroll_pixel & 255;
+        REG_BG2VOFS = bg3_presentation_scroll_pixel & 255;
         REG_BG2CNT = BG_PRIORITY(foreground_phase ? 0 : 1) |
                      CHAR_BASE(2) | SCREEN_BASE(BG2_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_2;
+                     BG_16_COLOR | BG_SIZE_1;
     }
     /*
      * Source Sprite2 frames are copied into the reserved OBJ tile cache only

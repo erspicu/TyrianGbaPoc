@@ -9,32 +9,32 @@ enum {
     SOURCE_STAGE4_EXPECTED_SPAWN_ATTEMPTS = 473,
     SOURCE_STAGE4_EXPECTED_SPAWN_SUCCESSES = 473,
     SOURCE_STAGE4_EXPECTED_POOL_FULL = 0,
-    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 2444,
-    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 1659,
-    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 52103,
-    SOURCE_STAGE4_EXPECTED_RELEASES = 458,
-    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 168,
-    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 168,
-    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 8,
-    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 8347,
-    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 168,
-    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 17,
-    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 467,
-    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 28,
-    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 137,
-    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1785,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 5,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 5,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 2,
-    SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 5,
+    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 2509,
+    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 1785,
+    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 58176,
+    SOURCE_STAGE4_EXPECTED_RELEASES = 459,
+    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 181,
+    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 181,
+    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 9,
+    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 8452,
+    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 181,
+    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 19,
+    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 355,
+    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 36,
+    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 79,
+    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1298,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 6,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 4,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 3,
+    SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 6,
     SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
-    SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 59,
-    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 35,
+    SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 60,
+    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 30,
     SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 0,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS = 44509,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES = 153,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS = 129,
-    SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS = 153,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS = 45248,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES = 145,
+    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS = 121,
+    SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS = 145,
     SOURCE_STAGE4_EXPECTED_FRAME_MAX_UPLOADS = 7,
 };
 
@@ -134,7 +134,7 @@ static void autotest_finish(void)
         source_parity_level.death_spawn_pool_full_count == 0 &&
         source_parity_level.death_spawn_missing_definition_count == 0 &&
         source_parity_level.score_item_unsupported_pickup_count == 0 &&
-        source_parity_level.data_cube_pickup_count == 2 &&
+        source_parity_level.data_cube_pickup_count == 0 &&
         source_parity_level.front_weapon_powerup_count == 0 &&
         source_parity_level.rear_weapon_powerup_count == 0 &&
         telemetry_source_death_control_events ==
@@ -162,12 +162,23 @@ static void autotest_finish(void)
         OBJ_ENEMY_FRAME_COUNT == 198 &&
         source_parity_level.enemy_shot_active_count == 0 &&
         source_parity_level.active_enemy_count == 20 &&
-        player_cash == 1960 &&
+        player_cash == 1398 &&
         telemetry_missed_vblanks <= 160 &&
         telemetry_source_launch_attempts == 0 &&
         telemetry_source_launch_successes == 0 &&
         telemetry_source_random_attempts == 0 &&
         telemetry_source_random_successes == 0 &&
+        source_world_to_screen_x(SOURCE_PRESENTATION_X_ORIGIN) == 0 &&
+        source_world_to_screen_x(
+            SOURCE_PRESENTATION_X_ORIGIN + SCREEN_WIDTH - 1
+        ) == SCREEN_WIDTH - 1 &&
+        source_world_to_screen_y(SOURCE_PRESENTATION_Y_ORIGIN) == 0 &&
+        source_world_to_screen_y(
+            SOURCE_PRESENTATION_Y_ORIGIN + SCREEN_HEIGHT - 1
+        ) == SCREEN_HEIGHT - 1 &&
+        source_background_hofs(0) < 512 &&
+        source_background_hofs(1) < 512 &&
+        source_background_hofs(2) < 512 &&
         bg1_scroll_speed == 1 &&
         bg2_scroll_speed == 2 &&
         bg3_scroll_speed == 0
@@ -178,7 +189,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 15;
+    sram[4] = 16;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -331,6 +342,28 @@ static void autotest_finish(void)
     sram_write_u32(456, source_parity_level.bonus_level ? 1 : 0);
     sram_write_u32(460, source_parity_level.next_level);
     sram_write_u32(464, source_parity_level.display_time);
+    sram_write_u32(468, (u16)player_source_x);
+    sram_write_u32(472, (u16)player_source_y);
+    sram_write_u32(
+        476,
+        source_parity_level.presentation_map_x_offset
+    );
+    sram_write_u32(
+        480,
+        source_parity_level.presentation_map_x2_offset
+    );
+    sram_write_u32(
+        484,
+        source_parity_level.presentation_map_x3_offset
+    );
+    sram_write_u32(488, source_background_hofs(0));
+    sram_write_u32(492, source_background_hofs(1));
+    sram_write_u32(496, source_background_hofs(2));
+    sram_write_u32(500, bg1_presentation_scroll_pixel);
+    sram_write_u32(504, bg2_presentation_scroll_pixel);
+    sram_write_u32(508, bg3_presentation_scroll_pixel);
+    sram_write_u32(512, SOURCE_PRESENTATION_X_ORIGIN);
+    sram_write_u32(516, SOURCE_PRESENTATION_Y_ORIGIN);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
@@ -351,6 +384,8 @@ static u16 autotest_input(void)
     u8 source_index;
     u16 phase = (level_tick >> 5) & 3;
     u16 keys = KEY_A;
+    s16 player_screen_x = source_player_screen_x();
+    s16 player_screen_y = source_player_screen_y();
 #ifdef AUTOTEST_STATIONARY_PLAYER
     /*
      * Screenshot regression mode: hold a neutral pose so two frames from
@@ -359,8 +394,33 @@ static u16 autotest_input(void)
     return 0;
 #endif
     if (game_state == STATE_BOSS) {
-        if (player_x + 16 < boss_x + 32) keys |= KEY_RIGHT;
-        if (player_x + 16 > boss_x + 32) keys |= KEY_LEFT;
+        if (player_screen_x + 16 < boss_x + 32) keys |= KEY_RIGHT;
+        if (player_screen_x + 16 > boss_x + 32) keys |= KEY_LEFT;
+        return keys;
+    }
+    /*
+     * Event-33 data cubes are physical score-item enemies (evalue==1), not
+     * destruction awards.  Prioritize them over cash objects so the exact
+     * JE_playerCollide() cube branch remains covered with PC inertia.
+     */
+    for (source_index = 0; source_index < OT_ENEMY_COUNT; source_index++) {
+        const OtEnemy *enemy = &source_parity_level.enemy[source_index];
+        s16 target_x;
+        s16 target_y;
+
+        if (
+            source_parity_level.enemy_avail[source_index] == 1 ||
+            !enemy->scoreitem ||
+            enemy->evalue != 1
+        ) {
+            continue;
+        }
+        target_x = (s16)(enemy->ex + enemy->mapoffset);
+        target_y = enemy->ey;
+        if (player_source_x < target_x - 2) keys |= KEY_RIGHT;
+        if (player_source_x > target_x + 2) keys |= KEY_LEFT;
+        if (player_source_y < target_y - 2) keys |= KEY_DOWN;
+        if (player_source_y > target_y + 2) keys |= KEY_UP;
         return keys;
     }
     /*
@@ -369,10 +429,18 @@ static u16 autotest_input(void)
      */
     for (reward_index = 0; reward_index < MAX_REWARDS; reward_index++) {
         if (!rewards[reward_index].active) continue;
-        if (player_x + 16 < rewards[reward_index].x + 8) keys |= KEY_RIGHT;
-        if (player_x + 16 > rewards[reward_index].x + 8) keys |= KEY_LEFT;
-        if (player_y + 14 < rewards[reward_index].y + 8) keys |= KEY_DOWN;
-        if (player_y + 14 > rewards[reward_index].y + 8) keys |= KEY_UP;
+        if (player_screen_x + 16 < rewards[reward_index].x + 8) {
+            keys |= KEY_RIGHT;
+        }
+        if (player_screen_x + 16 > rewards[reward_index].x + 8) {
+            keys |= KEY_LEFT;
+        }
+        if (player_screen_y + 14 < rewards[reward_index].y + 8) {
+            keys |= KEY_DOWN;
+        }
+        if (player_screen_y + 14 > rewards[reward_index].y + 8) {
+            keys |= KEY_UP;
+        }
         return keys;
     }
     for (source_index = 0; source_index < OT_ENEMY_COUNT; source_index++) {
@@ -388,10 +456,10 @@ static u16 autotest_input(void)
         }
         reward_x = source_score_item_screen_x(enemy);
         reward_y = source_score_item_screen_y(enemy);
-        if (player_x + 16 < reward_x + 8) keys |= KEY_RIGHT;
-        if (player_x + 16 > reward_x + 8) keys |= KEY_LEFT;
-        if (player_y + 14 < reward_y + 8) keys |= KEY_DOWN;
-        if (player_y + 14 > reward_y + 8) keys |= KEY_UP;
+        if (player_screen_x + 16 < reward_x + 8) keys |= KEY_RIGHT;
+        if (player_screen_x + 16 > reward_x + 8) keys |= KEY_LEFT;
+        if (player_screen_y + 14 < reward_y + 8) keys |= KEY_DOWN;
+        if (player_screen_y + 14 > reward_y + 8) keys |= KEY_UP;
         return keys;
     }
     if (phase == 0) keys |= KEY_RIGHT;

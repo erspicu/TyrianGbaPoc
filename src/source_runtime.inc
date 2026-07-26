@@ -1,11 +1,11 @@
 /*
  * GBA presentation/input adapter for the directly translated OpenTyrian
- * first-level runtime.  Source gameplay stays in its original 320x200
- * coordinate system; only these helpers map it to the 240x160 display.
+ * first-level runtime.  Source gameplay stays in its original coordinate
+ * system.  These helpers reproduce JE_starShowVGA's x=24 extraction, then
+ * centre-crop its 264x184 gameplay viewport to the GBA's native 240x160.
+ * No source coordinate or sprite is rescaled.
  */
 
-#define SOURCE_VIEW_X_OFFSET 34
-#define SOURCE_VIEW_Y_OFFSET (-10)
 #define SOURCE_ENEMY_CATALOG_HEADER_BYTES 16
 
 typedef struct {
@@ -220,51 +220,64 @@ static void source_enemy_cache_commit(void)
     source_enemy_upload_count = 0;
 }
 
-static s16 source_scale_4_5(s16 value)
-{
-    if (value < 0) {
-        return (s16)-(((-value) * 4 + 2) / 5);
-    }
-    return (s16)((value * 4 + 2) / 5);
-}
-
-static s16 source_unscale_4_5(s16 value)
-{
-    if (value < 0) {
-        return (s16)-(((-value) * 5 + 2) / 4);
-    }
-    return (s16)((value * 5 + 2) / 4);
-}
-
 static s16 source_world_to_screen_x(s16 source_x)
 {
-    return (s16)(
-        source_scale_4_5(source_x) + SOURCE_VIEW_X_OFFSET
-    );
+    return (s16)(source_x - SOURCE_PRESENTATION_X_ORIGIN);
 }
 
 static s16 source_world_to_screen_y(s16 source_y)
 {
-    return (s16)(
-        source_scale_4_5(source_y) + SOURCE_VIEW_Y_OFFSET
+    return (s16)(source_y - SOURCE_PRESENTATION_Y_ORIGIN);
+}
+
+static u16 source_background_hofs(u8 layer)
+{
+    const OtLevelPortState *state = &source_parity_level;
+
+    /*
+     * The initial PC frame deliberately uses mapXbpPos=0.  Later frames use
+     * the pointer/position pair calculated by JE_mainGamePlayerFunctions().
+     * Since the GBA map contains the complete unscaled PC raster, HOFS is the
+     * exact source-map pixel at game_screen x=36.
+     */
+    if (!state->presentation_parallax_initialized) {
+        return layer == 2 ? BG3_INITIAL_HOFS : BG12_INITIAL_HOFS;
+    }
+    if (layer == 0) {
+        return (u16)(
+            SOURCE_BG12_PARALLAX_BASE_X -
+            state->presentation_map_x_offset
+        );
+    }
+    if (layer == 1) {
+        return (u16)(
+            SOURCE_BG12_PARALLAX_BASE_X -
+            state->presentation_map_x2_offset
+        );
+    }
+    if (state->presentation_background3_x1) {
+        return (u16)(
+            SOURCE_BG12_PARALLAX_BASE_X -
+            state->presentation_map_x3_offset
+        );
+    }
+    return (u16)(
+        SOURCE_BG3_PARALLAX_BASE_X -
+        state->presentation_map_x3_offset
     );
 }
 
-static s16 source_player_x_from_gba(void)
+static s16 source_player_screen_x(void)
 {
     return (s16)(
-        source_unscale_4_5(
-            (s16)(player_x + 16 - SOURCE_VIEW_X_OFFSET)
-        ) - 8
+        source_world_to_screen_x((s16)(player_source_x + 7)) - 16
     );
 }
 
-static s16 source_player_y_from_gba(void)
+static s16 source_player_screen_y(void)
 {
     return (s16)(
-        source_unscale_4_5(
-            (s16)(player_y + 16 - SOURCE_VIEW_Y_OFFSET)
-        ) - 8
+        source_world_to_screen_y((s16)(player_source_y + 8)) - 16
     );
 }
 
@@ -539,11 +552,11 @@ static void source_update_enemy_projectiles(void)
 
     /*
      * JE_mainGamePlayerFunctions() runs between player/enemy collision and
-     * enemy-shot movement.  Reflect the just-applied GBA input at the same
-     * phase boundary without changing source projectile math.
+     * enemy-shot movement.  Reflect the just-applied GBA keypad input at the
+     * same phase boundary, directly in unchanged OpenTyrian coordinates.
      */
-    source_parity_level.player_x = source_player_x_from_gba();
-    source_parity_level.player_y = source_player_y_from_gba();
+    source_parity_level.player_x = player_source_x;
+    source_parity_level.player_y = player_source_y;
     old_enemy_shot_hits =
         source_parity_level.enemy_shot_player_hit_count;
     ot_level_port_update_enemy_shots(&source_parity_level);

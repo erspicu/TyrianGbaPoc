@@ -215,6 +215,17 @@ typedef struct {
     uint8_t level_end;
     uint16_t map_x;
     uint16_t map_x3;
+    /*
+     * JE_mainGamePlayerFunctions() derives these horizontal offsets from
+     * the player in PC coordinates.  The presentation fields retain the
+     * values consumed by the current background/enemy draw phase.
+     */
+    uint16_t map_x_offset;
+    uint16_t map_x2_offset;
+    uint16_t map_x3_offset;
+    uint16_t presentation_map_x_offset;
+    uint16_t presentation_map_x2_offset;
+    uint16_t presentation_map_x3_offset;
     uint16_t total_enemy;
     uint8_t last_created_slot;
     int16_t player_x;
@@ -236,6 +247,9 @@ typedef struct {
     bool random_explosions;
     bool small_enemy_adjust;
     bool assets_valid;
+    bool parallax_initialized;
+    bool presentation_parallax_initialized;
+    bool presentation_background3_x1;
 
     OtEnemy enemy[OT_ENEMY_COUNT];
     uint8_t enemy_avail[OT_ENEMY_COUNT];
@@ -325,6 +339,10 @@ void ot_level_port_advance(
     uint16_t cur_loc,
     int16_t player_x,
     int16_t player_y
+);
+void ot_level_port_update_parallax(
+    OtLevelPortState *state,
+    int16_t player_x
 );
 void ot_level_port_update_enemy_shots(OtLevelPortState *state);
 void ot_level_port_collide_player_shot(

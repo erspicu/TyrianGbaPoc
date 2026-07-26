@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_romfs_v17"
-$testName = "tyrian_gba_level1_source_parity_autotest_romfs_v17"
+$releaseName = "tyrian_gba_level1_source_parity_crop1to1_romfs_v18"
+$testName = "tyrian_gba_level1_source_parity_crop1to1_autotest_romfs_v18"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -335,7 +335,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 468) {
+if ($saveBytes.Length -lt 520) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -468,10 +468,23 @@ $telemetry = [ordered]@{
     source_parity_bonus_level = Read-TelemetryU32 456
     source_parity_next_level = Read-TelemetryU32 460
     source_parity_display_time = Read-TelemetryU32 464
+    final_player_source_x = Read-TelemetryU32 468
+    final_player_source_y = Read-TelemetryU32 472
+    final_map_x_offset = Read-TelemetryU32 476
+    final_map_x2_offset = Read-TelemetryU32 480
+    final_map_x3_offset = Read-TelemetryU32 484
+    final_bg1_horizontal_offset = Read-TelemetryU32 488
+    final_bg2_horizontal_offset = Read-TelemetryU32 492
+    final_bg3_horizontal_offset = Read-TelemetryU32 496
+    final_bg1_source_scroll = Read-TelemetryU32 500
+    final_bg2_source_scroll = Read-TelemetryU32 504
+    final_bg3_source_scroll = Read-TelemetryU32 508
+    presentation_crop_x = Read-TelemetryU32 512
+    presentation_crop_y = Read-TelemetryU32 516
 }
 
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 15
+    schema_version = $telemetry.version -eq 16
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_title = $telemetry.final_state -eq 0
     title_music_active = $telemetry.title_music_active -eq 1
@@ -480,28 +493,28 @@ $telemetryChecks = [ordered]@{
     final_level_position = $telemetry.final_level_position -eq 5400
     final_source_event_index = $telemetry.final_source_event_index -eq 878
     final_level_tick = $telemetry.final_level_tick -eq 7093
-    spawn_events = $telemetry.spawn_events -eq 478
-    control_events = $telemetry.control_events -eq 2444
-    collisions = $telemetry.collisions -eq 577
+    spawn_events = $telemetry.spawn_events -eq 479
+    control_events = $telemetry.control_events -eq 2509
+    collisions = $telemetry.collisions -eq 414
     streamed_map_rows = $telemetry.streamed_map_rows -eq 3590
     max_active_enemies = $telemetry.max_active_enemies -eq 39
-    max_hardware_oam = $telemetry.max_hardware_oam -eq 47
+    max_hardware_oam = $telemetry.max_hardware_oam -eq 43
     vblank_budget = $telemetry.missed_vblanks -le 160
     stream_drops = $telemetry.stream_drops -eq 0
-    max_active_effects = $telemetry.max_active_effects -eq 27
+    max_active_effects = $telemetry.max_active_effects -eq 30
     effect_drops = $telemetry.effect_drops -eq 0
-    reward_spawns = $telemetry.reward_spawns -eq 5
-    reward_pickups = $telemetry.reward_pickups -eq 5
-    max_active_rewards = $telemetry.max_active_rewards -eq 2
+    reward_spawns = $telemetry.reward_spawns -eq 6
+    reward_pickups = $telemetry.reward_pickups -eq 4
+    max_active_rewards = $telemetry.max_active_rewards -eq 3
     reward_drops = $telemetry.reward_drops -eq 0
-    all_enemy_shots_spawned = $telemetry.enemy_shots_spawned -eq 234
+    all_enemy_shots_spawned = $telemetry.enemy_shots_spawned -eq 247
     all_enemy_shot_drops = $telemetry.enemy_shot_drops -eq 0
-    all_max_active_enemy_shots = $telemetry.max_active_enemy_shots -eq 8
+    all_max_active_enemy_shots = $telemetry.max_active_enemy_shots -eq 23
     enemy_pool_replacements = $telemetry.enemy_pool_replacements -eq 0
-    direct_kill_cash = $telemetry.direct_kill_cash -eq 1785
-    final_cash = $telemetry.final_cash -eq 1960
+    direct_kill_cash = $telemetry.direct_kill_cash -eq 1298
+    final_cash = $telemetry.final_cash -eq 1398
     reward_control_events = $telemetry.reward_control_events -eq 32
-    reward_assignments = $telemetry.reward_assignments -eq 59
+    reward_assignments = $telemetry.reward_assignments -eq 60
     pause_toggles = $telemetry.pause_toggles -eq 2
     paused_display_frames = $telemetry.paused_display_frames -eq 60
     source_events = $telemetry.source_parity_events -eq 878
@@ -523,62 +536,62 @@ $telemetryChecks = [ordered]@{
     source_spawn_pool_full = $telemetry.source_parity_spawn_pool_full -eq 0
     source_spawn_missing = $telemetry.source_parity_spawn_missing -eq 0
     source_max_enemies = $telemetry.source_parity_max_enemies -eq 39
-    source_control_writes = $telemetry.source_parity_control_writes -eq 2444
-    source_rng_calls = $telemetry.source_parity_rng_calls -eq 1659
-    source_motion_updates = $telemetry.source_parity_motion_updates -eq 52103
-    source_releases = $telemetry.source_parity_releases -eq 458
-    source_shot_triggers = $telemetry.source_parity_shot_triggers -eq 168
+    source_control_writes = $telemetry.source_parity_control_writes -eq 2509
+    source_rng_calls = $telemetry.source_parity_rng_calls -eq 1785
+    source_motion_updates = $telemetry.source_parity_motion_updates -eq 58176
+    source_releases = $telemetry.source_parity_releases -eq 459
+    source_shot_triggers = $telemetry.source_parity_shot_triggers -eq 181
     source_launch_attempts = $telemetry.source_parity_launch_attempts -eq 0
     source_launch_successes = $telemetry.source_parity_launch_successes -eq 0
     source_random_attempts = $telemetry.source_parity_random_attempts -eq 0
     source_random_successes = $telemetry.source_parity_random_successes -eq 0
     source_enemy_shots_spawned = (
-        $telemetry.source_parity_enemy_shots_spawned -eq 168
+        $telemetry.source_parity_enemy_shots_spawned -eq 181
     )
     source_enemy_shot_drops = $telemetry.source_parity_enemy_shot_drops -eq 0
-    source_max_enemy_shots = $telemetry.source_parity_max_enemy_shots -eq 8
+    source_max_enemy_shots = $telemetry.source_parity_max_enemy_shots -eq 9
     source_enemy_shot_updates = (
-        $telemetry.source_parity_enemy_shot_updates -eq 8347
+        $telemetry.source_parity_enemy_shot_updates -eq 8452
     )
     source_enemy_shot_releases = (
-        $telemetry.source_parity_enemy_shot_releases -eq 168
+        $telemetry.source_parity_enemy_shot_releases -eq 181
     )
     source_enemy_shot_player_hits = (
-        $telemetry.source_parity_enemy_shot_player_hits -eq 17
+        $telemetry.source_parity_enemy_shot_player_hits -eq 19
     )
-    source_player_shot_hits = $telemetry.source_parity_player_shot_hits -eq 467
-    source_player_contacts = $telemetry.source_parity_player_contacts -eq 28
+    source_player_shot_hits = $telemetry.source_parity_player_shot_hits -eq 355
+    source_player_contacts = $telemetry.source_parity_player_contacts -eq 36
     source_collision_accounting = (
         $telemetry.source_parity_player_shot_hits +
         $telemetry.source_parity_enemy_shot_player_hits +
         $telemetry.source_parity_player_contacts
-    ) -eq 512
-    legacy_boss_collision_delta = $telemetry.collisions - 512 -eq 65
-    source_enemy_kills = $telemetry.source_parity_enemy_kills -eq 137
-    source_direct_cash = $telemetry.source_parity_direct_cash -eq 1785
+    ) -eq 410
+    legacy_boss_collision_delta = $telemetry.collisions - 410 -eq 4
+    source_enemy_kills = $telemetry.source_parity_enemy_kills -eq 79
+    source_direct_cash = $telemetry.source_parity_direct_cash -eq 1298
     source_score_item_spawns = (
-        $telemetry.source_parity_score_item_spawns -eq 5
+        $telemetry.source_parity_score_item_spawns -eq 6
     )
     source_score_item_pickups = (
-        $telemetry.source_parity_score_item_pickups -eq 5
+        $telemetry.source_parity_score_item_pickups -eq 4
     )
     source_score_item_max_active = (
-        $telemetry.source_parity_score_item_max_active -eq 2
+        $telemetry.source_parity_score_item_max_active -eq 3
     )
     source_death_spawn_attempts = (
-        $telemetry.source_parity_death_spawn_attempts -eq 5
+        $telemetry.source_parity_death_spawn_attempts -eq 6
     )
     source_death_spawn_successes = (
-        $telemetry.source_parity_death_spawn_successes -eq 5
+        $telemetry.source_parity_death_spawn_successes -eq 6
     )
     source_death_control_events = (
         $telemetry.source_parity_death_control_events -eq 32
     )
     source_death_assignments = (
-        $telemetry.source_parity_death_assignments -eq 59
+        $telemetry.source_parity_death_assignments -eq 60
     )
     source_max_visible_enemies = (
-        $telemetry.source_parity_max_visible_enemies -eq 35
+        $telemetry.source_parity_max_visible_enemies -eq 30
     )
     source_unknown_visuals = $telemetry.source_parity_unknown_visuals -eq 0
     source_unsupported_pickups = (
@@ -596,7 +609,7 @@ $telemetryChecks = [ordered]@{
     source_final_active_enemy_shots = (
         $telemetry.source_parity_final_active_enemy_shots -eq 0
     )
-    source_data_cube_pickups = $telemetry.source_parity_data_cube_pickups -eq 2
+    source_data_cube_pickups = $telemetry.source_parity_data_cube_pickups -eq 0
     source_front_weapon_powerups = (
         $telemetry.source_parity_front_weapon_powerups -eq 0
     )
@@ -609,13 +622,13 @@ $telemetryChecks = [ordered]@{
     source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
     final_game_paused = $telemetry.final_game_paused -eq 0
     enemy_frame_catalog_misses = $telemetry.enemy_frame_catalog_misses -eq 0
-    enemy_frame_cache_hits = $telemetry.enemy_frame_cache_hits -eq 44509
-    enemy_frame_cache_misses = $telemetry.enemy_frame_cache_misses -eq 153
+    enemy_frame_cache_hits = $telemetry.enemy_frame_cache_hits -eq 45248
+    enemy_frame_cache_misses = $telemetry.enemy_frame_cache_misses -eq 145
     enemy_frame_cache_evictions = (
-        $telemetry.enemy_frame_cache_evictions -eq 129
+        $telemetry.enemy_frame_cache_evictions -eq 121
     )
     enemy_frame_cache_drops = $telemetry.enemy_frame_cache_drops -eq 0
-    enemy_frame_uploads = $telemetry.enemy_frame_uploads -eq 153
+    enemy_frame_uploads = $telemetry.enemy_frame_uploads -eq 145
     enemy_frame_max_uploads = (
         $telemetry.enemy_frame_max_uploads_per_frame -eq 7
     )
@@ -662,6 +675,35 @@ $telemetryChecks = [ordered]@{
         $telemetry.source_parity_bonus_level -eq 0 -and
         $telemetry.source_parity_next_level -eq 0 -and
         $telemetry.source_parity_display_time -eq 0
+    )
+    final_player_source_position = (
+        $telemetry.final_player_source_x -eq 77 -and
+        $telemetry.final_player_source_y -eq 10
+    )
+    final_source_parallax_offsets = (
+        $telemetry.final_map_x_offset -eq 24 -and
+        $telemetry.final_map_x2_offset -eq 49 -and
+        $telemetry.final_map_x3_offset -eq 74
+    )
+    final_background_horizontal_offsets = (
+        $telemetry.final_bg1_horizontal_offset -eq (
+            84 - $telemetry.final_map_x_offset
+        ) -and
+        $telemetry.final_bg2_horizontal_offset -eq (
+            84 - $telemetry.final_map_x2_offset
+        ) -and
+        $telemetry.final_bg3_horizontal_offset -eq (
+            108 - $telemetry.final_map_x3_offset
+        )
+    )
+    final_source_background_scroll = (
+        $telemetry.final_bg1_source_scroll -eq 2363 -and
+        $telemetry.final_bg2_source_scroll -eq 5225 -and
+        $telemetry.final_bg3_source_scroll -eq 4198
+    )
+    presentation_is_central_1to1_crop = (
+        $telemetry.presentation_crop_x -eq 36 -and
+        $telemetry.presentation_crop_y -eq 12
     )
     romfs_entries = $telemetry.romfs_entries -eq $romfsAudit.entry_count
     romfs_image_bytes = $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes

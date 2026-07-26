@@ -24,7 +24,9 @@ Stage 4 已讓 source runtime 成為第一關本體的唯一 gameplay authority�
 `JE_drawEnemy()` movement／animation／release／fire、60-entry enemy-shot
 pool、玩家彈碰撞、armor／damaged transition、linked death、`eenemydie`
 子物件、score item 與 cash 均直接使用 ROMFS 的原始 LVL/HDT 資料。
-GBA 端只保留輸入、320×200→240×160 座標轉接、BG/OAM、音訊及效果呈現。
+GBA 端只保留輸入、PC 264×184 gameplay viewport 的 240×160 中央裁切、
+BG/OAM、音訊及效果呈現。敵人、玩家、彈幕、碰撞與三層背景都留在 PC
+座標；不再用 GBA 尺寸反推或縮放 gameplay state。
 `curLoc=5400` 後仍切到既有簡化 Boss，尚不能宣稱 Boss source parity。
 
 ## 已鎖定的顯示與操作規格
@@ -34,7 +36,7 @@ OpenTyrian 的邏輯 framebuffer 是 320×200；以 4:3 像素比例顯示時，
 
 | 區域 | 尺寸 | GBA 規格 |
 |---|---:|---|
-| Gameplay viewport | 264×184 | 映射至 240×160 |
+| Gameplay viewport | 264×184 | 1:1 中央裁成 240×160；四邊各捨去 12 px |
 | 右側 HUD | 56×184 | 不移植 |
 | 下方訊息 banner | 320×16 | 不移植 |
 
@@ -289,10 +291,19 @@ v16 刪除 `src/event_runtime.inc`、48-entry legacy enemy pool 及其壓縮
 更新，玩家撞機則遵守受擊無敵間隔；這兩點都是直接對照
 `JE_main()`／`JE_playerCollide()` 後修正的時序。
 
-Source gameplay 保持 320×200 座標。`src/source_runtime.inc` 使用 4:5
-縮放及固定 viewport offset 映射至 240×160；敵人 pool 決定 OBJ layer
-priority，主角、子彈、獎賞及爆炸固定在背景之前。這是 presentation
-adapter，不回寫敵人速度或碰撞尺寸。
+Source gameplay 保持 320×200 座標。v18 的 `src/source_runtime.inc`
+只做整數平移：
+
+```text
+GBA x = PC game_screen x - 36
+GBA y = PC game_screen y - 12
+```
+
+其中原版 `JE_starShowVGA()` 先從 `game_screen + 24` 取 264×184 gameplay
+viewport，再從該 viewport 四邊各裁 12 px，因此真正的 PC framebuffer
+來源範圍是 `x=36..275, y=12..171`。敵人 pool 仍決定 OBJ layer priority，
+主角、子彈、獎賞及爆炸固定在背景之前。這個 adapter 不回寫敵人位置、
+速度、碰撞尺寸或視差。
 
 ### 60-entry enemy-shot pool
 
@@ -306,7 +317,8 @@ adapter，不回寫敵人速度或碰撞尺寸。
 - 每次 weapon sound 所需的 MT19937 channel-selection 消耗順序
 
 在 Boss handoff 時，仍在飛行的 source shot 會經同一 release path 清除，
-因此 168 spawn 對應 168 release，沒有隱藏的 active projectile。
+v18 固定 route 的 181 spawn 對應 181 release，沒有隱藏的 active
+projectile。
 
 ### 玩家彈、死亡與獎賞
 
@@ -398,6 +410,61 @@ v17 把使用者指定的兩項問題納入 source-parity runtime，而不是繼
 - MUS metadata 已由 raw loader 讀取，實際 waveform 仍由 Maxmod IT cache
   播放。
 
+## v18 PC 座標與 1:1 中央裁切
+
+v18 移除舊的 4:5 presentation scaling，讓 GBA 僅作最終裁切。改動涵蓋
+玩家、敵人、敵彈、玩家彈、效果及三層背景，而不是只修改 OBJ 顯示公式：
+
+- 玩家位置改為 PC `player.x/y` authority，保留每次鍵盤 slice 的 ±1
+  input、X/Y friction cadence、速度 ±4 clamp 與 PC 邊界
+  `x=40..256, y=10..160`。
+- 玩家射擊、敵人瞄準、碰撞與 score item pickup 都直接讀同一份 PC
+  玩家座標，不再從已縮放的 GBA 畫面座標逆轉換。
+- 直譯 `JE_mainGamePlayerFunctions()` 的整數視差：
+
+  ```text
+  temp = floor((296 - playerX) * 72 / 224) - 1
+  mapX3ofs = temp
+  mapX2ofs = floor(temp * 2 / 3)
+  mapXofs  = floor(mapX2ofs / 2)
+  ```
+
+- `JE_drawEnemy()` 的 `mapoffset` 依 ground／sky／top pool 採用正確
+  map X offset；出界回收、射擊、碰撞與 OAM draw command 使用相同值。
+- 主角 24×28 與敵人 12×14／24×28 Sprite2 source cell 固定錨定在
+  32×32 OAM container，不再逐幀裁透明 bbox 後置中而造成位置偏移或
+  animation jitter。
+- 背景不再把 264 px 橫向壓成 240 px。ROM 中每層是 64 tile＝512 px
+  寬；VRAM 以兩個相鄰 screen block 組成 GBA `BG_SIZE_1`，保留完整 PC
+  來源 raster 後用 HOFS 選出中央 240 px。
+- MAP1 從原始 row 3、MAP2/MAP3 從 row 14 開始；初始垂直來源分別是
+  8,104 與 16,196 px。MAP1/MAP2 保留「先畫後推進」，MAP3 保留
+  「先推進後畫」的原版 phase。
+- 64-column map 只在 VRAM 維持 32 tile-row 環形視窗；每次跨列於
+  VBlank 同步更新左右兩個 screen block。
+
+自動測試 schema 16 額外保存 PC 玩家位置、三組 presentation map
+offset、三層 HOFS、三層垂直來源與裁切 origin，host verifier 逐一檢查
+上述關係。固定 route 結果：
+
+| 項目 | v18 結果 |
+|---|---:|
+| ROM／host verifier | PASS／PASS |
+| PC crop origin | 36, 12 |
+| 最終 PC player x/y | 77／10 |
+| MAP1／MAP2／MAP3 x offset | 24／49／74 |
+| MAP1／MAP2／MAP3 HOFS | 60／35／34 |
+| MAP1／MAP2／MAP3 vertical source | 2,363／5,225／4,198 |
+| Source event applied／deferred／skipped | 869／5／4 |
+| Event spawn success／pool full／missing | 473／0／0 |
+| Peak source enemies／peak OAM | 39／43 |
+| Stream／effect／reward／shot drops | 0／0／0／0 |
+| Missed VBlank／display frames | 58／12,239（約 0.47%） |
+| Runtime errors／ROMFS failures | 0／0 |
+
+完整公式、原碼定位與 framebuffer 檢查記錄見
+[Tyrian-GBA-1to1-Crop-Source-Parity-v18.md](Tyrian-GBA-1to1-Crop-Source-Parity-v18.md)。
+
 ## ROMFS v1 與原始格式 loader
 
 v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它，
@@ -465,7 +532,7 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 - PC timer → VBlank fixed-step scheduler
 - 檔案讀取 → ROM 中的 const table
 - PC 動態配置 → GBA 固定 pool
-- 264×184 gameplay viewport → 240×160 presentation transform
+- 264×184 gameplay viewport → 四邊各裁 12 px 的 240×160 1:1 視窗
 
 不允許在 platform adapter 內修改：
 
@@ -485,7 +552,7 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 2. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
    build option。
 3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
-4. 量測 101 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
+4. 量測 58 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
    rate、不刪音樂／圖層的前提下優化。
 
 ## 建置
@@ -494,10 +561,10 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 .\build.ps1
 ```
 
-目前 ROMFS v17 ROM：
+目前 ROMFS v18 1:1 crop ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_romfs_v17.gba
+build/tyrian_gba_level1_source_parity_crop1to1_romfs_v18.gba
 ```
 
 ROM 與中間產物不納入 Git。

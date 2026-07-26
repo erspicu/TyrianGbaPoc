@@ -18,6 +18,52 @@ from PIL import Image, ImageDraw
 
 SCREEN_WIDTH = 240
 SCREEN_HEIGHT = 160
+PC_GAME_VIEW_WIDTH = 264
+PC_GAME_VIEW_HEIGHT = 184
+PC_GAME_SCREEN_VISIBLE_X = 24
+PC_MAP_CELL_WIDTH = 24
+PC_MAP_CELL_HEIGHT = 28
+PC_BG1_FIRST_ROW = 3
+PC_BG1_LAST_ROW = 299
+PC_BG1_INITIAL_ROW = 292
+PC_BG23_FIRST_ROW = 14
+PC_BG23_LAST_ROW = 599
+PC_BG23_INITIAL_ROW = 592
+GBA_VIEW_CROP_X = (PC_GAME_VIEW_WIDTH - SCREEN_WIDTH) // 2
+GBA_VIEW_CROP_Y = (PC_GAME_VIEW_HEIGHT - SCREEN_HEIGHT) // 2
+GBA_BG_MAP_WIDTH = 512
+GBA_BG_MAP_COLUMNS = GBA_BG_MAP_WIDTH // 8
+GBA_BG1_SOURCE_HEIGHT = (
+    (PC_BG1_LAST_ROW - PC_BG1_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
+)
+GBA_BG1_PACK_HEIGHT = (GBA_BG1_SOURCE_HEIGHT + 7) // 8 * 8
+GBA_BG23_PACK_HEIGHT = (
+    (PC_BG23_LAST_ROW - PC_BG23_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
+)
+GBA_BG1_ROWS = GBA_BG1_PACK_HEIGHT // 8
+GBA_BG23_ROWS = GBA_BG23_PACK_HEIGHT // 8
+GBA_BG1_INITIAL_SCROLL = (
+    (PC_BG1_INITIAL_ROW - PC_BG1_FIRST_ROW) * PC_MAP_CELL_HEIGHT
+    + GBA_VIEW_CROP_Y
+)
+GBA_BG23_INITIAL_SCROLL = (
+    (PC_BG23_INITIAL_ROW - PC_BG23_FIRST_ROW) * PC_MAP_CELL_HEIGHT
+    + GBA_VIEW_CROP_Y
+)
+# Before the first JE_mainGamePlayerFunctions() call, OpenTyrian leaves all
+# map-X state at zero.  The 14-column layers therefore begin at column 1 and
+# the 15-column layer at column 2.  These are full-map source coordinates for
+# the central GBA crop's left edge (game_screen x=36).
+GBA_BG12_INITIAL_HOFS = (
+    PC_MAP_CELL_WIDTH
+    + PC_GAME_SCREEN_VISIBLE_X
+    + GBA_VIEW_CROP_X
+)
+GBA_BG3_INITIAL_HOFS = (
+    2 * PC_MAP_CELL_WIDTH
+    + PC_GAME_SCREEN_VISIBLE_X
+    + GBA_VIEW_CROP_X
+)
 ATLAS_STRIDE_TILES = 16
 EXPLOSION_SOURCE_SEQUENCES = (
     tuple(range(122, 134)),  # ordinary small enemy: type 1
@@ -58,6 +104,17 @@ ENEMY_FRAME_VERSION = 1
 ENEMY_FRAME_RECORD_BYTES = 8
 ENEMY_FRAME_TILES = 16
 ENEMY_FRAME_BYTES = ENEMY_FRAME_TILES * 32
+
+assert GBA_VIEW_CROP_X == 12
+assert GBA_VIEW_CROP_Y == 12
+assert GBA_BG_MAP_COLUMNS == 64
+assert GBA_BG1_SOURCE_HEIGHT == 8316
+assert GBA_BG1_ROWS == 1040
+assert GBA_BG23_ROWS == 2051
+assert GBA_BG1_INITIAL_SCROLL == 8104
+assert GBA_BG23_INITIAL_SCROLL == 16196
+assert GBA_BG12_INITIAL_HOFS == 60
+assert GBA_BG3_INITIAL_HOFS == 84
 
 # OBJ palettes 0/5/7..14 remain assigned to the player, simplified boss,
 # explosions, rewards, digits, projectiles, boss bar and PAUSED.  Exact
@@ -815,19 +872,64 @@ def repack_obj_tiles(
     output = bytearray()
     metadata: dict[str, int] = {}
 
-    def append_asset(name: str, width_tiles: int, height_tiles: int) -> None:
+    def append_asset(
+        name: str,
+        width_tiles: int,
+        height_tiles: int,
+        shift: tuple[int, int] = (0, 0),
+    ) -> None:
         source_base = source_metadata[f"OBJ_TILE_{name}"]
         metadata[f"OBJ_TILE_{name}"] = len(output) // 32
         metadata[f"OBJ_PAL_{name}"] = source_metadata[f"OBJ_PAL_{name}"]
+        canvas = np.zeros(
+            (height_tiles * 8, width_tiles * 8),
+            dtype=np.uint8,
+        )
         for tile_y in range(height_tiles):
             for tile_x in range(width_tiles):
                 source_index = (
                     source_base + tile_y * ATLAS_STRIDE_TILES + tile_x
                 )
-                output.extend(encode_gba_4bpp(decoded[source_index]))
+                canvas[
+                    tile_y * 8 : tile_y * 8 + 8,
+                    tile_x * 8 : tile_x * 8 + 8,
+                ] = decoded[source_index]
+        shift_x, shift_y = shift
+        if shift_x or shift_y:
+            shifted = np.zeros_like(canvas)
+            source_x = max(0, -shift_x)
+            source_y = max(0, -shift_y)
+            target_x = max(0, shift_x)
+            target_y = max(0, shift_y)
+            width = canvas.shape[1] - abs(shift_x)
+            height = canvas.shape[0] - abs(shift_y)
+            if width <= 0 or height <= 0:
+                raise ValueError(f"OBJ anchor shift exceeds canvas: {shift}")
+            shifted[
+                target_y : target_y + height,
+                target_x : target_x + width,
+            ] = canvas[
+                source_y : source_y + height,
+                source_x : source_x + width,
+            ]
+            canvas = shifted
+        for tile_y in range(height_tiles):
+            for tile_x in range(width_tiles):
+                output.extend(
+                    encode_gba_4bpp(
+                        canvas[
+                            tile_y * 8 : tile_y * 8 + 8,
+                            tile_x * 8 : tile_x * 8 + 8,
+                        ]
+                    )
+                )
 
-    append_asset("PLAYER_0", 4, 4)
-    append_asset("PLAYER_1", 4, 4)
+    # The shared atlas builder crops each alpha bbox before centring.  Undo
+    # only that translation for the two retained 24x28 player source cells:
+    # graphic 233 needs +0,+1 and graphic 235 needs +1,+1 to match a fixed
+    # (4,2) source canvas.  Enemy frames use preserve_sprite_canvas above.
+    append_asset("PLAYER_0", 4, 4, (0, 1))
+    append_asset("PLAYER_1", 4, 4, (1, 1))
     append_asset("BOSS_0", 8, 8)
 
     explosion_frame_bytes = 4 * 32
@@ -957,8 +1059,12 @@ def reconstruct_gba_window(
     row_count: int = 20,
 ) -> Image.Image:
     palettes = np.frombuffer(palette_binary, dtype="<u2").reshape(-1, 16)
-    words = np.frombuffer(map_binary, dtype="<u2").reshape(-1, 32)
-    output = Image.new("RGB", (256, row_count * 8), (0, 0, 0))
+    words = np.frombuffer(map_binary, dtype="<u2").reshape(
+        -1, GBA_BG_MAP_COLUMNS
+    )
+    output = Image.new(
+        "RGB", (GBA_BG_MAP_WIDTH, row_count * 8), (0, 0, 0)
+    )
     pixels = output.load()
     for local_row in range(row_count):
         source_row = min(len(words) - 1, row_start + local_row)
@@ -986,6 +1092,86 @@ def reconstruct_gba_window(
                         ((colour >> 10) & 31) << 3,
                     )
     return output
+
+
+def pack_pc_background_layer(
+    source: Image.Image,
+    height: int,
+) -> Image.Image:
+    """Place an unscaled PC map raster in a 512-pixel GBA tilemap canvas."""
+    if source.width > GBA_BG_MAP_WIDTH or source.height > height:
+        raise ValueError(
+            "PC background does not fit the GBA tilemap canvas: "
+            f"source={source.size}, canvas={(GBA_BG_MAP_WIDTH, height)}"
+        )
+    output = Image.new(
+        "RGBA", (GBA_BG_MAP_WIDTH, height), (0, 0, 0, 0)
+    )
+    output.alpha_composite(source.convert("RGBA"), (0, 0))
+    return output
+
+
+def quantize_gba_background_layer(
+    snes: ModuleType,
+    image: Image.Image,
+    palette_count: int,
+) -> tuple[
+    bytes,
+    bytes,
+    list[list[tuple[int, int, int]]],
+    dict[str, int],
+    np.ndarray,
+]:
+    """Quantize one 512-wide layer through the 256-wide shared helper.
+
+    Stack the left and right screen blocks vertically for quantization so
+    both halves select one common palette and 512-pattern bank, then restore
+    the hardware's 64-column row layout.
+    """
+    if image.width != GBA_BG_MAP_WIDTH or image.height % 8:
+        raise ValueError(f"invalid GBA background canvas: {image.size}")
+    stacked = Image.new(
+        "RGBA", (256, image.height * 2), (0, 0, 0, 0)
+    )
+    stacked.alpha_composite(image.crop((0, 0, 256, image.height)), (0, 0))
+    stacked.alpha_composite(
+        image.crop((256, 0, 512, image.height)),
+        (0, image.height),
+    )
+    tiles, stacked_map, palettes, report, assignments = (
+        snes.quantize_mode1_layer(stacked, palette_count, 0)
+    )
+    rows = image.height // 8
+    halves = np.frombuffer(stacked_map, dtype="<u2").reshape(rows * 2, 32)
+    combined = np.concatenate((halves[:rows], halves[rows:]), axis=1)
+    report = dict(report)
+    report["rows"] = rows
+    return tiles, combined.astype("<u2").tobytes(), palettes, report, assignments
+
+
+def save_initial_background_preview(
+    path: Path,
+    tile_binary: bytes,
+    map_binary: bytes,
+    palette_binary: bytes,
+    scroll: int,
+    horizontal_offset: int,
+) -> None:
+    row_start = scroll // 8
+    pixel_offset = scroll & 7
+    row_count = (pixel_offset + SCREEN_HEIGHT + 7) // 8
+    reconstruct_gba_window(
+        tile_binary,
+        map_binary,
+        palette_binary,
+        row_start,
+        row_count,
+    ).crop((
+        horizontal_offset,
+        pixel_offset,
+        horizontal_offset + SCREEN_WIDTH,
+        pixel_offset + SCREEN_HEIGHT,
+    )).save(path)
 
 
 def write_signed_pcm_wav(path: Path, pcm: bytes, rate: int) -> None:
@@ -1093,6 +1279,12 @@ def write_meta_header(
         f"#define BG1_ROWS {bg1_rows}u",
         f"#define BG2_ROWS {bg2_rows}u",
         f"#define BG3_ROWS {bg3_rows}u",
+        f"#define BG_MAP_COLUMNS {GBA_BG_MAP_COLUMNS}u",
+        f"#define BG1_INITIAL_SCROLL {GBA_BG1_INITIAL_SCROLL}u",
+        f"#define BG2_INITIAL_SCROLL {GBA_BG23_INITIAL_SCROLL}u",
+        f"#define BG3_INITIAL_SCROLL {GBA_BG23_INITIAL_SCROLL}u",
+        f"#define BG12_INITIAL_HOFS {GBA_BG12_INITIAL_HOFS}u",
+        f"#define BG3_INITIAL_HOFS {GBA_BG3_INITIAL_HOFS}u",
         f"#define LEGACY_LEVEL_EVENT_AUDIT_BYTES {event_bytes}u",
         f"#define LEVEL_BOSS_TICK {boss_tick}u",
         f"#define LEVEL_END_TICK {end_tick}u",
@@ -1270,16 +1462,29 @@ def compose_exact_enemy_frame(
                 ).convert("RGBA")
             )
             frame.alpha_composite(source, (x, y))
+        container_offset = (4, 2)
     else:
         frame = snes.normalize_sprite(
             Image.open(
                 enemy_component_path(image_root, shape_table, graphic)
             ).convert("RGBA")
         )
-    # A 32x32 GBA OBJ is only the presentation container.  fit_sprite never
-    # enlarges these 12x14/24x28 source pixels, so their silhouette remains
-    # the source Sprite2 artwork rather than the old archetype substitute.
-    return snes.fit_sprite(frame, (32, 32))
+        if frame.width > 12 or frame.height > 14:
+            raise ValueError(
+                "single Sprite2 component exceeds its PC source cell: "
+                f"table={shape_table}, graphic={graphic}, size={frame.size}"
+            )
+        container_offset = (10, 9)
+    # A 32x32 GBA OBJ is only the presentation container.  Preserve the
+    # complete 24x28 or 12x14 source cell at a fixed offset: cropping each
+    # alpha bbox would move transparent source margins and make animation
+    # frames jitter even though their OpenTyrian ex/ey is unchanged.
+    return preserve_sprite_canvas(
+        snes,
+        frame,
+        (32, 32),
+        container_offset,
+    )
 
 
 def build_exact_enemy_frame_catalog(
@@ -2138,25 +2343,48 @@ def main() -> None:
         "\n".join(source_parity_audit) + "\n",
         encoding="utf-8",
     )
-    layer1, _ = nes.render_map_layer(image_root, lookups[0], maps[0], 14, 3, 292)
-    layer1 = layer1.crop((40, 0, 296, snes.BG1_ROWS * 8)).convert("RGBA")
+    layer1, _ = nes.render_map_layer(
+        image_root,
+        lookups[0],
+        maps[0],
+        14,
+        PC_BG1_FIRST_ROW,
+        PC_BG1_LAST_ROW,
+    )
+    layer1 = pack_pc_background_layer(layer1, GBA_BG1_PACK_HEIGHT)
     layer2, layer2_nonblank = nes.render_map_layer(
-        image_root, lookups[1], maps[1], 14, 14, 593
+        image_root,
+        lookups[1],
+        maps[1],
+        14,
+        PC_BG23_FIRST_ROW,
+        PC_BG23_LAST_ROW,
     )
-    layer2 = layer2.crop((40, 0, 296, snes.BG2_ROWS * 8)).convert("RGBA")
+    layer2 = pack_pc_background_layer(layer2, GBA_BG23_PACK_HEIGHT)
     layer3, layer3_nonblank = nes.render_map_layer(
-        image_root, lookups[2], maps[2], 15, 14, 593
+        image_root,
+        lookups[2],
+        maps[2],
+        15,
+        PC_BG23_FIRST_ROW,
+        PC_BG23_LAST_ROW,
     )
-    layer3 = layer3.crop((52, 0, 308, snes.BG2_ROWS * 8)).convert("RGBA")
+    layer3 = pack_pc_background_layer(layer3, GBA_BG23_PACK_HEIGHT)
 
     bg1_snes_tiles, bg1_snes_map, bg1_palettes, bg1_report, _ = (
-        snes.quantize_mode1_layer(layer1, snes.BG1_PALETTES, 0)
+        quantize_gba_background_layer(
+            snes, layer1, snes.BG1_PALETTES
+        )
     )
     bg2_snes_tiles, bg2_snes_map, bg2_palettes, bg2_report, _ = (
-        snes.quantize_mode1_layer(layer2, snes.BG1_PALETTES, 0)
+        quantize_gba_background_layer(
+            snes, layer2, snes.BG1_PALETTES
+        )
     )
     bg3_snes_tiles, bg3_snes_map, bg3_palettes, bg3_report, _ = (
-        snes.quantize_mode1_layer(layer3, snes.BG1_PALETTES, 0)
+        quantize_gba_background_layer(
+            snes, layer3, snes.BG1_PALETTES
+        )
     )
     palette_bytes = snes.snes_palette_bytes(
         bg1_palettes + bg2_palettes + bg3_palettes
@@ -2178,15 +2406,30 @@ def main() -> None:
     (output / "bg1_map.bin").write_bytes(bg1_map)
     (output / "bg2_map.bin").write_bytes(bg2_map)
     (output / "bg3_map.bin").write_bytes(bg3_map)
-    reconstruct_gba_window(
-        bg1_tiles, bg1_map, palette_bytes, snes.BG1_ROWS - 20
-    ).crop((8, 0, 248, 160)).save(preview / "bg1_start_gba.png")
-    reconstruct_gba_window(
-        bg2_tiles, bg2_map, palette_bytes, snes.BG2_ROWS - 20
-    ).crop((8, 0, 248, 160)).save(preview / "bg2_start_gba.png")
-    reconstruct_gba_window(
-        bg3_tiles, bg3_map, palette_bytes, snes.BG2_ROWS - 20
-    ).crop((8, 0, 248, 160)).save(preview / "bg3_start_gba.png")
+    save_initial_background_preview(
+        preview / "bg1_start_gba.png",
+        bg1_tiles,
+        bg1_map,
+        palette_bytes,
+        GBA_BG1_INITIAL_SCROLL,
+        GBA_BG12_INITIAL_HOFS,
+    )
+    save_initial_background_preview(
+        preview / "bg2_start_gba.png",
+        bg2_tiles,
+        bg2_map,
+        palette_bytes,
+        GBA_BG23_INITIAL_SCROLL,
+        GBA_BG12_INITIAL_HOFS,
+    )
+    save_initial_background_preview(
+        preview / "bg3_start_gba.png",
+        bg3_tiles,
+        bg3_map,
+        palette_bytes,
+        GBA_BG23_INITIAL_SCROLL,
+        GBA_BG3_INITIAL_HOFS,
+    )
 
     (
         shared_level_events,
@@ -2270,6 +2513,19 @@ def main() -> None:
         image_root,
     )
     player_shot_source.save(preview / "player_shot_059_source.png")
+    player_dir = image_root / "sheets" / "09_player_ships"
+    player_anchor_boxes = {
+        233: (3, 2, 21, 27),
+        235: (5, 2, 21, 27),
+    }
+    for graphic, expected_box in player_anchor_boxes.items():
+        actual_box = compose_sprite_2x2(player_dir, graphic).getbbox()
+        if actual_box != expected_box:
+            raise ValueError(
+                "player source alpha anchor changed: "
+                f"graphic={graphic}, actual={actual_box}, "
+                f"expected={expected_box}"
+            )
     snes_obj_tiles, obj_palette, source_metadata, obj_preview = (
         snes.build_obj_assets(nes, image_root, player_shot_source)
     )
@@ -2449,9 +2705,9 @@ def main() -> None:
     write_meta_header(
         output,
         obj_metadata,
-        bg1_rows=snes.BG1_ROWS,
-        bg2_rows=snes.BG2_ROWS,
-        bg3_rows=snes.BG2_ROWS,
+        bg1_rows=GBA_BG1_ROWS,
+        bg2_rows=GBA_BG23_ROWS,
+        bg3_rows=GBA_BG23_ROWS,
         event_bytes=len(level_events),
         boss_tick=snes.LEVEL_BOSS_TICK,
         end_tick=snes.LEVEL_END_TICK,
@@ -2462,16 +2718,19 @@ def main() -> None:
         "display_hz=59.7275",
         "logic_hz=34.7826",
         "background_layers=3 (Tyrian MAP1 + MAP2 + MAP3)",
-        f"bg1_rows={snes.BG1_ROWS}",
+        f"bg1_rows={GBA_BG1_ROWS}",
+        f"bg1_initial_scroll={GBA_BG1_INITIAL_SCROLL}",
         f"bg1_tiles={len(bg1_tiles) // 32}",
         f"bg1_source_unique_tiles={bg1_report['source_unique_tiles']}",
         f"bg1_approximated_tiles={bg1_report['approximated_tiles']}",
-        f"bg2_rows={snes.BG2_ROWS}",
+        f"bg2_rows={GBA_BG23_ROWS}",
+        f"bg2_initial_scroll={GBA_BG23_INITIAL_SCROLL}",
         f"bg2_tiles={len(bg2_tiles) // 32}",
         f"bg2_nonblank_source_cells={layer2_nonblank}",
         f"bg2_source_unique_tiles={bg2_report['source_unique_tiles']}",
         f"bg2_approximated_tiles={bg2_report['approximated_tiles']}",
-        f"bg3_rows={snes.BG2_ROWS}",
+        f"bg3_rows={GBA_BG23_ROWS}",
+        f"bg3_initial_scroll={GBA_BG23_INITIAL_SCROLL}",
         f"bg3_tiles={len(bg3_tiles) // 32}",
         f"bg3_nonblank_source_cells={layer3_nonblank}",
         f"bg3_source_unique_tiles={bg3_report['source_unique_tiles']}",
@@ -2586,6 +2845,7 @@ def main() -> None:
         ),
         "obj_enemy_frame_key=shape_table/egr[enemycycle-1]/size",
         "obj_enemy_large_composition=graphic+0,+1,+19,+20",
+        "obj_enemy_anchor=12x14@(10,9),24x28@(4,2) in 32x32 OBJ",
         "obj_enemy_source_scope=all 1009 first-level event records",
         "boss_bar_source=OpenTyrian event79/draw_boss_bar",
         "boss_bar_pc_geometry=single x155 y7 width51 height6 armor254",
@@ -2612,7 +2872,7 @@ def main() -> None:
         "pause_text=PAUSED",
         "pause_text_source=JE_dString FONT_SHAPES hue15 brightness-3",
         "pause_text_source_sprites=15,0,20,18,4,3",
-        "pause_text_scale=PC 320x200 to GBA 240x160 (8x12 in 8x16 OBJ)",
+        "pause_text_anchor=PC game_screen (120,90) -> GBA crop (84,78)",
         f"pause_text_tiles={len(pause_tiles) // 32}",
         "enemy_projectile_source_graphics="
         + ",".join(str(value) for value in ENEMY_PROJECTILE_SOURCE_IDS),
@@ -2630,6 +2890,7 @@ def main() -> None:
         f"player_shot_graphic={player_shot_report['graphic']}",
         f"player_shot_sheet={player_shot_report['sheet']}",
         f"player_shot_sprite_number={player_shot_report['sprite_number']}",
+        "player_sprite_anchor=24x28@(4,2) in 32x32 OBJ",
         f"player_shot_repeat={player_shot_report['shot_repeat']}",
         f"player_shot_vertical_speed={player_shot_report['vertical_speed']}",
         f"player_shot_animation_frames={player_shot_report['animation_frames']}",

@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_romfs_v17
-TEST_TARGET := tyrian_gba_level1_source_parity_autotest_romfs_v17
+TARGET := tyrian_gba_level1_source_parity_crop1to1_romfs_v18
+TEST_TARGET := tyrian_gba_level1_source_parity_crop1to1_autotest_romfs_v18
 BUILD := build
 RES := res
 

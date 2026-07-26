@@ -23,7 +23,7 @@ static void render_game(void)
         render_pause_text();
     }
     put_sprite_with_attr1(
-        player_x, player_y,
+        source_player_screen_x(), source_player_screen_y(),
         player_bank ? OBJ_TILE_PLAYER_1 : OBJ_TILE_PLAYER_0,
         OBJ_PAL_PLAYER_0, ATTR1_SIZE_32, object_priority,
         player_bank < 0 ? OBJ_HFLIP : 0
