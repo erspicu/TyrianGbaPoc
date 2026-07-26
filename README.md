@@ -40,11 +40,18 @@ The current scope is deliberately narrow:
 - three physical pickups spawned and two collected by the deterministic route;
   `JE_playerCollide()` reward branches, including the data-cube branch not
   crossed by this route, retain their fixed-single-player gameplay state
-- 198 exact source Sprite2 frames keyed by
-  `(shape_table, egr[enemycycle - 1], size)`; the old 24-archetype aliases and
-  all fallback visuals are removed
-- a 24-slot VBlank-uploaded OBJ frame cache with zero catalog misses or cache
+- runtime decoding of the stock ROMFS `newsh*.shp` and compact
+  `tyrian.shp` Sprite2 streams, keyed by
+  `(shape_table, egr[enemycycle - 1], size, filter)`; there is no event-limited
+  Python enemy-frame catalog
+- a 21-slot split 8bpp OBJ cache with zero Sprite2 decode failures or cache
   drops, plus all 128 GBA OAM entries with a measured peak of 43
+- the complete OpenTyrian background2/background3, ground, sky, top, player,
+  projectile and effect draw order translated to dynamic GBA BG/OBJ priority
+  and reverse OAM emission; all 252 layer relations pass an exhaustive test
+- direct use of the active PC level palette: every Sprite2 retains its source
+  hue and is mapped to eight brightness samples, replacing the former
+  per-table and per-structure 15-colour approximations
 - exact PC player inertia, background parallax and enemy map offsets; the GBA
   crops `game_screen x=36..275, y=12..171` and restricts the player to source
   `y=17..152`, keeping the complete 24x28 ship inside that visible crop
@@ -57,11 +64,11 @@ The current scope is deliberately narrow:
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
 
-The deterministic v19 route has no stream, effect, reward, projectile-pool,
-catalog or frame-cache drops. It records 54 missed VBlanks over 12,239
-displayed frames (about 0.44%); this includes 145 exact-frame uploads and
-remains visible as a measured GBA workload result. All 198 catalogued first-
-level enemy/reward frames resolve without fallback.
+The deterministic v21 route has no stream, effect, reward, projectile-pool,
+Sprite2-decode or cache drops. It records 155 delayed VBlanks over 12,239
+displayed frames (about 1.27%): 152 unique runtime Sprite2 decodes produce
+44,926 subsequent cache hits. This deliberately exposes the cost of the raw
+runtime path so it can be compared with a future universal row-packed provider.
 
 ## Controls
 
@@ -82,7 +89,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
+build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -99,6 +106,8 @@ under `Backup`, and the reproducible source asset conversions are
 ## Documentation
 
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
+- [v21 runtime raw Sprite2 pipeline](MD/Tyrian-GBA-Runtime-Sprite2-v21.md)
+- [v20 PC layer order and structure palette](MD/Tyrian-GBA-PC-Layer-Order-Palette-v20.md)
 - [v19 player crop-safe bounds](MD/Tyrian-GBA-Player-Crop-Bounds-v19.md)
 - [v18 PC-coordinate 1:1 crop](MD/Tyrian-GBA-1to1-Crop-Source-Parity-v18.md)
 - [v17 enemy/reward source-parity translation](MD/Tyrian-GBA-Enemy-Reward-Source-Parity-v17.md)

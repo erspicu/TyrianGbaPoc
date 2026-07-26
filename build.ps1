@@ -13,8 +13,8 @@ $ucrtBin = Join-Path $msysRoot "ucrt64\bin"
 $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
-$releaseName = "tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19"
-$testName = "tyrian_gba_level1_source_parity_crop1to1_playerbounds_autotest_romfs_v19"
+$releaseName = "tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21"
+$testName = "tyrian_gba_level1_source_parity_runtime_sprite2_autotest_romfs_v21"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
@@ -335,7 +335,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 520) {
+if ($saveBytes.Length -lt 588) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -440,15 +440,15 @@ $telemetry = [ordered]@{
     final_bg3_scroll_speed = Read-TelemetryU32 344
     source_parity_assets_valid = Read-TelemetryU32 348
     final_game_paused = Read-TelemetryU32 352
-    enemy_frame_catalog_misses = Read-TelemetryU32 356
-    enemy_frame_cache_hits = Read-TelemetryU32 360
-    enemy_frame_cache_misses = Read-TelemetryU32 364
-    enemy_frame_cache_evictions = Read-TelemetryU32 368
-    enemy_frame_cache_drops = Read-TelemetryU32 372
-    enemy_frame_uploads = Read-TelemetryU32 376
-    enemy_frame_upload_bytes = Read-TelemetryU32 380
-    enemy_frame_max_uploads_per_frame = Read-TelemetryU32 384
-    enemy_frame_catalog_entries = Read-TelemetryU32 388
+    sprite2_decode_failures = Read-TelemetryU32 356
+    sprite2_cache_hits = Read-TelemetryU32 360
+    sprite2_cache_misses = Read-TelemetryU32 364
+    sprite2_cache_evictions = Read-TelemetryU32 368
+    sprite2_cache_drops = Read-TelemetryU32 372
+    sprite2_uploads = Read-TelemetryU32 376
+    sprite2_upload_bytes = Read-TelemetryU32 380
+    sprite2_max_uploads_per_frame = Read-TelemetryU32 384
+    sprite2_cache_slots = Read-TelemetryU32 388
     source_parity_powerup_consolation_cash = Read-TelemetryU32 392
     source_parity_orbiting_asteroid_pickups = Read-TelemetryU32 396
     source_parity_superbomb_pickups = Read-TelemetryU32 400
@@ -481,10 +481,27 @@ $telemetry = [ordered]@{
     final_bg3_source_scroll = Read-TelemetryU32 508
     presentation_crop_x = Read-TelemetryU32 512
     presentation_crop_y = Read-TelemetryU32 516
+    layer_rule_checks = Read-TelemetryU32 520
+    layer_rule_failures = Read-TelemetryU32 524
+    final_background2_over = Read-TelemetryU32 528
+    final_background3_over = Read-TelemetryU32 532
+    final_top_enemy_over = Read-TelemetryU32 536
+    final_sky_enemy_over_all = Read-TelemetryU32 540
+    final_background2_priority = Read-TelemetryU32 544
+    final_background3_priority = Read-TelemetryU32 548
+    sprite2_max_visible_unique = Read-TelemetryU32 552
+    effect_cache_hits = Read-TelemetryU32 556
+    effect_cache_misses = Read-TelemetryU32 560
+    effect_cache_evictions = Read-TelemetryU32 564
+    effect_cache_drops = Read-TelemetryU32 568
+    effect_cache_uploads = Read-TelemetryU32 572
+    effect_cache_upload_bytes = Read-TelemetryU32 576
+    effect_cache_max_uploads_per_frame = Read-TelemetryU32 580
+    effect_cache_max_visible_unique = Read-TelemetryU32 584
 }
 
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 17
+    schema_version = $telemetry.version -eq 19
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_title = $telemetry.final_state -eq 0
     title_music_active = $telemetry.title_music_active -eq 1
@@ -621,23 +638,37 @@ $telemetryChecks = [ordered]@{
     final_bg3_scroll_speed = $telemetry.final_bg3_scroll_speed -eq 0
     source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
     final_game_paused = $telemetry.final_game_paused -eq 0
-    enemy_frame_catalog_misses = $telemetry.enemy_frame_catalog_misses -eq 0
-    enemy_frame_cache_hits = $telemetry.enemy_frame_cache_hits -eq 44933
-    enemy_frame_cache_misses = $telemetry.enemy_frame_cache_misses -eq 145
-    enemy_frame_cache_evictions = (
-        $telemetry.enemy_frame_cache_evictions -eq 121
+    sprite2_decode_failures = $telemetry.sprite2_decode_failures -eq 0
+    sprite2_cache_hits = $telemetry.sprite2_cache_hits -eq 44926
+    sprite2_cache_misses = $telemetry.sprite2_cache_misses -eq 152
+    sprite2_cache_evictions = (
+        $telemetry.sprite2_cache_evictions -eq 131
     )
-    enemy_frame_cache_drops = $telemetry.enemy_frame_cache_drops -eq 0
-    enemy_frame_uploads = $telemetry.enemy_frame_uploads -eq 145
-    enemy_frame_max_uploads = (
-        $telemetry.enemy_frame_max_uploads_per_frame -eq 7
+    sprite2_cache_drops = $telemetry.sprite2_cache_drops -eq 0
+    sprite2_uploads = $telemetry.sprite2_uploads -eq 152
+    sprite2_max_uploads = (
+        $telemetry.sprite2_max_uploads_per_frame -eq 7
     )
-    enemy_frame_upload_accounting = (
-        $telemetry.enemy_frame_upload_bytes -eq
-            $telemetry.enemy_frame_uploads * 512
+    sprite2_upload_accounting = (
+        $telemetry.sprite2_upload_bytes -eq
+            $telemetry.sprite2_uploads * 1024
     )
-    enemy_frame_catalog_entries = (
-        $telemetry.enemy_frame_catalog_entries -eq 198
+    sprite2_cache_geometry = (
+        $telemetry.sprite2_cache_slots -eq 21 -and
+        $telemetry.sprite2_max_visible_unique -eq 16
+    )
+    effect_cache_hits = $telemetry.effect_cache_hits -eq 4266
+    effect_cache_misses = $telemetry.effect_cache_misses -eq 2382
+    effect_cache_evictions = $telemetry.effect_cache_evictions -eq 2350
+    effect_cache_drops = $telemetry.effect_cache_drops -eq 0
+    effect_cache_uploads = $telemetry.effect_cache_uploads -eq 2382
+    effect_cache_upload_accounting = (
+        $telemetry.effect_cache_upload_bytes -eq
+            $telemetry.effect_cache_uploads * 128
+    )
+    effect_cache_geometry = (
+        $telemetry.effect_cache_max_uploads_per_frame -eq 11 -and
+        $telemetry.effect_cache_max_visible_unique -eq 11
     )
     source_powerup_consolation_cash = (
         $telemetry.source_parity_powerup_consolation_cash -eq 0
@@ -704,6 +735,20 @@ $telemetryChecks = [ordered]@{
     presentation_is_central_1to1_crop = (
         $telemetry.presentation_crop_x -eq 36 -and
         $telemetry.presentation_crop_y -eq 12
+    )
+    layer_priority_exhaustive_checks = (
+        $telemetry.layer_rule_checks -eq 252 -and
+        $telemetry.layer_rule_failures -eq 0
+    )
+    final_pc_layer_flags = (
+        $telemetry.final_background2_over -eq 1 -and
+        $telemetry.final_background3_over -eq 1 -and
+        $telemetry.final_top_enemy_over -eq 0 -and
+        $telemetry.final_sky_enemy_over_all -eq 0
+    )
+    final_gba_background_priorities = (
+        $telemetry.final_background2_priority -eq 2 -and
+        $telemetry.final_background3_priority -eq 1
     )
     romfs_entries = $telemetry.romfs_entries -eq $romfsAudit.entry_count
     romfs_image_bytes = $telemetry.romfs_image_bytes -eq $romfsAudit.image_bytes

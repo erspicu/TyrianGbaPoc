@@ -336,13 +336,13 @@ SRAM telemetry。
 - 若未來 ROM 超過標準 32 MiB，不能只改 linker；需先減少資料、加入壓縮
   或設計非標準 bank switching，並重新確認實機及 flash cartridge 支援。
 
-## v19 驗證識別
+## v21 驗證識別
 
 ```text
 Release ROM:
-  build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
-  10,883,584 bytes
-  SHA-256 04b664d9fb48b0a73363d9b8b0b1f0fc9028fb07ae39ef7632d1de9d284839b5
+  build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
+  10,785,528 bytes
+  SHA-256 8c976a8c6abfec7f931eea17e76d2f3dc5b7e1a3b998c5dee75321c167e99a33
 
 ROMFS:
   9,853,080 bytes
@@ -350,8 +350,10 @@ ROMFS:
   manifest CRC32 764b1e68
 ```
 
-Build 以 telemetry schema 17 同時取得 ROM 內與 host verifier PASS：
+Build 以 telemetry schema 19 同時取得 ROM 內與 host verifier PASS：
 93 項 ROMFS self-test 全通過，並鎖定 Stage 4 authoritative runtime 的
 878 個 source events、473/473 event spawns、185/185 projectile
-spawn/release、198 個 exact enemy/reward frame、0 catalog miss 與
-0 cache/projectile drop。
+spawn/release、0 Sprite2 decode failure 與 0 cache/projectile drop。
+敵人不再連結第一關專用 frame catalog，而是由 C runtime 直接解析 ROMFS
+`newsh*.shp`／`tyrian.shp`；152 次 cache miss 後有 44,926 次 hit。v21
+同時保存 252/252 PC layer-priority 關係檢查，且 ROMFS image 本身未改變。

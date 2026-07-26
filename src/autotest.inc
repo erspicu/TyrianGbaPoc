@@ -31,11 +31,6 @@ enum {
     SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 60,
     SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 30,
     SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 0,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS = 44933,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES = 145,
-    SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS = 121,
-    SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS = 145,
-    SOURCE_STAGE4_EXPECTED_FRAME_MAX_UPLOADS = 7,
 };
 
 static void sram_write_u32(u32 offset, u32 value)
@@ -145,21 +140,26 @@ static void autotest_finish(void)
             SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES &&
         telemetry_source_unknown_visuals ==
             SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
-        telemetry_enemy_frame_catalog_misses == 0 &&
-        telemetry_enemy_frame_cache_hits ==
-            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_HITS &&
-        telemetry_enemy_frame_cache_misses ==
-            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_MISSES &&
-        telemetry_enemy_frame_cache_evictions ==
-            SOURCE_STAGE4_EXPECTED_FRAME_CACHE_EVICTIONS &&
-        telemetry_enemy_frame_cache_drops == 0 &&
-        telemetry_enemy_frame_uploads ==
-            SOURCE_STAGE4_EXPECTED_FRAME_UPLOADS &&
-        telemetry_enemy_frame_max_uploads ==
-            SOURCE_STAGE4_EXPECTED_FRAME_MAX_UPLOADS &&
-        telemetry_enemy_frame_upload_bytes ==
-            telemetry_enemy_frame_uploads * OBJ_ENEMY_FRAME_BYTES &&
-        OBJ_ENEMY_FRAME_COUNT == 198 &&
+        telemetry_sprite2_decode_failures == 0 &&
+        telemetry_sprite2_cache_drops == 0 &&
+        telemetry_sprite2_uploads ==
+            telemetry_sprite2_cache_misses &&
+        telemetry_sprite2_upload_bytes ==
+            telemetry_sprite2_uploads * SOURCE_ENEMY_FRAME_BYTES &&
+        telemetry_sprite2_max_uploads <=
+            SOURCE_ENEMY_CACHE_SLOT_COUNT &&
+        telemetry_sprite2_max_visible_unique <=
+            SOURCE_ENEMY_CACHE_SLOT_COUNT &&
+        telemetry_effect_cache_drops == 0 &&
+        telemetry_effect_cache_uploads ==
+            telemetry_effect_cache_misses &&
+        telemetry_effect_cache_upload_bytes ==
+            telemetry_effect_cache_uploads *
+                SOURCE_EFFECT_FRAME_BYTES &&
+        telemetry_effect_cache_max_uploads <=
+            SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+        telemetry_effect_cache_max_visible_unique <=
+            SOURCE_EFFECT_CACHE_SLOT_COUNT &&
         source_parity_level.enemy_shot_active_count == 0 &&
         source_parity_level.active_enemy_count == 20 &&
         player_cash == 1171 &&
@@ -181,7 +181,9 @@ static void autotest_finish(void)
         source_background_hofs(2) < 512 &&
         bg1_scroll_speed == 1 &&
         bg2_scroll_speed == 2 &&
-        bg3_scroll_speed == 0
+        bg3_scroll_speed == 0 &&
+        telemetry_layer_rule_checks == 252 &&
+        telemetry_layer_rule_failures == 0
     );
     volatile u32 delay;
 
@@ -189,7 +191,7 @@ static void autotest_finish(void)
     sram[1] = 'G';
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 17;
+    sram[4] = 19;
     sram[5] = pass;
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
@@ -308,15 +310,15 @@ static void autotest_finish(void)
     sram_write_u32(344, bg3_scroll_speed);
     sram_write_u32(348, source_parity_level.assets_valid ? 1 : 0);
     sram_write_u32(352, game_paused);
-    sram_write_u32(356, telemetry_enemy_frame_catalog_misses);
-    sram_write_u32(360, telemetry_enemy_frame_cache_hits);
-    sram_write_u32(364, telemetry_enemy_frame_cache_misses);
-    sram_write_u32(368, telemetry_enemy_frame_cache_evictions);
-    sram_write_u32(372, telemetry_enemy_frame_cache_drops);
-    sram_write_u32(376, telemetry_enemy_frame_uploads);
-    sram_write_u32(380, telemetry_enemy_frame_upload_bytes);
-    sram_write_u32(384, telemetry_enemy_frame_max_uploads);
-    sram_write_u32(388, OBJ_ENEMY_FRAME_COUNT);
+    sram_write_u32(356, telemetry_sprite2_decode_failures);
+    sram_write_u32(360, telemetry_sprite2_cache_hits);
+    sram_write_u32(364, telemetry_sprite2_cache_misses);
+    sram_write_u32(368, telemetry_sprite2_cache_evictions);
+    sram_write_u32(372, telemetry_sprite2_cache_drops);
+    sram_write_u32(376, telemetry_sprite2_uploads);
+    sram_write_u32(380, telemetry_sprite2_upload_bytes);
+    sram_write_u32(384, telemetry_sprite2_max_uploads);
+    sram_write_u32(388, SOURCE_ENEMY_CACHE_SLOT_COUNT);
     sram_write_u32(
         392,
         source_parity_level.powerup_consolation_cash
@@ -364,6 +366,26 @@ static void autotest_finish(void)
     sram_write_u32(508, bg3_presentation_scroll_pixel);
     sram_write_u32(512, SOURCE_PRESENTATION_X_ORIGIN);
     sram_write_u32(516, SOURCE_PRESENTATION_Y_ORIGIN);
+    sram_write_u32(520, telemetry_layer_rule_checks);
+    sram_write_u32(524, telemetry_layer_rule_failures);
+    sram_write_u32(528, source_parity_level.background2_over);
+    sram_write_u32(532, source_parity_level.background3_over);
+    sram_write_u32(536, source_parity_level.top_enemy_over ? 1 : 0);
+    sram_write_u32(
+        540,
+        source_parity_level.sky_enemy_over_all ? 1 : 0
+    );
+    sram_write_u32(544, source_background2_priority());
+    sram_write_u32(548, source_background3_priority());
+    sram_write_u32(552, telemetry_sprite2_max_visible_unique);
+    sram_write_u32(556, telemetry_effect_cache_hits);
+    sram_write_u32(560, telemetry_effect_cache_misses);
+    sram_write_u32(564, telemetry_effect_cache_evictions);
+    sram_write_u32(568, telemetry_effect_cache_drops);
+    sram_write_u32(572, telemetry_effect_cache_uploads);
+    sram_write_u32(576, telemetry_effect_cache_upload_bytes);
+    sram_write_u32(580, telemetry_effect_cache_max_uploads);
+    sram_write_u32(584, telemetry_effect_cache_max_visible_unique);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }

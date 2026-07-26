@@ -790,7 +790,22 @@ bool ot_data_pic_palette_view(
         return false;
     }
     palette_index = pcx_palette[picture_number - 1];
-    if (palette_index >= OT_PALETTE_COUNT) return false;
+    return ot_data_palette_view(palette_index, view);
+}
+
+bool ot_data_palette_view(
+    uint8_t palette_index,
+    OtDataView *view
+)
+{
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.pic_valid ||
+        view == 0 ||
+        palette_index >= OT_PALETTE_COUNT
+    ) {
+        return false;
+    }
     view->data =
         data_state.palette.data + (uint32_t)palette_index * OT_PALETTE_BYTES;
     view->size = OT_PALETTE_BYTES;
@@ -915,22 +930,93 @@ bool ot_data_comp_shape_bank_view(
     char character;
 
     if (!initialization_attempted) ot_data_init();
-    if (
-        !catalog.shp_valid ||
-        view == 0 ||
-        shape_table == 0 ||
-        shape_table > sizeof(shape_file) / sizeof(shape_file[0])
-    ) {
+    if (!catalog.shp_valid || view == 0 || shape_table == 0) {
         return false;
     }
+
+    /*
+     * JE_makeEnemy bypasses shapeFile[] for these two logical banks and
+     * points at SpriteSheet11 (coins) or SpriteSheet10 (power-ups) from
+     * tyrian.shp.  Preserve that source dispatch before consulting newsh.
+     */
+    if (shape_table == 21) {
+        return ot_data_shp_section_view(11, view);
+    }
+    if (shape_table == 26) {
+        return ot_data_shp_section_view(10, view);
+    }
+    if (shape_table > sizeof(shape_file) / sizeof(shape_file[0])) {
+        return false;
+    }
+
     character = shape_file[shape_table - 1];
     if (character >= 'A' && character <= 'Z') {
         character = (char)(character + ('a' - 'A'));
     }
+    /*
+     * The distributed data set carries shapeFile '@' under its DOS-export
+     * alias '~'.  Keep the logical table byte identical to OpenTyrian while
+     * resolving the actual cartridge filename.
+     */
+    if (character == '@') character = '~';
     name[5] = character;
     if (!stat_data_file(name, &stat) || stat.size == 0) return false;
     view->data = stat.data;
     view->size = stat.size;
+    return true;
+}
+
+bool ot_data_comp_shape_sprite_view(
+    uint8_t shape_table,
+    uint16_t sprite_number,
+    OtDataView *view
+)
+{
+    OtDataView bank;
+    uint16_t first_offset;
+    uint16_t sprite_count;
+    uint16_t start;
+    uint32_t end;
+
+    if (
+        view == 0 ||
+        sprite_number == 0 ||
+        !ot_data_comp_shape_bank_view(shape_table, &bank) ||
+        bank.size < 2
+    ) {
+        return false;
+    }
+
+    /*
+     * Sprite2 has no explicit count: the first u16 offset is also the byte
+     * size of its u16 offset table.  OpenTyrian indexes it one-based.
+     */
+    first_offset = read_u16(bank.data);
+    if (
+        (first_offset & 1u) != 0 ||
+        first_offset < 2 ||
+        first_offset > bank.size
+    ) {
+        return false;
+    }
+    sprite_count = (uint16_t)(first_offset / 2);
+    if (sprite_number > sprite_count) return false;
+
+    start = read_u16(
+        bank.data + (uint32_t)(sprite_number - 1) * 2
+    );
+    end = sprite_number < sprite_count ?
+        read_u16(bank.data + (uint32_t)sprite_number * 2) :
+        bank.size;
+    if (
+        start < first_offset ||
+        end <= start ||
+        end > bank.size
+    ) {
+        return false;
+    }
+    view->data = bank.data + start;
+    view->size = end - start;
     return true;
 }
 

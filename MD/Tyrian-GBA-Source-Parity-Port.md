@@ -494,6 +494,63 @@ stream、effect、reward、projectile、catalog 及 frame-cache drop 都是 0。
 推導、靜態斷言與驗證記錄見
 [Tyrian-GBA-Player-Crop-Bounds-v19.md](Tyrian-GBA-Player-Crop-Bounds-v19.md)。
 
+## v20 PC draw order 與結構 palette
+
+v19 以前的 GBA scene adapter 仍把四組 enemy pool 指派到固定 OBJ
+priority，沒有把 `tyrian2.c` 的
+`background2over`、`background3over`、`topEnemyOver` 與
+`skyEnemyOverAll` software-blit 順序完整翻譯。因為 GBA OBJ 在與 BG
+同 priority 時會位於 BG 前方，ground pool priority 2 會錯誤突出到
+priority 2 的雲層上。
+
+v20 保留原始 pool identity，新增 `src/layer_runtime.inc`：
+
+- MAP2/MAP3 依 PC 當幀 stage 分別使用 BG priority 2／1；
+- 位於兩層後、兩層間、兩層前的 OBJ 分別使用 priority 3／2／0；
+- scene category 與每個 pool slot 以 PC blit 的反向順序寫入 OAM；
+- 事件 21/22/28/29/42/43/73 改變的 layer flags 直接驅動 VBlank 設定，
+  沒有第一關座標特例。
+
+4×3 種背景狀態和 10 個物件 stage 共 252 項前後關係全部通過。固定
+`curLoc=240`、5000、5050 framebuffer 回歸確認 type-12 可破壞建物會被
+白雲遮住，而 Boss 前機關位於 MAP2 與 MAP3 之間。
+
+同一版把 type-12 結構使用的八張 table-1 frame 改用專屬 15 色 palette；
+第一關期間與 position-5400 後的簡化 Boss 分時使用 OBJ palette bank 5。
+PC source RGB RMSE 由 12.4863 降為 6.7365（降低 46.05%）。
+
+Telemetry schema 18 的完整路線仍為 7,093 logic updates、12,239 display
+frames、54 missed VBlank、peak OAM 43，所有 stream/effect/reward/
+projectile/catalog/cache drops 都是 0。完整設計與驗證見
+[Tyrian-GBA-PC-Layer-Order-Palette-v20.md](Tyrian-GBA-PC-Layer-Order-Palette-v20.md)。
+
+## v21 通用 ROMFS Sprite2 直讀
+
+v20 的 gameplay 已直接讀 LVL/HDT，但 presentation 仍只能從 Python
+產生的 198-frame 第一關 catalog 取圖；增加關卡就必須先擴充 event
+closure 與 palette mapping。v21 移除這個維護邊界：
+
+- `opentyrian_data.c` 依 PC `shapeFile[]` 直接開 ROMFS `newsh*.shp`；
+- shape table 21／26 依 `JE_makeEnemy()` 改讀 `tyrian.shp` 的
+  coins／power-up compact sections；
+- `opentyrian_sprite2.c` 直接翻寫 one-based offset、skip/fill、
+  `0x0f` terminator、filter 與 2×2 component composition；
+- GBA adapter 把 PC palette index 投影到 16 hue × 8 brightness 的
+  8bpp OBJ palette；
+- 21-slot cache 的 key 包含 shape table、graphic、size 與 filter，不再
+  存在 first-level catalog lookup 或 fallback visual。
+
+因此增加後續關卡時，gameplay loader 只需照原始 LVL 載入它的 shape-bank
+需求；只要 bank 已包含在 ROMFS manifest，enemy presentation 不需要新增
+關卡專用 Python 分支。
+
+完整 route 是 0 decode failure、0 cache drop，152 次 decode miss 與
+44,926 次 hit；代價是 delayed VBlank 由 v20 的 54 增至 155。這一版先
+保留 raw runtime 路徑供實際試用。若成本不合適，下一個版本會以全 bank、
+非 event-driven 的預展開 row provider 替換 component reader，並保持
+相同 gameplay／composition API。詳見
+[Tyrian-GBA-Runtime-Sprite2-v21.md](Tyrian-GBA-Runtime-Sprite2-v21.md)。
+
 ## ROMFS v1 與原始格式 loader
 
 v14 建立通用資料 I/O；v15 的 `src/opentyrian_data.c/.h` 開始實際使用它，
@@ -533,6 +590,7 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | 檔案 | 責任 |
 |---|---|
 | `main.c` | GBA 入口、共享狀態及主排程 |
+| `src/layer_runtime.inc` | PC software draw stage 到 GBA BG/OBJ priority 的純映射與窮舉測試 |
 | `src/gba_platform.inc` | VBlank、音訊及暫停平台層 |
 | `src/level_setup.inc` | 關卡進出與 VRAM 資源設定 |
 | `src/entity_runtime.inc` | GBA explosion／測試 reward presentation pool |
@@ -544,6 +602,7 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | `src/gba_scene.inc` | scene-to-OAM renderer |
 | `src/autotest.inc` | mGBA deterministic regression harness |
 | `src/opentyrian_data.c` | ROMFS MUS/SHP/PIC/HDT/LVL 原始格式 reader |
+| `src/opentyrian_sprite2.c` | ROMFS Sprite2 skip/fill 與 filter 直接 decoder |
 | `src/opentyrian_level_port.c` | 第一關本體 authoritative source runtime |
 
 GBA presentation `.inc` 仍由同一 translation unit 編譯；原始事件、敵人、
@@ -582,8 +641,8 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 2. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
    build option。
 3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
-4. 量測 54 個 missed VBlank 的 frame 分布，再決定是否能在不降 logic
-   rate、不刪音樂／圖層的前提下優化。
+4. 比較 v21 runtime raw Sprite2 與通用 row-packed provider 的成本，在
+   不降 logic rate、不刪音樂／圖層的前提下降低 155 個 delayed frame。
 
 ## 建置
 
@@ -591,10 +650,10 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 .\build.ps1
 ```
 
-目前 ROMFS v19 player-bounds ROM：
+目前 ROMFS v21 runtime Sprite2 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
+build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
 ```
 
 ROM 與中間產物不納入 Git。

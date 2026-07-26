@@ -185,6 +185,10 @@ bool ot_data_pic_palette_view(
     uint8_t picture_number,
     OtDataView *view
 );
+bool ot_data_palette_view(
+    uint8_t palette_index,
+    OtDataView *view
+);
 bool ot_data_pic_decode(
     uint8_t picture_number,
     uint8_t *destination,
@@ -203,6 +207,11 @@ bool ot_data_shp_sprite_read(
 );
 bool ot_data_comp_shape_bank_view(
     uint8_t shape_table,
+    OtDataView *view
+);
+bool ot_data_comp_shape_sprite_view(
+    uint8_t shape_table,
+    uint16_t sprite_number,
     OtDataView *view
 );
 

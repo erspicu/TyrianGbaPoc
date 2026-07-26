@@ -19,21 +19,21 @@ Tyrian 開場畫面
 沒有關卡選單、武器選單或右側武器資訊欄。主角在技術展示階段沒有死亡流程，
 但保留移動、射擊、敵彈、命中、爆炸、敵機碰撞與 Boss 碰撞等 game loop 要素。
 
-目前 source-parity／ROMFS v19 player-bounds 正式 ROM：
+目前 source-parity／ROMFS v21 runtime Sprite2 正式 ROM：
 
 ```text
-repo/TyrianGbaPoc/build/tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19.gba
+repo/TyrianGbaPoc/build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
 ```
 
 SHA-256：
 
 ```text
-04b664d9fb48b0a73363d9b8b0b1f0fc9028fb07ae39ef7632d1de9d284839b5
+8c976a8c6abfec7f931eea17e76d2f3dc5b7e1a3b998c5dee75321c167e99a33
 ```
 
-ROM 大小為 10,883,584 bytes（約 10.38 MiB），其中 9,853,080 bytes 是
+ROM 大小為 10,785,528 bytes（約 10.29 MiB），其中 9,853,080 bytes 是
 68 個 stock Tyrian runtime 檔案的唯讀 ROMFS；使用標準 32 MiB GBA ROM
-視窗的約 32.44%。
+視窗的約 32.14%。
 
 ## 原始資料來源與轉換
 
@@ -57,10 +57,12 @@ ROM 大小為 10,883,584 bytes（約 10.38 MiB），其中 9,853,080 bytes 是
 repo/TyrianGbaPoc/tools/build_assets.py
 ```
 
-v19 的 LVL/HDT/PIC/SHP/MUS loader 由 `src/opentyrian_data.c` 直接讀
+v21 的 LVL/HDT/PIC/SHP/MUS loader 由 `src/opentyrian_data.c` 直接讀
 ROMFS raw bytes。`tools/build_assets.py` 仍負責尚未替換的 GBA
 packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 10,273-byte event bytecode 只在 host 計算資源稽核，不再輸出或連入 ROM。
+敵人／實體獎賞則由 `src/opentyrian_sprite2.c` 在 runtime 直接解碼
+ROMFS `newsh*.shp`／`tyrian.shp`，不再經過 Python frame catalog。
 
 目前資源統計：
 
@@ -71,7 +73,7 @@ packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 | 三層完整關卡 map | 658,176 bytes；64-column 1:1 PC raster |
 | 背景與 OBJ palette | 1,024 bytes |
 | 靜態 OBJ atlas／VRAM image | 32,768 bytes |
-| 198-frame enemy/reward catalog＋tiles | 102,976 bytes |
+| 預轉換 enemy/reward catalog＋tiles | 0 bytes；runtime 直讀 Sprite2 |
 | Runtime 關卡事件 blob | 0 bytes；直接讀 ROMFS `tyrian1.lvl` |
 | 兩首音樂及七組音效 soundbank | 122,660 bytes |
 | Stock Tyrian ROMFS | 9,853,080 bytes |
@@ -83,20 +85,21 @@ packed-nibble 4bpp tile cache、OBJ atlas 與 Maxmod waveform cache。舊
 | GBA 元件 | Tyrian 用途 | 設定 |
 |---|---|---|
 | BG0 | MAP1 地形底層 | 4bpp、char block 0、screen block 24+25、priority 3 |
-| BG1 | MAP2 中景透明層 | 4bpp、char block 1、screen block 26+27、priority 2 |
-| BG2 | MAP3 前景透明層 | 4bpp、char block 2、screen block 28+29、priority 1/0 |
-| OBJ | 主角、敵機、子彈、爆炸、獎賞、數字、Boss、血條 | 4bpp、1D mapping、priority 0/1/2 |
+| BG1 | MAP2 透明層 | 4bpp、char block 1、screen block 26+27、依 PC stage 動態 priority 1/2 |
+| BG2 | MAP3 透明層 | 4bpp、char block 2、screen block 28+29、依 PC stage 動態 priority 1/2 |
+| OBJ | 主角、四組敵人、子彈、爆炸、獎賞、數字、Boss、血條 | source enemy 8bpp，其餘 4bpp；1D mapping、依 PC stage 使用 priority 0/2/3 |
 | Mode 3 | 開場畫面 | 240×160、15-bit bitmap |
 
 GBA 硬體實際有 128 筆 OAM；每一筆 OAM 本身就是一個 Sprite 描述，不是
 OAM 與 Sprite 各有一套獨立容量。v6 已取消先前的 64 筆軟體限制，可使用
 完整 128 筆硬體 OAM。
 
-v18 不再把 enemy ID 對到 24 個自訂 archetype。第一關 113 個 transitive
-definition 共 198 個原始 Sprite2 frame，以
-`shape_table/egr[enemycycle-1]/size` 查表；24-slot true-LRU cache 在
-VBlank 將需要的 32×32 4bpp frame 搬入 OBJ VRAM。金幣、寶石與 data cube
-也使用同一套 source enemy draw command，不另套 GBA reward 外框。
+v21 不再把 enemy ID 對到自訂 archetype，也不再查第一關專用的 198-frame
+Python catalog。Runtime 以
+`shape_table/egr[enemycycle-1]/size/filter` 直接定位 ROMFS Sprite2，
+在 cache miss 時翻譯原始 skip/fill stream；21-slot LRU cache 在 VBlank
+將需要的 32×32 8bpp frame 搬入 OBJ VRAM。金幣、寶石與 data cube 也使用
+同一套 source enemy draw command，不另套 GBA reward 外框。
 32×32 只是 OAM container；12×14／24×28 PC source cell 使用固定
 top-left anchor，不逐幀裁透明 bbox 後置中，因此動畫不會在相同
 `ex/ey` 上產生 presentation jitter。
@@ -120,13 +123,13 @@ OBJ atlas 包含：
 - 64×64 Boss
 - 主角彈、八張 PC 原始敵彈圖、爆炸、legacy 視覺測試獎賞、金額數字、
   PAUSED 字樣與 Boss 血條
-- tile 640..1023 的 24 個動態 32×32 enemy/reward frame slots
+- tile 224..511 與 640..1023 的 21 個動態 32×32 8bpp
+  enemy/reward frame slots
 
-Host 稽核現在掃描全部 1,009 event 的 spawn、launch 與 death closure，
-建立 198 個精確 `(shape_table, graphic, size)` 畫格。Runtime 直接使用
-`JE_drawEnemy()` 當幀的 `egr[enemycycle-1]` 查表，4,912..5,384 的大型
-地景／Boss component 也已納入資源，不再有 fallback ID。原始 Boss
-lifecycle 尚未接管，是另一個獨立邊界。
+Host 仍稽核全部 1,009 event 的 spawn、launch 與 death closure，但不再
+建立 frame 資源。Runtime 直接使用 `JE_drawEnemy()` 當幀的
+`egr[enemycycle-1]` 解碼任意已封裝 shape bank，資源範圍不被第一關
+event list 限制。原始 Boss lifecycle 尚未接管，是另一個獨立邊界。
 
 ### Pulse-Cannon 主角彈修正
 
@@ -510,7 +513,7 @@ VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 | 項目 | 結果 |
 |---|---:|
 | ROM internal／host verifier | PASS／PASS |
-| Telemetry schema | 17 |
+| Telemetry schema | 19 |
 | Logic updates | 7,093 |
 | Final PC `curLoc` | 5,400 |
 | Display frames／VBlank IRQ | 12,239／12,658 |
@@ -539,21 +542,27 @@ VBlank IRQ，Maxmod 第一個 audio frame 的 double-buffer write pointer
 | Enemy-shot player hits | 11 |
 | Player-shot enemy hits／enemy contacts／kills | 341／39／73 |
 | Peak visible source enemies | 30 |
-| Exact frame catalog／fallback visuals | 198／0 |
-| Frame cache hit／miss／eviction／drop | 44,933／145／121／0 |
-| Frame uploads／bytes／single-frame peak | 145／74,240／7 |
+| 預轉換 enemy frame catalog | 0 |
+| Sprite2 decode failure／cache drop | 0／0 |
+| Sprite2 cache hit／miss／eviction | 44,926／152／131 |
+| Sprite2 uploads／bytes／single-frame peak | 152／155,648／7 |
+| Sprite2 visible unique peak／slots | 16／21 |
+| Explosion cache hit／miss／drop | 4,266／2,382／0 |
 | Final PC player x/y | 77／17 |
 | Final MAP1／MAP2／MAP3 x offset | 24／49／74 |
 | Final MAP1／MAP2／MAP3 HOFS | 60／35／34 |
 | Presentation crop origin | 36／12 |
+| Layer priority checks／failures | 252／0 |
+| Final MAP2／MAP3 priority | 2／1 |
 | State transitions | 5 |
 | ROMFS checks／failures | 93／0 |
 | mGBA memory/runtime errors | 0 |
 
 7,093 個 logic tick 約等於 204 秒的 GBA 遊戲時間。增加的時間來自原作
 MAP1 慢速段現在也同步控制事件 `curLoc`。Headless mGBA 在 PC 以不限速
-模式約 4.6 秒跑完；這個 host 時間不是 GBA 效能數字。54 次 missed
-VBlank 包含新的 ROM→OBJ VRAM frame upload，由測試保留並設上限 160；
+模式約 4.8 秒跑完；這個 host 時間不是 GBA 效能數字。155 次 missed
+VBlank 包含 runtime decode 與 ROM/EWRAM→OBJ VRAM upload，由測試保留
+並設上限 160；
 沒有透過降 logic rate、刪除音樂或圖層隱藏少數重負載 frame。
 
 實際 framebuffer 截圖：
@@ -611,7 +620,7 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
 
 若 mGBA GUI 正載入要覆寫的同名 ROM，Windows 會鎖住該檔案；重建前請先
 關閉該 ROM 或關閉模擬器。正式交付使用
-`_source_parity_crop1to1_playerbounds_romfs_v19.gba` 檔名，避免與先前測試 ROM
+`_source_parity_runtime_sprite2_romfs_v21.gba` 檔名，避免與先前測試 ROM
 混淆。
 
 ## 現階段結論
@@ -622,14 +631,24 @@ cd C:\ai_project\AprTyrianNes\repo\TyrianGbaPoc
 - 100-entry source enemy pool 峰值 39，無 pool-full；OAM 峰值 43 / 128。
 - 三層共串流 3,590 列，0 stream drop。
 - 185 發 source 敵彈峰值 9 / 60，0 projectile drop。
-- 完整 route 有 54 / 12,239 missed VBlank，約 0.44%。
-- 含完整 stock ROMFS 與 198-frame catalog 後佔標準 32 MiB 視窗約
-  32.44%。
+- 完整 route 有 155 / 12,239 missed VBlank，約 1.27%。
+- 含完整 stock ROMFS、但不含預轉換 enemy catalog，佔標準 32 MiB
+  視窗約 32.14%。
 - 三層背景、完整 tracker 音樂、source event/enemy/projectile/collision
   可以同時運作。
 
-目前 198-frame catalog 已消除第一關 enemy/reward fallback；最大的正確性
-限制改為 5,400 後仍使用簡化 Boss，以及尚未加入的玩家死亡流程。容量不是
-瓶頸。下一階段應讓 source Boss lifecycle 接管，再針對 54 個
-over-budget frame 做定位式優化，而不是先降低 logic rate、縮減關卡或
-刪除音樂。
+目前通用 ROMFS Sprite2 decoder 已消除第一關 enemy/reward fallback，
+且不把後續關卡限制在固定 catalog；最大的正確性限制是 5,400 後仍使用
+簡化 Boss，以及尚未加入的玩家死亡流程。容量不是瓶頸。若 v21 試用顯示
+raw runtime 成本不可接受，應以全 shape-bank 通用 row-packed provider
+替換底層 reader，而不是回到逐關事件 catalog。
+
+v20 另把 OpenTyrian 完整 draw order 翻譯成動態 BG/OBJ priority 與反向
+OAM 排序，修正雲層、可破壞 ground 結構及 Boss 前機關的前後關係；並為
+八張 2x2 結構 component 建立專屬 palette。詳細推導與畫面回歸見
+[Tyrian-GBA-PC-Layer-Order-Palette-v20.md](Tyrian-GBA-PC-Layer-Order-Palette-v20.md)。
+
+v21 再以 ROMFS raw Sprite2 decoder 與 8bpp palette projection 取代 v20
+的 4bpp frame catalog／structure palette。完整格式、成本量測與可替換的
+通用 row-packed provider 規劃見
+[Tyrian-GBA-Runtime-Sprite2-v21.md](Tyrian-GBA-Runtime-Sprite2-v21.md)。

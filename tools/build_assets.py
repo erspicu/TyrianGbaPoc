@@ -116,10 +116,12 @@ assert GBA_BG23_INITIAL_SCROLL == 16196
 assert GBA_BG12_INITIAL_HOFS == 60
 assert GBA_BG3_INITIAL_HOFS == 84
 
-# OBJ palettes 0/5/7..14 remain assigned to the player, simplified boss,
-# explosions, rewards, digits, projectiles, boss bar and PAUSED.  Exact
-# source frames use the six free banks.  The two rare one-frame shape tables
-# share a palette; bank 15 reproduces the source filter/ice flash.
+# OBJ palettes 0/7..14 remain assigned to the player, explosions, rewards,
+# digits, projectiles, boss bar and PAUSED. During the level body, bank 5 is a
+# dedicated palette for the recurring 2x2 destructible ground structures; at
+# the position-5400 POC handoff, runtime restores the mutually exclusive
+# simplified boss palette to that bank. Exact source frames otherwise use
+# banks 1/2/3/4/6; bank 15 reproduces the source filter/ice flash.
 ENEMY_FRAME_PALETTE_GROUPS = {
     1: 1,
     2: 2,
@@ -128,8 +130,19 @@ ENEMY_FRAME_PALETTE_GROUPS = {
     10: 6,
     20: 6,
 }
+ENEMY_STRUCTURE_PALETTE_BANK = 5
+ENEMY_STRUCTURE_FRAME_KEYS = frozenset(
+    (1, graphic, 1)
+    for graphic in (77, 79, 81, 83, 115, 117, 119, 121)
+)
 ENEMY_FILTER_PALETTE_BANK = 15
 SHAPE_TABLE_CHARACTERS = "2478ABCDEFGHIJKLMNOPQRSTU5#V0@3^59"
+
+
+def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
+    if key in ENEMY_STRUCTURE_FRAME_KEYS:
+        return ENEMY_STRUCTURE_PALETTE_BANK
+    return ENEMY_FRAME_PALETTE_GROUPS[key[0]]
 
 
 def load_snes_builder(workspace: Path) -> ModuleType:
@@ -1015,38 +1028,15 @@ def repack_obj_tiles(
     output.extend(boss_bar_tiles)
 
     static_tile_count = len(output) // 32
-    dynamic_tile_base = (
-        (static_tile_count + ENEMY_FRAME_TILES - 1) //
-        ENEMY_FRAME_TILES *
-        ENEMY_FRAME_TILES
-    )
-    dynamic_slot_count = (
-        1024 - dynamic_tile_base
-    ) // ENEMY_FRAME_TILES
-    if dynamic_slot_count < 16:
-        raise ValueError(
-            "exact enemy-frame cache is too small: "
-            f"static={static_tile_count}, base={dynamic_tile_base}, "
-            f"slots={dynamic_slot_count}"
-        )
-    output.extend(
-        b"\0" * (dynamic_tile_base * 32 - len(output))
-    )
-    output.extend(
-        b"\0" * (
-            dynamic_slot_count *
-            ENEMY_FRAME_TILES *
-            32
-        )
-    )
+    # Runtime C now decodes ROMFS Sprite2 streams straight into split 8bpp
+    # OBJ caches. Keep the cartridge-side static atlas padded to the full
+    # hardware window so all time-shared VRAM regions have deterministic
+    # backing, without generating any per-enemy frame catalog here.
+    output.extend(b"\0" * (1024 * 32 - len(output)))
     tile_count = len(output) // 32
     if tile_count > 1024:
         raise ValueError(f"GBA OBJ atlas exceeds 1024 tiles: {tile_count}")
     metadata["OBJ_STATIC_TILE_COUNT"] = static_tile_count
-    metadata["OBJ_DYNAMIC_TILE_BASE"] = dynamic_tile_base
-    metadata["OBJ_DYNAMIC_SLOT_COUNT"] = dynamic_slot_count
-    metadata["OBJ_DYNAMIC_TILES_PER_SLOT"] = ENEMY_FRAME_TILES
-    metadata["OBJ_PAL_ENEMY_FILTER"] = ENEMY_FILTER_PALETTE_BANK
     metadata["OBJ_TILE_COUNT"] = tile_count
     return bytes(output), metadata
 
@@ -1525,7 +1515,7 @@ def build_exact_enemy_frame_catalog(
     }
     grouped_pixels: dict[int, list[np.ndarray]] = collections.defaultdict(list)
     for key, image in images.items():
-        palette_bank = ENEMY_FRAME_PALETTE_GROUPS[key[0]]
+        palette_bank = enemy_frame_palette_bank(key)
         rgba = np.asarray(image, dtype=np.uint8)
         mask = rgba[:, :, 3] >= 80
         if mask.any():
@@ -1533,7 +1523,12 @@ def build_exact_enemy_frame_catalog(
 
     palette_colours: dict[int, list[tuple[int, int, int]]] = {}
     palette_bytes: dict[int, bytes] = {}
-    for palette_bank in sorted(set(ENEMY_FRAME_PALETTE_GROUPS.values())):
+    if not ENEMY_STRUCTURE_FRAME_KEYS.issubset(images):
+        missing = sorted(ENEMY_STRUCTURE_FRAME_KEYS.difference(images))
+        raise ValueError(
+            f"destructible structure palette frames are missing: {missing}"
+        )
+    for palette_bank in sorted(grouped_pixels):
         pixels = np.concatenate(grouped_pixels[palette_bank], axis=0)
         colours = snes.adaptive_palette(pixels)
         palette = ([(0, 0, 0)] + colours)[:16]
@@ -1550,6 +1545,50 @@ def build_exact_enemy_frame_catalog(
         snes.snes_palette_bytes([filter_palette])
     )
 
+    structure_pixels = np.concatenate(
+        grouped_pixels[ENEMY_STRUCTURE_PALETTE_BANK],
+        axis=0,
+    ).astype(np.float32)
+    legacy_table1_pixels = np.concatenate(
+        [
+            np.asarray(image, dtype=np.uint8)[
+                np.asarray(image, dtype=np.uint8)[:, :, 3] >= 80,
+                :3,
+            ]
+            for key, image in images.items()
+            if key[0] == 1
+        ],
+        axis=0,
+    )
+    legacy_table1_colours = snes.adaptive_palette(
+        legacy_table1_pixels
+    )
+
+    def palette_rgb_rmse(
+        pixels: np.ndarray,
+        colours: list[tuple[int, int, int]],
+    ) -> float:
+        palette_array = np.asarray(colours, dtype=np.float32)
+        squared_error = (
+            (pixels[:, None, :] - palette_array[None, :, :]) ** 2
+        ).sum(axis=2)
+        return float(np.sqrt(squared_error.min(axis=1).mean() / 3.0))
+
+    structure_palette_rmse = palette_rgb_rmse(
+        structure_pixels,
+        palette_colours[ENEMY_STRUCTURE_PALETTE_BANK][1:],
+    )
+    legacy_structure_palette_rmse = palette_rgb_rmse(
+        structure_pixels,
+        legacy_table1_colours,
+    )
+    if structure_palette_rmse >= legacy_structure_palette_rmse:
+        raise ValueError(
+            "dedicated structure palette did not improve PC-source colour "
+            f"error: dedicated={structure_palette_rmse:.4f}, "
+            f"shared={legacy_structure_palette_rmse:.4f}"
+        )
+
     tiles = bytearray()
     records = bytearray()
     quantized_previews: list[Image.Image] = []
@@ -1558,11 +1597,19 @@ def build_exact_enemy_frame_catalog(
         f"source_commit={OPENTYRIAN_SOURCE_COMMIT}",
         f"enemy_definitions={len(definitions)}",
         f"frame_count={len(frame_keys)}",
+        (
+            "structure_palette_dedicated_rgb_rmse="
+            f"{structure_palette_rmse:.4f}"
+        ),
+        (
+            "structure_palette_legacy_shared_rgb_rmse="
+            f"{legacy_structure_palette_rmse:.4f}"
+        ),
         "frame_index,shape_table,graphic,size,palette_bank",
     ]
     for frame_index, key in enumerate(frame_keys):
         shape_table, graphic, size = key
-        palette_bank = ENEMY_FRAME_PALETTE_GROUPS[shape_table]
+        palette_bank = enemy_frame_palette_bank(key)
         palette = palette_colours[palette_bank]
         palette_array = np.asarray(palette[1:], dtype=np.int32)
         rgba = np.asarray(images[key], dtype=np.uint8)
@@ -2530,21 +2577,6 @@ def main() -> None:
         snes.build_obj_assets(nes, image_root, player_shot_source)
     )
     (
-        enemy_frame_tiles,
-        enemy_frame_catalog,
-        enemy_frame_palettes,
-        enemy_frame_audit,
-        enemy_frame_preview,
-    ) = build_exact_enemy_frame_catalog(
-        snes,
-        nes,
-        source_events,
-        data_root / "tyrian1.lvl",
-        data_root / "tyrian.hdt",
-        data_root / "palette.dat",
-        image_root,
-    )
-    (
         explosion_tiles,
         explosion_palette,
         explosion_preview,
@@ -2580,14 +2612,6 @@ def main() -> None:
         boss_bar_flash_colours,
     ) = build_boss_bar_assets(snes, data_root / "palette.dat")
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
-    for palette_bank, palette_data in enemy_frame_palettes.items():
-        if len(palette_data) != 32:
-            raise ValueError(
-                f"enemy OBJ palette {palette_bank} is not 16 colours"
-            )
-        obj_palette[
-            palette_bank * 32 : (palette_bank + 1) * 32
-        ] = palette_data
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
     obj_palette[9 * 32 : 10 * 32] = digit_palette
@@ -2613,31 +2637,18 @@ def main() -> None:
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
-    obj_metadata["OBJ_ENEMY_FRAME_COUNT"] = (
-        (len(enemy_frame_catalog) - 16) // ENEMY_FRAME_RECORD_BYTES
-    )
-    obj_metadata["OBJ_ENEMY_FRAME_RECORD_BYTES"] = (
-        ENEMY_FRAME_RECORD_BYTES
-    )
-    obj_metadata["OBJ_ENEMY_FRAME_TILES"] = ENEMY_FRAME_TILES
-    obj_metadata["OBJ_ENEMY_FRAME_BYTES"] = ENEMY_FRAME_BYTES
-    obj_metadata["OBJ_ENEMY_FRAME_CATALOG_BYTES"] = len(
-        enemy_frame_catalog
-    )
-    obj_metadata["OBJ_ENEMY_FRAME_TILE_BYTES"] = len(enemy_frame_tiles)
+    for obsolete in (
+        output / "enemy_structure_palette.bin",
+        output / "enemy_frame_tiles.bin",
+        output / "enemy_frame_catalog.bin",
+        output / "enemy_frame_audit.csv",
+        preview / "enemy_frames_exact_catalog.png",
+    ):
+        obsolete.unlink(missing_ok=True)
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
-    (output / "enemy_frame_tiles.bin").write_bytes(enemy_frame_tiles)
-    (output / "enemy_frame_catalog.bin").write_bytes(enemy_frame_catalog)
-    (output / "enemy_frame_audit.csv").write_text(
-        "\n".join(enemy_frame_audit) + "\n",
-        encoding="utf-8",
-    )
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
         preview / "obj_gba_source_atlas.png"
-    )
-    enemy_frame_preview.save(
-        preview / "enemy_frames_exact_catalog.png"
     )
     explosion_preview.resize((384, 288), Image.Resampling.NEAREST).save(
         preview / "explosion_animations_small_air_ground.png"
@@ -2827,26 +2838,15 @@ def main() -> None:
         ),
         f"obj_tiles={len(obj_tiles) // 32}",
         "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
-        (
-            "obj_enemy_exact_frame_count="
-            f"{obj_metadata['OBJ_ENEMY_FRAME_COUNT']}"
-        ),
-        (
-            "obj_enemy_exact_frame_tile_bytes="
-            f"{len(enemy_frame_tiles)}"
-        ),
-        (
-            "obj_enemy_dynamic_cache_slots="
-            f"{obj_metadata['OBJ_DYNAMIC_SLOT_COUNT']}"
-        ),
-        (
-            "obj_enemy_dynamic_tile_base="
-            f"{obj_metadata['OBJ_DYNAMIC_TILE_BASE']}"
-        ),
-        "obj_enemy_frame_key=shape_table/egr[enemycycle-1]/size",
+        "obj_enemy_preconverted_frames=0",
+        "obj_enemy_runtime_source=ROMFS newsh*.shp/tyrian.shp",
+        "obj_enemy_runtime_decoder=src/opentyrian_sprite2.c",
+        "obj_enemy_runtime_format=8bpp 32x32 split VRAM cache",
+        "obj_enemy_frame_key=shape_table/egr[enemycycle-1]/size/filter",
         "obj_enemy_large_composition=graphic+0,+1,+19,+20",
         "obj_enemy_anchor=12x14@(10,9),24x28@(4,2) in 32x32 OBJ",
-        "obj_enemy_source_scope=all 1009 first-level event records",
+        "obj_enemy_palette=PC palette5 16 hues x 8 brightness levels",
+        "obj_enemy_source_scope=all ROMFS Sprite2 banks; not event-catalog limited",
         "boss_bar_source=OpenTyrian event79/draw_boss_bar",
         "boss_bar_pc_geometry=single x155 y7 width51 height6 armor254",
         "boss_bar_gba_geometry=single x96..135 y6..11 centered fill",

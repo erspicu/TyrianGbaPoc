@@ -6,96 +6,199 @@
  * No source coordinate or sprite is rescaled.
  */
 
-#define SOURCE_ENEMY_CATALOG_HEADER_BYTES 16
-
 typedef struct {
-    u16 frame_index;
+    u16 graphic;
     u32 last_epoch;
+    u8 shape_table;
+    u8 size;
+    u8 filter;
     u8 valid;
 } SourceEnemyCacheSlot;
 
 typedef struct {
     u8 slot;
-    u16 frame_index;
 } SourceEnemyUpload;
 
 static SourceEnemyCacheSlot
-    source_enemy_cache[OBJ_DYNAMIC_SLOT_COUNT] EWRAM_DATA;
+    source_enemy_cache[SOURCE_ENEMY_CACHE_SLOT_COUNT] EWRAM_BSS;
 static SourceEnemyUpload
-    source_enemy_uploads[OBJ_DYNAMIC_SLOT_COUNT] EWRAM_DATA;
+    source_enemy_uploads[SOURCE_ENEMY_CACHE_SLOT_COUNT] EWRAM_BSS;
+static u8 source_enemy_cache_tiles
+    [SOURCE_ENEMY_CACHE_SLOT_COUNT][SOURCE_ENEMY_FRAME_BYTES]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 source_enemy_decode_pixels[OT_SPRITE2_FRAME_PIXELS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
+    EWRAM_BSS;
 static u32 source_enemy_cache_epoch;
 static u8 source_enemy_upload_count;
-static u8 source_enemy_catalog_valid;
+static u8 source_enemy_palette_valid;
 
-static u16 source_read_u16(const u8 *source)
-{
-    return (u16)(source[0] | ((u16)source[1] << 8));
-}
+/*
+ * The source level needs more than 15 simultaneous colours per enemy frame,
+ * so it uses 8bpp OBJ.  Static 4bpp actors retain their authored banks; only
+ * banks unused by the source-level renderer are time-shared here.
+ */
+static const u8 source_enemy_dynamic_palette_banks[
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT
+] = {
+    1, 2, 3, 4, 5, 8, 13, 15,
+};
 
-static u32 source_read_u32(const u8 *source)
-{
-    return
-        (u32)source[0] |
-        ((u32)source[1] << 8) |
-        ((u32)source[2] << 16) |
-        ((u32)source[3] << 24);
-}
+static const u8 source_enemy_brightness_samples[
+    SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT
+] = {
+    0, 2, 4, 6, 8, 10, 12, 15,
+};
 
-static const u8 *source_enemy_catalog_record(u16 index)
-{
-    return enemy_frame_catalog +
-        SOURCE_ENEMY_CATALOG_HEADER_BYTES +
-        (u32)index * OBJ_ENEMY_FRAME_RECORD_BYTES;
-}
-
-static const u8 *source_find_enemy_frame(
-    u8 shape_table,
-    u16 graphic,
-    u8 size
+static u32 source_palette_distance(
+    const u8 *left,
+    const u8 *right
 )
 {
-    s16 low = 0;
-    s16 high = (s16)OBJ_ENEMY_FRAME_COUNT - 1;
+    s16 red = (s16)left[0] - right[0];
+    s16 green = (s16)left[1] - right[1];
+    s16 blue = (s16)left[2] - right[2];
 
-    if (!source_enemy_catalog_valid) return 0;
-    while (low <= high) {
-        s16 middle = (s16)(low + (high - low) / 2);
-        const u8 *record = source_enemy_catalog_record((u16)middle);
-        u8 record_shape = record[0];
-        u8 record_size = record[1];
-        u16 record_graphic = source_read_u16(record + 2);
+    return
+        (u32)(red * red) +
+        (u32)(green * green) +
+        (u32)(blue * blue);
+}
 
-        if (
-            record_shape < shape_table ||
-            (
-                record_shape == shape_table &&
-                record_graphic < graphic
-            ) ||
-            (
-                record_shape == shape_table &&
-                record_graphic == graphic &&
-                record_size < size
-            )
+static u8 source_enemy_palette_destination(u8 logical_index)
+{
+    u8 bank = source_enemy_dynamic_palette_banks[
+        logical_index / 16
+    ];
+
+    return (u8)(bank * 16 + logical_index % 16);
+}
+
+static u8 source_enemy_palette_setup(u8 palette_index)
+{
+    OtDataView palette;
+    u8 hue;
+
+    source_enemy_palette_valid = 0;
+    if (!ot_data_palette_view(palette_index, &palette)) return 0;
+
+    for (hue = 0; hue < 16; hue++) {
+        u8 brightness;
+
+        for (
+            brightness = 0;
+            brightness < SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT;
+            brightness++
         ) {
-            low = (s16)(middle + 1);
-        } else if (
-            record_shape > shape_table ||
-            (
-                record_shape == shape_table &&
-                record_graphic > graphic
-            ) ||
-            (
-                record_shape == shape_table &&
-                record_graphic == graphic &&
-                record_size > size
-            )
-        ) {
-            high = (s16)(middle - 1);
-        } else {
-            return record;
+            u8 logical = (u8)(
+                hue * SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT +
+                brightness
+            );
+            u8 source_index = (u8)(
+                hue * 16 +
+                source_enemy_brightness_samples[brightness]
+            );
+            u8 destination =
+                source_enemy_palette_destination(logical);
+
+            SPRITE_PALETTE[destination] =
+                title_palette_colour(&palette, source_index);
+        }
+
+        /*
+         * Preserve the PC hue nibble and choose the closest of eight
+         * brightnesses in the actual active palette.  This is deterministic
+         * and applies to every current or future Sprite2 frame.
+         */
+        for (brightness = 0; brightness < 16; brightness++) {
+            const u8 *source_rgb =
+                palette.data + (u32)(hue * 16 + brightness) * 3;
+            u32 best_distance = 0xffffffffu;
+            u8 best = 0;
+            u8 candidate;
+
+            for (
+                candidate = 0;
+                candidate < SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT;
+                candidate++
+            ) {
+                u8 candidate_index = (u8)(
+                    hue * 16 +
+                    source_enemy_brightness_samples[candidate]
+                );
+                u32 distance = source_palette_distance(
+                    source_rgb,
+                    palette.data + (u32)candidate_index * 3
+                );
+
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best = candidate;
+                }
+            }
+            source_enemy_palette_map[hue * 16 + brightness] =
+                source_enemy_palette_destination(
+                    (u8)(
+                        hue * SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT +
+                        best
+                    )
+                );
         }
     }
-    return 0;
+    source_enemy_palette_valid = 1;
+    return 1;
+}
+
+static u16 source_enemy_cache_tile(u8 slot)
+{
+    if (slot < SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT) {
+        return (u16)(
+            SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
+            slot * SOURCE_ENEMY_TILES_PER_SLOT
+        );
+    }
+    return (u16)(
+        SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
+        (slot - SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT) *
+            SOURCE_ENEMY_TILES_PER_SLOT
+    );
+}
+
+static void source_enemy_pack_8bpp(u8 slot)
+{
+    u8 *target = source_enemy_cache_tiles[slot];
+    u8 tile_y;
+
+    for (tile_y = 0; tile_y < 4; tile_y++) {
+        u8 tile_x;
+
+        for (tile_x = 0; tile_x < 4; tile_x++) {
+            u8 row;
+
+            for (row = 0; row < 8; row++) {
+                u8 column;
+
+                for (column = 0; column < 8; column++) {
+                    u16 source_pixel = source_enemy_decode_pixels[
+                        (u32)(tile_y * 8 + row) *
+                            OT_SPRITE2_FRAME_WIDTH +
+                        tile_x * 8 + column
+                    ];
+                    u32 target_offset =
+                        (u32)(tile_y * 4 + tile_x) * 64 +
+                        row * 8 +
+                        column;
+
+                    target[target_offset] = source_pixel == 0 ?
+                        0 :
+                        source_enemy_palette_map[
+                            (u8)(source_pixel - 1)
+                        ];
+                }
+            }
+        }
+    }
 }
 
 static void source_enemy_cache_begin_frame(void)
@@ -105,53 +208,79 @@ static void source_enemy_cache_begin_frame(void)
         u8 index;
 
         source_enemy_cache_epoch = 1;
-        for (index = 0; index < OBJ_DYNAMIC_SLOT_COUNT; index++) {
+        for (
+            index = 0;
+            index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
+            index++
+        ) {
             source_enemy_cache[index].last_epoch = 0;
         }
     }
     source_enemy_upload_count = 0;
 }
 
+static void source_enemy_cache_end_frame(void)
+{
+    u8 index;
+    u8 visible_unique = 0;
+
+    for (
+        index = 0;
+        index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        if (
+            source_enemy_cache[index].valid &&
+            source_enemy_cache[index].last_epoch ==
+                source_enemy_cache_epoch
+        ) {
+            visible_unique++;
+        }
+    }
+    if (
+        visible_unique >
+        telemetry_sprite2_max_visible_unique
+    ) {
+        telemetry_sprite2_max_visible_unique = visible_unique;
+    }
+}
+
 static u16 source_enemy_cache_acquire(
-    const OtEnemyDrawCommand *draw,
-    u8 *palette
+    const OtEnemyDrawCommand *draw
 )
 {
-    const u8 *record = source_find_enemy_frame(
-        draw->shape_table,
-        draw->graphic,
-        draw->size
-    );
-    u16 frame_index;
     u8 index;
-    u8 selected = OBJ_DYNAMIC_SLOT_COUNT;
-    u8 free_slot = OBJ_DYNAMIC_SLOT_COUNT;
-    u8 eviction_slot = OBJ_DYNAMIC_SLOT_COUNT;
+    u8 selected = SOURCE_ENEMY_CACHE_SLOT_COUNT;
+    u8 free_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
+    u8 eviction_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
     u32 oldest_epoch = 0xffffffffu;
 
-    if (record == 0) {
+    if (!source_enemy_palette_valid) {
         telemetry_source_unknown_visuals++;
-        telemetry_enemy_frame_catalog_misses++;
+        telemetry_sprite2_decode_failures++;
         return 0xffff;
     }
-    frame_index = source_read_u16(record + 6);
-    *palette = draw->filter ?
-        OBJ_PAL_ENEMY_FILTER :
-        record[4];
 
-    for (index = 0; index < OBJ_DYNAMIC_SLOT_COUNT; index++) {
+    for (
+        index = 0;
+        index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
+        index++
+    ) {
         SourceEnemyCacheSlot *slot = &source_enemy_cache[index];
 
-        if (slot->valid && slot->frame_index == frame_index) {
+        if (
+            slot->valid &&
+            slot->shape_table == draw->shape_table &&
+            slot->graphic == draw->graphic &&
+            slot->size == draw->size &&
+            slot->filter == draw->filter
+        ) {
             slot->last_epoch = source_enemy_cache_epoch;
-            telemetry_enemy_frame_cache_hits++;
-            return (u16)(
-                OBJ_DYNAMIC_TILE_BASE +
-                index * OBJ_DYNAMIC_TILES_PER_SLOT
-            );
+            telemetry_sprite2_cache_hits++;
+            return source_enemy_cache_tile(index);
         }
         if (!slot->valid) {
-            if (free_slot == OBJ_DYNAMIC_SLOT_COUNT) {
+            if (free_slot == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
                 free_slot = index;
             }
         } else if (
@@ -162,39 +291,56 @@ static u16 source_enemy_cache_acquire(
             oldest_epoch = slot->last_epoch;
         }
     }
-    selected = free_slot != OBJ_DYNAMIC_SLOT_COUNT ?
+    selected = free_slot != SOURCE_ENEMY_CACHE_SLOT_COUNT ?
         free_slot :
         eviction_slot;
-    if (selected == OBJ_DYNAMIC_SLOT_COUNT) {
-        telemetry_enemy_frame_cache_drops++;
+    if (selected == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
+        telemetry_sprite2_cache_drops++;
         return 0xffff;
     }
     if (source_enemy_cache[selected].valid) {
-        telemetry_enemy_frame_cache_evictions++;
+        telemetry_sprite2_cache_evictions++;
     }
     source_enemy_cache[selected].valid = 1;
-    source_enemy_cache[selected].frame_index = frame_index;
+    source_enemy_cache[selected].shape_table = draw->shape_table;
+    source_enemy_cache[selected].graphic = draw->graphic;
+    source_enemy_cache[selected].size = draw->size;
+    source_enemy_cache[selected].filter = draw->filter;
     source_enemy_cache[selected].last_epoch = source_enemy_cache_epoch;
-    telemetry_enemy_frame_cache_misses++;
-    if (source_enemy_upload_count >= OBJ_DYNAMIC_SLOT_COUNT) {
-        telemetry_enemy_frame_cache_drops++;
+    telemetry_sprite2_cache_misses++;
+    if (
+        !ot_sprite2_frame_decode(
+            draw->shape_table,
+            draw->graphic,
+            draw->size,
+            draw->filter,
+            source_enemy_decode_pixels,
+            OT_SPRITE2_FRAME_PIXELS
+        )
+    ) {
+        telemetry_source_unknown_visuals++;
+        telemetry_sprite2_decode_failures++;
+        source_enemy_cache[selected].valid = 0;
+        return 0xffff;
+    }
+    source_enemy_pack_8bpp(selected);
+
+    if (
+        source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT
+    ) {
+        telemetry_sprite2_cache_drops++;
         source_enemy_cache[selected].valid = 0;
         return 0xffff;
     }
     source_enemy_uploads[source_enemy_upload_count].slot = selected;
-    source_enemy_uploads[source_enemy_upload_count].frame_index =
-        frame_index;
     source_enemy_upload_count++;
     if (
         source_enemy_upload_count >
-        telemetry_enemy_frame_max_uploads
+        telemetry_sprite2_max_uploads
     ) {
-        telemetry_enemy_frame_max_uploads = source_enemy_upload_count;
+        telemetry_sprite2_max_uploads = source_enemy_upload_count;
     }
-    return (u16)(
-        OBJ_DYNAMIC_TILE_BASE +
-        selected * OBJ_DYNAMIC_TILES_PER_SLOT
-    );
+    return source_enemy_cache_tile(selected);
 }
 
 static void source_enemy_cache_commit(void)
@@ -203,21 +349,193 @@ static void source_enemy_cache_commit(void)
 
     for (index = 0; index < source_enemy_upload_count; index++) {
         const SourceEnemyUpload *upload = &source_enemy_uploads[index];
+        const u8 *source = source_enemy_cache_tiles[upload->slot];
+        u8 *target =
+            (u8 *)OBJ_BASE_ADR +
+            source_enemy_cache_tile(upload->slot) * 32;
+
+        dmaCopy(source, target, SOURCE_ENEMY_FRAME_BYTES);
+        telemetry_sprite2_uploads++;
+        telemetry_sprite2_upload_bytes += SOURCE_ENEMY_FRAME_BYTES;
+    }
+    source_enemy_upload_count = 0;
+}
+
+typedef struct {
+    u32 last_epoch;
+    u8 frame_key;
+    u8 valid;
+} SourceEffectCacheSlot;
+
+typedef struct {
+    u8 slot;
+    u8 frame_key;
+} SourceEffectUpload;
+
+static SourceEffectCacheSlot source_effect_cache[
+    SOURCE_EFFECT_CACHE_SLOT_COUNT
+] EWRAM_BSS;
+static SourceEffectUpload source_effect_uploads[
+    SOURCE_EFFECT_CACHE_SLOT_COUNT
+] EWRAM_BSS;
+static u32 source_effect_cache_epoch;
+static u8 source_effect_upload_count;
+
+static void source_effect_cache_begin_frame(void)
+{
+    source_effect_cache_epoch++;
+    if (source_effect_cache_epoch == 0) {
+        u8 index;
+
+        source_effect_cache_epoch = 1;
+        for (
+            index = 0;
+            index < SOURCE_EFFECT_CACHE_SLOT_COUNT;
+            index++
+        ) {
+            source_effect_cache[index].last_epoch = 0;
+        }
+    }
+    source_effect_upload_count = 0;
+}
+
+static void source_effect_cache_end_frame(void)
+{
+    u8 index;
+    u8 visible_unique = 0;
+
+    for (
+        index = 0;
+        index < SOURCE_EFFECT_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        if (
+            source_effect_cache[index].valid &&
+            source_effect_cache[index].last_epoch ==
+                source_effect_cache_epoch
+        ) {
+            visible_unique++;
+        }
+    }
+    if (
+        visible_unique >
+        telemetry_effect_cache_max_visible_unique
+    ) {
+        telemetry_effect_cache_max_visible_unique = visible_unique;
+    }
+}
+
+static u16 source_effect_cache_acquire(u8 sequence, u8 frame)
+{
+    u8 frame_key;
+    u8 index;
+    u8 free_slot = SOURCE_EFFECT_CACHE_SLOT_COUNT;
+    u8 eviction_slot = SOURCE_EFFECT_CACHE_SLOT_COUNT;
+    u32 oldest_epoch = 0xffffffffu;
+    u8 selected;
+
+    if (
+        sequence >= OBJ_EXPLOSION_SEQUENCE_COUNT ||
+        frame >= OBJ_EXPLOSION_FRAME_COUNT
+    ) {
+        telemetry_effect_cache_drops++;
+        return 0xffff;
+    }
+    frame_key = (u8)(
+        sequence * OBJ_EXPLOSION_FRAME_COUNT + frame
+    );
+    for (
+        index = 0;
+        index < SOURCE_EFFECT_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        SourceEffectCacheSlot *slot = &source_effect_cache[index];
+
+        if (slot->valid && slot->frame_key == frame_key) {
+            slot->last_epoch = source_effect_cache_epoch;
+            telemetry_effect_cache_hits++;
+            return (u16)(
+                SOURCE_EFFECT_CACHE_TILE_BASE +
+                index * SOURCE_EFFECT_TILES_PER_SLOT
+            );
+        }
+        if (!slot->valid) {
+            if (free_slot == SOURCE_EFFECT_CACHE_SLOT_COUNT) {
+                free_slot = index;
+            }
+        } else if (
+            slot->last_epoch != source_effect_cache_epoch &&
+            slot->last_epoch < oldest_epoch
+        ) {
+            eviction_slot = index;
+            oldest_epoch = slot->last_epoch;
+        }
+    }
+    selected = free_slot != SOURCE_EFFECT_CACHE_SLOT_COUNT ?
+        free_slot :
+        eviction_slot;
+    if (selected == SOURCE_EFFECT_CACHE_SLOT_COUNT) {
+        telemetry_effect_cache_drops++;
+        return 0xffff;
+    }
+    if (source_effect_cache[selected].valid) {
+        telemetry_effect_cache_evictions++;
+    }
+    if (
+        source_effect_upload_count >= SOURCE_EFFECT_CACHE_SLOT_COUNT
+    ) {
+        telemetry_effect_cache_drops++;
+        return 0xffff;
+    }
+    source_effect_cache[selected].valid = 1;
+    source_effect_cache[selected].frame_key = frame_key;
+    source_effect_cache[selected].last_epoch =
+        source_effect_cache_epoch;
+    source_effect_uploads[source_effect_upload_count].slot = selected;
+    source_effect_uploads[source_effect_upload_count].frame_key =
+        frame_key;
+    source_effect_upload_count++;
+    telemetry_effect_cache_misses++;
+    if (
+        source_effect_upload_count >
+        telemetry_effect_cache_max_uploads
+    ) {
+        telemetry_effect_cache_max_uploads =
+            source_effect_upload_count;
+    }
+    return (u16)(
+        SOURCE_EFFECT_CACHE_TILE_BASE +
+        selected * SOURCE_EFFECT_TILES_PER_SLOT
+    );
+}
+
+static void source_effect_cache_commit(void)
+{
+    u8 index;
+
+    for (index = 0; index < source_effect_upload_count; index++) {
+        const SourceEffectUpload *upload =
+            &source_effect_uploads[index];
         const u8 *source =
-            enemy_frame_tiles +
-            (u32)upload->frame_index * OBJ_ENEMY_FRAME_BYTES;
+            obj_tiles +
+            (
+                OBJ_TILE_EXPLOSION +
+                upload->frame_key *
+                    OBJ_EXPLOSION_TILES_PER_FRAME
+            ) * 32;
         u8 *target =
             (u8 *)OBJ_BASE_ADR +
             (
-                OBJ_DYNAMIC_TILE_BASE +
-                upload->slot * OBJ_DYNAMIC_TILES_PER_SLOT
+                SOURCE_EFFECT_CACHE_TILE_BASE +
+                upload->slot * SOURCE_EFFECT_TILES_PER_SLOT
             ) * 32;
 
-        dmaCopy(source, target, OBJ_ENEMY_FRAME_BYTES);
-        telemetry_enemy_frame_uploads++;
-        telemetry_enemy_frame_upload_bytes += OBJ_ENEMY_FRAME_BYTES;
+        dmaCopy(source, target, SOURCE_EFFECT_FRAME_BYTES);
+        telemetry_effect_cache_uploads++;
+        telemetry_effect_cache_upload_bytes +=
+            SOURCE_EFFECT_FRAME_BYTES;
     }
-    source_enemy_upload_count = 0;
+    source_effect_upload_count = 0;
 }
 
 static s16 source_world_to_screen_x(s16 source_x)
@@ -495,7 +813,6 @@ static void source_apply_background_state(void)
     if (bg2_scroll_delay > bg2_scroll_delay_max) {
         bg2_scroll_delay = bg2_scroll_delay_max;
     }
-    foreground_phase = source_parity_level.background3_over != 0;
 }
 
 static void source_process_player_collisions(void)
@@ -580,36 +897,48 @@ static void source_update_enemy_projectiles(void)
 
 static void source_runtime_reset(void)
 {
+    u32 layer_passed_checks;
+    u32 layer_failed_checks;
+
     memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
     memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
+    memset(source_effect_cache, 0, sizeof(source_effect_cache));
+    memset(source_effect_uploads, 0, sizeof(source_effect_uploads));
     source_enemy_cache_epoch = 0;
     source_enemy_upload_count = 0;
-    source_enemy_catalog_valid =
-        enemy_frame_catalog[0] == 'O' &&
-        enemy_frame_catalog[1] == 'T' &&
-        enemy_frame_catalog[2] == 'E' &&
-        enemy_frame_catalog[3] == 'F' &&
-        source_read_u16(enemy_frame_catalog + 4) == 1 &&
-        source_read_u16(enemy_frame_catalog + 6) ==
-            OBJ_ENEMY_FRAME_COUNT &&
-        source_read_u16(enemy_frame_catalog + 8) ==
-            OBJ_ENEMY_FRAME_RECORD_BYTES &&
-        source_read_u16(enemy_frame_catalog + 10) ==
-            OBJ_ENEMY_FRAME_TILES &&
-        source_read_u32(enemy_frame_catalog + 12) ==
-            OBJ_ENEMY_FRAME_TILE_BYTES;
-    if (!source_enemy_catalog_valid) {
+    source_effect_cache_epoch = 0;
+    source_effect_upload_count = 0;
+    if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         source_parity_level.assets_valid = false;
     }
+    if (
+        !source_layer_priority_self_test(
+            &layer_passed_checks,
+            &layer_failed_checks
+        )
+    ) {
+        source_parity_level.assets_valid = false;
+    }
+    telemetry_layer_rule_checks = layer_passed_checks;
+    telemetry_layer_rule_failures = layer_failed_checks;
     telemetry_source_visible_enemies = 0;
     telemetry_source_max_visible_enemies = 0;
     telemetry_source_unknown_visuals = 0;
-    telemetry_enemy_frame_catalog_misses = 0;
-    telemetry_enemy_frame_cache_hits = 0;
-    telemetry_enemy_frame_cache_misses = 0;
-    telemetry_enemy_frame_cache_evictions = 0;
-    telemetry_enemy_frame_cache_drops = 0;
-    telemetry_enemy_frame_uploads = 0;
-    telemetry_enemy_frame_upload_bytes = 0;
-    telemetry_enemy_frame_max_uploads = 0;
+    telemetry_sprite2_decode_failures = 0;
+    telemetry_sprite2_cache_hits = 0;
+    telemetry_sprite2_cache_misses = 0;
+    telemetry_sprite2_cache_evictions = 0;
+    telemetry_sprite2_cache_drops = 0;
+    telemetry_sprite2_uploads = 0;
+    telemetry_sprite2_upload_bytes = 0;
+    telemetry_sprite2_max_uploads = 0;
+    telemetry_sprite2_max_visible_unique = 0;
+    telemetry_effect_cache_hits = 0;
+    telemetry_effect_cache_misses = 0;
+    telemetry_effect_cache_evictions = 0;
+    telemetry_effect_cache_drops = 0;
+    telemetry_effect_cache_uploads = 0;
+    telemetry_effect_cache_upload_bytes = 0;
+    telemetry_effect_cache_max_uploads = 0;
+    telemetry_effect_cache_max_visible_unique = 0;
 }

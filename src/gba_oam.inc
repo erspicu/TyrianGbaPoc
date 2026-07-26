@@ -40,6 +40,30 @@ static void put_sprite(
     put_sprite_with_attr1(x, y, tile, palette, size, priority, 0);
 }
 
+static void put_sprite_8bpp_32(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 priority
+)
+{
+    OBJATTR *object;
+
+    if (oam_count >= SPRITE_LIMIT) return;
+    if (
+        x <= -32 || x >= SCREEN_WIDTH ||
+        y <= -32 || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 = (y & 0x00ff) | ATTR0_NORMAL |
+                    ATTR0_COLOR_256 | ATTR0_SQUARE;
+    object->attr1 = (x & 0x01ff) | ATTR1_SIZE_32;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(priority);
+    object->dummy = 0;
+}
+
 static void put_sprite_shaped(
     s16 x,
     s16 y,

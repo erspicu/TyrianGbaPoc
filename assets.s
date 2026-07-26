@@ -46,16 +46,6 @@ obj_palette:
 	.incbin "res/obj_palette.bin"
 
 	.balign 4
-	.global enemy_frame_catalog
-enemy_frame_catalog:
-	.incbin "res/enemy_frame_catalog.bin"
-
-	.balign 4
-	.global enemy_frame_tiles
-enemy_frame_tiles:
-	.incbin "res/enemy_frame_tiles.bin"
-
-	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

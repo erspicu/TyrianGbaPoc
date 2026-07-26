@@ -1,7 +1,7 @@
 .SUFFIXES:
 
-TARGET := tyrian_gba_level1_source_parity_crop1to1_playerbounds_romfs_v19
-TEST_TARGET := tyrian_gba_level1_source_parity_crop1to1_playerbounds_autotest_romfs_v19
+TARGET := tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21
+TEST_TARGET := tyrian_gba_level1_source_parity_runtime_sprite2_autotest_romfs_v21
 BUILD := build
 RES := res
 
@@ -62,9 +62,7 @@ ASSET_BINARIES := \
 	$(RES)/bg2_map.bin \
 	$(RES)/bg3_map.bin \
 	$(RES)/obj_tiles.bin \
-	$(RES)/obj_palette.bin \
-	$(RES)/enemy_frame_catalog.bin \
-	$(RES)/enemy_frame_tiles.bin
+	$(RES)/obj_palette.bin
 
 AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \
@@ -81,6 +79,7 @@ COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
 	$(BUILD)/gba_heap.o \
 	$(BUILD)/opentyrian_data.o \
+	$(BUILD)/opentyrian_sprite2.o \
 	$(BUILD)/opentyrian_level_port.o \
 	$(BUILD)/romfs.o \
 	$(BUILD)/opentyrian_rom_io.o
@@ -122,13 +121,13 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 
 $(BUILD)/main_release.o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
-		src/opentyrian_rom_io.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/main_test.o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
-		src/opentyrian_rom_io.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
@@ -141,6 +140,10 @@ $(BUILD)/opentyrian_data.o: src/opentyrian_data.c \
 
 $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
 		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/opentyrian_sprite2.o: src/opentyrian_sprite2.c \
+		src/opentyrian_sprite2.h src/opentyrian_data.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/romfs.o: src/romfs.c src/romfs.h | $(BUILD)
@@ -179,6 +182,8 @@ clean:
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
+		$(BUILD)/opentyrian_sprite2.o \
+		$(BUILD)/opentyrian_sprite2.d \
 		$(BUILD)/opentyrian_level_port.o \
 		$(BUILD)/opentyrian_level_port.d \
 		$(BUILD)/romfs.o $(BUILD)/romfs.d \
@@ -199,6 +204,7 @@ distclean: clean
 -include $(BUILD)/main_test.d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
+-include $(BUILD)/opentyrian_sprite2.d
 -include $(BUILD)/opentyrian_level_port.d
 -include $(BUILD)/romfs.d
 -include $(BUILD)/opentyrian_rom_io.d

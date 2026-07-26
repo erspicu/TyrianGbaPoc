@@ -330,6 +330,12 @@ static void enter_level(void)
     dmaCopy(bg_palette, BG_PALETTE, 512);
     dmaCopy(obj_tiles, OBJ_BASE_ADR, OBJ_TILE_COUNT * 32);
     dmaCopy(obj_palette, SPRITE_PALETTE, 512);
+    /*
+     * source_runtime_reset() replaces only its documented time-shared banks
+     * with a projection of the PC level palette. enter_boss() restores this
+     * complete static palette before the legacy POC boss is presented.
+     */
+    boss_obj_palette_restore_pending = 0;
 
     REG_BG0CNT = BG_PRIORITY(3) | CHAR_BASE(0) |
                  SCREEN_BASE(BG0_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
@@ -373,7 +379,6 @@ static void enter_level(void)
 #endif
     level_tick = 0;
     level_position = 0;
-    foreground_phase = 0;
     logic_accumulator = 0;
     ot_level_port_init(&source_parity_level);
     source_runtime_reset();

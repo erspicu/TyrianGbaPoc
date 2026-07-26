@@ -8,8 +8,10 @@
 #include "src/opentyrian_data.h"
 #include "src/opentyrian_level_port.h"
 #include "src/opentyrian_rom_io.h"
+#include "src/opentyrian_sprite2.h"
 
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
+    defined(AUTOTEST_SCREENSHOT_POSITION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION_FRAME) || \
     defined(AUTOTEST_SCREENSHOT_REWARD) || \
@@ -92,6 +94,34 @@
 #define CASH_COUNTER_Y 140
 #define TITLE_SHP_SCRATCH_PIXELS 40000
 
+/*
+ * Runtime Sprite2 presentation.  The original PC 256-colour indices are
+ * decoded from ROMFS and presented through eight time-shared OBJ banks.
+ */
+#define SOURCE_LEVEL_PALETTE_INDEX 5
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT 8
+#define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
+#define SOURCE_ENEMY_FRAME_BYTES 1024
+#define SOURCE_ENEMY_TILES_PER_SLOT 32
+#define SOURCE_ENEMY_CACHE_LOWER_TILE_BASE 224
+#define SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT 9
+#define SOURCE_ENEMY_CACHE_UPPER_TILE_BASE 640
+#define SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT 12
+#define SOURCE_ENEMY_CACHE_SLOT_COUNT \
+    (SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
+        SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT)
+
+/*
+ * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
+ * atlas.  Active 16x16 explosion frames are therefore streamed into a
+ * 32-frame 4bpp cache at the original explosion base.
+ */
+#define SOURCE_EFFECT_CACHE_TILE_BASE OBJ_TILE_EXPLOSION
+#define SOURCE_EFFECT_CACHE_SLOT_COUNT 32
+#define SOURCE_EFFECT_TILES_PER_SLOT EXPLOSION_TILES_PER_FRAME
+#define SOURCE_EFFECT_FRAME_BYTES \
+    (SOURCE_EFFECT_TILES_PER_SLOT * 32)
+
 #define PC_SHOT_GRAPHIC_DART 58
 #define PC_SHOT_GRAPHIC_RED 112
 #define PC_SHOT_GRAPHIC_LASER_LEFT 145
@@ -151,18 +181,45 @@ _Static_assert(
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 _Static_assert(
-    OBJ_DYNAMIC_TILES_PER_SLOT == OBJ_ENEMY_FRAME_TILES,
-    "dynamic OBJ slot must contain one exact enemy frame"
+    SOURCE_ENEMY_FRAME_BYTES ==
+        OT_SPRITE2_FRAME_PIXELS,
+    "one 8bpp enemy cache frame must contain a 32x32 Sprite2 canvas"
 );
 _Static_assert(
-    OBJ_ENEMY_FRAME_BYTES == OBJ_ENEMY_FRAME_TILES * 32,
-    "exact enemy frame byte stride changed"
+    SOURCE_ENEMY_FRAME_BYTES ==
+        SOURCE_ENEMY_TILES_PER_SLOT * 32,
+    "8bpp enemy frame tile stride changed"
 );
 _Static_assert(
-    OBJ_DYNAMIC_TILE_BASE +
-        OBJ_DYNAMIC_SLOT_COUNT * OBJ_DYNAMIC_TILES_PER_SLOT <=
+    SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
+        SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
+            SOURCE_ENEMY_TILES_PER_SLOT <=
+        OBJ_TILE_REWARD,
+    "lower enemy frame cache overlaps retained static OBJ assets"
+);
+_Static_assert(
+    SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
+        SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT *
+            SOURCE_ENEMY_TILES_PER_SLOT <=
         OBJ_TILE_COUNT,
-    "dynamic enemy frame cache exceeds OBJ VRAM"
+    "upper enemy frame cache exceeds OBJ VRAM"
+);
+_Static_assert(
+    (SOURCE_ENEMY_CACHE_LOWER_TILE_BASE & 1) == 0 &&
+        (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE & 1) == 0,
+    "8bpp OBJ cache bases must use even character indices"
+);
+_Static_assert(
+    SOURCE_EFFECT_CACHE_TILE_BASE +
+        SOURCE_EFFECT_CACHE_SLOT_COUNT *
+            SOURCE_EFFECT_TILES_PER_SLOT <=
+        SOURCE_ENEMY_CACHE_LOWER_TILE_BASE,
+    "explosion and enemy caches overlap"
+);
+_Static_assert(
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT * 16 ==
+        16 * SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT,
+    "dynamic OBJ palette must provide eight shades for every PC hue"
 );
 _Static_assert(
     OT_GAME_VIEW_WIDTH - SCREEN_WIDTH == 24,
@@ -227,8 +284,6 @@ extern const u8 bg2_map[];
 extern const u8 bg3_map[];
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
-extern const u8 enemy_frame_catalog[];
-extern const u8 enemy_frame_tiles[];
 extern const u8 soundbank[];
 
 typedef struct {
@@ -396,10 +451,10 @@ static u8 boss_aim_left_pos;
 static u8 boss_aim_right_pos;
 static u8 boss_spread_pos;
 static u8 clear_timer;
+static u8 boss_obj_palette_restore_pending;
 
 static u16 level_tick;
 static u16 level_position;
-static u8 foreground_phase;
 static u32 logic_accumulator;
 static u8 title_pic_pixels[OT_PIC_DECODED_BYTES] EWRAM_BSS;
 static u8 title_shp_pixels[TITLE_SHP_SCRATCH_PIXELS] EWRAM_BSS;
@@ -499,14 +554,23 @@ volatile u32 telemetry_source_launch_attempts;
 volatile u32 telemetry_source_launch_successes;
 volatile u32 telemetry_source_random_attempts;
 volatile u32 telemetry_source_random_successes;
-volatile u32 telemetry_enemy_frame_catalog_misses;
-volatile u32 telemetry_enemy_frame_cache_hits;
-volatile u32 telemetry_enemy_frame_cache_misses;
-volatile u32 telemetry_enemy_frame_cache_evictions;
-volatile u32 telemetry_enemy_frame_cache_drops;
-volatile u32 telemetry_enemy_frame_uploads;
-volatile u32 telemetry_enemy_frame_upload_bytes;
-volatile u32 telemetry_enemy_frame_max_uploads;
+volatile u32 telemetry_sprite2_decode_failures;
+volatile u32 telemetry_sprite2_cache_hits;
+volatile u32 telemetry_sprite2_cache_misses;
+volatile u32 telemetry_sprite2_cache_evictions;
+volatile u32 telemetry_sprite2_cache_drops;
+volatile u32 telemetry_sprite2_uploads;
+volatile u32 telemetry_sprite2_upload_bytes;
+volatile u32 telemetry_sprite2_max_uploads;
+volatile u32 telemetry_sprite2_max_visible_unique;
+volatile u32 telemetry_effect_cache_hits;
+volatile u32 telemetry_effect_cache_misses;
+volatile u32 telemetry_effect_cache_evictions;
+volatile u32 telemetry_effect_cache_drops;
+volatile u32 telemetry_effect_cache_uploads;
+volatile u32 telemetry_effect_cache_upload_bytes;
+volatile u32 telemetry_effect_cache_max_uploads;
+volatile u32 telemetry_effect_cache_max_visible_unique;
 volatile u32 telemetry_state_transitions;
 volatile u32 telemetry_romfs_entries;
 volatile u32 telemetry_romfs_image_bytes;
@@ -514,6 +578,8 @@ volatile u32 telemetry_romfs_payload_bytes;
 volatile u32 telemetry_romfs_checks;
 volatile u32 telemetry_romfs_failures;
 volatile u32 telemetry_romfs_manifest_crc32;
+volatile u32 telemetry_layer_rule_checks;
+volatile u32 telemetry_layer_rule_failures;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -555,7 +621,7 @@ static const u16 boss_bar_fill_colours[7][3] = {
 
 #ifdef AUTOTEST
 static u8 autotest_running;
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V119";
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V121";
 static void autotest_finish(void);
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;
@@ -567,7 +633,9 @@ static s16 source_player_screen_y(void);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
+static void source_effect_cache_commit(void);
 
+#include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"
 #include "src/entity_runtime.inc"
@@ -684,6 +752,20 @@ int main(void)
                             game_state != STATE_TITLE &&
                             level_tick >= AUTOTEST_SCREENSHOT_TICK
                         ) {
+                            autotest_screenshot_delay = 3;
+                        }
+#endif
+#ifdef AUTOTEST_SCREENSHOT_POSITION
+                        if (
+                            !autotest_screenshot_delay &&
+                            game_state == STATE_PLAY &&
+                            level_position >= AUTOTEST_SCREENSHOT_POSITION
+                        ) {
+                            /*
+                             * Position-based capture makes the PC event
+                             * sequence reproducible even when presentation
+                             * frame counts change.
+                             */
                             autotest_screenshot_delay = 3;
                         }
 #endif

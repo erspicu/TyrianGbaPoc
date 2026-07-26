@@ -50,15 +50,33 @@ static void commit_vblank_work(void)
         bg3_row_pending = 0;
     }
     if (game_state != STATE_TITLE) {
+        u8 background2_priority = 2;
+        u8 background3_priority = 1;
+
+        if (game_state == STATE_PLAY) {
+            background2_priority = source_background2_priority();
+            background3_priority = source_background3_priority();
+        }
         REG_BG0HOFS = source_background_hofs(0);
         REG_BG1HOFS = source_background_hofs(1);
         REG_BG2HOFS = source_background_hofs(2);
         REG_BG0VOFS = bg1_presentation_scroll_pixel & 255;
         REG_BG1VOFS = bg2_presentation_scroll_pixel & 255;
         REG_BG2VOFS = bg3_presentation_scroll_pixel & 255;
-        REG_BG2CNT = BG_PRIORITY(foreground_phase ? 0 : 1) |
+        REG_BG1CNT = BG_PRIORITY(background2_priority) |
+                     CHAR_BASE(1) | SCREEN_BASE(BG1_SCREEN_BLOCK) |
+                     BG_16_COLOR | BG_SIZE_1;
+        REG_BG2CNT = BG_PRIORITY(background3_priority) |
                      CHAR_BASE(2) | SCREEN_BASE(BG2_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_1;
+        if (boss_obj_palette_restore_pending) {
+            dmaCopy(
+                obj_palette,
+                SPRITE_PALETTE,
+                512
+            );
+            boss_obj_palette_restore_pending = 0;
+        }
     }
     /*
      * Source Sprite2 frames are copied into the reserved OBJ tile cache only
@@ -67,6 +85,7 @@ static void commit_vblank_work(void)
      * translated JE_drawEnemy selected it.
      */
     source_enemy_cache_commit();
+    source_effect_cache_commit();
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;

@@ -103,7 +103,7 @@ static void enter_boss(void)
 {
     ot_level_port_clear_projectiles(&source_parity_level);
     source_sync_runtime_telemetry();
-    foreground_phase = 0;
+    boss_obj_palette_restore_pending = 1;
     boss_x = 88;
     boss_y = 8;
     boss_dx = 1;
