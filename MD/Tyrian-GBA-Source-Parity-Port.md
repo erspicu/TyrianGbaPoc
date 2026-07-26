@@ -634,15 +634,36 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 
 所有無法直接保留的差異要以 `GBA_PORT` 註解及本文件記錄。
 
-## 下一個直譯階段
+## v25／v26 來源流程進度
 
-1. 不在 5400 提前切換，逐行移植 event 79 Boss link、component armor、
-   weapon、movement、damage bar 與 level-end path。
-2. 加入玩家 armor／damage／death／respawn；開發用無死亡模式改成明確
-   build option。
-3. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
-4. 比較 v21 runtime raw Sprite2 與通用 row-packed provider 的成本，在
-   不降 logic rate、不刪音樂／圖層的前提下降低 155 個 delayed frame。
+v25 已把第一關 Boss group 清空後的 player end-level warp、殘影、End of
+Level 曲目、`Level completed` voice、分段統計與按鍵返回翻寫完成。
+
+v26 已完成玩家死亡路徑：
+
+1. `JE_playerDamage()` 致命狀態、60 tick 與 `levelEnd = 40`。
+2. 每 tick 雙大型爆炸、來源 MT19937 呼叫順序及隨機
+   `S_EXPLOSION_9`／`S_EXPLOSION_11` cadence。
+3. 59 次一單位音樂 fade、真正 Game Over 曲目及 effect-preserving
+   module switch。
+4. 在最後 gameplay composition 上疊出 `GAME OVER`；按鍵後才回到
+   Game Menu 並恢復 title music。
+5. effect 邏輯 pool 對齊 PC 的 200 格；GBA OAM 僅在 presentation
+   階段限制每幀 48 個 effect。
+
+詳細紀錄：
+
+- `Tyrian-GBA-End-Level-Source-Parity-v25.md`
+- `Tyrian-GBA-Player-Death-Source-Parity-v26.md`
+
+## 下一個移植階段
+
+1. 啟用 Jukebox，對照 PC 曲目 catalog、曲名與星塵／粒子流程，以 GBA
+   tile、palette cycling 及少量 OBJ 做硬體轉接。
+2. 讓 Episode 選擇真正決定 episode data，打通 `nextLevel` 與第二關。
+3. MUS、SHP、PIC、HDT、LVL loader 持續收斂到通用 ROMFS reader，避免
+   為每一關新增 Python 特例。
+4. 完成 turret 251..255 magnet／special effects 與 player misc-shot 104。
 
 ## 建置
 
@@ -650,10 +671,10 @@ projectile 及 collision state 已收進獨立的 `.c/.h` 模組。舊
 .\build.ps1
 ```
 
-目前 ROMFS v21 runtime Sprite2 ROM：
+目前 ROMFS v26 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_source_parity_runtime_sprite2_romfs_v21.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v26_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

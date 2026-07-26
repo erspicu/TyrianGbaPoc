@@ -55,6 +55,32 @@ static void render_pause_text(void)
     }
 }
 
+static void render_game_over_text(void)
+{
+    u8 index;
+    s16 x = source_world_to_screen_x(120);
+    s16 y = source_world_to_screen_y(60);
+
+    /*
+     * Direct tyrian2.c GAME OVER call:
+     *   JE_dString(VGAScreen, 120, 60, miscText[21], FONT_SHAPES)
+     * The generated bank omits the blank glyph; apply JE_dString's six-PC-
+     * pixel space (scaled by the existing GBA FONT_SHAPES adapter) before O.
+     */
+    for (index = 0; index < OBJ_GAME_OVER_GLYPH_COUNT; index++) {
+        if (index == 4) x += OBJ_GAME_OVER_WORD_GAP;
+        put_sprite_shaped(
+            x, y,
+            OBJ_TILE_GAME_OVER_RUNTIME + index * 2,
+            OBJ_PAL_GAME_OVER,
+            ATTR0_TALL, ATTR1_SIZE_8,
+            8, 16, 0
+        );
+        x += game_over_glyph_advances[index];
+    }
+    telemetry_game_over_overlay_frames++;
+}
+
 static u8 source_boss_bar_armor(u8 bar)
 {
     u8 link = source_parity_level.boss_bar_link[bar];

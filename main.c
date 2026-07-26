@@ -49,7 +49,9 @@
  */
 #define MAX_PLAYER_SHOTS 12
 #define MAX_ENEMY_SHOTS 60
-#define MAX_EFFECTS 48
+/* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
+#define MAX_EFFECTS 200
+#define MAX_VISIBLE_EFFECTS 48
 #define MAX_REWARDS 32
 #define MAX_PICKUP_EXPLOSIONS 32
 #define HARDWARE_OAM_ENTRIES 128
@@ -176,6 +178,24 @@ _Static_assert(
 _Static_assert(
     OBJ_PAUSE_GLYPH_COUNT == 6,
     "pause label must contain the six original PAUSED glyphs"
+);
+_Static_assert(
+    OBJ_GAME_OVER_GLYPH_COUNT == 8 &&
+        OBJ_GAME_OVER_TILE_COUNT == OBJ_GAME_OVER_GLYPH_COUNT * 2,
+    "GAME OVER label must contain eight 8x16 glyphs"
+);
+_Static_assert(
+    OBJ_TILE_GAME_OVER_RUNTIME ==
+        SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
+            SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
+                SOURCE_ENEMY_TILES_PER_SLOT &&
+        OBJ_TILE_GAME_OVER_RUNTIME + OBJ_GAME_OVER_TILE_COUNT <=
+            OBJ_TILE_REWARD,
+    "GAME OVER runtime bank must occupy the lower-cache/reward gap"
+);
+_Static_assert(
+    OBJ_TILE_GAME_OVER_SOURCE == SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
+    "GAME OVER cartridge bank must use the first time-shared upper slot"
 );
 _Static_assert(
     OBJ_PROJECTILE_SOURCE_COUNT == 8,
@@ -376,6 +396,7 @@ static Effect effects[MAX_EFFECTS] EWRAM_DATA;
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
 static PickupExplosion pickup_explosions[MAX_PICKUP_EXPLOSIONS] EWRAM_DATA;
 static u8 active_effect_count;
+static u8 effect_slot_high_water;
 static u8 active_reward_count;
 static u8 active_pickup_explosion_count;
 static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
@@ -412,6 +433,19 @@ static const u8 pause_glyph_advances[OBJ_PAUSE_GLYPH_COUNT] = {
     OBJ_PAUSE_ADVANCE_5,
 };
 
+static const u8 game_over_glyph_advances[
+    OBJ_GAME_OVER_GLYPH_COUNT
+] = {
+    OBJ_GAME_OVER_ADVANCE_0,
+    OBJ_GAME_OVER_ADVANCE_1,
+    OBJ_GAME_OVER_ADVANCE_2,
+    OBJ_GAME_OVER_ADVANCE_3,
+    OBJ_GAME_OVER_ADVANCE_4,
+    OBJ_GAME_OVER_ADVANCE_5,
+    OBJ_GAME_OVER_ADVANCE_6,
+    OBJ_GAME_OVER_ADVANCE_7,
+};
+
 static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
@@ -445,6 +479,9 @@ static u8 player_source_y_friction_ticks;
 static u8 player_invulnerable;
 static u8 player_alive;
 static u8 player_exploding_ticks;
+static u8 player_death_fx_wait;
+static u8 player_death_music_volume;
+static u8 player_death_music_fade_active;
 static u8 player_armor;
 static u8 player_shield;
 static u8 player_shield_max;
@@ -495,6 +532,7 @@ static u16 *bg3_row_target;
 static u8 oam_count;
 static u8 previous_oam_count;
 static u8 oam_dirty;
+static u8 game_over_tile_upload_pending;
 static u32 last_vblank_seen;
 
 volatile u32 telemetry_vblank_irqs;
@@ -595,6 +633,14 @@ volatile u32 telemetry_end_level_trail_max;
 volatile u32 telemetry_level_complete_voice_starts;
 volatile u32 telemetry_stats_stage_advances;
 volatile u32 telemetry_stats_cube_reveals;
+volatile u32 telemetry_player_death_large_explosions;
+volatile u32 telemetry_player_death_sfx_9;
+volatile u32 telemetry_player_death_sfx_11;
+volatile u32 telemetry_player_death_sfx_22;
+volatile u32 telemetry_player_death_music_fade_steps;
+volatile u32 telemetry_game_over_music_starts;
+volatile u32 telemetry_game_over_overlay_frames;
+volatile u32 telemetry_game_over_exits;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -726,7 +772,10 @@ int main(void)
         pad_now = keysHeld();
         pad_pressed = keysDown();
 #ifdef AUTOTEST
-        if (game_state != STATE_PLAY) {
+        if (game_state == STATE_GAME_OVER) {
+            pad_now = 0;
+            pad_pressed = 0;
+        } else if (game_state != STATE_PLAY) {
             if (!autotest_running) autotest_running = 1;
             pad_now = 0;
 #ifdef AUTOTEST_FRONTEND_STRESS
@@ -766,7 +815,16 @@ int main(void)
         }
 #endif
 
-        if (game_state != STATE_PLAY) {
+        if (game_state == STATE_GAME_OVER) {
+            game_over_update();
+            if (game_state == STATE_GAME_OVER) {
+                render_game();
+                telemetry_display_frames++;
+#ifdef AUTOTEST_DEATH_FLOW
+                autotest_death_update();
+#endif
+            }
+        } else if (game_state != STATE_PLAY) {
 #ifdef AUTOTEST_BOOT_ONLY
             u8 old_state = game_state;
 #endif
@@ -894,8 +952,13 @@ int main(void)
                 if (logic_accumulator >= TYRIAN_GBA_LOGIC_DENOMINATOR) {
                     logic_accumulator -= TYRIAN_GBA_LOGIC_DENOMINATOR;
                     update_logic();
-                    if (game_state == STATE_PLAY) {
+                    if (
+                        game_state == STATE_PLAY ||
+                        game_state == STATE_GAME_OVER
+                    ) {
                         render_game();
+                    }
+                    if (game_state == STATE_PLAY) {
 #ifdef AUTOTEST_SCREENSHOT_TICK
                         if (
                             !autotest_screenshot_delay &&

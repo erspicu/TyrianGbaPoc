@@ -91,6 +91,11 @@ REWARD_FRAMES_PER_SEQUENCE = 3
 CASH_DIGIT_SOURCE_IDS = (79, 70, 71, 72, 73, 74, 75, 76, 77, 78)
 PAUSE_TEXT = "PAUSED"
 PAUSE_TEXT_SOURCE_IDS = (15, 0, 20, 18, 4, 3)
+GAME_OVER_TEXT = "GAMEOVER"
+GAME_OVER_TEXT_SOURCE_IDS = (6, 0, 12, 4, 14, 21, 4, 17)
+GAME_OVER_WORD_GAP = (6 * 3 + 2) // 4
+GAME_OVER_SOURCE_TILE = 640
+GAME_OVER_RUNTIME_TILE = 512
 ENEMY_PROJECTILE_SOURCE_IDS = (58, 112, 113, 145, 146, 147, 201, 202)
 ENEMY_PROJECTILE_WEAPON_IDS = (2, 3, 4, 59, 62, 78, 115, 116, 125, 126)
 BOSS_PROJECTILE_WEAPON_IDS = (59, 127)
@@ -1534,12 +1539,14 @@ def build_cash_digits(
     )
 
 
-def build_pause_text(
+def build_gameplay_status_text(
     snes: ModuleType,
     image_root: Path,
     palette_file: Path,
+    text: str,
+    source_ids: tuple[int, ...],
 ) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
-    """Recreate JE_dString(PAUSED, FONT_SHAPES) at GBA display scale."""
+    """Recreate a JE_dString FONT_SHAPES label at GBA display scale."""
     source_dir = image_root / "sprites" / "00_font"
     tyrian_palette = load_tyrian_palette(palette_file)
     font_colour_indices = {
@@ -1550,14 +1557,14 @@ def build_pause_text(
     advances: list[int] = []
 
     for character, source_id in zip(
-        PAUSE_TEXT,
-        PAUSE_TEXT_SOURCE_IDS,
+        text,
+        source_ids,
         strict=True,
     ):
         source = Image.open(source_dir / f"{source_id:03d}.png").convert("RGBA")
-        if source.height != 15 or source.width not in (11, 12):
+        if source.height != 15 or not 11 <= source.width <= 17:
             raise ValueError(
-                "unexpected Tyrian FONT_SHAPES pause glyph canvas: "
+                "unexpected Tyrian FONT_SHAPES status glyph canvas: "
                 f"{character}/{source_id} is {source.size}"
             )
         advances.append(((source.width + 1) * 3 + 2) // 4)
@@ -1567,7 +1574,7 @@ def build_pause_text(
             colour = tuple(int(component) for component in rgba[y, x, :3])
             if colour not in font_colour_indices:
                 raise ValueError(
-                    "unexpected Tyrian FONT_SHAPES pause glyph colour: "
+                    "unexpected Tyrian FONT_SHAPES status glyph colour: "
                     f"{character}/{source_id} contains {colour}"
                 )
             source_index = font_colour_indices[colour]
@@ -1747,6 +1754,8 @@ def repack_obj_tiles(
     digit_advances: tuple[int, ...],
     pause_tiles: bytes,
     pause_advances: tuple[int, ...],
+    game_over_tiles: bytes,
+    game_over_advances: tuple[int, ...],
     projectile_tiles: bytes,
     projectile_layouts: tuple[dict[str, int], ...],
     boss_bar_tiles: bytes,
@@ -1907,6 +1916,26 @@ def repack_obj_tiles(
     # hardware window so all time-shared VRAM regions have deterministic
     # backing, without generating any per-enemy frame catalog here.
     output.extend(b"\0" * (1024 * 32 - len(output)))
+    expected_game_over_bytes = len(GAME_OVER_TEXT) * 2 * 32
+    if len(game_over_tiles) != expected_game_over_bytes:
+        raise ValueError(
+            "GBA GAME OVER text must contain two tiles per glyph"
+        )
+    if len(game_over_advances) != len(GAME_OVER_TEXT):
+        raise ValueError("GBA GAME OVER text advance count changed")
+    game_over_start = GAME_OVER_SOURCE_TILE * 32
+    game_over_end = game_over_start + len(game_over_tiles)
+    if game_over_end > len(output):
+        raise ValueError("GBA GAME OVER source bank exceeds OBJ backing")
+    output[game_over_start:game_over_end] = game_over_tiles
+    metadata["OBJ_TILE_GAME_OVER_SOURCE"] = GAME_OVER_SOURCE_TILE
+    metadata["OBJ_TILE_GAME_OVER_RUNTIME"] = GAME_OVER_RUNTIME_TILE
+    metadata["OBJ_PAL_GAME_OVER"] = 14
+    metadata["OBJ_GAME_OVER_GLYPH_COUNT"] = len(GAME_OVER_TEXT)
+    metadata["OBJ_GAME_OVER_TILE_COUNT"] = len(game_over_tiles) // 32
+    metadata["OBJ_GAME_OVER_WORD_GAP"] = GAME_OVER_WORD_GAP
+    for index, advance in enumerate(game_over_advances):
+        metadata[f"OBJ_GAME_OVER_ADVANCE_{index}"] = advance
     tile_count = len(output) // 32
     if tile_count > 1024:
         raise ValueError(f"GBA OBJ atlas exceeds 1024 tiles: {tile_count}")
@@ -3555,7 +3584,27 @@ def main() -> None:
         pause_palette,
         pause_preview,
         pause_advances,
-    ) = build_pause_text(snes, image_root, data_root / "palette.dat")
+    ) = build_gameplay_status_text(
+        snes,
+        image_root,
+        data_root / "palette.dat",
+        PAUSE_TEXT,
+        PAUSE_TEXT_SOURCE_IDS,
+    )
+    (
+        game_over_tiles,
+        game_over_palette,
+        game_over_preview,
+        game_over_advances,
+    ) = build_gameplay_status_text(
+        snes,
+        image_root,
+        data_root / "palette.dat",
+        GAME_OVER_TEXT,
+        GAME_OVER_TEXT_SOURCE_IDS,
+    )
+    if game_over_palette != pause_palette:
+        raise ValueError("PAUSED and GAME OVER must share one OBJ palette")
     (
         projectile_tiles,
         projectile_palettes,
@@ -3586,6 +3635,8 @@ def main() -> None:
         digit_advances,
         pause_tiles,
         pause_advances,
+        game_over_tiles,
+        game_over_advances,
         projectile_tiles,
         projectile_layouts,
         boss_bar_tiles,
@@ -3630,6 +3681,10 @@ def main() -> None:
         (pause_preview.width * 8, pause_preview.height * 8),
         Image.Resampling.NEAREST,
     ).save(preview / "paused_font_shapes.png")
+    game_over_preview.resize(
+        (game_over_preview.width * 8, game_over_preview.height * 8),
+        Image.Resampling.NEAREST,
+    ).save(preview / "game_over_font_shapes.png")
     projectile_preview.resize(
         (projectile_preview.width * 6, projectile_preview.height * 6),
         Image.Resampling.NEAREST,
@@ -3652,12 +3707,25 @@ def main() -> None:
         workspace,
         workspace / "org" / "TyrianAudioLab" / "Music" / "10_end_of_level.tym",
     )
+    game_over_music, game_over_report = build_sparse_tym_tracker_it(
+        snes,
+        workspace,
+        workspace / "org" / "TyrianAudioLab" / "Music" / "11_game_over_solo.tym",
+    )
     (output / "tyrian_title_full.it").write_bytes(title_music)
     (output / "tyrian_level_full.it").write_bytes(level_music)
     (output / "tyrian_end_level_full.it").write_bytes(end_level_music)
+    (output / "tyrian_game_over_full.it").write_bytes(game_over_music)
     sound_file = data_root / "tyrian.snd"
     voice_file = data_root / "voices.snd"
     sfx = snes.extract_tyrian_sfx(sound_file)
+    for sound_id in (11, 22):
+        sfx.append((
+            f"explosion_{sound_id}",
+            extract_tyrian_sfx_entry(sound_file, sound_id - 1),
+            11_025,
+            False,
+        ))
     # S_ITEM is one-based sample 18 in OpenTyrian, hence archive index 17.
     sfx.append((
         "item",
@@ -3884,6 +3952,11 @@ def main() -> None:
         (
             "end_level_music_seconds="
             f"{end_level_report['tracker_duration_seconds']:.6f}"
+        ),
+        f"game_over_music_it_bytes={len(game_over_music)}",
+        (
+            "game_over_music_seconds="
+            f"{game_over_report['tracker_duration_seconds']:.6f}"
         ),
         f"level_complete_voice_pcm_bytes={len(level_complete) - 100}",
         f"audio_sfx_samples={len(sfx)}",

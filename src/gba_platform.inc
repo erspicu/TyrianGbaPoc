@@ -73,14 +73,15 @@ static void commit_vblank_work(void)
         commit_background_row(bg3_row_source, bg3_row_target);
         bg3_row_pending = 0;
     }
-    if (game_state == STATE_PLAY) {
+    if (
+        game_state == STATE_PLAY ||
+        game_state == STATE_GAME_OVER
+    ) {
         u8 background2_priority = 2;
         u8 background3_priority = 1;
 
-        if (game_state == STATE_PLAY) {
-            background2_priority = source_background2_priority();
-            background3_priority = source_background3_priority();
-        }
+        background2_priority = source_background2_priority();
+        background3_priority = source_background3_priority();
         REG_BG0HOFS = source_background_hofs(0);
         REG_BG1HOFS = source_background_hofs(1);
         REG_BG2HOFS = source_background_hofs(2);
@@ -104,6 +105,21 @@ static void commit_vblank_work(void)
             );
             boss_obj_palette_restore_pending = 0;
         }
+    }
+    if (game_over_tile_upload_pending) {
+        /*
+         * The generated GAME OVER glyphs live in cartridge backing at the
+         * first upper Sprite2 cache slot.  At death completion, copy them
+         * into the otherwise unused 512..527 runtime gap.  The explosion
+         * cache reads its source frames from cartridge ROM, so replacing
+         * those VRAM characters cannot corrupt the final death effects.
+         */
+        dmaCopy(
+            obj_tiles + OBJ_TILE_GAME_OVER_SOURCE * 32,
+            (u8 *)OBJ_BASE_ADR + OBJ_TILE_GAME_OVER_RUNTIME * 32,
+            OBJ_GAME_OVER_TILE_COUNT * 32
+        );
+        game_over_tile_upload_pending = 0;
     }
     /*
      * Source Sprite2 frames are copied into the reserved OBJ tile cache only
@@ -139,6 +155,9 @@ static void audio_load_music_internal(
     case MOD_TYRIAN_END_LEVEL_FULL:
         source_song = 9u;
         break;
+    case MOD_TYRIAN_GAME_OVER_FULL:
+        source_song = 10u;
+        break;
     default:
         source_song = 17u;
         break;
@@ -156,6 +175,18 @@ static void audio_load_music_internal(
     mmStart(module, MM_PLAY_LOOP);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
+}
+
+static void audio_set_source_music_volume(u8 source_volume)
+{
+    /*
+     * OpenTyrian's tyrMusicVolume/tempVolume range is 0..255.  Preserve the
+     * established calibrated Maxmod ceiling (896) while translating the
+     * source's one-unit-per-tick death fade.
+     */
+    mmSetModuleVolume(
+        (u16)(((u32)source_volume * 896u + 127u) / 255u)
+    );
 }
 
 static void audio_load_music(u16 module)

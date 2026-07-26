@@ -47,6 +47,106 @@ static void sram_write_u32(u32 offset, u32 value)
     sram[offset + 3] = (u8)(value >> 24);
 }
 
+#ifdef AUTOTEST_DEATH_FLOW
+static void autotest_death_update(void)
+{
+    static u8 settled_frames;
+    const OtDataCatalog *catalog;
+    volatile u8 *sram;
+    u8 game_over_pass;
+
+    if (++settled_frames < 4) return;
+
+    catalog = ot_data_catalog();
+    sram = (volatile u8 *)0x0E000000;
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'D';
+    sram[3] = '2';
+    sram_write_u32(
+        4,
+        catalog ? catalog->selected_mus_song : 0xffffu
+    );
+    sram_write_u32(8, mmActive());
+    sram_write_u32(12, game_state);
+    sram_write_u32(16, TYRIAN_GBA_DEV_PLAYER_INVINCIBLE);
+    sram_write_u32(20, player_alive);
+    sram_write_u32(24, player_exploding_ticks);
+    sram_write_u32(28, telemetry_player_death_large_explosions);
+    sram_write_u32(32, telemetry_player_death_sfx_9);
+    sram_write_u32(36, telemetry_player_death_sfx_11);
+    sram_write_u32(40, telemetry_player_death_sfx_22);
+    sram_write_u32(44, telemetry_player_death_music_fade_steps);
+    sram_write_u32(48, telemetry_game_over_music_starts);
+    sram_write_u32(52, telemetry_game_over_overlay_frames);
+    sram_write_u32(56, source_parity_level.rng_call_count);
+    sram_write_u32(60, game_over_tile_upload_pending);
+    sram_write_u32(64, source_parity_level.level_end);
+    sram_write_u32(68, frontend_mode4_active);
+    sram_write_u32(72, active_effect_count);
+    sram_write_u32(76, telemetry_effect_drops);
+    sram_write_u32(80, telemetry_display_frames);
+    sram_write_u32(84, oam_count);
+    game_over_pass = (
+        game_state == STATE_GAME_OVER &&
+        catalog != 0 &&
+        catalog->selected_mus_song == 10 &&
+        mmActive() &&
+        !TYRIAN_GBA_DEV_PLAYER_INVINCIBLE &&
+        !player_alive &&
+        player_exploding_ticks == 0 &&
+        telemetry_player_death_large_explosions == 120 &&
+        telemetry_player_death_sfx_22 == 1 &&
+        telemetry_player_death_sfx_9 +
+            telemetry_player_death_sfx_11 > 0 &&
+        telemetry_player_death_music_fade_steps == 59 &&
+        telemetry_game_over_music_starts == 1 &&
+        telemetry_game_over_overlay_frames >= 4 &&
+        !game_over_tile_upload_pending &&
+        source_parity_level.level_end == 0 &&
+        !frontend_mode4_active
+    );
+    sram_write_u32(88, game_over_pass);
+
+#ifdef AUTOTEST_DEATH_CAPTURE
+    /*
+     * Optional visual harness: stop before the synthetic return key so
+     * mGBA -O captures the complete live gameplay/GAME OVER composition.
+     */
+    __asm__ volatile("swi 3");
+#endif
+
+    /*
+     * Exercise the source "any input" exit after recording the live Mode-0
+     * overlay, then verify that Game Menu restores the title module.
+     */
+    pad_pressed = KEY_A;
+    game_over_update();
+    catalog = ot_data_catalog();
+    sram_write_u32(
+        92,
+        catalog ? catalog->selected_mus_song : 0xffffu
+    );
+    sram_write_u32(96, game_state);
+    sram_write_u32(100, frontend_selection);
+    sram_write_u32(104, frontend_mode4_active);
+    sram_write_u32(108, telemetry_game_over_exits);
+    sram_write_u32(112, mmActive());
+    sram_write_u32(
+        116,
+        game_over_pass &&
+        catalog != 0 &&
+        catalog->selected_mus_song == 29 &&
+        game_state == STATE_GAME_MENU &&
+        frontend_selection == 4 &&
+        frontend_mode4_active &&
+        telemetry_game_over_exits == 1 &&
+        mmActive()
+    );
+    __asm__ volatile("swi 3");
+}
+#endif
+
 static void autotest_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;

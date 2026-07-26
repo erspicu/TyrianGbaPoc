@@ -50,8 +50,17 @@ static void player_damage(u16 damage)
                 player_armor = 0;
                 player_alive = 0;
                 player_exploding_ticks = 60;
+                player_death_fx_wait = 0;
+                player_death_music_volume = 255;
+                player_death_music_fade_active = 0;
                 source_parity_level.level_end = 40;
-                audio_effect(SFX_EXPLOSION_9);
+                /*
+                 * varz.c JE_playerDamage() assigns S_EXPLOSION_22 at the
+                 * lethal transition before JE_playerMovement begins the
+                 * repeating 9/11 cadence later in this same source tick.
+                 */
+                audio_effect(SFX_EXPLOSION_22);
+                telemetry_player_death_sfx_22++;
             } else {
                 player_armor = (u8)(player_armor - remaining);
                 audio_effect(SFX_ENEMY_HIT);
@@ -82,24 +91,87 @@ static void update_player(void)
 
     if (!player_alive) {
         if (player_exploding_ticks > 0) {
-            s16 centre_x = (s16)(source_player_screen_x() + 16);
-            s16 centre_y = (s16)(source_player_screen_y() + 16);
+            s16 explosion_x;
+            s16 explosion_y;
+
+            /*
+             * tyrian2.c evaluates the previous frame's musicFade before
+             * JE_playerMovement, then enables it after that movement.  The
+             * lethal frame therefore does not fade; the remaining 59 do.
+             */
+            if (
+                player_death_music_fade_active &&
+                player_death_music_volume > 10
+            ) {
+                player_death_music_volume--;
+                audio_set_source_music_volume(
+                    player_death_music_volume
+                );
+                telemetry_player_death_music_fade_steps++;
+            }
 
             player_exploding_ticks--;
-            if ((player_exploding_ticks & 3u) == 0) {
-                s16 offset_x =
-                    (s16)(((player_exploding_ticks * 13u) & 31u) - 16);
-                s16 offset_y =
-                    (s16)(((player_exploding_ticks * 7u) & 31u) - 16);
-
-                spawn_large_effect(
-                    (s16)(centre_x + offset_x),
-                    (s16)(centre_y + offset_y),
-                    0
+            if (player_death_fx_wait > 0) {
+                player_death_fx_wait--;
+            } else {
+                player_death_fx_wait = (u8)(
+                    ot_level_port_random(&source_parity_level) % 6u + 3u
                 );
+                if (
+                    ot_level_port_random(&source_parity_level) % 3u == 1u
+                ) {
+                    audio_effect(SFX_EXPLOSION_9);
+                    telemetry_player_death_sfx_9++;
+                } else {
+                    audio_effect(SFX_EXPLOSION_11);
+                    telemetry_player_death_sfx_11++;
+                }
             }
-            if ((player_exploding_ticks % 9u) == 0) {
-                audio_effect(SFX_EXPLOSION_9);
+
+            explosion_x = (s16)(
+                player_source_x +
+                (s16)(ot_level_port_random(&source_parity_level) % 32u) -
+                16
+            );
+            explosion_y = (s16)(
+                player_source_y +
+                (s16)(ot_level_port_random(&source_parity_level) % 32u) -
+                16
+            );
+            spawn_large_effect(
+                (s16)(explosion_x - SOURCE_PRESENTATION_X_ORIGIN),
+                (s16)(
+                    explosion_y + 7 -
+                    SOURCE_PRESENTATION_Y_ORIGIN
+                ),
+                0
+            );
+            telemetry_player_death_large_explosions++;
+            spawn_large_effect(
+                (s16)(player_source_x - SOURCE_PRESENTATION_X_ORIGIN),
+                (s16)(
+                    player_source_y + 7 -
+                    SOURCE_PRESENTATION_Y_ORIGIN
+                ),
+                0
+            );
+            telemetry_player_death_large_explosions++;
+
+            if (source_parity_level.level_end > 0) {
+                source_parity_level.level_end--;
+            }
+            player_death_music_fade_active = 1;
+            telemetry_source_rng_calls =
+                source_parity_level.rng_call_count;
+            if (
+                player_exploding_ticks == 0 &&
+                game_state == STATE_PLAY
+            ) {
+                /*
+                 * Full Game starts with exactly one life.  Unlike Arcade,
+                 * there is no JE_playerMovement respawn branch here.
+                 */
+                frontend_enter_game_over();
             }
         } else if (game_state == STATE_PLAY) {
             /*
@@ -263,7 +335,7 @@ static void update_rewards(void)
 static void update_effects(void)
 {
     u8 index;
-    for (index = 0; index < MAX_EFFECTS; index++) {
+    for (index = 0; index < effect_slot_high_water; index++) {
         if (!effects[index].active) continue;
         effects[index].y += (
             bg2_scroll_speed ? bg2_scroll_speed : bg1_scroll_speed
@@ -274,5 +346,11 @@ static void update_effects(void)
             effects[index].active = 0;
             if (active_effect_count) active_effect_count--;
         }
+    }
+    while (
+        effect_slot_high_water > 0 &&
+        !effects[effect_slot_high_water - 1].active
+    ) {
+        effect_slot_high_water--;
     }
 }

@@ -16,6 +16,7 @@ static void clear_entities(void)
         pickup_explosions[index].active = 0;
     }
     active_effect_count = 0;
+    effect_slot_high_water = 0;
     active_reward_count = 0;
     active_pickup_explosion_count = 0;
 }
@@ -74,6 +75,7 @@ static void enter_level(void)
     source_background2_enabled =
         TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_NORMAL;
     source_background2_upload_pending = 0;
+    game_over_tile_upload_pending = 0;
     clear_entities();
     hide_all_sprites();
 
@@ -140,6 +142,9 @@ static void enter_level(void)
      */
     player_alive = 1;
     player_exploding_ticks = 0;
+    player_death_fx_wait = 0;
+    player_death_music_volume = 255;
+    player_death_music_fade_active = 0;
     player_armor = 10;
     player_shield = 5;
     player_shield_max = 10;
@@ -233,6 +238,14 @@ static void enter_level(void)
     telemetry_level_complete_voice_starts = 0;
     telemetry_stats_stage_advances = 0;
     telemetry_stats_cube_reveals = 0;
+    telemetry_player_death_large_explosions = 0;
+    telemetry_player_death_sfx_9 = 0;
+    telemetry_player_death_sfx_11 = 0;
+    telemetry_player_death_sfx_22 = 0;
+    telemetry_player_death_music_fade_steps = 0;
+    telemetry_game_over_music_starts = 0;
+    telemetry_game_over_overlay_frames = 0;
+    telemetry_game_over_exits = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
     REG_BG0HOFS = source_background_hofs(0);

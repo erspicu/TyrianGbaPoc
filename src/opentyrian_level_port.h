@@ -362,6 +362,7 @@ void ot_level_port_update_parallax(
     int16_t player_x
 );
 void ot_level_port_update_enemy_shots(OtLevelPortState *state);
+uint32_t ot_level_port_random(OtLevelPortState *state);
 void ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,

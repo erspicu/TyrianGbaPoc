@@ -18,13 +18,18 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v25_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v25_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v26_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v26_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v26_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
+$deathTestRom = Join-Path $buildDir "$deathTestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
+$deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
+$deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
+$deathTestStderr = Join-Path $buildDir "death_autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
@@ -55,7 +60,7 @@ set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
@@ -315,6 +320,10 @@ $testInfo = Test-GbaRom `
     -Name "autotest" `
     -Path $testRom `
     -ExpectedGameCode "TYGT"
+$deathTestInfo = Test-GbaRom `
+    -Name "death_autotest" `
+    -Path $deathTestRom `
+    -ExpectedGameCode "TYGD"
 
 $env:PATH = "$ucrtBin;$env:PATH"
 if (Test-Path -LiteralPath $testSave) {
@@ -923,6 +932,130 @@ if ($failedTelemetryChecks.Count -ne 0) {
     )
 }
 
+if (Test-Path -LiteralPath $deathTestSave) {
+    Remove-Item -LiteralPath $deathTestSave -Force
+}
+$deathTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$deathTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $deathTestStdout `
+    -StandardError $deathTestStderr
+if (-not (Test-Path -LiteralPath $deathTestSave)) {
+    throw (
+        "mGBA did not create the expected death auto-test SRAM file: " +
+        $deathTestSave
+    )
+}
+$deathRuntimeErrors = @(
+    Select-String `
+        -Path $deathTestStdout, $deathTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($deathRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA death auto-test reported " +
+        "$($deathRuntimeErrors.Count) runtime error(s)"
+    )
+}
+$deathSaveBytes = [System.IO.File]::ReadAllBytes($deathTestSave)
+if ($deathSaveBytes.Length -lt 120) {
+    throw "Death auto-test SRAM telemetry is truncated"
+}
+$deathMagic = [Text.Encoding]::ASCII.GetString($deathSaveBytes, 0, 4)
+if ($deathMagic -ne "TGD2") {
+    throw "Death auto-test SRAM magic mismatch: '$deathMagic'"
+}
+function Read-DeathTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($deathSaveBytes, $Offset)
+}
+$deathTelemetry = [ordered]@{
+    game_over_song = Read-DeathTelemetryU32 4
+    game_over_music_active = Read-DeathTelemetryU32 8
+    game_over_state = Read-DeathTelemetryU32 12
+    dev_invincible = Read-DeathTelemetryU32 16
+    player_alive = Read-DeathTelemetryU32 20
+    exploding_ticks = Read-DeathTelemetryU32 24
+    large_explosion_calls = Read-DeathTelemetryU32 28
+    explosion_9_starts = Read-DeathTelemetryU32 32
+    explosion_11_starts = Read-DeathTelemetryU32 36
+    explosion_22_starts = Read-DeathTelemetryU32 40
+    music_fade_steps = Read-DeathTelemetryU32 44
+    game_over_music_starts = Read-DeathTelemetryU32 48
+    game_over_overlay_frames = Read-DeathTelemetryU32 52
+    rng_calls = Read-DeathTelemetryU32 56
+    tile_upload_pending = Read-DeathTelemetryU32 60
+    final_level_end = Read-DeathTelemetryU32 64
+    game_over_mode4 = Read-DeathTelemetryU32 68
+    active_effects = Read-DeathTelemetryU32 72
+    effect_drops = Read-DeathTelemetryU32 76
+    display_frames = Read-DeathTelemetryU32 80
+    final_oam = Read-DeathTelemetryU32 84
+    game_over_pass = Read-DeathTelemetryU32 88
+    return_song = Read-DeathTelemetryU32 92
+    return_state = Read-DeathTelemetryU32 96
+    return_selection = Read-DeathTelemetryU32 100
+    return_mode4 = Read-DeathTelemetryU32 104
+    game_over_exits = Read-DeathTelemetryU32 108
+    return_music_active = Read-DeathTelemetryU32 112
+    full_pass = Read-DeathTelemetryU32 116
+}
+$deathChecks = [ordered]@{
+    rom_reported_game_over_pass = $deathTelemetry.game_over_pass -eq 1
+    rom_reported_full_pass = $deathTelemetry.full_pass -eq 1
+    source_game_over_song = (
+        $deathTelemetry.game_over_song -eq 10 -and
+        $deathTelemetry.game_over_music_active -eq 1
+    )
+    live_mode0_game_over = (
+        $deathTelemetry.game_over_state -eq 10 -and
+        $deathTelemetry.game_over_mode4 -eq 0 -and
+        $deathTelemetry.tile_upload_pending -eq 0 -and
+        $deathTelemetry.game_over_overlay_frames -ge 4
+    )
+    release_invincibility_override = (
+        $deathTelemetry.dev_invincible -eq 0
+    )
+    source_death_completion = (
+        $deathTelemetry.player_alive -eq 0 -and
+        $deathTelemetry.exploding_ticks -eq 0 -and
+        $deathTelemetry.final_level_end -eq 0
+    )
+    source_double_large_explosions = (
+        $deathTelemetry.large_explosion_calls -eq 120 -and
+        $deathTelemetry.active_effects -eq 96 -and
+        $deathTelemetry.effect_drops -eq 0
+    )
+    source_explosion_sound_cadence = (
+        $deathTelemetry.explosion_9_starts -eq 3 -and
+        $deathTelemetry.explosion_11_starts -eq 6 -and
+        $deathTelemetry.explosion_22_starts -eq 1
+    )
+    source_music_fade = $deathTelemetry.music_fade_steps -eq 59
+    shared_mt19937_stream = $deathTelemetry.rng_calls -eq 138
+    gba_oam_limit = $deathTelemetry.final_oam -le 128
+    return_to_game_menu = (
+        $deathTelemetry.return_song -eq 29 -and
+        $deathTelemetry.return_state -eq 7 -and
+        $deathTelemetry.return_selection -eq 4 -and
+        $deathTelemetry.return_mode4 -eq 1 -and
+        $deathTelemetry.game_over_exits -eq 1 -and
+        $deathTelemetry.return_music_active -eq 1
+    )
+}
+$failedDeathChecks = @(
+    $deathChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedDeathChecks.Count -ne 0) {
+    throw (
+        "Death auto-test failed invariant(s): " +
+        ($failedDeathChecks -join ", ")
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -951,7 +1084,7 @@ $verification.Add("result=PASS")
 $verification.Add("verified_at=$([DateTime]::UtcNow.ToString('o'))")
 $verification.Add("compiler=$compilerVersion")
 $verification.Add("emulator=$mgbaVersion")
-foreach ($info in @($releaseInfo, $testInfo)) {
+foreach ($info in @($releaseInfo, $testInfo, $deathTestInfo)) {
     foreach ($entry in $info.GetEnumerator()) {
         $verification.Add("$($info.name)_$($entry.Key)=$($entry.Value)")
     }
@@ -970,6 +1103,13 @@ $verification.Add("autotest_host_elapsed_ms=$testElapsed")
 $verification.Add("autotest_runtime_error_count=$($runtimeErrors.Count)")
 foreach ($entry in $telemetry.GetEnumerator()) {
     $verification.Add("telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("death_autotest_host_elapsed_ms=$deathTestElapsed")
+$verification.Add(
+    "death_autotest_runtime_error_count=$($deathRuntimeErrors.Count)"
+)
+foreach ($entry in $deathTelemetry.GetEnumerator()) {
+    $verification.Add("death_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

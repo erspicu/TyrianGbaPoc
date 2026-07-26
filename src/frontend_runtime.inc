@@ -699,13 +699,6 @@ static void frontend_update(void)
         frontend_redraw();
         return;
     }
-    if (game_state == STATE_GAME_OVER) {
-        if (pad_pressed != 0) {
-            frontend_enter_state(STATE_GAME_MENU, 4);
-        }
-        return;
-    }
-
     if (pad_pressed & KEY_UP) {
         switch (game_state) {
         case STATE_TITLE:
@@ -826,10 +819,29 @@ static void frontend_enter_level_stats(u8 completed)
 
 static void frontend_enter_game_over(void)
 {
-    frontend_enter_state(STATE_GAME_OVER, 0);
     /*
-     * The level module loops indefinitely, so leaving gameplay must select
-     * the front-end source song explicitly before Game Over / Game Menu.
+     * tyrian2.c leaves VGAScreen on the live gameplay frame and overlays
+     * miscText[21].  Stay in Mode 0, request the OBJ glyph upload, and select
+     * zero-based SONG_GAMEOVER (10) without cancelling the last explosion.
      */
+    game_state = STATE_GAME_OVER;
+    frontend_selection = 0;
+    frontend_mode4_active = 0;
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    game_paused = 0;
+    player_death_music_fade_active = 0;
+    game_over_tile_upload_pending = 1;
+    audio_load_music_preserve_effects(MOD_TYRIAN_GAME_OVER_FULL);
+    telemetry_game_over_music_starts++;
+    telemetry_state_transitions++;
+}
+
+static void game_over_update(void)
+{
+    if (pad_pressed == 0) return;
+
+    frontend_enter_state(STATE_GAME_MENU, 4);
     audio_load_music(MOD_TYRIAN_TITLE_FULL);
+    telemetry_game_over_exits++;
 }

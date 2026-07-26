@@ -104,16 +104,25 @@ static void render_player_shots(u8 priority)
 static void render_effect_sprites(u8 priority)
 {
     s16 index;
+    u8 submitted = 0;
 
-    for (index = MAX_EFFECTS - 1; index >= 0; index--) {
+    for (index = (s16)effect_slot_high_water - 1; index >= 0; index--) {
         u16 tile;
 
         if (!effects[index].active) continue;
+        /*
+         * Keep OpenTyrian's full 200-entry allocator and lifecycle, then
+         * apply a presentation-only GBA budget. Newer (later PC blits)
+         * survive first, while the 128-entry hardware OAM remains available
+         * for enemies, projectiles, HUD and the GAME OVER overlay.
+         */
+        if (submitted >= MAX_VISIBLE_EFFECTS) continue;
         tile = source_effect_cache_acquire(
             effects[index].sequence,
             effects[index].frame
         );
         if (tile == 0xffff) continue;
+        submitted++;
         put_sprite(
             effects[index].x, effects[index].y,
             tile,
@@ -329,6 +338,14 @@ static void render_game(void)
 
     source_effect_cache_begin_frame();
     oam_count = 0;
+    if (game_state == STATE_GAME_OVER) {
+        /*
+         * PC draws GAME OVER after the complete gameplay scene. Lower GBA
+         * OAM indices win equal-priority ties, so reserve its front-most
+         * entries before emitting the translated world in reverse order.
+         */
+        render_game_over_text();
+    }
     if (
         game_paused
 #ifdef AUTOTEST_SCREENSHOT_REWARD
@@ -339,7 +356,12 @@ static void render_game(void)
     }
     render_cash_counter();
 
-    if (game_state == STATE_PLAY) render_source_play_scene();
+    if (
+        game_state == STATE_PLAY ||
+        game_state == STATE_GAME_OVER
+    ) {
+        render_source_play_scene();
+    }
     source_effect_cache_end_frame();
 
     visible_count = oam_count;

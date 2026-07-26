@@ -117,6 +117,16 @@ static uint32_t ot_mt_rand(OtLevelPortState *state)
     return y;
 }
 
+uint32_t ot_level_port_random(OtLevelPortState *state)
+{
+    /*
+     * JE_playerMovement shares the process-wide MT stream with event and
+     * enemy logic.  Expose that exact translated stream to the surrounding
+     * GBA player adapter instead of introducing a second death-only RNG.
+     */
+    return ot_mt_rand(state);
+}
+
 static int8_t ot_abs_s8(int16_t value)
 {
     return (int8_t)(value < 0 ? -value : value);

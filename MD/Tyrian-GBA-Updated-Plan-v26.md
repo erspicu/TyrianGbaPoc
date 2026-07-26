@@ -1,4 +1,4 @@
-# Tyrian GBA Updated Plan v24
+# Tyrian GBA Updated Plan v26
 
 更新日期：2026-07-26
 工作分支：`opentyrian-source-parity-port`
@@ -13,7 +13,7 @@
 成 GBA 240 × 160。選單與 Logo 則可依 GBA VRAM／DMA 特性使用預先產生
 的 Mode 4 畫面、tile 或局部更新，不要求逐像素照搬 PC renderer。
 
-## 本階段已完成
+## 已完成的共用設定
 
 ### Detail Level
 
@@ -69,19 +69,23 @@ PC 版不是以一般文字繪製拾取金額，而是在 `scoreitem` 分支建�
 第一關自動測試實際拾取兩個 `scoreitem`，產生兩個固定金額效果，
 pool drop 為 0。
 
-## v24 驗證矩陣
+## v26 驗證矩陣
 
-| Detail | Game Speed | 結果 | 邏輯更新 | 顯示 frame | BG2 最終狀態 |
-|---|---|---:|---:|---:|---:|
-| Low | Normal | PASS | 7,828 | 13,502 | 關閉 |
-| Normal | Normal | PASS | 7,828 | 13,502 | 開啟 |
-| Low | Low | PASS | 7,828 | 16,863 | 關閉 |
-| Normal | Low | PASS | 7,828 | 16,863 | 開啟 |
+| Detail | Game Speed | 完整關卡 | 死亡流程 | 邏輯更新 | 顯示 frame | BG2 最終狀態 |
+|---|---|---:|---:|---:|---:|---:|
+| Low | Normal | PASS | PASS | 7,832 | 13,509 | 關閉 |
+| Normal | Normal | PASS | PASS | 7,832 | 13,509 | 開啟 |
+| Low | Low | PASS | PASS | 7,832 | 16,872 | 關閉 |
+| Normal | Low | PASS | PASS | 7,832 | 16,872 | 開啟 |
 
 四種組合皆走完 935 個第一關事件、100 個敵人擊破、Boss group 清空、
 1 個 data cube、2 個 `scoreitem` 拾取，最後回到 Game Menu。ROMFS
 self-test、Sprite2 decode、map stream 與 reward pool 均為零失敗／
 零丟失；最大硬體 OAM 使用量為 89/128。
+
+四種組合也各自執行獨立的強制死亡測試，皆得到 120 次大型爆炸呼叫、
+59 次音樂 fade、138 次來源 RNG 呼叫、零 effect drop；Game Over 使用
+曲目索引 10，按鍵返回後才切至選單曲索引 29。
 
 預設交付組合維持：
 
@@ -103,18 +107,22 @@ Game Speed   = Normal
 驗收：Boss 死亡後不立即切黑畫面；離場、音樂、統計與 Game Menu
 順序和 PC 原始流程相同。
 
-### P2：玩家死亡
+### P2：玩家死亡（v26 已完成）
 
-1. 保留 `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE` 開發旗標，release 驗證時可關。
-2. 翻寫每 tick 的雙爆炸、隨機 SFX、音樂 fade 與死亡計時。
-3. 在最後一幀關卡畫面上疊出 PC 風格 `GAME OVER`，播放真正 Game Over
-   曲目，不提早切回 title music。
-4. 按鍵後回到 Game Menu，才切換選單音樂。
+1. 保留 `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE` 開發旗標，death auto-test
+   會明確設為 0。
+2. 已翻寫 60 tick、每 tick 雙大型爆炸、來源 MT19937、隨機 SFX 與
+   59 次音樂 fade。
+3. effect 邏輯 pool 對齊 PC 的 200 格；GBA presentation 每幀最多顯示
+   48 個 effect，來源 allocation drop 為 0。
+4. 在凍結的最後 gameplay composition 上疊出 `GAME OVER`，播放真正
+   Game Over 曲目索引 10。
+5. 按鍵後回到 Game Menu，才切換到 title song 索引 29。
 
-驗收：另建強制死亡 auto-test，確認死亡曲目索引、GAME OVER 狀態、
-按鍵返回與無敵旗標四項。
+驗收：四組 Detail／Game Speed 的獨立強制死亡 auto-test 全數 PASS。
+完整結果見 `Tyrian-GBA-Player-Death-Source-Parity-v26.md`。
 
-### P3：Jukebox
+### P3：Jukebox（目前階段）
 
 1. 啟用目前 disabled 的 Jukebox 選項。
 2. 對照 PC 原始星空／粒子背景，依 GBA 特性使用 tile、palette cycling

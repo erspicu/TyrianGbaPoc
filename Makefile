@@ -20,8 +20,9 @@ $(error GAME_SPEED must be low or normal)
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v25_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v25_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v26_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v26_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v26_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -79,7 +80,8 @@ ASSET_INPUTS := \
 	../../org/opentyrian/src/episodes.h \
 	../../org/TyrianAudioLab/Music/30_tyrian_the_song.tym \
 	../../org/TyrianAudioLab/Music/18_tyrian_the_level.tym \
-	../../org/TyrianAudioLab/Music/10_end_of_level.tym
+	../../org/TyrianAudioLab/Music/10_end_of_level.tym \
+	../../org/TyrianAudioLab/Music/11_game_over_solo.tym
 
 ASSET_BINARIES := \
 	$(RES)/bg1_tiles.bin \
@@ -100,9 +102,12 @@ AUDIO_INPUTS := \
 	$(RES)/tyrian_title_full.it \
 	$(RES)/tyrian_level_full.it \
 	$(RES)/tyrian_end_level_full.it \
+	$(RES)/tyrian_game_over_full.it \
 	$(RES)/weapon_1.wav \
 	$(RES)/enemy_hit.wav \
 	$(RES)/explosion_9.wav \
+	$(RES)/explosion_11.wav \
+	$(RES)/explosion_22.wav \
 	$(RES)/item.wav \
 	$(RES)/enemy_shot_4.wav \
 	$(RES)/enemy_shot_6.wav \
@@ -120,11 +125,13 @@ COMMON_OBJECTS := \
 
 MAIN_INCLUDES := $(wildcard src/*.inc)
 
-.PHONY: all autotest assets clean distclean
+.PHONY: all autotest death-autotest assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
 
 autotest: $(BUILD)/$(TEST_TARGET).gba
+
+death-autotest: $(BUILD)/$(DEATH_TEST_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -165,6 +172,15 @@ $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
+$(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FORCE_PLAYER_DEATH \
+		-DAUTOTEST_DEATH_FLOW \
+		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -203,6 +219,12 @@ $(BUILD)/$(TEST_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(DEATH_TEST_TARGET).elf: \
+		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(DEATH_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(TARGET).gba: $(BUILD)/$(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN GBA" -cTYGA -m00
@@ -211,12 +233,18 @@ $(BUILD)/$(TEST_TARGET).gba: $(BUILD)/$(TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN TEST" -cTYGT -m00
 
+$(BUILD)/$(DEATH_TEST_TARGET).gba: $(BUILD)/$(DEATH_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYRIAN DEATH" -cTYGD -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_test_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -231,7 +259,10 @@ clean:
 		$(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).gba \
 		$(BUILD)/$(TARGET).map \
 		$(BUILD)/$(TEST_TARGET).elf $(BUILD)/$(TEST_TARGET).gba \
-		$(BUILD)/$(TEST_TARGET).map
+		$(BUILD)/$(TEST_TARGET).map \
+		$(BUILD)/$(DEATH_TEST_TARGET).elf \
+		$(BUILD)/$(DEATH_TEST_TARGET).gba \
+		$(BUILD)/$(DEATH_TEST_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -240,6 +271,7 @@ distclean: clean
 
 -include $(BUILD)/main_release_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_test_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_death_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_sprite2.d

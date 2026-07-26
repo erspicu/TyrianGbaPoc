@@ -11,6 +11,9 @@ static void spawn_effect(s16 x, s16 y, u8 sequence)
             effects[index].frame = 0;
             effects[index].sequence = sequence;
             active_effect_count++;
+            if (index >= effect_slot_high_water) {
+                effect_slot_high_water = (u8)(index + 1);
+            }
             if (active_effect_count > telemetry_max_effects) {
                 telemetry_max_effects = active_effect_count;
             }
