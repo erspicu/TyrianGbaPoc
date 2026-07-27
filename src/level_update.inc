@@ -33,6 +33,30 @@ static void advance_backgrounds(void)
     u16 new_row;
     u8 move1 = 0;
     u8 move2 = 0;
+
+    /*
+     * The previous update may have kept one outgoing row alive while the old
+     * presentation scroll was still on screen.  It is safe to release that
+     * row now, before this update can allocate or upload another source row.
+     */
+    background_retain_visible_rows(
+        0,
+        bg1_scroll_pixel >> 3
+    );
+    if (
+        source_background2_enabled &&
+        !source_background2_upload_pending
+    ) {
+        background_retain_visible_rows(
+            1,
+            bg2_scroll_pixel >> 3
+        );
+    }
+    background_retain_visible_rows(
+        2,
+        bg3_scroll_pixel >> 3
+    );
+
     bg1_step = 0;
     bg2_step = 0;
     bg3_step = 0;

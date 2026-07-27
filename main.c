@@ -541,27 +541,33 @@ static u8 frontend_play_mode;
 static u8 frontend_episode;
 static u8 frontend_difficulty;
 static u16 frontend_main_section;
-static OtEpisodeMap frontend_map;
-static OtEpisodeLevel frontend_map_level[OT_EPISODE_MAP_CHOICE_COUNT];
-static OtEpisodeLevel frontend_level;
-static OtFrontendText frontend_text;
+/*
+ * These decoded menu records are cold while gameplay is active.  Keep them
+ * in EWRAM so the scarce 32 KiB IWRAM can hold collision and Sprite2 cache
+ * hot paths without sacrificing the link-time stack/IRQ safety margin.
+ */
+static OtEpisodeMap frontend_map EWRAM_BSS;
+static OtEpisodeLevel
+    frontend_map_level[OT_EPISODE_MAP_CHOICE_COUNT] EWRAM_BSS;
+static OtEpisodeLevel frontend_level EWRAM_BSS;
+static OtFrontendText frontend_text EWRAM_BSS;
 static u8 frontend_text_ready;
 static u8 frontend_map_ready;
 static u8 frontend_level_ready;
-static u16 frontend_timer;
-static u8 frontend_stats_stage;
-static u8 frontend_stats_cube_visible_count;
-static u16 frontend_stats_timer;
-static u8 frontend_level_completed;
+static u16 frontend_timer EWRAM_BSS;
+static u8 frontend_stats_stage EWRAM_BSS;
+static u8 frontend_stats_cube_visible_count EWRAM_BSS;
+static u16 frontend_stats_timer EWRAM_BSS;
+static u8 frontend_level_completed EWRAM_BSS;
 static u8 frontend_mode4_active;
-static u8 frontend_display_page;
-static u8 frontend_frame_pending;
-static u8 frontend_pending_kind;
-static u8 frontend_patch_state;
-static u8 frontend_patch_old_selection;
-static u8 frontend_patch_new_selection;
-static const u8 *frontend_pending_frame;
-static const u8 *frontend_pending_palette;
+static u8 frontend_display_page EWRAM_BSS;
+static u8 frontend_frame_pending EWRAM_BSS;
+static u8 frontend_pending_kind EWRAM_BSS;
+static u8 frontend_patch_state EWRAM_BSS;
+static u8 frontend_patch_old_selection EWRAM_BSS;
+static u8 frontend_patch_new_selection EWRAM_BSS;
+static const u8 *frontend_pending_frame EWRAM_BSS;
+static const u8 *frontend_pending_palette EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
@@ -882,7 +888,7 @@ static u32 autotest_campaign_levels_completed;
 static u32 autotest_campaign_failures;
 static u32 autotest_campaign_checksum;
 static AutotestCampaignRecord
-    autotest_campaign_record[AUTOTEST_CAMPAIGN_LEVEL_COUNT];
+    autotest_campaign_record[AUTOTEST_CAMPAIGN_LEVEL_COUNT] EWRAM_BSS;
 #endif
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
 static u8 autotest_screenshot_delay;

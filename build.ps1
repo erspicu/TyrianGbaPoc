@@ -18,23 +18,26 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v30_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v30_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v30_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v30_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v30_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v30_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v31_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v31_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v31_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v31_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v31_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v31_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v31_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
 $jukeboxTestRom = Join-Path $buildDir "$jukeboxTestName.gba"
 $matrixTestRom = Join-Path $buildDir "$matrixTestName.gba"
 $campaignTestRom = Join-Path $buildDir "$campaignTestName.gba"
+$episode2TestRom = Join-Path $buildDir "$episode2TestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
 $matrixTestSave = Join-Path $buildDir "$matrixTestName.sav"
 $campaignTestSave = Join-Path $buildDir "$campaignTestName.sav"
+$episode2TestSave = Join-Path $buildDir "$episode2TestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
@@ -45,6 +48,8 @@ $matrixTestStdout = Join-Path $buildDir "matrix_autotest_mgba_stdout.txt"
 $matrixTestStderr = Join-Path $buildDir "matrix_autotest_mgba_stderr.txt"
 $campaignTestStdout = Join-Path $buildDir "campaign_autotest_mgba_stdout.txt"
 $campaignTestStderr = Join-Path $buildDir "campaign_autotest_mgba_stderr.txt"
+$episode2TestStdout = Join-Path $buildDir "episode2_autotest_mgba_stdout.txt"
+$episode2TestStderr = Join-Path $buildDir "episode2_autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
@@ -77,7 +82,7 @@ set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" all autotest death-autotest jukebox-autotest romfs-matrix-autotest campaign-smoke-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest romfs-matrix-autotest route-smoke-autotest campaign-smoke-autotest
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
@@ -443,6 +448,10 @@ $campaignTestInfo = Test-GbaRom `
     -Name "campaign_autotest" `
     -Path $campaignTestRom `
     -ExpectedGameCode "TYGC"
+$episode2TestInfo = Test-GbaRom `
+    -Name "episode2_autotest" `
+    -Path $episode2TestRom `
+    -ExpectedGameCode "TYGR"
 $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "release" `
@@ -462,6 +471,9 @@ $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "campaign_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($campaignTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "episode2_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($episode2TestRom, ".map"))
 )
 
 $env:PATH = "$ucrtBin;$env:PATH"
@@ -1626,6 +1638,170 @@ if ($failedCampaignChecks.Count -ne 0) {
     )
 }
 
+if (Test-Path -LiteralPath $episode2TestSave) {
+    Remove-Item -LiteralPath $episode2TestSave -Force
+}
+$episode2TestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$episode2TestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $episode2TestStdout `
+    -StandardError $episode2TestStderr `
+    -TimeoutMilliseconds 60000
+$episode2RuntimeErrors = @(
+    Select-String `
+        -Path $episode2TestStdout, $episode2TestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($episode2RuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA Episode 2 smoke reported " +
+        "$($episode2RuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $episode2TestSave)) {
+    throw "Episode 2 smoke did not create SRAM telemetry"
+}
+$episode2SaveBytes = [IO.File]::ReadAllBytes($episode2TestSave)
+if (
+    $episode2SaveBytes.Length -lt 6312 -or
+    [Text.Encoding]::ASCII.GetString(
+        $episode2SaveBytes,
+        0,
+        4
+    ) -ne "TGRS"
+) {
+    throw "Episode 2 smoke SRAM telemetry is invalid"
+}
+function Read-Episode2TelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($episode2SaveBytes, $Offset)
+}
+$episode2Telemetry = [ordered]@{
+    schema = $episode2SaveBytes[4]
+    pass = $episode2SaveBytes[5]
+    final_state = $episode2SaveBytes[6]
+    music_active = $episode2SaveBytes[7]
+    logic_updates = Read-Episode2TelemetryU32 8
+    display_frames = Read-Episode2TelemetryU32 12
+    vblank_irqs = Read-Episode2TelemetryU32 16
+    missed_vblanks = Read-Episode2TelemetryU32 20
+    collisions = Read-Episode2TelemetryU32 32
+    streamed_map_rows = Read-Episode2TelemetryU32 36
+    max_active_enemies = Read-Episode2TelemetryU32 40
+    stream_drops = Read-Episode2TelemetryU32 48
+    event_index = Read-Episode2TelemetryU32 52
+    final_level_position = Read-Episode2TelemetryU32 104
+    source_unknown_visuals = Read-Episode2TelemetryU32 296
+    sprite2_decode_failures = Read-Episode2TelemetryU32 356
+    sprite2_cache_hits = Read-Episode2TelemetryU32 360
+    sprite2_cache_misses = Read-Episode2TelemetryU32 364
+    sprite2_cache_evictions = Read-Episode2TelemetryU32 368
+    sprite2_cache_drops = Read-Episode2TelemetryU32 372
+    sprite2_uploads = Read-Episode2TelemetryU32 376
+    configured_detail_level = Read-Episode2TelemetryU32 600
+    configured_game_speed = Read-Episode2TelemetryU32 604
+    background_approximations = Read-Episode2TelemetryU32 648
+    background_prefetch_late_columns = Read-Episode2TelemetryU32 684
+    route_episode = Read-Episode2TelemetryU32 720
+    route_section = Read-Episode2TelemetryU32 724
+    lvl_file_number = Read-Episode2TelemetryU32 728
+    source_song = Read-Episode2TelemetryU32 732
+    event_count = Read-Episode2TelemetryU32 736
+    first_decode_failure = Read-Episode2TelemetryU32 6000
+    combat_assists = Read-Episode2TelemetryU32 6028
+    sprite2_l2_hits = Read-Episode2TelemetryU32 6244
+    sprite2_l2_misses = Read-Episode2TelemetryU32 6248
+    sprite2_l2_evictions = Read-Episode2TelemetryU32 6252
+    sprite2_l2_drops = Read-Episode2TelemetryU32 6256
+    sprite2_l2_raw_builds = Read-Episode2TelemetryU32 6264
+    sprite2_l2_rle_fallbacks = Read-Episode2TelemetryU32 6268
+}
+$expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
+    13079
+} else {
+    10475
+}
+$expectedEpisode2Sprite2Hits = if ($GameSpeed -eq "low") {
+    68820
+} else {
+    69060
+}
+$episode2Checks = [ordered]@{
+    schema = $episode2Telemetry.schema -eq 3
+    rom_reported_pass = $episode2Telemetry.pass -eq 1
+    returned_to_game_menu = (
+        $episode2Telemetry.final_state -eq 7 -and
+        $episode2Telemetry.music_active -eq 1
+    )
+    authored_route = (
+        $episode2Telemetry.route_episode -eq 2 -and
+        $episode2Telemetry.route_section -eq 1 -and
+        $episode2Telemetry.lvl_file_number -eq 1 -and
+        $episode2Telemetry.source_song -eq 27 -and
+        $episode2Telemetry.event_count -eq 1752
+    )
+    authored_completion = (
+        $episode2Telemetry.logic_updates -eq 6065 -and
+        $episode2Telemetry.display_frames -eq
+            $expectedEpisode2DisplayFrames -and
+        $episode2Telemetry.event_index -eq 1484 -and
+        $episode2Telemetry.final_level_position -eq 6632
+    )
+    source_workload = (
+        $episode2Telemetry.collisions -eq 838 -and
+        $episode2Telemetry.streamed_map_rows -eq
+            $(if ($DetailLevel -eq "low") { 2487 } else { 4145 }) -and
+        $episode2Telemetry.max_active_enemies -eq 39
+    )
+    sprite2_l1_accounting = (
+        $episode2Telemetry.sprite2_cache_hits -eq
+            $expectedEpisode2Sprite2Hits -and
+        $episode2Telemetry.sprite2_cache_misses -eq 3276 -and
+        $episode2Telemetry.sprite2_cache_evictions -eq 3252 -and
+        $episode2Telemetry.sprite2_cache_drops -eq 0 -and
+        $episode2Telemetry.sprite2_uploads -eq 3276
+    )
+    sprite2_l2_accounting = (
+        $episode2Telemetry.sprite2_l2_hits -eq 2868 -and
+        $episode2Telemetry.sprite2_l2_misses -eq 413 -and
+        $episode2Telemetry.sprite2_l2_evictions -eq 349 -and
+        $episode2Telemetry.sprite2_l2_drops -eq 0 -and
+        $episode2Telemetry.sprite2_l2_raw_builds -eq 413 -and
+        $episode2Telemetry.sprite2_l2_rle_fallbacks -eq 0
+    )
+    no_asset_or_stream_failure = (
+        $episode2Telemetry.stream_drops -eq 0 -and
+        $episode2Telemetry.source_unknown_visuals -eq 0 -and
+        $episode2Telemetry.sprite2_decode_failures -eq 0 -and
+        $episode2Telemetry.first_decode_failure -eq 0 -and
+        $episode2Telemetry.combat_assists -eq 0
+    )
+    requested_configuration = (
+        $episode2Telemetry.configured_detail_level -eq
+            $expectedDetailLevel -and
+        $episode2Telemetry.configured_game_speed -eq
+            $expectedGameSpeed
+    )
+    background_working_set_budget = (
+        $episode2Telemetry.background_approximations -le 64
+    )
+    full_level_vblank_budget = (
+        $episode2Telemetry.missed_vblanks -le 50
+    )
+}
+$failedEpisode2Checks = @(
+    $episode2Checks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedEpisode2Checks.Count -ne 0) {
+    throw (
+        "Episode 2 smoke failed invariant(s): " +
+        ($failedEpisode2Checks -join ", ")
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -1661,7 +1837,8 @@ foreach (
         $deathTestInfo,
         $jukeboxTestInfo,
         $matrixTestInfo,
-        $campaignTestInfo
+        $campaignTestInfo,
+        $episode2TestInfo
     )
 ) {
     foreach ($entry in $info.GetEnumerator()) {
@@ -1722,6 +1899,13 @@ $verification.Add(
 )
 foreach ($entry in $campaignTelemetry.GetEnumerator()) {
     $verification.Add("campaign_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("episode2_autotest_host_elapsed_ms=$episode2TestElapsed")
+$verification.Add(
+    "episode2_autotest_runtime_error_count=$($episode2RuntimeErrors.Count)"
+)
+foreach ($entry in $episode2Telemetry.GetEnumerator()) {
+    $verification.Add("episode2_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

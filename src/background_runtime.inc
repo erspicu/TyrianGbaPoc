@@ -3,8 +3,10 @@
  *
  * No GBA-native level background is stored in the cartridge.  The selected
  * tyrianN.lvl map, its big-endian shape lookup, shapes?.dat pixels and the
- * stock palette.dat are read directly from ROMFS.  Only the active 32-row
- * GBA ring and a reclaimable 512-pattern cache per layer live in EWRAM.
+ * stock palette.dat are read directly from ROMFS.  The hardware map remains
+ * a 32-row GBA ring, but only the 21 rows which can intersect the 160-pixel
+ * viewport own cache references.  A separately referenced prefetch row
+ * covers the next upward-scroll boundary without pinning invisible rows.
  */
 
 enum {
@@ -20,6 +22,13 @@ enum {
     BACKGROUND_PALETTE_BANKS = 16,
     BACKGROUND_PALETTE_BANK_COLOURS = 16,
     BACKGROUND_MAX_ROW_UPLOADS = BACKGROUND_ROW_TILES,
+    /*
+     * A non-tile-aligned 160-pixel viewport intersects 21 source tile rows.
+     * Keeping all 32 hardware map rows referenced inflated Episode 2's
+     * layer-1 working set beyond the 512-pattern cache and repeatedly forced
+     * its O(512 * 32-byte) visual-approximation fallback.
+     */
+    BACKGROUND_VISIBLE_TILE_ROWS = SCREEN_HEIGHT / 8 + 1,
     BACKGROUND_SEMANTIC_CACHE_SIZE = 1024,
     BACKGROUND_SEMANTIC_WAYS = 4,
     BACKGROUND_SEMANTIC_SETS =
@@ -36,6 +45,11 @@ enum {
     BACKGROUND_PREFETCH_IDLE_MISSES = 6,
     BACKGROUND_PC_PALETTE_INDEX = 0,
 };
+
+_Static_assert(
+    BACKGROUND_VISIBLE_TILE_ROWS + 1 <= MAP_RING_ROWS,
+    "visible background plus prefetch row must fit the hardware ring"
+);
 
 typedef struct {
     u32 key;
@@ -63,6 +77,7 @@ typedef struct {
     u8 free_queued[BACKGROUND_CACHE_SLOTS];
     u16 ring_word[MAP_RING_ROWS][BACKGROUND_ROW_TILES];
     u16 ring_source_row[MAP_RING_ROWS];
+    u8 ring_reference_rows;
     u16 prefetch_word[BACKGROUND_ROW_TILES];
     u16 prefetch_row;
     u16 upload_slot[BACKGROUND_MAX_ROW_UPLOADS];
@@ -795,6 +810,7 @@ static IWRAM_CODE ARM_CODE void background_release_ring_row(
     BackgroundLayerCache *cache = &background_layer_cache[layer];
     u8 column;
 
+    if (cache->ring_source_row[ring_row] == UINT16_MAX) return;
     for (column = 0; column < BACKGROUND_ROW_TILES; column++) {
         u16 slot = cache->ring_word[ring_row][column] & 0x01ffu;
 
@@ -804,6 +820,10 @@ static IWRAM_CODE ARM_CODE void background_release_ring_row(
                 background_queue_unreferenced(cache, slot);
             }
         }
+    }
+    cache->ring_source_row[ring_row] = UINT16_MAX;
+    if (cache->ring_reference_rows != 0) {
+        cache->ring_reference_rows--;
     }
 }
 
@@ -833,6 +853,7 @@ static void background_build_ring_row(
         cache->reference_count[slot]++;
     }
     cache->ring_source_row[ring_row] = source_row;
+    cache->ring_reference_rows++;
 }
 
 static void background_copy_ring_row(
@@ -860,7 +881,7 @@ static u8 background_prepare_layer(u8 layer, u16 top_row)
 {
     BackgroundLayerCache *cache;
     u16 first = top_row;
-    u16 last = (u16)(first + MAP_RING_ROWS);
+    u16 last = (u16)(first + BACKGROUND_VISIBLE_TILE_ROWS);
     u16 row;
 
     if (
@@ -871,7 +892,6 @@ static u8 background_prepare_layer(u8 layer, u16 top_row)
     }
     if (last > background_canvas_rows[layer]) {
         last = background_canvas_rows[layer];
-        first = (u16)(last - MAP_RING_ROWS);
     }
     cache = &background_layer_cache[layer];
     memset(cache, 0, sizeof(*cache));
@@ -894,7 +914,7 @@ static void background_commit_full_layer(
 {
     BackgroundLayerCache *cache = &background_layer_cache[layer];
     u16 first = top_row;
-    u16 last = (u16)(first + MAP_RING_ROWS);
+    u16 last = (u16)(first + BACKGROUND_VISIBLE_TILE_ROWS);
     u16 row;
 
     dmaCopy(
@@ -902,9 +922,21 @@ static void background_commit_full_layer(
         CHAR_BASE_BLOCK(layer),
         BACKGROUND_CACHE_SLOTS * BACKGROUND_TILE_BYTES
     );
+    {
+        static const u32 blank_word = 0;
+
+        DMA3COPY(
+            &blank_word,
+            SCREEN_BASE_BLOCK(screen_block),
+            DMA_SRC_FIXED | DMA32 |
+                (
+                    MAP_SCREEN_BLOCK_WORDS * 2u * sizeof(u16) /
+                    sizeof(u32)
+                )
+        );
+    }
     if (last > background_canvas_rows[layer]) {
         last = background_canvas_rows[layer];
-        first = (u16)(last - MAP_RING_ROWS);
     }
     for (row = first; row < last; row++) {
         background_copy_ring_row(layer, row, screen_block);
@@ -960,6 +992,7 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
             sizeof(cache->prefetch_word)
         );
         cache->ring_source_row[ring_row] = row;
+        cache->ring_reference_rows++;
         /*
          * Prefetch incremented references while building. They now become
          * the installed ring's references without another adjustment.
@@ -976,6 +1009,41 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
         (u16 *)SCREEN_BASE_BLOCK(screen_block) +
         ((row & 31u) * 32u);
     return 1;
+}
+
+/*
+ * Drop rows which can no longer be sampled by the presentation viewport.
+ * This runs before the next scroll update: a row installed during the prior
+ * update therefore overlaps the old presentation window for one frame, then
+ * its outgoing bottom row becomes reclaimable before any later VBlank upload.
+ */
+static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
+    u8 layer,
+    u16 top_row
+)
+{
+    BackgroundLayerCache *cache;
+    u16 last = (u16)(top_row + BACKGROUND_VISIBLE_TILE_ROWS);
+    u8 ring_row;
+
+    if (
+        !background_runtime_valid ||
+        layer >= BACKGROUND_LAYER_COUNT
+    ) {
+        return;
+    }
+    cache = &background_layer_cache[layer];
+    if (!cache->prepared) return;
+    for (ring_row = 0; ring_row < MAP_RING_ROWS; ring_row++) {
+        u16 source_row = cache->ring_source_row[ring_row];
+
+        if (
+            source_row != UINT16_MAX &&
+            (source_row < top_row || source_row >= last)
+        ) {
+            background_release_ring_row(layer, ring_row);
+        }
+    }
 }
 
 static IWRAM_CODE ARM_CODE void background_cancel_prefetch(u8 layer)
@@ -1128,6 +1196,18 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
             active = bg3_scroll_speed != 0;
         }
         if (!active || row == 0) continue;
+        /*
+         * A just-installed row overlaps the previous presentation window for
+         * one frame.  Do not add another prefetched row until that outgoing
+         * row has been released, keeping the maximum ownership window at 22
+         * rows rather than silently growing back toward the 32-row problem.
+         */
+        if (
+            background_layer_cache[layer].ring_reference_rows >
+            BACKGROUND_VISIBLE_TILE_ROWS
+        ) {
+            continue;
+        }
         used = (u8)(
             used +
             background_prefetch_layer(

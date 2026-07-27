@@ -11,6 +11,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <gba_base.h>
+
 #include "opentyrian_data.h"
 
 enum {
@@ -405,7 +407,7 @@ void ot_level_port_update_parallax(
 );
 void ot_level_port_update_enemy_shots(OtLevelPortState *state);
 uint32_t ot_level_port_random(OtLevelPortState *state);
-void ot_level_port_collide_player_shot(
+IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y,

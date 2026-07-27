@@ -256,7 +256,35 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
         (x & 7u);
 }
 
-static IWRAM_CODE ARM_CODE u8 source_sprite2_l2_write_raw_component(
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u32
+source_sprite2_l2_pack_raw_word(
+    const u8 *raw,
+    u8 filter
+)
+{
+    u32 packed = 0;
+    u8 lane;
+
+    for (lane = 0; lane < 4; lane++) {
+        u8 pixel = raw[lane];
+
+        if (pixel != 0) {
+            if (filter != 0) {
+                pixel = (u8)(filter | (pixel & 0x0f));
+            }
+            pixel = source_enemy_palette_map[pixel];
+        }
+        packed |= (u32)pixel << (lane * 8u);
+    }
+    return packed;
+}
+
+/*
+ * Keep this as a real ARM/IWRAM leaf.  With -O3 the former annotation was
+ * defeated by inlining the complete byte-at-a-time loop into its ROM caller.
+ */
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+source_sprite2_l2_write_raw_component(
     u8 *target,
     u8 tile_columns,
     u8 shape_table,
@@ -270,28 +298,56 @@ static IWRAM_CODE ARM_CODE u8 source_sprite2_l2_write_raw_component(
         shape_table,
         graphic
     );
+    u8 tile_column = origin_x >> 3;
+    u8 row_offset = origin_x & 7u;
     u8 y;
 
-    if (raw == 0) return 0;
+    if (
+        raw == 0 ||
+        (
+            row_offset != 0 &&
+            row_offset != 2 &&
+            row_offset != 4
+        )
+    ) {
+        return 0;
+    }
     for (y = 0; y < SPRITE2_RAW_COMPONENT_HEIGHT; y++) {
-        u8 x;
+        u8 target_y = (u8)(origin_y + y);
+        u8 *row = target +
+            (
+                (u32)(
+                    (target_y >> 3) * tile_columns +
+                    tile_column
+                ) * 64u
+            ) +
+            (u32)(target_y & 7u) * 8u;
+        u32 word0 = source_sprite2_l2_pack_raw_word(raw, filter);
+        u32 word1 = source_sprite2_l2_pack_raw_word(raw + 4, filter);
+        u32 word2 = source_sprite2_l2_pack_raw_word(raw + 8, filter);
 
-        for (x = 0; x < SPRITE2_RAW_COMPONENT_WIDTH; x++) {
-            u8 pixel = raw[
-                (u32)y * SPRITE2_RAW_COMPONENT_WIDTH + x
-            ];
-
-            if (pixel != 0) {
-                if (filter != 0) {
-                    pixel = (u8)(filter | (pixel & 0x0f));
-                }
-                target[source_sprite2_tile_offset(
-                    (u8)(origin_x + x),
-                    (u8)(origin_y + y),
-                    tile_columns
-                )] = source_enemy_palette_map[pixel];
-            }
+        if (row_offset == 0) {
+            ((u32 *)row)[0] = word0;
+            ((u32 *)row)[1] = word1;
+            *(u32 *)(row + 64) = word2;
+        } else if (row_offset == 4) {
+            *(u32 *)(row + 4) = word0;
+            ((u32 *)(row + 64))[0] = word1;
+            ((u32 *)(row + 64))[1] = word2;
+        } else {
+            /*
+             * origin_x=10 spans x=2..7 of one tile and x=0..5 of
+             * the next.  Two aligned words plus two aligned halfwords
+             * preserve the exact little-endian byte layout.
+             */
+            *(u16 *)(row + 2) = (u16)word0;
+            *(u32 *)(row + 4) =
+                (word0 >> 16) | (word1 << 16);
+            *(u32 *)(row + 64) =
+                (word1 >> 16) | (word2 << 16);
+            *(u16 *)(row + 68) = (u16)(word2 >> 16);
         }
+        raw += SPRITE2_RAW_COMPONENT_WIDTH;
     }
     return 1;
 }
@@ -570,7 +626,8 @@ static void source_enemy_cache_end_frame(void)
     }
 }
 
-static u16 source_enemy_cache_acquire(
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u16
+source_enemy_cache_acquire(
     const OtEnemyDrawCommand *draw
 )
 {

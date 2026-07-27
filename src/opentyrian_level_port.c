@@ -2708,7 +2708,8 @@ static void ot_apply_damaged_transition(
     }
 }
 
-void ot_level_port_collide_player_shot(
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y,

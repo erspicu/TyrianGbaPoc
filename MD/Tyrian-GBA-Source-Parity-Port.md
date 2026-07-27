@@ -732,6 +732,34 @@ SHA-256 完全相同，Episode 2／4 則恢復水面、地面、基地與通道�
 
 - `Tyrian-GBA-Episode-Background-Sentinel-v30.md`
 
+## v31 Episode 2 背景效能與 IWRAM 熱路徑
+
+Episode 2 第一關的嚴重停頓不是 Maxmod 或 Sprite2 RLE 解壓造成。
+v30 把 64×32 tilemap ring 的全部 32 列都視為正在使用，layer 1
+因此同時保護約 642 個 pattern；超過 512-slot cache 後，每次 miss
+都會掃描 512×32 bytes 選擇近似圖。
+
+v31 保持硬體 ring 不變，只讓 21 列可見區持有 references，另用一列
+支援 prefetch／presentation 轉場。Episode 2 第一關的 22 列最大
+工作集是 501，能放進目前配置。`missed VBlank` 由 553 降到 30，
+background approximations 由 472 降到 28；collision、event、Sprite2
+L1／L2 與關卡完成位置都不變。
+
+Sprite2 raw palette mapping 改為 32／16-bit grouped stores；cache
+acquire、player-shot collision 與真正的 raw writer 固定在
+ARM/IWRAM。RLE decoder 不搬移，因為 runtime fallback 為 0。
+release 仍保留 49,612 bytes EWRAM 與 6,408 bytes IWRAM。
+
+關閉全部 music／SFX 的診斷 build 在修正後只把 missed VBlank
+30 降為 29，因此保留完整 Maxmod 音質，不以 Game Boy PSG 作效能
+workaround。`build.ps1` 已加入 Episode 2 section 1 的永久 route
+效能回歸。
+
+詳細紀錄：
+
+- `Tyrian-GBA-EP2-Background-Performance-v31.md`
+- `Tyrian-GBA-EP2-Performance-Evaluation-2026-07-27.md`
+
 ## 下一個移植階段
 
 1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
@@ -746,10 +774,10 @@ SHA-256 完全相同，Episode 2／4 則恢復水面、地面、基地與通道�
 .\build.ps1
 ```
 
-目前 ROMFS v30 預設 ROM：
+目前 ROMFS v31 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v30_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v31_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

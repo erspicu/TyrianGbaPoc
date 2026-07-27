@@ -83,6 +83,15 @@ without per-level data or exceptions. Pixel-identical Episode 1 and 3
 captures, corrected Episode 2 and 4 captures, and the complete 62-section
 ROMFS matrix all pass.
 
+The v31 background working-set fix keeps the 32-row hardware tilemap but
+references only the 21 rows which can intersect the GBA viewport, plus one
+prefetch/transition row. Episode 2 level 1 missed VBlanks fall from 553 to 30
+and lossy background approximations from 472 to 28, with identical gameplay,
+collision and Sprite2 telemetry. ARM/IWRAM collision/cache paths, grouped
+Sprite2 stores and an explicit Episode 2 performance regression are included.
+Disabling all music and sound after this fix changes 30 to only 29, so the
+full Maxmod soundtrack remains enabled instead of being degraded to PSG.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -103,14 +112,16 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v30_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v31_detail_low_speed_normal.gba
 ```
 
-`build.ps1` also builds a deterministic auto-test ROM, runs the entire route
-under mGBA, and checks its SRAM telemetry.  After a successful run, historical
-and test ROMs move to `Backup`, rebuildable intermediates are removed, and
-`build` retains only the latest release ROM.  Pass `-KeepIntermediates` when
-debugging requires ELF, map, log, save, preview and verification files.
+`build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
+four-level campaign and all-62-section matrix tests, runs them under mGBA,
+and checks their SRAM telemetry and memory budgets. After a successful run,
+historical and test ROMs move to `Backup`, rebuildable intermediates are
+removed, and `build` retains only the latest release ROM. Pass
+`-KeepIntermediates` when debugging requires ELF, map, log, save, preview and
+verification files.
 
 The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
 are under `res`, the current release ROM is under `build`, historical ROMs are
@@ -119,6 +130,9 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v31 Episode 2 background performance](MD/Tyrian-GBA-EP2-Background-Performance-v31.md)
+- [v31 pre-implementation performance evaluation](MD/Tyrian-GBA-EP2-Performance-Evaluation-2026-07-27.md)
+- [v31 updated plan](MD/Tyrian-GBA-Updated-Plan-v31.md)
 - [v30 Episode background sentinel parity](MD/Tyrian-GBA-Episode-Background-Sentinel-v30.md)
 - [v29 Boss Sprite2 raw/L2 performance](MD/Tyrian-GBA-Boss-Sprite2-L2-v29.md)
 - [v29 updated plan](MD/Tyrian-GBA-Updated-Plan-v29.md)
