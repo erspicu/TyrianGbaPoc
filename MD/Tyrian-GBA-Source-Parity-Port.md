@@ -878,7 +878,31 @@ song 30、`nextLevel`、150-tick `Secret Level!` 閃字及後續 route override
 詳細紀錄：
 
 - `Tyrian-GBA-Source-Audio-Gameplay-Parity-v37.md`
+- `Tyrian-GBA-Episode4-Embedded-ItemDB-v37.md`
 - `Tyrian-GBA-Updated-Plan-v37.md`
+
+## v37 Episode 4 嵌入式 Item Database
+
+OpenTyrian 的 `JE_loadItemDat()` 並非四個 Episode 都讀
+`tyrian.hdt`：Episode 1–3 使用 HDT，Episode 4 則從
+`tyrian4.lvl` 最後一個 offset 載入另一套 weapon／option／enemy
+definitions。舊 GBA reader 永遠讀 HDT，因而把 Episode 4 event 50
+生成的 enemy 201 解成 HDT 的 shape bank 6；關卡當時只載入
+31／32／20／33，碰撞實體仍存在但 renderer 無法解析 bank 6。
+
+現在 item database 是 ROMFS 上的 zero-copy view，關卡選取時依
+Episode 套用正確來源並驗證完整 137,192-byte layout。62-level matrix
+也分開掃描兩個 definition domain，並以 enemy 201 的來源指紋防止
+「格式合法、內容來源錯誤」再次漏測。
+
+正確 Episode 4 definitions 同時揭露每 frame 最多 10 個不同
+projectile graphics；一般版把未使用的四個 explosion slots 改作兩個
+16×16 projectile slots。Episode 4 route 的 projectile drops 由 203
+降為 0，explosion drops 維持 0。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Episode4-Embedded-ItemDB-v37.md`
 
 ## 下一個移植階段
 

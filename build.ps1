@@ -1544,14 +1544,14 @@ $matrixChecks = [ordered]@{
     )
     source_catalog = (
         $matrixTelemetry.shape_banks -eq 35 -and
-        $matrixTelemetry.sprites -eq 6097 -and
-        $matrixTelemetry.enemies -eq 818 -and
-        $matrixTelemetry.weapons -eq 52
+        $matrixTelemetry.sprites -eq 8063 -and
+        $matrixTelemetry.enemies -eq 1285 -and
+        $matrixTelemetry.weapons -eq 100
     )
     sprite2_runtime_pixel_parity = (
         $matrixTelemetry.sprite2_l2_frames -eq
             $matrixTelemetry.sprites + 1 -and
-        $matrixTelemetry.sprite2_l2_pixels -eq 6146816 -and
+        $matrixTelemetry.sprite2_l2_pixels -eq 8011008 -and
         $matrixTelemetry.sprite2_l2_filter_frames -eq 1
     )
     sprite2_raw_catalog = (

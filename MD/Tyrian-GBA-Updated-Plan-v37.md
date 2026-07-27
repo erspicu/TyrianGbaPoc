@@ -13,6 +13,11 @@
   Level Complete 等來源聲音。
 - Secret Level portal、song 30、150-tick 閃字及 route override。
 - 每關清空四個 enemy shape slots，修復 Episode 4 跨關卡 bank 汙染。
+- Item database 依 `JE_loadItemDat()` 切換：Episode 1–3 讀
+  `tyrian.hdt`，Episode 4 讀 `tyrian4.lvl` 尾端嵌入資料。
+- 修復 Episode 4 第一關可碰撞但透明的 ID 201 砲台，並把同畫面
+  projectile cache 由 8 格擴為 10 格；enemy／projectile／effect drop
+  均為 0。
 - 金額提示下移 8 pixels。
 - 新增 source sound bitset 與 Secret Level collision 永久回歸。
 - High／Normal 的 gameplay、death、Jukebox、62-level matrix、

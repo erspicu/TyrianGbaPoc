@@ -27,6 +27,17 @@ enum {
 };
 
 typedef struct {
+    const uint8_t *data;
+    uint32_t size;
+    uint32_t source_offset;
+    uint32_t weapon_table_offset;
+    uint32_t port_table_offset;
+    uint32_t special_table_offset;
+    uint32_t option_table_offset;
+    uint32_t enemy_table_offset;
+} OtItemDatabase;
+
+typedef struct {
     OtRomFsStat lvl;
     OtRomFsStat hdt;
     OtRomFsStat pic;
@@ -39,11 +50,7 @@ typedef struct {
     const uint8_t *level_maps[3];
     uint32_t level_map_bytes[3];
     OtLevelInfo level_info;
-    uint32_t hdt_weapon_table_offset;
-    uint32_t hdt_port_table_offset;
-    uint32_t hdt_special_table_offset;
-    uint32_t hdt_option_table_offset;
-    uint32_t hdt_enemy_table_offset;
+    OtItemDatabase items;
 } OtDataState;
 
 static OtDataCatalog catalog;
@@ -111,6 +118,81 @@ static bool multiply_is_valid(
 {
     if (count != 0 && width > UINT32_MAX / count) return false;
     *bytes = count * width;
+    return true;
+}
+
+/*
+ * JE_loadItemDat() uses the same fixed record layout from two different
+ * stock sources: tyrian.hdt for Episodes 1-3, and the final offset in
+ * tyrian4.lvl for Episode 4.  Keep offsets relative to the selected item
+ * block so every existing HDT reader can follow the current episode without
+ * copying or generating an adapter-specific database.
+ */
+static bool item_database_view(
+    const OtRomFsStat *source,
+    uint32_t item_offset,
+    OtItemDatabase *items
+)
+{
+    static const uint16_t expected_item_maximums[7] = {
+        OT_HDT_WEAPON_COUNT - 1,
+        OT_HDT_PORT_COUNT - 1,
+        6,
+        OT_HDT_SHIP_COUNT - 1,
+        OT_HDT_OPTION_COUNT - 1,
+        OT_HDT_SHIELD_COUNT - 1,
+        OT_HDT_ENEMY_COUNT - 1,
+    };
+    uint32_t expected_bytes =
+        OT_HDT_ITEM_COUNT_BYTES +
+        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES +
+        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES +
+        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
+        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
+        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES +
+        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
+        OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES +
+        OT_HDT_ENEMY_COUNT * OT_HDT_ENEMY_RECORD_BYTES;
+    uint8_t index;
+
+    if (
+        source == 0 ||
+        source->data == 0 ||
+        items == 0 ||
+        !span_is_valid(source->size, item_offset, expected_bytes) ||
+        item_offset + expected_bytes != source->size
+    ) {
+        return false;
+    }
+    for (index = 0; index < 7; index++) {
+        if (
+            read_u16(source->data + item_offset + (uint32_t)index * 2u) !=
+            expected_item_maximums[index]
+        ) {
+            return false;
+        }
+    }
+
+    *items = (OtItemDatabase){0};
+    items->data = source->data + item_offset;
+    items->size = expected_bytes;
+    items->source_offset = item_offset;
+    items->weapon_table_offset = OT_HDT_ITEM_COUNT_BYTES;
+    items->port_table_offset =
+        items->weapon_table_offset +
+        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES;
+    items->special_table_offset =
+        items->port_table_offset +
+        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES;
+    items->option_table_offset =
+        items->special_table_offset +
+        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
+        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
+        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES;
+    items->enemy_table_offset =
+        items->option_table_offset +
+        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
+        OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES;
     return true;
 }
 
@@ -251,9 +333,48 @@ static uint32_t table_offset(
     return read_u32(file->data + 2u + (uint32_t)index * 4u);
 }
 
+static bool resolve_item_database(
+    uint8_t episode,
+    const OtRomFsStat *level_file,
+    uint16_t level_offset_count,
+    OtItemDatabase *items
+)
+{
+    const OtRomFsStat *source;
+    uint32_t item_offset;
+
+    if (episode == 4) {
+        if (
+            level_file == 0 ||
+            level_offset_count == 0 ||
+            (level_offset_count & 1u) == 0
+        ) {
+            return false;
+        }
+        source = level_file;
+        item_offset = table_offset(
+            level_file,
+            (uint16_t)(level_offset_count - 1u)
+        );
+    } else if (episode >= 1 && episode <= 3) {
+        source = &data_state.hdt;
+        if (
+            source->data == 0 ||
+            !span_is_valid(source->size, 0, 4)
+        ) {
+            return false;
+        }
+        item_offset = read_u32(source->data);
+    } else {
+        return false;
+    }
+    return item_database_view(source, item_offset, items);
+}
+
 static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
 {
     OtRomFsStat lvl;
+    OtItemDatabase items;
     OtLevelInfo level_info;
     const uint8_t *level_enemy_ids;
     const uint8_t *level_events;
@@ -289,7 +410,7 @@ static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
     level_count = read_u16(source);
     offset_index = ((uint32_t)lvl_file_number - 1u) * 2u;
     if (
-        offset_index >= level_count ||
+        offset_index + 1u >= level_count ||
         !offset_table_is_valid(&lvl, level_count)
     ) {
         return false;
@@ -357,7 +478,12 @@ static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
         level_maps[layer] = source + position;
         position += level_map_bytes[layer];
     }
-    if (position != section_end) return false;
+    if (
+        position != section_end ||
+        !resolve_item_database(episode, &lvl, level_count, &items)
+    ) {
+        return false;
+    }
 
     level_info.enemy_count = enemy_count;
     level_info.event_count = event_count;
@@ -365,6 +491,7 @@ static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
     level_info.section_bytes = section_end - offset;
     data_state.lvl = lvl;
     data_state.level_info = level_info;
+    data_state.items = items;
     data_state.level_enemy_ids = level_enemy_ids;
     data_state.level_events = level_events;
     data_state.level_map_shapes = level_map_shapes;
@@ -377,6 +504,8 @@ static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
     catalog.selected_lvl_file_number = lvl_file_number;
     catalog.level_enemy_count = enemy_count;
     catalog.level_event_count = event_count;
+    catalog.hdt_enemy_table_offset =
+        items.source_offset + items.enemy_table_offset;
     return true;
 }
 
@@ -389,8 +518,7 @@ static bool parse_lvl(void)
 static bool parse_hdt(void)
 {
     int32_t item_offset;
-    uint32_t enemy_offset;
-    uint32_t enemy_bytes;
+    OtItemDatabase items;
 
     if (!stat_data_file("tyrian.hdt", &data_state.hdt)) return false;
     if (!span_is_valid(data_state.hdt.size, 0, 4)) return false;
@@ -406,32 +534,16 @@ static bool parse_hdt(void)
         return false;
     }
 
-    data_state.hdt_weapon_table_offset =
-        (uint32_t)item_offset + OT_HDT_ITEM_COUNT_BYTES;
-    data_state.hdt_port_table_offset =
-        data_state.hdt_weapon_table_offset +
-        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES;
-    data_state.hdt_special_table_offset =
-        data_state.hdt_port_table_offset +
-        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES;
-    data_state.hdt_option_table_offset =
-        data_state.hdt_special_table_offset +
-        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
-        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
-        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES;
-    enemy_offset =
-        data_state.hdt_option_table_offset +
-        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
-        OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES;
-    enemy_bytes = OT_HDT_ENEMY_COUNT * OT_HDT_ENEMY_RECORD_BYTES;
-    if (
-        !span_is_valid(data_state.hdt.size, enemy_offset, enemy_bytes) ||
-        enemy_offset + enemy_bytes != data_state.hdt.size
-    ) {
+    if (!item_database_view(
+            &data_state.hdt,
+            (uint32_t)item_offset,
+            &items
+        )) {
         return false;
     }
-    data_state.hdt_enemy_table_offset = enemy_offset;
-    catalog.hdt_enemy_table_offset = enemy_offset;
+    data_state.items = items;
+    catalog.hdt_enemy_table_offset =
+        items.source_offset + items.enemy_table_offset;
     return true;
 }
 
@@ -882,8 +994,8 @@ bool ot_data_init(void)
     data_state = (OtDataState){0};
     catalog.selected_mus_song = UINT16_MAX;
 
-    catalog.lvl_valid = parse_lvl();
     catalog.hdt_valid = parse_hdt();
+    catalog.lvl_valid = parse_lvl();
     catalog.pic_valid = parse_pic();
     catalog.shp_valid = parse_shp();
     catalog.mus_valid = parse_mus();
@@ -1459,14 +1571,15 @@ bool ot_data_hdt_enemy_read(
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
         enemy == 0 ||
         enemy_id >= OT_HDT_ENEMY_COUNT
     ) {
         return false;
     }
     source =
-        data_state.hdt.data +
-        data_state.hdt_enemy_table_offset +
+        data_state.items.data +
+        data_state.items.enemy_table_offset +
         (uint32_t)enemy_id * OT_HDT_ENEMY_RECORD_BYTES;
     enemy->ani = source[0];
     for (index = 0; index < 3; index++) {
@@ -1514,14 +1627,15 @@ bool ot_data_hdt_weapon_read(
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
         weapon == 0 ||
         weapon_id >= OT_HDT_WEAPON_COUNT
     ) {
         return false;
     }
     source =
-        data_state.hdt.data +
-        data_state.hdt_weapon_table_offset +
+        data_state.items.data +
+        data_state.items.weapon_table_offset +
         (uint32_t)weapon_id * OT_HDT_WEAPON_RECORD_BYTES;
     weapon->drain = read_u16(source);
     weapon->shotrepeat = source[2];
@@ -1571,14 +1685,15 @@ bool ot_data_hdt_weapon_port_read(
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
         port == 0 ||
         port_id >= OT_HDT_PORT_COUNT
     ) {
         return false;
     }
     source =
-        data_state.hdt.data +
-        data_state.hdt_port_table_offset +
+        data_state.items.data +
+        data_state.items.port_table_offset +
         (uint32_t)port_id * OT_HDT_PORT_RECORD_BYTES;
     hdt_item_name_copy(source, port->name);
     port->opnum = source[31];
@@ -1609,14 +1724,15 @@ bool ot_data_hdt_special_read(
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
         special == 0 ||
         special_id >= OT_HDT_SPECIAL_COUNT
     ) {
         return false;
     }
     source =
-        data_state.hdt.data +
-        data_state.hdt_special_table_offset +
+        data_state.items.data +
+        data_state.items.special_table_offset +
         (uint32_t)special_id * OT_HDT_SPECIAL_RECORD_BYTES;
     hdt_item_name_copy(source, special->name);
     special->itemgraphic = read_u16(source + 31);
@@ -1637,14 +1753,15 @@ bool ot_data_hdt_option_read(
     if (!initialization_attempted) ot_data_init();
     if (
         !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
         option == 0 ||
         option_id >= OT_HDT_OPTION_COUNT
     ) {
         return false;
     }
     source =
-        data_state.hdt.data +
-        data_state.hdt_option_table_offset +
+        data_state.items.data +
+        data_state.items.option_table_offset +
         (uint32_t)option_id * OT_HDT_OPTION_RECORD_BYTES;
     hdt_item_name_copy(source, option->name);
     option->power = source[31];

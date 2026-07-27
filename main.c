@@ -311,18 +311,22 @@ enum {
     (OBJ_TILE_PLAYER_SHOT + 4)
 #define SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT 1
 #if TYRIAN_GBA_STRESS_LOADOUT
-#define SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE 640
-#define SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT 10
+#define SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE 640
+#define SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT 10
+#else
+/*
+ * Episode 4 can present nine or ten distinct authored projectile frames in
+ * one scanout.  Reserve two 16x16 slots from the otherwise overprovisioned
+ * explosion cache tail instead of dropping a visible shot.  Twenty-eight
+ * explosion slots remain, above the measured high-detail peak of seventeen.
+ */
+#define SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE 208
+#define SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT 2
+#endif
 #define SOURCE_PROJECTILE_CACHE_SLOT_COUNT \
     (SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT + \
         SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT + \
-        SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT)
-#else
-#define SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT 0
-#define SOURCE_PROJECTILE_CACHE_SLOT_COUNT \
-    (SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT + \
-        SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT)
-#endif
+        SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT)
 #define SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE \
     (SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE + \
         SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT * \
@@ -348,11 +352,17 @@ enum {
 
 /*
  * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
- * atlas.  Active 16x16 explosion frames are therefore streamed into a
- * 32-frame 4bpp cache at the original explosion base.
+ * atlas.  Active 16x16 explosion frames are therefore streamed into a 4bpp
+ * cache at the original explosion base.  Stress builds retain all 32 slots;
+ * release builds reserve the unused four-slot tail for two Episode 4
+ * projectile frames.
  */
 #define SOURCE_EFFECT_CACHE_TILE_BASE OBJ_TILE_EXPLOSION
+#if TYRIAN_GBA_STRESS_LOADOUT
 #define SOURCE_EFFECT_CACHE_SLOT_COUNT 32
+#else
+#define SOURCE_EFFECT_CACHE_SLOT_COUNT 28
+#endif
 #define SOURCE_EFFECT_TILES_PER_SLOT EXPLOSION_TILES_PER_FRAME
 #define SOURCE_EFFECT_FRAME_BYTES \
     (SOURCE_EFFECT_TILES_PER_SLOT * 32)
@@ -418,7 +428,7 @@ _Static_assert(
 _Static_assert(
     OBJ_TILE_GAME_OVER_SOURCE ==
 #if TYRIAN_GBA_STRESS_LOADOUT
-        SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE,
+        SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE,
 #else
         SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
 #endif
@@ -488,14 +498,19 @@ _Static_assert(
         OBJ_TILE_BOSS_BAR,
     "runtime projectile cache overlaps retained OBJ assets"
 );
-#if TYRIAN_GBA_STRESS_LOADOUT
 _Static_assert(
-    SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE +
-        SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT *
+    SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE +
+        SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT *
             SOURCE_PROJECTILE_TILES_PER_SLOT <=
+#if TYRIAN_GBA_STRESS_LOADOUT
         SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
-    "stress projectile cache overlaps the upper enemy cache"
+    "extra projectile cache overlaps the upper enemy cache"
+#else
+        SOURCE_ENEMY_CACHE_LOWER_TILE_BASE,
+    "extra projectile cache overlaps the lower enemy cache"
+#endif
 );
+#if TYRIAN_GBA_STRESS_LOADOUT
 _Static_assert(
     SOURCE_OPTION_PROJECTILE_TILE_BASE +
         SOURCE_OPTION_PROJECTILE_TILES <=
@@ -531,7 +546,11 @@ _Static_assert(
     SOURCE_EFFECT_CACHE_TILE_BASE +
         SOURCE_EFFECT_CACHE_SLOT_COUNT *
             SOURCE_EFFECT_TILES_PER_SLOT <=
+#if TYRIAN_GBA_STRESS_LOADOUT
         SOURCE_ENEMY_CACHE_LOWER_TILE_BASE,
+#else
+        SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE,
+#endif
     "explosion and enemy caches overlap"
 );
 _Static_assert(

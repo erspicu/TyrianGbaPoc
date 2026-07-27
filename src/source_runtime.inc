@@ -936,14 +936,13 @@ static u16 source_projectile_cache_tile(u8 slot)
             slot * SOURCE_PROJECTILE_TILES_PER_SLOT
         );
     }
-#if TYRIAN_GBA_STRESS_LOADOUT
     if (
         slot >=
         SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT +
             SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT
     ) {
         return (u16)(
-            SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE +
+            SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE +
             (
                 slot -
                 SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT -
@@ -951,7 +950,6 @@ static u16 source_projectile_cache_tile(u8 slot)
             ) * SOURCE_PROJECTILE_TILES_PER_SLOT
         );
     }
-#endif
     return (u16)(
         SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
         (

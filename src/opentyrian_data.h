@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  * Zero-copy readers for the stock Tyrian MUS/SHP/PIC/HDT/LVL formats stored
- * in the cartridge ROMFS.
+ * in the cartridge ROMFS.  Item/enemy reads follow JE_loadItemDat(): HDT for
+ * Episodes 1-3 and the item database embedded in tyrian4.lvl for Episode 4.
  *
  * The structures below retain the integer widths and field order used by
  * OpenTyrian revision 1c34d1bddac8c8f2de834229d04b5a729525c944.  They are

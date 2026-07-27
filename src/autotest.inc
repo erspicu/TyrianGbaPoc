@@ -80,6 +80,7 @@ enum {
     ROMFS_MATRIX_FAIL_SPRITE2_PALETTE = 23,
     ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY = 24,
     ROMFS_MATRIX_FAIL_BACKGROUND_SENTINEL = 25,
+    ROMFS_MATRIX_FAIL_ITEM_DATABASE = 26,
 };
 
 typedef struct {
@@ -119,6 +120,22 @@ static u16 romfs_matrix_sprite2_pixels[
     OT_SPRITE2_FRAME_PIXELS
 ] EWRAM_BSS __attribute__((aligned(4)));
 static u16 romfs_matrix_enemy_queue_count;
+static u32 romfs_matrix_enemy_queue_total;
+
+static void romfs_matrix_reset_item_validation(void)
+{
+    memset(
+        romfs_matrix_enemy_queued,
+        0,
+        sizeof(romfs_matrix_enemy_queued)
+    );
+    memset(
+        romfs_matrix_weapon_validated,
+        0,
+        sizeof(romfs_matrix_weapon_validated)
+    );
+    romfs_matrix_enemy_queue_count = 0;
+}
 
 static u32 romfs_matrix_hash(u32 hash, u32 value)
 {
@@ -143,6 +160,50 @@ static void romfs_matrix_fail(
     }
     if (level_failure != 0 && *level_failure == 0) {
         *level_failure = code;
+    }
+}
+
+/*
+ * Enemy 201 is deliberately used as a source-identity sentinel.  The stock
+ * HDT and Episode 4 embedded item database both contain a valid record at
+ * this index, but they describe entirely different objects.  Structural
+ * validation alone therefore cannot catch the old "valid but wrong source"
+ * regression that produced collidable, invisible Episode 4 enemies.
+ */
+static void romfs_matrix_validate_item_database_identity(
+    RomfsMatrixTelemetry *telemetry,
+    u8 episode,
+    u16 level,
+    u32 *level_failure
+)
+{
+    OtEnemyDefinition enemy;
+    u8 expected_shape_bank = episode == 4 ? 31 : 6;
+    u16 expected_graphic = episode == 4 ? 1 : 2;
+    u8 expected_armor = episode == 4 ? 6 : 254;
+
+    if (
+        !ot_data_hdt_enemy_read(201, &enemy) ||
+        enemy.shapebank != expected_shape_bank ||
+        enemy.egraphic[0] != expected_graphic ||
+        enemy.armor != expected_armor
+    ) {
+        u32 detail = 0xffffffffu;
+
+        if (ot_data_hdt_enemy_read(201, &enemy)) {
+            detail =
+                ((u32)enemy.shapebank << 24) |
+                ((u32)enemy.armor << 16) |
+                enemy.egraphic[0];
+        }
+        romfs_matrix_fail(
+            telemetry,
+            ROMFS_MATRIX_FAIL_ITEM_DATABASE,
+            episode,
+            level,
+            detail,
+            level_failure
+        );
     }
 }
 
@@ -523,6 +584,11 @@ static void romfs_matrix_validate_enqueued_enemies(
                 0
             );
             for (graphic_index = 0; graphic_index < 20; graphic_index++) {
+                /*
+                 * OpenTyrian treats 999 as an authored "remove this
+                 * enemy" animation sentinel before attempting a blit.
+                 */
+                if (enemy.egraphic[graphic_index] == 999) continue;
                 romfs_matrix_validate_graphic(
                     telemetry,
                     0,
@@ -534,7 +600,7 @@ static void romfs_matrix_validate_enqueued_enemies(
                     0
                 );
             }
-            if (enemy.dgr != 0) {
+            if (enemy.dgr != 0 && enemy.dgr != 999) {
                 romfs_matrix_validate_graphic(
                     telemetry,
                     0,
@@ -969,22 +1035,13 @@ static void autotest_romfs_level_matrix(void)
 
     telemetry.matrix_checksum = 2166136261u;
     telemetry.route_checksum = 2166136261u;
-    memset(
-        romfs_matrix_enemy_queued,
-        0,
-        sizeof(romfs_matrix_enemy_queued)
-    );
-    memset(
-        romfs_matrix_weapon_validated,
-        0,
-        sizeof(romfs_matrix_weapon_validated)
-    );
+    romfs_matrix_reset_item_validation();
     memset(
         romfs_matrix_shape_validated,
         0,
         sizeof(romfs_matrix_shape_validated)
     );
-    romfs_matrix_enemy_queue_count = 0;
+    romfs_matrix_enemy_queue_total = 0;
     if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         romfs_matrix_fail(
             &telemetry,
@@ -1044,6 +1101,14 @@ static void autotest_romfs_level_matrix(void)
                     &level_failure
                 );
             } else {
+                if (level == 1) {
+                    romfs_matrix_validate_item_database_identity(
+                        &telemetry,
+                        episode,
+                        level,
+                        &level_failure
+                    );
+                }
                 telemetry.total_events += info.event_count;
                 telemetry.total_enemy_pool_entries += info.enemy_count;
                 telemetry.level_section_bytes += info.section_bytes;
@@ -1234,9 +1299,21 @@ static void autotest_romfs_level_matrix(void)
             );
             record_index++;
         }
+        /*
+         * Episodes 1-3 share tyrian.hdt.  Episode 4 replaces every item,
+         * weapon, and enemy definition with the database appended to
+         * tyrian4.lvl, so validate the two source domains independently.
+         */
+        if (episode == 3 || episode == 4) {
+            romfs_matrix_validate_enqueued_enemies(&telemetry);
+            romfs_matrix_enemy_queue_total +=
+                romfs_matrix_enemy_queue_count;
+            if (episode != 4) {
+                romfs_matrix_reset_item_validation();
+            }
+        }
     }
 
-    romfs_matrix_validate_enqueued_enemies(&telemetry);
     if (
         !romfs_matrix_validate_sprite2_l2(
             &telemetry,
@@ -1306,7 +1383,7 @@ static void autotest_romfs_level_matrix(void)
         116,
         catalog != 0 ? catalog->raw_bytes_referenced : 0
     );
-    sram_write_u32(120, romfs_matrix_enemy_queue_count);
+    sram_write_u32(120, romfs_matrix_enemy_queue_total);
     sram[124] = *(volatile const u8 *)save_type_marker;
     sram_write_u32(6000, telemetry.sprite2_l2_frames);
     sram_write_u32(6004, telemetry.sprite2_l2_pixels);
