@@ -77,6 +77,7 @@ enum {
     ROMFS_MATRIX_FAIL_ROUTE_LIMIT = 22,
     ROMFS_MATRIX_FAIL_SPRITE2_PALETTE = 23,
     ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY = 24,
+    ROMFS_MATRIX_FAIL_BACKGROUND_SENTINEL = 25,
 };
 
 typedef struct {
@@ -1060,28 +1061,45 @@ static void autotest_romfs_level_matrix(void)
                         (u8)info.shape_file,
                         &level_failure
                     );
-                } else if (
-                    !background_prepare_layer(
-                        0,
-                        BG1_INITIAL_SCROLL >> 3
-                    ) ||
-                    !background_prepare_layer(
-                        1,
-                        BG2_INITIAL_SCROLL >> 3
-                    ) ||
-                    !background_prepare_layer(
-                        2,
-                        BG3_INITIAL_SCROLL >> 3
-                    )
-                ) {
-                    romfs_matrix_fail(
-                        &telemetry,
-                        ROMFS_MATRIX_FAIL_BACKGROUND_PREPARE,
-                        episode,
-                        level,
-                        0,
-                        &level_failure
-                    );
+                } else {
+                    if (
+                        background_shape_number_for_map_index(0, 72) != 0 ||
+                        background_shape_number_for_map_index(1, 71) != 0 ||
+                        background_shape_number_for_map_index(2, 70) != 0 ||
+                        background_shape_number_for_map_index(2, 71) != 0
+                    ) {
+                        romfs_matrix_fail(
+                            &telemetry,
+                            ROMFS_MATRIX_FAIL_BACKGROUND_SENTINEL,
+                            episode,
+                            level,
+                            0x484746u,
+                            &level_failure
+                        );
+                    }
+                    if (
+                        !background_prepare_layer(
+                            0,
+                            BG1_INITIAL_SCROLL >> 3
+                        ) ||
+                        !background_prepare_layer(
+                            1,
+                            BG2_INITIAL_SCROLL >> 3
+                        ) ||
+                        !background_prepare_layer(
+                            2,
+                            BG3_INITIAL_SCROLL >> 3
+                        )
+                    ) {
+                        romfs_matrix_fail(
+                            &telemetry,
+                            ROMFS_MATRIX_FAIL_BACKGROUND_PREPARE,
+                            episode,
+                            level,
+                            0,
+                            &level_failure
+                        );
+                    }
                 }
                 approximations = background_cache_approximations;
                 telemetry.background_approximations += approximations;

@@ -116,6 +116,23 @@ static const u8 background_map_columns[BACKGROUND_LAYER_COUNT] = {
     OT_LEVEL_MAP3_COLUMNS,
 };
 
+/*
+ * OpenTyrian fills ref[layer][] from shapes?.dat with these exact bounds:
+ *
+ *   layer 1: x <= 71
+ *   layer 2: x <= 71, but x == 71 is forced to NULL
+ *   layer 3: x <= 71, but x >= 70 is forced to NULL
+ *
+ * The stock maps deliberately use 71 as an empty-cell sentinel (and layer 3
+ * may also use 70).  Looking those values up through the otherwise populated
+ * 128-entry mapSh table turns empty space into an unrelated repeated shape.
+ */
+static const u8 background_map_shape_slots[BACKGROUND_LAYER_COUNT] = {
+    72,
+    71,
+    70,
+};
+
 static const u16 background_canvas_rows[BACKGROUND_LAYER_COUNT] = {
     (
         (
@@ -290,27 +307,15 @@ static u8 background_bind_selected_level(void)
     return 1;
 }
 
-static IWRAM_CODE ARM_CODE u16 background_map_shape_number(
+static IWRAM_CODE ARM_CODE u16 background_shape_number_for_map_index(
     u8 layer,
-    u16 map_row,
-    u8 map_column
+    u8 map_index
 )
 {
-    const OtDataView *map = &background_map_view[layer];
     const OtDataView *lookup = &background_lookup_view[layer];
-    u8 map_index;
     u16 shape_number;
 
-    if (
-        map_row >= background_map_rows[layer] ||
-        map_column >= background_map_columns[layer]
-    ) {
-        return 0;
-    }
-    map_index = map->data[
-        (u32)map_row * background_map_columns[layer] + map_column
-    ];
-    if (map_index >= OT_LEVEL_MAP_SHAPE_COUNT) return 0;
+    if (map_index >= background_map_shape_slots[layer]) return 0;
     shape_number = (u16)(
         ((u16)lookup->data[(u16)map_index * 2u] << 8) |
         lookup->data[(u16)map_index * 2u + 1u]
@@ -324,6 +329,27 @@ static IWRAM_CODE ARM_CODE u16 background_map_shape_number(
     return background_shape_pixels[shape_number - 1u] != 0 ?
         shape_number :
         0;
+}
+
+static IWRAM_CODE ARM_CODE u16 background_map_shape_number(
+    u8 layer,
+    u16 map_row,
+    u8 map_column
+)
+{
+    const OtDataView *map = &background_map_view[layer];
+    u8 map_index;
+
+    if (
+        map_row >= background_map_rows[layer] ||
+        map_column >= background_map_columns[layer]
+    ) {
+        return 0;
+    }
+    map_index = map->data[
+        (u32)map_row * background_map_columns[layer] + map_column
+    ];
+    return background_shape_number_for_map_index(layer, map_index);
 }
 
 static IWRAM_CODE ARM_CODE u32 background_tile_key(

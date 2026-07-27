@@ -47,6 +47,9 @@ The current scope is deliberately narrow:
 - the complete OpenTyrian background2/background3, ground, sky, top, player,
   projectile and effect draw order translated to dynamic GBA BG/OBJ priority
   and reverse OAM emission; all 252 layer relations pass an exhaustive test
+- exact OpenTyrian map-reference bounds for all three background layers:
+  stock sentinel 71 is transparent on layer 2, while 70 and 71 are
+  transparent on layer 3, instead of becoming unrelated repeated shapes
 - direct use of the active PC level palette: every Sprite2 retains its source
   hue and is mapped to eight brightness samples, replacing the former
   per-table and per-structure 15-colour approximations
@@ -75,6 +78,11 @@ and the boss group fully cleared. Its Sprite2 L2 reduces first-level missed
 VBlanks from 625 to 13 and the authored Boss interval from 437 to 4, while the
 L1 miss/eviction workload remains unchanged.
 
+The v30 background fix removes the Episode 2 and 4 first-level corruption
+without per-level data or exceptions. Pixel-identical Episode 1 and 3
+captures, corrected Episode 2 and 4 captures, and the complete 62-section
+ROMFS matrix all pass.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -95,7 +103,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v29_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v30_detail_low_speed_normal.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -111,6 +119,7 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v30 Episode background sentinel parity](MD/Tyrian-GBA-Episode-Background-Sentinel-v30.md)
 - [v29 Boss Sprite2 raw/L2 performance](MD/Tyrian-GBA-Boss-Sprite2-L2-v29.md)
 - [v29 updated plan](MD/Tyrian-GBA-Updated-Plan-v29.md)
 - [v28 all-level ROMFS runtime](MD/Tyrian-GBA-ROMFS-All-Levels-v28.md)

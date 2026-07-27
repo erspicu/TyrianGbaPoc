@@ -710,6 +710,28 @@ palette/filter 語意不變：
 - `Tyrian-GBA-Boss-Sprite2-L2-v29.md`
 - `Tyrian-GBA-Updated-Plan-v29.md`
 
+## v30 Episode 2／4 背景空白索引修正
+
+OpenTyrian 載入 `mapSh` 後，三層 `ref` 並不是共用 128 個有效 entry：
+
+- layer 1：`0..71`
+- layer 2：`0..70`，`71` 強制為 `NULL`
+- layer 3：`0..69`，`70..71` 強制為 `NULL`
+
+GBA 版先前直接對三層查完整的 128-entry table。Episode 2 第一關的
+layer 2／3 全部使用空白 sentinel 71，因而被誤查成 shape 567 並鋪滿
+畫面；Episode 4 layer 2 的 8,302／8,400 cells 與 layer 3 的
+9,000／9,000 cells 也使用 71，分別被誤查成 shape 24／1。
+
+v30 在共用 background lookup 套用原版的 72／71／70 entry 界線，不
+修改 LVL、不新增 Episode 特例。Episode 1／3 的固定座標 PNG 在修正前後
+SHA-256 完全相同，Episode 2／4 則恢復水面、地面、基地與通道的正常
+分層。`TGLM schema 2` 的 62 個 sections 與所有既有回歸均通過。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Episode-Background-Sentinel-v30.md`
+
 ## 下一個移植階段
 
 1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
@@ -724,10 +746,10 @@ palette/filter 語意不變：
 .\build.ps1
 ```
 
-目前 ROMFS v29 預設 ROM：
+目前 ROMFS v30 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v29_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v30_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。
