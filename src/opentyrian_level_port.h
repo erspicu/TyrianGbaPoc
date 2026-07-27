@@ -15,6 +15,14 @@
 
 #include "opentyrian_data.h"
 
+#ifndef TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#define TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK 1
+#endif
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK != 0 && \
+    TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK != 1
+#error TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK must be 0 or 1
+#endif
+
 enum {
     OT_LOGICAL_SCREEN_WIDTH = 320,
     OT_LOGICAL_SCREEN_HEIGHT = 200,
@@ -303,6 +311,14 @@ typedef struct {
 
     OtEnemy enemy[OT_ENEMY_COUNT];
     uint8_t enemy_avail[OT_ENEMY_COUNT];
+    /*
+     * Runtime-only acceleration index for the player-shot collision phase.
+     * OpenTyrian's authoritative enemy_avail[] state remains unchanged.
+     * The mask is rebuilt once per phase and updated immediately when a
+     * death spawn or release mutates the pool, preserving source scan order.
+     */
+    uint32_t player_shot_collision_active_mask[4];
+    bool player_shot_collision_mask_active;
     OtEnemyDrawCommand enemy_draw[OT_ENEMY_COUNT];
     OtEnemyShot enemy_shot[OT_ENEMY_SHOT_COUNT];
     uint8_t global_flags[OT_GLOBAL_FLAG_COUNT];
@@ -367,6 +383,9 @@ typedef struct {
     uint32_t death_spawn_pool_full_count;
     uint32_t death_spawn_missing_definition_count;
     uint32_t player_shot_collision_count;
+    uint32_t player_shot_collision_mask_rebuild_count;
+    uint32_t player_shot_collision_candidate_visit_count;
+    uint32_t player_shot_collision_linear_slot_visit_count;
     uint32_t player_enemy_contact_count;
     uint32_t enemy_kill_count;
     uint32_t direct_cash_awarded;
@@ -407,6 +426,12 @@ void ot_level_port_update_parallax(
 );
 void ot_level_port_update_enemy_shots(OtLevelPortState *state);
 uint32_t ot_level_port_random(OtLevelPortState *state);
+ARM_CODE void ot_level_port_begin_player_shot_collision_phase(
+    OtLevelPortState *state
+);
+void ot_level_port_end_player_shot_collision_phase(
+    OtLevelPortState *state
+);
 IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,
@@ -424,7 +449,7 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_sized(
     OtShotCollisionResult *result
 );
 IWRAM_CODE ARM_CODE bool ot_level_port_player_shot_overlaps(
-    const OtLevelPortState *state,
+    OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y
 );

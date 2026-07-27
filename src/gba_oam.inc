@@ -88,7 +88,8 @@ static void put_sprite_8bpp_16(
     object->dummy = 0;
 }
 
-#if TYRIAN_GBA_STRESS_LOADOUT
+#if TYRIAN_GBA_STRESS_LOADOUT && \
+    !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static void put_sprite_8bpp_64_blended(
     s16 x,
     s16 y,

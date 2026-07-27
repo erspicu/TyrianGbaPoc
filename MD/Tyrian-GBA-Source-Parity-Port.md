@@ -784,6 +784,30 @@ Normal Detail／Normal Speed 為 5／0，Low Detail／Low Speed 為
 - `Tyrian-GBA-Background-Cache-VRAM-v32.md`
 - `Tyrian-GBA-Knowledgebase-Strategy-Evaluation-v32.md`
 
+## v34 全武器碰撞與 presentation cache 最佳化
+
+Pentium full-loadout 的主要瓶頸經 Timer 2/3 A/B 定位為 81-shot pool
+重複掃描 100-slot enemy pool，不是 Maxmod 或 Pentium blend。每個
+collision phase 現在從 authoritative `enemy_avail[]` 重建四個 live
+bit words，並在 death spawn、release 與 damaged-remnant 轉換時同步
+更新；ascending cursor 保留原始迴圈在 pool mutation 下的次序語意。
+
+Projectile 在 presentation cache 前先裁掉離屏與 OAM-full request，
+但 source collision 不變。Length-delimited collision result 不再為每發
+清除未使用的 effect arrays；大型 group-death／damaged-transition
+分支禁止 inline，讓真正的高頻 scan 留在 IWRAM。
+
+完全相同的 12,374 shot spawns、253 chain volleys、81 active shots 與
+128 OAM 下，collision 平均 117,750.88 → 58,875.21 cycles，missed
+VBlank 2,086 → 1,370／3,600。極限配置仍不可滿幀，但一般 Episode 2
+route 維持 3／10,475，所有 gameplay／Boss、death、Jukebox、
+62-section matrix 與四關 campaign 回歸通過。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Full-Loadout-Optimization-v34.md`
+- `Tyrian-GBA-Updated-Plan-v34.md`
+
 ## 下一個移植階段
 
 1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與

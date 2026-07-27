@@ -1100,13 +1100,16 @@ $telemetryChecks = [ordered]@{
                 $telemetry.sprite2_compact_uploads * 256 -and
         $telemetry.sprite2_cache_slots -eq 24
     )
+    # v34 rejects 37 offscreen projectile presentation requests before L1.
+    # Enemy Sprite2 uploads remain identical; projectile/L2 hits decrease by
+    # exactly those 37 requests, including inside the authored Boss window.
     sprite2_workload_unchanged = (
         $telemetry.sprite2_cache_misses -eq 582 -and
         $telemetry.sprite2_cache_evictions -eq 558 -and
         $telemetry.sprite2_uploads -eq 582 -and
         $telemetry.sprite2_upload_bytes -eq 563712 -and
         $telemetry.sprite2_max_uploads_per_frame -eq 16 -and
-        $telemetry.projectile_cache_misses -eq 150
+        $telemetry.projectile_cache_misses -eq 113
     )
     projectile_cache_accounting = (
         $telemetry.projectile_cache_drops -eq 0 -and
@@ -1134,7 +1137,7 @@ $telemetryChecks = [ordered]@{
             $telemetry.sprite2_l2_slots
     )
     sprite2_l2_golden = (
-        $telemetry.sprite2_l2_hits -eq 568 -and
+        $telemetry.sprite2_l2_hits -eq 531 -and
         $telemetry.sprite2_l2_misses -eq 164 -and
         $telemetry.sprite2_l2_evictions -eq 100 -and
         $telemetry.sprite2_l2_raw_builds -eq 164 -and
@@ -1151,13 +1154,13 @@ $telemetryChecks = [ordered]@{
         $telemetry.boss_perf_sprite2_misses -eq 432 -and
         $telemetry.boss_perf_sprite2_evictions -eq 432 -and
         $telemetry.boss_perf_sprite2_upload_bytes -eq 411648 -and
-        $telemetry.boss_perf_projectile_misses -eq 146
+        $telemetry.boss_perf_projectile_misses -eq 109
     )
     authored_boss_perf_budget = (
         $telemetry.boss_perf_missed_vblanks -le 8
     )
     authored_boss_l2_golden = (
-        $telemetry.boss_perf_l2_hits -eq 548 -and
+        $telemetry.boss_perf_l2_hits -eq 511 -and
         $telemetry.boss_perf_l2_misses -eq 30 -and
         $telemetry.boss_perf_l2_evictions -eq 30 -and
         $telemetry.boss_perf_l2_raw_builds -eq 30 -and

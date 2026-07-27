@@ -170,6 +170,7 @@ static void render_stress_sidekicks(u8 priority)
 }
 #endif
 
+#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static void render_player_shots(u8 priority)
 {
     s16 index;
@@ -183,6 +184,8 @@ static void render_player_shots(u8 priority)
             u8 shape_table;
             u16 graphic;
             u16 tile;
+            s16 screen_x;
+            s16 screen_y;
 
             if (frame > 60000) {
                 if (
@@ -194,13 +197,15 @@ static void render_player_shots(u8 priority)
                     telemetry_stress_loadout_failures++;
                     continue;
                 }
+                screen_x = source_player_shot_screen_x(
+                    &player_shots[index]
+                );
+                screen_y = source_player_shot_screen_y(
+                    &player_shots[index]
+                );
                 put_sprite_8bpp_64_blended(
-                    source_player_shot_screen_x(
-                        &player_shots[index]
-                    ),
-                    source_player_shot_screen_y(
-                        &player_shots[index]
-                    ),
+                    screen_x,
+                    screen_y,
                     SOURCE_OPTION_PROJECTILE_TILE_BASE,
                     priority
                 );
@@ -213,14 +218,46 @@ static void render_player_shots(u8 priority)
                     OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
                     OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
             graphic = frame > 500 ? (u16)(frame - 500) : frame;
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+            if (oam_count >= SPRITE_LIMIT) {
+                telemetry_projectile_culled_oam_full_before_cache++;
+                continue;
+            }
+            screen_x = source_player_shot_screen_x(
+                &player_shots[index]
+            );
+            screen_y = source_player_shot_screen_y(
+                &player_shots[index]
+            );
+            if (
+                screen_x <= -16 || screen_x >= SCREEN_WIDTH ||
+                screen_y <= -16 || screen_y >= SCREEN_HEIGHT
+            ) {
+                telemetry_projectile_culled_offscreen_before_cache++;
+                continue;
+            }
             tile = source_projectile_cache_acquire(
                 shape_table,
-                graphic
+                graphic,
+                1
             );
+#else
+            tile = source_projectile_cache_acquire(
+                shape_table,
+                graphic,
+                0
+            );
+            screen_x = source_player_shot_screen_x(
+                &player_shots[index]
+            );
+            screen_y = source_player_shot_screen_y(
+                &player_shots[index]
+            );
+#endif
             if (tile == 0xffff) continue;
             put_sprite_8bpp_16(
-                source_player_shot_screen_x(&player_shots[index]),
-                source_player_shot_screen_y(&player_shots[index]),
+                screen_x,
+                screen_y,
                 tile,
                 priority
             );
@@ -235,6 +272,7 @@ static void render_player_shots(u8 priority)
 #endif
     }
 }
+#endif
 
 static void render_effect_sprites(u8 priority)
 {
@@ -387,8 +425,29 @@ static void render_source_enemy_shots(u8 priority)
         u8 shape_table;
         u16 graphic;
         u16 tile;
+        s16 screen_x;
+        s16 screen_y;
 
         if (!source_shot->active) continue;
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+        if (oam_count >= SPRITE_LIMIT) {
+#if TYRIAN_GBA_STRESS_LOADOUT
+            telemetry_projectile_culled_oam_full_before_cache++;
+#endif
+            continue;
+        }
+        screen_x = source_enemy_shot_screen_x(source_shot);
+        screen_y = source_enemy_shot_screen_y(source_shot);
+        if (
+            screen_x <= -16 || screen_x >= SCREEN_WIDTH ||
+            screen_y <= -16 || screen_y >= SCREEN_HEIGHT
+        ) {
+#if TYRIAN_GBA_STRESS_LOADOUT
+            telemetry_projectile_culled_offscreen_before_cache++;
+#endif
+            continue;
+        }
+#endif
         shape_table =
             source_shot->sgr >= 500 ?
                 OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
@@ -402,12 +461,21 @@ static void render_source_enemy_shots(u8 priority)
         );
         tile = source_projectile_cache_acquire(
             shape_table,
-            graphic
+            graphic,
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+            1
+#else
+            0
+#endif
         );
         if (tile == 0xffff) continue;
+#if !TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+        screen_x = source_enemy_shot_screen_x(source_shot);
+        screen_y = source_enemy_shot_screen_y(source_shot);
+#endif
         put_sprite_8bpp_16(
-            source_enemy_shot_screen_x(source_shot),
-            source_enemy_shot_screen_y(source_shot),
+            screen_x,
+            screen_y,
             tile,
             priority
         );
@@ -462,9 +530,11 @@ static void render_source_play_scene(void)
     render_player_sprite(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
     );
+#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
     render_player_shots(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER_SHOT)
     );
+#endif
     if (!source_parity_level.top_enemy_over) {
         render_source_enemy_pool(
             50,

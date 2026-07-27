@@ -1335,7 +1335,7 @@ static void autotest_full_loadout_stress_finish(void)
     sram[0] = 'T';
     sram[1] = 'G';
     sram[2] = 'W';
-    sram[3] = '3';
+    sram[3] = '4';
     sram[4] = 1;
     sram[5] =
         stress_loadout_valid &&
@@ -1380,6 +1380,58 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(148, telemetry_detail_blur_frames);
     sram_write_u32(152, telemetry_detail_wild_frames);
     sram_write_u32(156, telemetry_stress_psg_triggers);
+    sram_write_u32(
+        160,
+        telemetry_projectile_culled_offscreen_before_cache
+    );
+    sram_write_u32(
+        164,
+        telemetry_projectile_culled_oam_full_before_cache
+    );
+    sram_write_u32(
+        168,
+        telemetry_projectile_post_visibility_acquires
+    );
+    sram_write_u32(
+        172,
+        telemetry_projectile_visible_capacity_drops
+    );
+    sram_write_u32(176, telemetry_stress_logic_cycles_total);
+    sram_write_u32(180, telemetry_stress_logic_cycles_max);
+    sram_write_u32(184, telemetry_stress_render_cycles_total);
+    sram_write_u32(188, telemetry_stress_render_cycles_max);
+    sram_write_u32(192, telemetry_stress_collision_cycles_total);
+    sram_write_u32(196, telemetry_stress_collision_cycles_max);
+    sram_write_u32(
+        200,
+        TYRIAN_GBA_PROJECTILE_PRECACHE_CULL |
+            (TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION << 1) |
+            (
+                TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER <<
+                2
+            ) |
+            (TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK << 3)
+    );
+    sram_write_u32(204, telemetry_projectile_cache_hits);
+    sram_write_u32(208, telemetry_projectile_cache_misses);
+    sram_write_u32(212, telemetry_projectile_cache_evictions);
+    sram_write_u32(216, telemetry_projectile_cache_uploads);
+    sram_write_u32(
+        220,
+        source_parity_level.player_shot_collision_mask_rebuild_count
+    );
+    sram_write_u32(
+        224,
+        source_parity_level.player_shot_collision_candidate_visit_count
+    );
+    sram_write_u32(
+        228,
+        source_parity_level.player_shot_collision_linear_slot_visit_count
+    );
+    sram_write_u32(
+        232,
+        source_parity_level.player_shot_collision_mask_active
+    );
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

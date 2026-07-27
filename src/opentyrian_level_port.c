@@ -481,6 +481,31 @@ static void ot_record_spawn_success(
     }
 }
 
+static inline void ot_player_shot_collision_mask_set(
+    OtLevelPortState *state,
+    uint8_t enemy_index,
+    bool active
+)
+{
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint32_t bit;
+    uint8_t word;
+
+    if (!state->player_shot_collision_mask_active) return;
+    word = (uint8_t)(enemy_index >> 5);
+    bit = 1u << (enemy_index & 31);
+    if (active) {
+        state->player_shot_collision_active_mask[word] |= bit;
+    } else {
+        state->player_shot_collision_active_mask[word] &= ~bit;
+    }
+#else
+    (void)state;
+    (void)enemy_index;
+    (void)active;
+#endif
+}
+
 /*
  * Direct translation of JE_newEnemy()'s 25-slot allocation boundary.  Event,
  * launched and continual enemies share the source pool but keep separate
@@ -537,6 +562,7 @@ static uint8_t ot_new_enemy_with_definition(
     }
 
     state->enemy_avail[slot] = avail;
+    ot_player_shot_collision_mask_set(state, slot, avail == 0);
     if (avail == 2 && state->enemy[slot].scoreitem) {
         state->score_item_spawn_count++;
         state->score_item_active_count++;
@@ -1896,6 +1922,7 @@ static void ot_release_enemy(
         state->score_item_active_count--;
     }
     state->enemy_avail[enemy_index] = 1;
+    ot_player_shot_collision_mask_set(state, enemy_index, false);
     if (state->active_enemy_count > 0) state->active_enemy_count--;
     state->enemy_release_count++;
 }
@@ -2570,7 +2597,8 @@ static bool ot_death_link_matches(
         );
 }
 
-static void ot_kill_enemy_group(
+static ARM_CODE __attribute__((noinline, noclone)) void
+ot_kill_enemy_group(
     OtLevelPortState *state,
     uint8_t hit_index,
     OtShotCollisionResult *result
@@ -2623,6 +2651,7 @@ static void ot_kill_enemy_group(
         ) {
             enemy->edlevel = 0;
             state->enemy_avail[index] = 2;
+            ot_player_shot_collision_mask_set(state, index, false);
             enemy->egr[0] = enemy->edgr;
             enemy->ani = 1;
             enemy->aniactive = 0;
@@ -2638,7 +2667,8 @@ static void ot_kill_enemy_group(
     }
 }
 
-static void ot_apply_damaged_transition(
+static ARM_CODE __attribute__((noinline, noclone)) void
+ot_apply_damaged_transition(
     OtLevelPortState *state,
     uint8_t hit_index,
     uint8_t target_link,
@@ -2708,16 +2738,171 @@ static void ot_apply_damaged_transition(
     }
 }
 
+ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_begin_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t index;
+
+    if (state == 0) return;
+    state->player_shot_collision_active_mask[0] = 0;
+    state->player_shot_collision_active_mask[1] = 0;
+    state->player_shot_collision_active_mask[2] = 0;
+    state->player_shot_collision_active_mask[3] = 0;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (state->enemy_avail[index] == 0) {
+            state->player_shot_collision_active_mask[index >> 5] |=
+                1u << (index & 31);
+        }
+    }
+    state->player_shot_collision_mask_active = true;
+    state->player_shot_collision_mask_rebuild_count++;
+#else
+    (void)state;
+#endif
+}
+
+void ot_level_port_end_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+    if (state == 0) return;
+    state->player_shot_collision_mask_active = false;
+}
+
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+static const uint8_t ot_collision_debruijn_index[32] = {
+    0, 1, 28, 2, 29, 14, 24, 3,
+    30, 22, 20, 15, 25, 17, 4, 8,
+    31, 27, 13, 23, 21, 19, 16, 7,
+    26, 12, 18, 6, 11, 5, 10, 9,
+};
+
+static inline uint8_t ot_collision_lowest_set_bit(uint32_t bits)
+{
+    uint32_t isolated = bits & (0u - bits);
+
+    return ot_collision_debruijn_index[
+        (isolated * 0x077cb531u) >> 27
+    ];
+}
+
+/*
+ * Return collision candidates in the same ascending slot order as the
+ * original 0..99 loop.  The live mask is re-read after every candidate:
+ * death-spawn children in a later slot can therefore still be hit by the
+ * same penetrating shot, while children allocated below the cursor cannot,
+ * exactly matching the source loop's mutation semantics.
+ */
+static inline bool ot_next_player_shot_collision_candidate(
+    const OtLevelPortState *state,
+    uint8_t *cursor,
+    uint8_t *enemy_index
+)
+{
+    uint8_t search = *cursor;
+
+    if (!state->player_shot_collision_mask_active) {
+        if (search >= OT_ENEMY_COUNT) return false;
+        *enemy_index = search;
+        *cursor = (uint8_t)(search + 1);
+        return true;
+    }
+
+    while (search < OT_ENEMY_COUNT) {
+        uint8_t word_index = (uint8_t)(search >> 5);
+        uint32_t candidates =
+            state->player_shot_collision_active_mask[word_index] &
+            (UINT32_MAX << (search & 31));
+
+        if (candidates != 0) {
+            uint8_t bit = ot_collision_lowest_set_bit(candidates);
+            uint8_t candidate =
+                (uint8_t)((word_index << 5) + bit);
+
+            if (candidate >= OT_ENEMY_COUNT) return false;
+            *enemy_index = candidate;
+            *cursor = (uint8_t)(candidate + 1);
+            return true;
+        }
+        search = (uint8_t)((word_index + 1) << 5);
+    }
+    return false;
+}
+
+static inline void ot_record_player_shot_collision_visits(
+    OtLevelPortState *state,
+    uint32_t visits
+)
+{
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->player_shot_collision_candidate_visit_count += visits;
+#else
+    (void)state;
+    (void)visits;
+#endif
+}
+#endif
+
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) bool
 ot_level_port_player_shot_overlaps(
-    const OtLevelPortState *state,
+    OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y
 )
 {
     uint8_t index;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t cursor = 0;
+    uint32_t visits = 0;
+#endif
 
     if (state == 0) return false;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    while (
+        ot_next_player_shot_collision_candidate(
+            state,
+            &cursor,
+            &index
+        )
+    ) {
+        const OtEnemy *enemy;
+
+        visits++;
+        if (state->enemy_avail[index] != 0) continue;
+        enemy = &state->enemy[index];
+        if (
+            (
+                enemy->enemycycle == 0 &&
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 25 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 12)
+                ) < 29
+            ) ||
+            (
+                enemy->enemycycle != 0 &&
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 13 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 6)
+                ) < 15
+            )
+        ) {
+            ot_record_player_shot_collision_visits(state, visits);
+            return true;
+        }
+    }
+    ot_record_player_shot_collision_visits(state, visits);
+#else
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         const OtEnemy *enemy;
 
@@ -2750,6 +2935,7 @@ ot_level_port_player_shot_overlaps(
             return true;
         }
     }
+#endif
     return false;
 }
 
@@ -2765,18 +2951,47 @@ ot_level_port_collide_player_shot_sized(
 )
 {
     uint8_t index;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t cursor = 0;
+    uint32_t visits = 0;
+#endif
 
     if (result == 0) return;
-    *result = (OtShotCollisionResult){0};
+    /*
+     * effects[] is consumed only through effect_count.  Clearing the whole
+     * fixed 16-entry array for every active projectile was pure stack
+     * bandwidth (several KiB per gameplay tick under the stress loadout).
+     */
+    result->collided = false;
+    result->consumed = false;
     result->remaining_damage = damage;
+    result->hit_count = 0;
+    result->kill_count = 0;
+    result->effect_count = 0;
+    result->data_cubes_awarded = 0;
+    result->cash_awarded = 0;
     if (state == 0 || damage == 0) return;
 
-    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    while (
+        ot_next_player_shot_collision_candidate(
+            state,
+            &cursor,
+            &index
+        )
+    )
+#else
+    for (index = 0; index < OT_ENEMY_COUNT; index++)
+#endif
+    {
         OtEnemy *enemy;
         bool collided;
         uint16_t armor;
         uint8_t target_link;
 
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+        visits++;
+#endif
         if (state->enemy_avail[index] != 0) continue;
         enemy = &state->enemy[index];
         if (enemy->enemycycle == 0) {
@@ -2859,11 +3074,17 @@ ot_level_port_collide_player_shot_sized(
         if (result->remaining_damage <= armor) {
             result->remaining_damage = 0;
             result->consumed = true;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+            ot_record_player_shot_collision_visits(state, visits);
+#endif
             return;
         }
         result->remaining_damage =
             (uint8_t)(result->remaining_damage - armor);
     }
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    ot_record_player_shot_collision_visits(state, visits);
+#endif
 }
 
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
@@ -2945,7 +3166,23 @@ void ot_level_port_collide_player(
     uint8_t index;
 
     if (result == 0) return;
-    *result = (OtPlayerCollisionResult){0};
+    /*
+     * As above, the effect arrays are length-delimited.  Initialize only
+     * their counts and the scalar result fields instead of clearing both
+     * arrays every tick.
+     */
+    result->pickup_count = 0;
+    result->contact_count = 0;
+    result->damage = 0;
+    result->effect_count = 0;
+    result->data_cubes_awarded = 0;
+    result->front_powerups = 0;
+    result->rear_powerups = 0;
+    result->superbombs_awarded = 0;
+    result->bonus_level_triggered = false;
+    result->next_level = 0;
+    result->cash_awarded = 0;
+    result->pickup_effect_count = 0;
     if (state == 0) return;
 
     for (index = 0; index < OT_ENEMY_COUNT; index++) {

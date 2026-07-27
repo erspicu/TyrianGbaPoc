@@ -980,7 +980,8 @@ static void source_projectile_cache_begin_frame(void)
 
 static u16 source_projectile_cache_acquire(
     u8 shape_table,
-    u16 graphic
+    u16 graphic,
+    u8 presentation_eligible
 )
 {
     u8 index;
@@ -990,6 +991,13 @@ static u16 source_projectile_cache_acquire(
     u8 l2_slot;
     u32 oldest_epoch = 0xffffffffu;
 
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (presentation_eligible) {
+        telemetry_projectile_post_visibility_acquires++;
+    }
+#else
+    (void)presentation_eligible;
+#endif
     if (!source_enemy_palette_valid || graphic == 0) {
         telemetry_projectile_cache_drops++;
         return 0xffff;
@@ -1028,6 +1036,11 @@ static u16 source_projectile_cache_acquire(
         eviction_slot;
     if (selected == SOURCE_PROJECTILE_CACHE_SLOT_COUNT) {
         telemetry_projectile_cache_drops++;
+#if TYRIAN_GBA_STRESS_LOADOUT
+        if (presentation_eligible) {
+            telemetry_projectile_visible_capacity_drops++;
+        }
+#endif
         return 0xffff;
     }
     if (source_projectile_cache[selected].valid) {
@@ -1407,6 +1420,7 @@ static s16 source_score_item_screen_y(const OtEnemy *enemy)
 }
 #endif
 
+#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static s16 source_player_shot_screen_x(const PlayerShot *shot)
 {
 #if TYRIAN_GBA_STRESS_LOADOUT
@@ -1424,6 +1438,7 @@ static s16 source_player_shot_screen_y(const PlayerShot *shot)
     return (s16)(source_world_to_screen_y(shot->y) - 4);
 #endif
 }
+#endif
 
 static s16 source_enemy_shot_screen_x(const OtEnemyShot *shot)
 {
@@ -1766,7 +1781,7 @@ static void source_apply_background_state(void)
     }
 }
 
-static void source_apply_player_shot_result(
+static __attribute__((unused)) void source_apply_player_shot_result(
     PlayerShot *shot,
     OtShotCollisionResult *result
 )
@@ -1828,7 +1843,8 @@ static bool source_autotest_enemy_matches_stop_pool(u8 index)
  * a grace period.  This exists only in route-smoke ROMs and is separately
  * reported, so release gameplay can never inherit or conceal the assist.
  */
-static void source_autotest_route_combat_assist(void)
+static __attribute__((unused)) void
+source_autotest_route_combat_assist(void)
 {
     u8 index;
     u8 candidate = OT_ENEMY_COUNT;
@@ -1886,17 +1902,41 @@ static void source_autotest_route_combat_assist(void)
 }
 #endif
 
-static void source_process_player_collisions(void)
+#if TYRIAN_GBA_STRESS_LOADOUT
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+#else
+static void
+#endif
+source_process_player_collisions(void)
 {
+#if !(TYRIAN_GBA_STRESS_LOADOUT && \
+    TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION)
     u8 shot_index;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    bool collision_phase_started = false;
+#endif
+#endif
     u8 effect_index;
     OtPlayerCollisionResult player_result;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    u32 collision_cycle_start = stress_cycle_counter_read();
+#endif
 
+#if !(TYRIAN_GBA_STRESS_LOADOUT && \
+    TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION)
     for (shot_index = 0; shot_index < MAX_PLAYER_SHOTS; shot_index++) {
         PlayerShot *shot = &player_shots[shot_index];
         OtShotCollisionResult result;
 
         if (!shot->active) continue;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+        if (!collision_phase_started) {
+            ot_level_port_begin_player_shot_collision_phase(
+                &source_parity_level
+            );
+            collision_phase_started = true;
+        }
+#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
         if (shot->chain_weapon != 0) {
             if (
@@ -1955,8 +1995,26 @@ static void source_process_player_collisions(void)
         }
         source_apply_player_shot_result(shot, &result);
     }
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    if (collision_phase_started) {
+        ot_level_port_end_player_shot_collision_phase(
+            &source_parity_level
+        );
+    }
+#endif
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    stress_cycle_accumulate(
+        collision_cycle_start,
+        &telemetry_stress_collision_cycles_total,
+        &telemetry_stress_collision_cycles_max
+    );
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+#if !(TYRIAN_GBA_STRESS_LOADOUT && \
+    TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION)
     source_autotest_route_combat_assist();
+#endif
 #endif
 
     source_parity_level.player_armor = player_armor;

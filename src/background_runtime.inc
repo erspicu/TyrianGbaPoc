@@ -468,7 +468,12 @@ static IWRAM_CODE ARM_CODE u16 background_map_shape_number(
     return background_shape_number_for_map_index(layer, map_index);
 }
 
-static IWRAM_CODE ARM_CODE u32 background_tile_key(
+#if TYRIAN_GBA_STRESS_LOADOUT
+static ARM_CODE __attribute__((noinline, noclone)) u32
+#else
+static IWRAM_CODE ARM_CODE u32
+#endif
+background_tile_key(
     u8 layer,
     u16 tile_x,
     u16 tile_y

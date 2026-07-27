@@ -7,6 +7,7 @@ ROUTE_SECTION ?= 5
 CAMPAIGN_EPISODE ?= 1
 CAMPAIGN_SECTION ?= 1
 CAMPAIGN_LEVELS ?= 4
+STRESS_DIAGNOSTIC ?= active_mask
 
 ifeq ($(DETAIL_LEVEL),low)
 DETAIL_LEVEL_VALUE := 0
@@ -28,6 +29,40 @@ else
 $(error GAME_SPEED must be low or normal)
 endif
 
+ifeq ($(STRESS_DIAGNOSTIC),baseline)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
+else ifeq ($(STRESS_DIAGNOSTIC),no_collision)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=1 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
+else ifeq ($(STRESS_DIAGNOSTIC),no_render)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=1
+else ifeq ($(STRESS_DIAGNOSTIC),precache_cull)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=1 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
+else ifeq ($(STRESS_DIAGNOSTIC),active_mask)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=1 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=1 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
+else
+$(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cull or active_mask)
+endif
+
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
 TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v32_$(CONFIG_SUFFIX)
 TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v32_$(CONFIG_SUFFIX)
@@ -36,8 +71,8 @@ JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v32_$(CONFIG_SUFFIX)
 ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v32_$(CONFIG_SUFFIX)
 ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v32_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v32_$(CONFIG_SUFFIX)
-STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v33_$(CONFIG_SUFFIX)
-PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v33_$(CONFIG_SUFFIX)
+STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v34_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
+PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v34_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -146,6 +181,12 @@ COMMON_OBJECTS := \
 	$(BUILD)/opentyrian_level_port.o \
 	$(BUILD)/romfs.o \
 	$(BUILD)/opentyrian_rom_io.o
+
+STRESS_LEVEL_OBJECT := \
+	$(BUILD)/opentyrian_level_port_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o
+STRESS_COMMON_OBJECTS := \
+	$(filter-out $(BUILD)/opentyrian_level_port.o,$(COMMON_OBJECTS)) \
+	$(STRESS_LEVEL_OBJECT)
 
 MAIN_INCLUDES := $(wildcard src/*.inc)
 
@@ -262,7 +303,7 @@ $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_lev
 		-DAUTOTEST_CAMPAIGN_LEVEL_COUNT=$(CAMPAIGN_LEVELS) \
 		-MMD -MP -c $< -o $@
 
-$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o: \
+$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o: \
 		main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
@@ -273,6 +314,7 @@ $(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o: \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=2 \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=1 \
 		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
+		$(STRESS_DIAGNOSTIC_FLAGS) \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o: \
@@ -295,6 +337,12 @@ $(BUILD)/opentyrian_data.o: src/opentyrian_data.c \
 $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
 		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(STRESS_LEVEL_OBJECT): src/opentyrian_level_port.c \
+		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST_FULL_LOADOUT_STRESS \
+		$(STRESS_DIAGNOSTIC_FLAGS) \
+		-MMD -MP -c $< -o $@
 
 $(BUILD)/opentyrian_sprite2.o: src/opentyrian_sprite2.c \
 		src/opentyrian_sprite2.h src/opentyrian_data.h \
@@ -358,8 +406,8 @@ $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf: \
 	$(SIZE) $@
 
 $(BUILD)/$(STRESS_TARGET).elf: \
-		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o \
-		$(COMMON_OBJECTS)
+		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
+		$(STRESS_COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(STRESS_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
@@ -425,8 +473,10 @@ clean:
 		$(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d \
-		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o \
-		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d \
+		$(STRESS_LEVEL_OBJECT) \
+		$(STRESS_LEVEL_OBJECT:.o=.d) \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
@@ -478,7 +528,8 @@ distclean: clean
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
--include $(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d
+-include $(STRESS_LEVEL_OBJECT:.o=.d)
 -include $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d

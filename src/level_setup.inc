@@ -259,6 +259,20 @@ static u8 enter_level(u16 selected_section)
     telemetry_player_chain_volleys = 0;
     telemetry_stress_option_blend_draws = 0;
     telemetry_stress_psg_triggers = 0;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    telemetry_projectile_culled_offscreen_before_cache = 0;
+    telemetry_projectile_culled_oam_full_before_cache = 0;
+    telemetry_projectile_post_visibility_acquires = 0;
+    telemetry_projectile_visible_capacity_drops = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    telemetry_stress_logic_cycles_total = 0;
+    telemetry_stress_logic_cycles_max = 0;
+    telemetry_stress_render_cycles_total = 0;
+    telemetry_stress_render_cycles_max = 0;
+    telemetry_stress_collision_cycles_total = 0;
+    telemetry_stress_collision_cycles_max = 0;
+#endif
     telemetry_detail_lava_frames = 0;
     telemetry_detail_water_frames = 0;
     telemetry_detail_iced_frames = 0;

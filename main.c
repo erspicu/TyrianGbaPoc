@@ -41,6 +41,46 @@
 #error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
 #endif
 
+/*
+ * Presentation-only projectile culling is safe for ordinary and stress
+ * builds: collision remains in source coordinates, while work for an OBJ
+ * that cannot be submitted is rejected before touching the tile cache.
+ * Dedicated stress variants override these switches for A/B measurement.
+ */
+#ifndef TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+#define TYRIAN_GBA_PROJECTILE_PRECACHE_CULL 1
+#endif
+#ifndef TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#define TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK 1
+#endif
+#ifndef TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION
+#define TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION 0
+#endif
+#ifndef TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
+#define TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER 0
+#endif
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL != 0 && \
+    TYRIAN_GBA_PROJECTILE_PRECACHE_CULL != 1
+#error TYRIAN_GBA_PROJECTILE_PRECACHE_CULL must be 0 or 1
+#endif
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK != 0 && \
+    TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK != 1
+#error TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK must be 0 or 1
+#endif
+#if TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION != 0 && \
+    TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION != 1
+#error TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION must be 0 or 1
+#endif
+#if TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER != 0 && \
+    TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER != 1
+#error TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER must be 0 or 1
+#endif
+#if !TYRIAN_GBA_STRESS_LOADOUT && \
+    (TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION || \
+        TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER)
+#error Stress diagnostic skips require TYRIAN_GBA_STRESS_LOADOUT
+#endif
+
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
     defined(AUTOTEST_SCREENSHOT_POSITION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
@@ -883,6 +923,12 @@ volatile u32 telemetry_player_chain_volleys;
 volatile u32 telemetry_stress_loadout_failures;
 volatile u32 telemetry_stress_option_blend_draws;
 volatile u32 telemetry_stress_psg_triggers;
+#if TYRIAN_GBA_STRESS_LOADOUT
+volatile u32 telemetry_projectile_culled_offscreen_before_cache;
+volatile u32 telemetry_projectile_culled_oam_full_before_cache;
+volatile u32 telemetry_projectile_post_visibility_acquires;
+volatile u32 telemetry_projectile_visible_capacity_drops;
+#endif
 volatile u32 telemetry_detail_lava_frames;
 volatile u32 telemetry_detail_water_frames;
 volatile u32 telemetry_detail_iced_frames;
@@ -946,6 +992,15 @@ volatile u32 telemetry_boss_perf_l2_evictions;
 volatile u32 telemetry_boss_perf_l2_raw_builds;
 volatile u32 telemetry_boss_perf_l2_fallbacks;
 volatile u32 telemetry_waitcnt;
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+volatile u32 telemetry_stress_logic_cycles_total;
+volatile u32 telemetry_stress_logic_cycles_max;
+volatile u32 telemetry_stress_render_cycles_total;
+volatile u32 telemetry_stress_render_cycles_max;
+volatile u32 telemetry_stress_collision_cycles_total;
+volatile u32 telemetry_stress_collision_cycles_max;
+#endif
 
 static u32 boss_perf_start_display_frames;
 static u32 boss_perf_start_missed_vblanks;
@@ -1070,6 +1125,37 @@ static void stress_spawn_weapon(
     s16 origin_y
 );
 #endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static inline u32 stress_cycle_counter_read(void)
+{
+    u16 high_before;
+    u16 low;
+    u16 high_after;
+
+    /*
+     * Timer 2 runs at the 16.78 MHz system clock and Timer 3 cascades.
+     * Repeat if the low word rolled over between the two high reads.
+     */
+    do {
+        high_before = REG_TM3CNT_L;
+        low = REG_TM2CNT_L;
+        high_after = REG_TM3CNT_L;
+    } while (high_before != high_after);
+    return ((u32)high_before << 16) | low;
+}
+
+static inline void stress_cycle_accumulate(
+    u32 start,
+    volatile u32 *total,
+    volatile u32 *maximum
+)
+{
+    u32 elapsed = stress_cycle_counter_read() - start;
+
+    *total += elapsed;
+    if (elapsed > *maximum) *maximum = elapsed;
+}
+#endif
 static void frontend_commit_vblank(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
@@ -1093,6 +1179,9 @@ int main(void)
 {
     u32 current_vblank;
     u8 logic_updated;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    u32 stress_cycle_start;
+#endif
     uint32_t romfs_passed_checks = 0;
     uint32_t romfs_failed_checks = 0;
     const OtRomFs *mounted_romfs;
@@ -1135,6 +1224,14 @@ int main(void)
      */
     mmInitDefault((mm_addr)soundbank, 16);
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    REG_TM2CNT_H = 0;
+    REG_TM3CNT_H = 0;
+    REG_TM2CNT_L = 0;
+    REG_TM3CNT_L = 0;
+    REG_TM3CNT_H = TIMER_COUNT | TIMER_START;
+    REG_TM2CNT_H = TIMER_START;
+#endif
     telemetry_vblank_irqs = 0;
     telemetry_state_transitions = 0;
     hide_all_sprites();
@@ -1369,12 +1466,32 @@ int main(void)
                 if (logic_accumulator >= TYRIAN_GBA_LOGIC_DENOMINATOR) {
                     logic_accumulator -= TYRIAN_GBA_LOGIC_DENOMINATOR;
                     logic_updated = 1;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                    stress_cycle_start = stress_cycle_counter_read();
+#endif
                     update_logic();
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                    stress_cycle_accumulate(
+                        stress_cycle_start,
+                        &telemetry_stress_logic_cycles_total,
+                        &telemetry_stress_logic_cycles_max
+                    );
+#endif
                     if (
                         game_state == STATE_PLAY ||
                         game_state == STATE_GAME_OVER
                     ) {
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                        stress_cycle_start = stress_cycle_counter_read();
+#endif
                         render_game();
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                        stress_cycle_accumulate(
+                            stress_cycle_start,
+                            &telemetry_stress_render_cycles_total,
+                            &telemetry_stress_render_cycles_max
+                        );
+#endif
                     }
                     if (game_state == STATE_PLAY) {
 #ifdef AUTOTEST_SCREENSHOT_TICK
