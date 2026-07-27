@@ -1322,6 +1322,72 @@ static void autotest_romfs_level_matrix(void)
 }
 #endif
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static void autotest_full_loadout_stress_finish(void)
+{
+    volatile u8 *sram = (volatile u8 *)0x0E000000;
+    u8 active_shots = 0;
+    u8 index;
+
+    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+        if (player_shots[index].active) active_shots++;
+    }
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'W';
+    sram[3] = '3';
+    sram[4] = 1;
+    sram[5] =
+        stress_loadout_valid &&
+        telemetry_stress_loadout_failures == 0;
+    sram_write_u32(8, TYRIAN_GBA_DETAIL_LEVEL);
+    sram_write_u32(12, TYRIAN_GBA_GAME_SPEED);
+    sram_write_u32(16, telemetry_display_frames);
+    sram_write_u32(20, telemetry_logic_updates);
+    sram_write_u32(24, telemetry_missed_vblanks);
+    sram_write_u32(28, telemetry_max_oam);
+    sram_write_u32(32, telemetry_player_shot_spawns);
+    sram_write_u32(36, telemetry_player_shot_drops);
+    sram_write_u32(40, telemetry_player_shot_max_active);
+    sram_write_u32(44, telemetry_player_chain_volleys);
+    sram_write_u32(48, telemetry_projectile_cache_drops);
+    sram_write_u32(
+        52,
+        telemetry_projectile_cache_max_visible_unique
+    );
+    sram_write_u32(56, telemetry_sprite2_cache_drops);
+    sram_write_u32(60, telemetry_sprite2_max_visible_unique);
+    sram_write_u32(64, telemetry_sprite2_l2_drops);
+    sram_write_u32(68, telemetry_effect_cache_drops);
+    sram_write_u32(72, telemetry_pickup_explosion_drops);
+    sram_write_u32(76, telemetry_pickup_explosion_max_active);
+    sram_write_u32(80, telemetry_source_max_visible_enemies);
+    sram_write_u32(84, telemetry_source_unknown_visuals);
+    sram_write_u32(88, background_cache_approximations);
+    sram_write_u32(92, telemetry_stress_loadout_failures);
+    sram_write_u32(96, telemetry_vblank_irqs);
+    sram_write_u32(100, level_position);
+    sram_write_u32(104, active_shots);
+    sram_write_u32(108, SOURCE_PROJECTILE_CACHE_SLOT_COUNT);
+    sram_write_u32(112, SOURCE_ENEMY_CACHE_SLOT_COUNT);
+    sram_write_u32(116, MAX_PLAYER_SHOTS);
+    sram_write_u32(120, source_parity_level.assets_valid);
+    sram_write_u32(128, telemetry_stress_option_blend_draws);
+    sram_write_u32(132, source_option_projectile_valid);
+    sram_write_u32(136, telemetry_detail_lava_frames);
+    sram_write_u32(140, telemetry_detail_water_frames);
+    sram_write_u32(144, telemetry_detail_iced_frames);
+    sram_write_u32(148, telemetry_detail_blur_frames);
+    sram_write_u32(152, telemetry_detail_wild_frames);
+    sram_write_u32(156, telemetry_stress_psg_triggers);
+    sram[124] = *(volatile const u8 *)save_type_marker;
+    __asm__ volatile("swi 3");
+    for (;;) {
+        VBlankIntrWait();
+    }
+}
+#endif
+
 #ifdef AUTOTEST_DEATH_FLOW
 static void autotest_death_update(void)
 {

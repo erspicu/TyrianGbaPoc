@@ -29,6 +29,18 @@
 #error TYRIAN_GBA_DEV_PLAYER_INVINCIBLE must be 0 or 1
 #endif
 
+/*
+ * Diagnostic upper-bound build.  The ordinary release keeps the translated
+ * Pulse-Cannon adapter; the dedicated stress target enables six stock HDT
+ * weapon sources at once without changing campaign equipment/save state.
+ */
+#ifndef TYRIAN_GBA_STRESS_LOADOUT
+#define TYRIAN_GBA_STRESS_LOADOUT 0
+#endif
+#if TYRIAN_GBA_STRESS_LOADOUT != 0 && TYRIAN_GBA_STRESS_LOADOUT != 1
+#error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
+#endif
+
 #if defined(AUTOTEST_SCREENSHOT_TICK) || \
     defined(AUTOTEST_SCREENSHOT_POSITION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
@@ -52,13 +64,23 @@
  * NES/SNES low-detail proofs.  These pools intentionally raise the first
  * level's concurrency while staying under a conservative scanline budget.
  */
+#if TYRIAN_GBA_STRESS_LOADOUT
+/* OpenTyrian shots.h MAX_PWEAPON. */
+#define MAX_PLAYER_SHOTS 81
+#else
 #define MAX_PLAYER_SHOTS 12
+#endif
 #define MAX_ENEMY_SHOTS 60
 /* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
 #define MAX_EFFECTS 200
 #define MAX_VISIBLE_EFFECTS 48
 #define MAX_REWARDS 32
+#if TYRIAN_GBA_STRESS_LOADOUT
+/* OpenTyrian varz.h MAX_EXPLOSIONS. */
+#define MAX_PICKUP_EXPLOSIONS 200
+#else
 #define MAX_PICKUP_EXPLOSIONS 32
+#endif
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
 /*
@@ -164,8 +186,20 @@
 #define SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT 2
 #define SOURCE_ENEMY_CACHE_LOWER_TILE_BASE 224
 #define SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT 9
+#if TYRIAN_GBA_STRESS_LOADOUT
+/*
+ * The stress ROM trades three 32x32 enemy slots for ten additional 16x16
+ * projectile slots, then reserves the final four 32x32 slots for the
+ * source Super Bomb's 80x79 OPTION_SHAPES framebuffer-blend graphic.  The
+ * GBA adapter centre-crops that source graphic to the hardware's largest
+ * square OBJ (64x64), preserving 1:1 pixels and using hardware alpha.
+ */
+#define SOURCE_ENEMY_CACHE_UPPER_TILE_BASE 720
+#define SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT 5
+#else
 #define SOURCE_ENEMY_CACHE_UPPER_TILE_BASE 640
 #define SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT 12
+#endif
 #define SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT \
     (SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
@@ -176,19 +210,47 @@
         SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT)
 #define SOURCE_ENEMY_COMPACT_FRAME_BYTES 256
 #define SOURCE_ENEMY_COMPACT_TILES_PER_SLOT 8
-#define SOURCE_PROJECTILE_CACHE_SLOT_COUNT 8
 #define SOURCE_PROJECTILE_TILES_PER_SLOT 8
 #define SOURCE_PROJECTILE_CACHE_LOWER_TILE_BASE OBJ_TILE_REWARD
 #define SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT 7
 #define SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE \
     (OBJ_TILE_PLAYER_SHOT + 4)
+#define SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT 1
+#if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE 640
+#define SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT 10
+#define SOURCE_PROJECTILE_CACHE_SLOT_COUNT \
+    (SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT + \
+        SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT + \
+        SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT)
+#else
+#define SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT 0
+#define SOURCE_PROJECTILE_CACHE_SLOT_COUNT \
+    (SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT + \
+        SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT)
+#endif
 #define SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE \
     (SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE + \
-        (SOURCE_PROJECTILE_CACHE_SLOT_COUNT - \
-            SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT) * \
+        SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT * \
             SOURCE_PROJECTILE_TILES_PER_SLOT)
 #define SOURCE_PROJECTILE_FRAME_BYTES \
     (SOURCE_PROJECTILE_TILES_PER_SLOT * 32)
+#if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_OPTION_PROJECTILE_SOURCE_TABLE 5
+#define SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC 33
+#define SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH 80
+#define SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT 79
+#define SOURCE_OPTION_PROJECTILE_CROP_X 8
+#define SOURCE_OPTION_PROJECTILE_CROP_Y 7
+#define SOURCE_OPTION_PROJECTILE_SIZE 64
+#define SOURCE_OPTION_PROJECTILE_TILES 128
+#define SOURCE_OPTION_PROJECTILE_BYTES \
+    (SOURCE_OPTION_PROJECTILE_TILES * 32)
+#define SOURCE_OPTION_PROJECTILE_TILE_BASE \
+    (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE + \
+        SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT * \
+            SOURCE_ENEMY_TILES_PER_SLOT)
+#endif
 
 /*
  * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
@@ -249,7 +311,12 @@ _Static_assert(
     "GAME OVER runtime bank must occupy the lower-cache/reward gap"
 );
 _Static_assert(
-    OBJ_TILE_GAME_OVER_SOURCE == SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
+    OBJ_TILE_GAME_OVER_SOURCE ==
+#if TYRIAN_GBA_STRESS_LOADOUT
+        SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE,
+#else
+        SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
+#endif
     "GAME OVER cartridge bank must use the first time-shared upper slot"
 );
 _Static_assert(
@@ -274,7 +341,7 @@ _Static_assert(
 );
 _Static_assert(
     SPRITE2_RAW_TABLE_COUNT ==
-        OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY &&
+        OT_COMP_SHAPE_TABLE_OPTIONS_SMALL &&
         SPRITE2_RAW_COMPONENT_WIDTH ==
             OT_SPRITE2_COMPONENT_WIDTH &&
         SPRITE2_RAW_COMPONENT_HEIGHT ==
@@ -310,19 +377,36 @@ _Static_assert(
         SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT *
             SOURCE_PROJECTILE_TILES_PER_SLOT <=
         OBJ_TILE_SCORE_DIGITS &&
-        SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
-            (
-                SOURCE_PROJECTILE_CACHE_SLOT_COUNT -
-                SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT
-            ) * SOURCE_PROJECTILE_TILES_PER_SLOT <=
+    SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
+        SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT *
+            SOURCE_PROJECTILE_TILES_PER_SLOT <=
         OBJ_TILE_BOSS_BAR,
     "runtime projectile cache overlaps retained OBJ assets"
 );
+#if TYRIAN_GBA_STRESS_LOADOUT
+_Static_assert(
+    SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE +
+        SOURCE_PROJECTILE_CACHE_STRESS_SLOT_COUNT *
+            SOURCE_PROJECTILE_TILES_PER_SLOT <=
+        SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
+    "stress projectile cache overlaps the upper enemy cache"
+);
+_Static_assert(
+    SOURCE_OPTION_PROJECTILE_TILE_BASE +
+        SOURCE_OPTION_PROJECTILE_TILES <=
+        OBJ_TILE_COUNT,
+    "source OPTION_SHAPES projectile exceeds OBJ VRAM"
+);
+#endif
 _Static_assert(
     SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT *
             SOURCE_ENEMY_TILES_PER_SLOT <=
+#if TYRIAN_GBA_STRESS_LOADOUT
+        SOURCE_OPTION_PROJECTILE_TILE_BASE,
+#else
         OBJ_TILE_COUNT,
+#endif
     "upper enemy frame cache exceeds OBJ VRAM"
 );
 _Static_assert(
@@ -441,9 +525,34 @@ extern const u8 soundbank[];
 
 typedef struct {
     u8 active;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    u8 ttl;
+    u8 damage;
+    u8 infinite;
+    u8 animation;
+    u8 animation_max;
+    u8 trail;
+    u8 reserved;
+    u16 graphic;
+    u16 render_graphic;
+    u16 chain_weapon;
+    s16 x;
+    s16 y;
+    s16 xm;
+    s16 ym;
+    s16 xc;
+    s16 yc;
+#else
+    /*
+     * Keep the ordinary source-parity adapter at its original eight-byte
+     * footprint.  The extended motion/animation/chain fields only describe
+     * the dedicated six-system stress loadout and must not consume campaign
+     * EWRAM.
+     */
     s16 x;
     s16 y;
     u8 damage;
+#endif
 } PlayerShot;
 
 typedef struct {
@@ -472,6 +581,8 @@ typedef struct {
 typedef struct {
     u8 active;
     u8 ttl;
+    u8 fixed_position;
+    s8 delta_y;
     u16 graphic;
     s16 x;
     s16 y;
@@ -608,6 +719,35 @@ static u8 fire_cooldown;
 static s8 player_bank;
 static u32 player_cash;
 
+#if TYRIAN_GBA_STRESS_LOADOUT
+enum {
+    STRESS_BAY_FRONT = 0,
+    STRESS_BAY_REAR = 1,
+    STRESS_BAY_LEFT_SIDEKICK = 2,
+    STRESS_BAY_RIGHT_SIDEKICK = 3,
+    STRESS_BAY_SPECIAL = 4,
+    STRESS_BAY_SUPERBOMB = 5,
+    STRESS_BAY_EQUIPMENT_COUNT = 6,
+    STRESS_BAY_MISC = 6,
+    STRESS_BAY_COUNT = 7,
+};
+
+static OtWeaponDefinition
+    stress_weapon[STRESS_BAY_EQUIPMENT_COUNT] EWRAM_BSS;
+static OtOptionDefinition stress_left_option EWRAM_BSS;
+static OtOptionDefinition stress_right_option EWRAM_BSS;
+static OtSpecialDefinition stress_special EWRAM_BSS;
+static u8 stress_loadout_valid;
+static u8 stress_shot_repeat[STRESS_BAY_COUNT];
+static u8 stress_shot_multi_pos[STRESS_BAY_COUNT];
+static u8 stress_sidekick_animation[2];
+static s16 stress_sidekick_x[2];
+static s16 stress_sidekick_y[2];
+static s16 stress_player_delta_x;
+static s16 stress_player_delta_y;
+static u8 source_option_projectile_valid;
+#endif
+
 static u8 boss_bar_flash;
 static u8 boss_bar_palette_dirty;
 static u8 boss_obj_palette_restore_pending;
@@ -736,6 +876,18 @@ volatile u32 telemetry_projectile_cache_drops;
 volatile u32 telemetry_projectile_cache_uploads;
 volatile u32 telemetry_projectile_cache_max_uploads;
 volatile u32 telemetry_projectile_cache_max_visible_unique;
+volatile u32 telemetry_player_shot_spawns;
+volatile u32 telemetry_player_shot_drops;
+volatile u32 telemetry_player_shot_max_active;
+volatile u32 telemetry_player_chain_volleys;
+volatile u32 telemetry_stress_loadout_failures;
+volatile u32 telemetry_stress_option_blend_draws;
+volatile u32 telemetry_stress_psg_triggers;
+volatile u32 telemetry_detail_lava_frames;
+volatile u32 telemetry_detail_water_frames;
+volatile u32 telemetry_detail_iced_frames;
+volatile u32 telemetry_detail_blur_frames;
+volatile u32 telemetry_detail_wild_frames;
 volatile u32 telemetry_effect_cache_hits;
 volatile u32 telemetry_effect_cache_misses;
 volatile u32 telemetry_effect_cache_evictions;
@@ -902,6 +1054,22 @@ static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
 static void source_projectile_cache_commit(void);
 static void source_effect_cache_commit(void);
+static void source_spawn_explosion(
+    s16 x,
+    s16 y,
+    s8 delta_y,
+    u8 type,
+    u8 fixed_position
+);
+#if TYRIAN_GBA_STRESS_LOADOUT
+static void stress_loadout_init(void);
+static void stress_spawn_weapon(
+    const OtWeaponDefinition *weapon,
+    u8 bay,
+    s16 origin_x,
+    s16 origin_y
+);
+#endif
 static void frontend_commit_vblank(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
@@ -1047,12 +1215,14 @@ int main(void)
         } else {
             pad_now = autotest_input();
             pad_pressed = 0;
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS
             if (
                 telemetry_display_frames == 120 ||
                 telemetry_display_frames == 180
             ) {
                 pad_pressed = KEY_START;
             }
+#endif
         }
 #endif
 
@@ -1262,6 +1432,14 @@ int main(void)
             }
             telemetry_display_frames++;
 #ifdef AUTOTEST
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            if (
+                game_state == STATE_PLAY &&
+                telemetry_display_frames >= 3600
+            ) {
+                autotest_full_loadout_stress_finish();
+            }
+#endif
             if (
                 autotest_running &&
                 telemetry_display_frames >= 20000 &&

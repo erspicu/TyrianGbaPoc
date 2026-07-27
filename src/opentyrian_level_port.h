@@ -414,6 +414,20 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot(
     uint8_t damage,
     OtShotCollisionResult *result
 );
+IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_sized(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    uint8_t radius_w,
+    uint8_t radius_h,
+    OtShotCollisionResult *result
+);
+IWRAM_CODE ARM_CODE bool ot_level_port_player_shot_overlaps(
+    const OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y
+);
 void ot_level_port_collide_player(
     OtLevelPortState *state,
     bool player_vulnerable,

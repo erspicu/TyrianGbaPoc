@@ -19,7 +19,7 @@ bool ot_sprite2_raw_catalog_valid(void)
     return
         SPRITE2_RAW_VERSION == 1u &&
         SPRITE2_RAW_TABLE_COUNT ==
-            OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY &&
+            OT_COMP_SHAPE_TABLE_OPTIONS_SMALL &&
         SPRITE2_RAW_COMPONENT_WIDTH ==
             OT_SPRITE2_COMPONENT_WIDTH &&
         SPRITE2_RAW_COMPONENT_HEIGHT ==

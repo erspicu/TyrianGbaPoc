@@ -85,6 +85,91 @@ static void render_player_sprite(u8 priority)
     }
 }
 
+#if TYRIAN_GBA_STRESS_LOADOUT
+static void render_stress_sidekicks(u8 priority)
+{
+    u8 side;
+
+    if (!player_alive || !stress_loadout_valid) return;
+    for (side = 0; side < 2; side++) {
+        const OtOptionDefinition *option =
+            side == 0 ? &stress_left_option : &stress_right_option;
+        OtEnemyDrawCommand draw;
+        u16 graphic;
+        u16 tile;
+        s16 screen_x;
+        s16 screen_y;
+
+        if (
+            option->option == 0 ||
+            option->animation_count == 0
+        ) {
+            continue;
+        }
+        graphic = option->graphic[
+            stress_sidekick_animation[side]
+        ];
+        draw = (OtEnemyDrawCommand){
+            .active = true,
+            .x = stress_sidekick_x[side],
+            .y = stress_sidekick_y[side],
+            .graphic = graphic,
+            .shape_table =
+                option->style == 1 || option->style == 2 ?
+                    26 :
+                    OT_COMP_SHAPE_TABLE_OPTIONS_SMALL,
+            .size =
+                option->style == 1 || option->style == 2 ?
+                    1 :
+                    0,
+            .filter = 0,
+            .pool = 0,
+        };
+        tile = source_enemy_cache_acquire(&draw);
+        if (tile == 0xffff) continue;
+        if (draw.size != 0) {
+            /*
+             * blit_sprite2x2(x - 6, y) places its first 12x14 component at
+             * canvas (4,2); compensate that unchanged source layout.
+             */
+            screen_x = source_world_to_screen_x(
+                (s16)(stress_sidekick_x[side] - 10)
+            );
+            screen_y = source_world_to_screen_y(
+                (s16)(stress_sidekick_y[side] - 2)
+            );
+            put_sprite_8bpp_32(
+                screen_x,
+                screen_y,
+                tile,
+                priority
+            );
+        } else if (source_enemy_cache_tile_is_compact(tile)) {
+            put_sprite_8bpp_16(
+                source_world_to_screen_x(stress_sidekick_x[side]),
+                source_world_to_screen_y(stress_sidekick_y[side]),
+                tile,
+                priority
+            );
+        } else {
+            /*
+             * A size-0 Sprite2 occupies (8,8)..(23,23) in a full L2 frame.
+             */
+            put_sprite_8bpp_32(
+                source_world_to_screen_x(
+                    (s16)(stress_sidekick_x[side] - 8)
+                ),
+                source_world_to_screen_y(
+                    (s16)(stress_sidekick_y[side] - 8)
+                ),
+                tile,
+                priority
+            );
+        }
+    }
+}
+#endif
+
 static void render_player_shots(u8 priority)
 {
     s16 index;
@@ -92,12 +177,62 @@ static void render_player_shots(u8 priority)
     /* PC blits ascending slots; later slots must win the GBA OBJ tie. */
     for (index = MAX_PLAYER_SHOTS - 1; index >= 0; index--) {
         if (!player_shots[index].active) continue;
+#if TYRIAN_GBA_STRESS_LOADOUT
+        {
+            u16 frame = player_shots[index].render_graphic;
+            u8 shape_table;
+            u16 graphic;
+            u16 tile;
+
+            if (frame > 60000) {
+                if (
+                    frame !=
+                        60001 +
+                            SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
+                    !source_option_projectile_valid
+                ) {
+                    telemetry_stress_loadout_failures++;
+                    continue;
+                }
+                put_sprite_8bpp_64_blended(
+                    source_player_shot_screen_x(
+                        &player_shots[index]
+                    ),
+                    source_player_shot_screen_y(
+                        &player_shots[index]
+                    ),
+                    SOURCE_OPTION_PROJECTILE_TILE_BASE,
+                    priority
+                );
+                telemetry_stress_option_blend_draws++;
+                continue;
+            }
+            if (frame > 1000) frame %= 1000;
+            shape_table =
+                frame > 500 ?
+                    OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
+                    OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
+            graphic = frame > 500 ? (u16)(frame - 500) : frame;
+            tile = source_projectile_cache_acquire(
+                shape_table,
+                graphic
+            );
+            if (tile == 0xffff) continue;
+            put_sprite_8bpp_16(
+                source_player_shot_screen_x(&player_shots[index]),
+                source_player_shot_screen_y(&player_shots[index]),
+                tile,
+                priority
+            );
+        }
+#else
         put_sprite(
             source_player_shot_screen_x(&player_shots[index]),
             source_player_shot_screen_y(&player_shots[index]),
             OBJ_TILE_PLAYER_SHOT, OBJ_PAL_PLAYER_SHOT,
             ATTR1_SIZE_16, priority
         );
+#endif
     }
 }
 
@@ -165,7 +300,7 @@ static void render_source_pickup_explosions(u8 priority)
             .active = true,
             .x = explosion->x,
             .y = explosion->y,
-            .graphic = explosion->graphic,
+            .graphic = (u16)(explosion->graphic + 1),
             .shape_table = OT_COMP_SHAPE_TABLE_EXPLOSION,
             .size = 0,
             .filter = 0,
@@ -319,6 +454,11 @@ static void render_source_play_scene(void)
     render_source_enemy_shots(
         source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT)
     );
+#if TYRIAN_GBA_STRESS_LOADOUT
+    render_stress_sidekicks(
+        source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
+    );
+#endif
     render_player_sprite(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
     );

@@ -487,6 +487,8 @@ static void jukebox_enter(void)
     jukebox_rebuild_palettes();
 
     REG_DISPCNT = LCDC_OFF;
+    REG_BLDCNT = 0;
+    REG_BLDALPHA = 0;
     hide_all_sprites();
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     oam_dirty = 0;

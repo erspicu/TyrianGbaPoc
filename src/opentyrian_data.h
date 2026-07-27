@@ -33,6 +33,10 @@ enum {
     OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS = 8,
     OT_HDT_WEAPON_COUNT = 781,
     OT_HDT_WEAPON_RECORD_BYTES = 80,
+    OT_HDT_PORT_COUNT = 43,
+    OT_HDT_PORT_RECORD_BYTES = 82,
+    OT_HDT_OPTION_COUNT = 31,
+    OT_HDT_OPTION_RECORD_BYTES = 86,
     OT_HDT_ENEMY_COUNT = 851,
     OT_HDT_ENEMY_RECORD_BYTES = 77,
     OT_PIC_COUNT = 13,
@@ -59,6 +63,12 @@ enum {
      */
     OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY = 36,
     OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY = 37,
+    /*
+     * Adapter-only ID for OpenTyrian's spriteSheet9, which contains the
+     * ordinary (non-2x2) sidekick bodies.  The stock level shape-table range
+     * ends at 34 and the three adapter banks above occupy 35..37.
+     */
+    OT_COMP_SHAPE_TABLE_OPTIONS_SMALL = 38,
     OT_MUS_LDS_PATCH_BYTES = 46,
     OT_MUS_LDS_CHANNEL_COUNT = 9,
 };
@@ -133,6 +143,40 @@ typedef struct {
     uint8_t trail;
     uint8_t shipblastfilter;
 } OtWeaponDefinition;
+
+typedef struct {
+    char name[31];
+    uint8_t opnum;
+    uint16_t op[2][11];
+    uint16_t cost;
+    uint16_t itemgraphic;
+    uint16_t poweruse;
+} OtWeaponPortDefinition;
+
+typedef struct {
+    char name[31];
+    uint16_t itemgraphic;
+    uint8_t power;
+    uint8_t type;
+    uint16_t weapon;
+} OtSpecialDefinition;
+
+typedef struct {
+    char name[31];
+    uint8_t power;
+    uint16_t itemgraphic;
+    uint16_t cost;
+    uint8_t style;
+    uint8_t option;
+    int8_t speed;
+    uint8_t animation_count;
+    uint16_t graphic[20];
+    uint8_t weapon_port;
+    uint16_t weapon;
+    uint8_t ammo;
+    bool stop;
+    uint8_t icon_graphic;
+} OtOptionDefinition;
 
 typedef struct {
     char map_file;
@@ -300,6 +344,18 @@ bool ot_data_hdt_enemy_read(
 bool ot_data_hdt_weapon_read(
     uint16_t weapon_id,
     OtWeaponDefinition *weapon
+);
+bool ot_data_hdt_weapon_port_read(
+    uint8_t port_id,
+    OtWeaponPortDefinition *port
+);
+bool ot_data_hdt_special_read(
+    uint8_t special_id,
+    OtSpecialDefinition *special
+);
+bool ot_data_hdt_option_read(
+    uint8_t option_id,
+    OtOptionDefinition *option
 );
 
 /*

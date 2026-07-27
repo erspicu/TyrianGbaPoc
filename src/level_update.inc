@@ -290,7 +290,7 @@ static void update_logic(void)
      * Existing fixed-position JE_setupExplosion entries lose one TTL before
      * JE_playerCollide() can append this tick's newly collected label.
      */
-    source_update_fixed_pickup_explosions();
+    source_update_explosions();
 #ifdef AUTOTEST_EXPLOSION_SEAM_TEST
     if (level_tick == 2) spawn_large_effect(120, 72, 0);
 #endif

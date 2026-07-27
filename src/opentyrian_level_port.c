@@ -2708,12 +2708,59 @@ static void ot_apply_damaged_transition(
     }
 }
 
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) bool
+ot_level_port_player_shot_overlaps(
+    const OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y
+)
+{
+    uint8_t index;
+
+    if (state == 0) return false;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy;
+
+        if (state->enemy_avail[index] != 0) continue;
+        enemy = &state->enemy[index];
+        if (
+            (
+                enemy->enemycycle == 0 &&
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 25 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 12)
+                ) < 29
+            ) ||
+            (
+                enemy->enemycycle != 0 &&
+                ot_abs_s16(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    )
+                ) < 13 &&
+                ot_abs_s16(
+                    (int16_t)(enemy->ey - shot_y - 6)
+                ) < 15
+            )
+        ) {
+            return true;
+        }
+    }
+    return false;
+}
+
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
-ot_level_port_collide_player_shot(
+ot_level_port_collide_player_shot_sized(
     OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y,
     uint8_t damage,
+    uint8_t radius_w,
+    uint8_t radius_h,
     OtShotCollisionResult *result
 )
 {
@@ -2736,22 +2783,28 @@ ot_level_port_collide_player_shot(
             collided =
                 ot_abs_s16(
                     (int16_t)(
-                        enemy->ex + enemy->mapoffset - shot_x
+                        enemy->ex + enemy->mapoffset -
+                            shot_x - radius_w
                     )
-                ) < 25 &&
+                ) < 25 + radius_w &&
                 ot_abs_s16(
-                    (int16_t)(enemy->ey - shot_y - 12)
-                ) < 29;
+                    (int16_t)(
+                        enemy->ey - shot_y - 12 - radius_h
+                    )
+                ) < 29 + radius_h;
         } else {
             collided =
                 ot_abs_s16(
                     (int16_t)(
-                        enemy->ex + enemy->mapoffset - shot_x
+                        enemy->ex + enemy->mapoffset -
+                            shot_x - radius_w
                     )
-                ) < 13 &&
+                ) < 13 + radius_w &&
                 ot_abs_s16(
-                    (int16_t)(enemy->ey - shot_y - 6)
-                ) < 15;
+                    (int16_t)(
+                        enemy->ey - shot_y - 6 - radius_h
+                    )
+                ) < 15 + radius_h;
         }
         if (!collided) continue;
 
@@ -2811,6 +2864,26 @@ ot_level_port_collide_player_shot(
         result->remaining_damage =
             (uint8_t)(result->remaining_damage - armor);
     }
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    OtShotCollisionResult *result
+)
+{
+    ot_level_port_collide_player_shot_sized(
+        state,
+        shot_x,
+        shot_y,
+        damage,
+        0,
+        0,
+        result
+    );
 }
 
 static void ot_recalculate_purple_balls(OtLevelPortState *state)

@@ -1,6 +1,6 @@
 param(
     [switch]$KeepIntermediates,
-    [ValidateSet("low", "normal")]
+    [ValidateSet("low", "normal", "high", "pentium")]
     [string]$DetailLevel = "low",
     [ValidateSet("low", "normal")]
     [string]$GameSpeed = "normal"
@@ -142,24 +142,24 @@ $sprite2RawBytes = (Get-Item -LiteralPath $sprite2RawPath).Length
 $sprite2RawSha256 = (
     Get-FileHash -LiteralPath $sprite2RawPath -Algorithm SHA256
 ).Hash.ToLowerInvariant()
-$sprite2RawCrc32 = [Convert]::ToUInt32("aca11e49", 16)
+$sprite2RawCrc32 = [Convert]::ToUInt32("38f795b9", 16)
 if (
     $sprite2RawAudit.version -ne "1" -or
-    $sprite2RawAudit.table_count -ne "37" -or
+    $sprite2RawAudit.table_count -ne "38" -or
     $sprite2RawAudit.components_per_table -ne "304" -or
-    $sprite2RawAudit.component_count -ne "11248" -or
+    $sprite2RawAudit.component_count -ne "11552" -or
     $sprite2RawAudit.component_width -ne "12" -or
     $sprite2RawAudit.component_height -ne "14" -or
     $sprite2RawAudit.component_bytes -ne "168" -or
-    $sprite2RawBytes -ne 1889664 -or
+    $sprite2RawBytes -ne 1940736 -or
     [int64]$sprite2RawAudit.raw_bytes -ne $sprite2RawBytes -or
-    $sprite2RawAudit.raw_crc32 -ne "aca11e49" -or
+    $sprite2RawAudit.raw_crc32 -ne "38f795b9" -or
     $sprite2RawAudit.raw_sha256 -ne $sprite2RawSha256 -or
     $sprite2RawSha256 -ne
-        "a6c475d5c02264e8c761eb9ceb208ccbd2f01ef19b29e4e1ca547334b9993819" -or
-    $sprite2RawAudit.source_stream_bytes -ne "1119622" -or
-    $sprite2RawAudit.source_stream_crc32 -ne "5b6084ce" -or
-    $sprite2RawAudit.roundtrip_components -ne "11248"
+        "bbfddd080955fd639eeabe151b5cab0aacbbea5917b39bf56fc6693f048ceca4" -or
+    $sprite2RawAudit.source_stream_bytes -ne "1151417" -or
+    $sprite2RawAudit.source_stream_crc32 -ne "2a635936" -or
+    $sprite2RawAudit.roundtrip_components -ne "11552"
 ) {
     throw "Sprite2 raw audit does not match the stock logical bank catalog"
 }
@@ -999,7 +999,13 @@ $legacyStage4TelemetryChecks = [ordered]@{
 # The legacy block above remains as an audit record for the position-5400
 # proof.  The active regression contract follows the authored boss, end
 # flight, stats screen and return to the PC-style Game Menu.
-$expectedDetailLevel = if ($DetailLevel -eq "low") { 0 } else { 1 }
+$expectedDetailLevel = switch ($DetailLevel) {
+    "low" { 0 }
+    "normal" { 1 }
+    "high" { 2 }
+    "pentium" { 3 }
+    default { throw "Unsupported detail profile: $DetailLevel" }
+}
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { 16872 } else { 13509 }
 $expectedBossDisplayFrames = if ($GameSpeed -eq "low") { 2226 } else { 1781 }
@@ -1792,7 +1798,7 @@ $episode2Checks = [ordered]@{
     background_partition = (
         $episode2Telemetry.background_layer0_valid -eq 576 -and
         $episode2Telemetry.background_layer1_valid -eq
-            $(if ($DetailLevel -eq "normal") { 1 } else { 0 }) -and
+            $(if ($DetailLevel -eq "low") { 0 } else { 1 }) -and
         $episode2Telemetry.background_layer2_valid -eq 1
     )
     full_level_vblank_budget = (

@@ -70,7 +70,7 @@ static u8 enter_level(u16 selected_section)
     bg2_row_pending = 0;
     bg3_row_pending = 0;
     source_background2_enabled =
-        TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_NORMAL;
+        TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW;
     source_background2_upload_pending = 0;
     game_over_tile_upload_pending = 0;
     clear_entities();
@@ -179,6 +179,9 @@ static u8 enter_level(u16 selected_section)
         frontend_play_mode == FRONTEND_PLAY_ARCADE,
         source_enemy_shape_history_valid != 0
     );
+#if TYRIAN_GBA_STRESS_LOADOUT
+    stress_loadout_init();
+#endif
     source_enemy_shape_history_valid = 1;
     source_runtime_reset();
 
@@ -250,6 +253,23 @@ static u8 enter_level(u16 selected_section)
     telemetry_projectile_cache_uploads = 0;
     telemetry_projectile_cache_max_uploads = 0;
     telemetry_projectile_cache_max_visible_unique = 0;
+    telemetry_player_shot_spawns = 0;
+    telemetry_player_shot_drops = 0;
+    telemetry_player_shot_max_active = 0;
+    telemetry_player_chain_volleys = 0;
+    telemetry_stress_option_blend_draws = 0;
+    telemetry_stress_psg_triggers = 0;
+    telemetry_detail_lava_frames = 0;
+    telemetry_detail_water_frames = 0;
+    telemetry_detail_iced_frames = 0;
+    telemetry_detail_blur_frames = 0;
+    telemetry_detail_wild_frames = 0;
+    telemetry_stress_loadout_failures =
+#if TYRIAN_GBA_STRESS_LOADOUT
+        stress_loadout_valid ? 0 : 1;
+#else
+        0;
+#endif
     telemetry_source_launch_attempts = 0;
     telemetry_source_launch_successes = 0;
     telemetry_source_random_attempts = 0;
@@ -281,7 +301,7 @@ static u8 enter_level(u16 selected_section)
     REG_BG2VOFS = bg3_scroll_pixel & 255;
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
-        (source_background2_enabled ? BG1_ON : 0);
+        (source_background2_present() ? BG1_ON : 0);
     audio_load_source_song(frontend_level.source_song);
     game_state = STATE_PLAY;
     telemetry_state_transitions++;

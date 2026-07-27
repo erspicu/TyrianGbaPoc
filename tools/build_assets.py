@@ -154,7 +154,7 @@ ENEMY_STRUCTURE_FRAME_KEYS = frozenset(
 ENEMY_FILTER_PALETTE_BANK = 15
 SHAPE_TABLE_CHARACTERS = "2478ABCDEFGHIJKLMNOPQRSTU5#V0@3^59"
 SPRITE2_RAW_VERSION = 1
-SPRITE2_RAW_TABLE_COUNT = 37
+SPRITE2_RAW_TABLE_COUNT = 38
 SPRITE2_RAW_COMPONENTS_PER_TABLE = 304
 SPRITE2_RAW_COMPONENT_WIDTH = 12
 SPRITE2_RAW_COMPONENT_HEIGHT = 14
@@ -253,6 +253,8 @@ def sprite2_logical_bank(
         return sprite2_tyrian_shp_section(tyrian_shp, 8)
     if shape_table == 37:
         return sprite2_tyrian_shp_section(tyrian_shp, 12)
+    if shape_table == 38:
+        return sprite2_tyrian_shp_section(tyrian_shp, 9)
     if not 1 <= shape_table <= len(SHAPE_TABLE_CHARACTERS):
         raise ValueError(f"Sprite2 logical bank outside table: {shape_table}")
     character = SHAPE_TABLE_CHARACTERS[shape_table - 1].lower()

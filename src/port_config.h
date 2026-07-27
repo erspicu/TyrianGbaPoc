@@ -1,11 +1,14 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * Small, explicit GBA adaptation switches.  They intentionally expose only
- * the two source settings that are useful for this port's hardware tests.
+ * Small, explicit GBA adaptation switches.  Detail values retain the
+ * OpenTyrian processor-profile ordering used by JE_initProcessorType():
+ * Low/386, Normal/486, High Detail and Pentium.
  *
  * Override examples:
  *   make DETAIL_LEVEL=normal GAME_SPEED=normal
+ *   make DETAIL_LEVEL=high   GAME_SPEED=normal
+ *   make DETAIL_LEVEL=pentium GAME_SPEED=normal
  *   make DETAIL_LEVEL=low    GAME_SPEED=low
  */
 #ifndef TYRIAN_GBA_PORT_CONFIG_H
@@ -13,14 +16,18 @@
 
 #define TYRIAN_GBA_DETAIL_LOW 0
 #define TYRIAN_GBA_DETAIL_NORMAL 1
+#define TYRIAN_GBA_DETAIL_HIGH 2
+#define TYRIAN_GBA_DETAIL_PENTIUM 3
 
 #ifndef TYRIAN_GBA_DETAIL_LEVEL
 #define TYRIAN_GBA_DETAIL_LEVEL TYRIAN_GBA_DETAIL_LOW
 #endif
 
 #if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW && \
-    TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_NORMAL
-#error TYRIAN_GBA_DETAIL_LEVEL must be TYRIAN_GBA_DETAIL_LOW or NORMAL
+    TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_NORMAL && \
+    TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_HIGH && \
+    TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_PENTIUM
+#error TYRIAN_GBA_DETAIL_LEVEL must be LOW, NORMAL, HIGH or PENTIUM
 #endif
 
 #define TYRIAN_GBA_GAME_SPEED_LOW 0
@@ -41,6 +48,10 @@
 #if TYRIAN_GBA_GAME_SPEED != TYRIAN_GBA_GAME_SPEED_LOW && \
     TYRIAN_GBA_GAME_SPEED != TYRIAN_GBA_GAME_SPEED_NORMAL
 #error TYRIAN_GBA_GAME_SPEED must be TYRIAN_GBA_GAME_SPEED_LOW or NORMAL
+#endif
+
+#ifndef TYRIAN_GBA_STRESS_PSG_AUDIO
+#define TYRIAN_GBA_STRESS_PSG_AUDIO 1
 #endif
 
 /*

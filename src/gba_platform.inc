@@ -88,9 +88,11 @@ static void commit_vblank_work(void)
     ) {
         u8 background2_priority = 2;
         u8 background3_priority = 1;
+        u8 background2_present;
 
         background2_priority = source_background2_priority();
         background3_priority = source_background3_priority();
+        background2_present = source_background2_present();
         REG_BG0HOFS = source_background_hofs(0);
         REG_BG1HOFS = source_background_hofs(1);
         REG_BG2HOFS = source_background_hofs(2);
@@ -107,7 +109,78 @@ static void commit_vblank_work(void)
                      BG_16_COLOR | BG_SIZE_1;
         REG_DISPCNT =
             MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
-            (source_background2_enabled ? BG1_ON : 0);
+            (background2_present ? BG1_ON : 0);
+        /*
+         * Count the source software-filter requests independently from the
+         * GBA presentation.  This distinguishes a cheap hardware detail
+         * profile from a level that actually asks for the PC framebuffer
+         * lava/water/iced/blur passes.
+         */
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+        if (source_parity_level.smoothies[0]) {
+            telemetry_detail_lava_frames++;
+        }
+        if (source_parity_level.smoothies[1]) {
+            telemetry_detail_water_frames++;
+        }
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_NORMAL
+        if (
+            source_parity_level.smoothies[2] ||
+            source_parity_level.smoothies[4]
+        ) {
+            telemetry_detail_iced_frames++;
+        }
+        if (source_parity_level.smoothies[3]) {
+            telemetry_detail_blur_frames++;
+        }
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+        if (
+            background2_present &&
+            !source_parity_level.background2_not_transparent
+        ) {
+            telemetry_detail_wild_frames++;
+        }
+#endif
+        {
+            u16 blend_first = 0;
+            u16 blend_second = 0;
+
+#if TYRIAN_GBA_STRESS_LOADOUT
+            /*
+             * OpenTyrian's large Super Bomb OPTION_SHAPES image is a
+             * framebuffer blend.  Only that OBJ uses semi-transparent mode;
+             * ordinary objects remain opaque.
+             */
+            blend_first |= 1u << 4;
+            blend_second |= 1u | 2u | 4u | 32u;
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+            if (
+                background2_present &&
+                !source_parity_level.background2_not_transparent
+            ) {
+                /*
+                 * OpenTyrian Pentium/wild averages the overlay brightness
+                 * with the existing framebuffer.  GBA alpha blending is the
+                 * closest hardware-native equivalent: BG1 is source
+                 * background 2 and BG0/BG2/backdrop are the destination.
+                 */
+                blend_first |= 1u << 1;
+                blend_second |= 1u | 4u | 32u;
+            }
+#endif
+            if (blend_first != 0) {
+                REG_BLDCNT =
+                    blend_first | (1u << 6) |
+                    (blend_second << 8);
+                REG_BLDALPHA = 8u | (8u << 8);
+            } else {
+                REG_BLDCNT = 0;
+                REG_BLDALPHA = 0;
+            }
+        }
         if (boss_obj_palette_restore_pending) {
             dmaCopy(
                 obj_palette,
@@ -206,7 +279,29 @@ static void audio_load_source_song_preserve_effects(u8 source_song)
 
 static void audio_effect(u16 effect)
 {
+#if TYRIAN_GBA_STRESS_LOADOUT && TYRIAN_GBA_STRESS_PSG_AUDIO
+    /*
+     * The all-weapons diagnostic can request several effects in one logic
+     * tick.  Route those deliberately extreme SFX through one native DMG
+     * square channel, leaving the Maxmod background module intact.  This
+     * isolates sprite/gameplay cost from sample-mixer voice pressure and is
+     * also the requested "basic Game Boy channel" quality mode.
+     */
+    u16 frequency = (u16)(1420u + (effect & 15u) * 24u);
+
+    if (frequency > 2047u) frequency = 2047u;
+    REG_SOUNDCNT_X = 0x0080;
+    REG_SOUNDCNT_L |= 0x1177;
+    REG_SOUNDCNT_H = (u16)((REG_SOUNDCNT_H & 0xfffcu) | 0x0002u);
+    REG_SOUND1CNT_L = 0;
+    REG_SOUND1CNT_H =
+        (u16)((2u << 6) | (2u << 8) | (8u << 12));
+    REG_SOUND1CNT_X =
+        (u16)(frequency | (1u << 14) | (1u << 15));
+    telemetry_stress_psg_triggers++;
+#else
     mmEffect(effect);
+#endif
 }
 
 static void toggle_pause(void)

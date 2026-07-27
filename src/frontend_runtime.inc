@@ -202,6 +202,8 @@ static void frontend_show_immediate(
 )
 {
     REG_DISPCNT = LCDC_OFF;
+    REG_BLDCNT = 0;
+    REG_BLDALPHA = 0;
     bg1_row_pending = 0;
     bg2_row_pending = 0;
     bg3_row_pending = 0;

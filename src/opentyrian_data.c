@@ -11,16 +11,12 @@
 
 enum {
     OT_HDT_ITEM_COUNT_BYTES = 14,
-    OT_HDT_PORT_COUNT = 43,
-    OT_HDT_PORT_RECORD_BYTES = 82,
     OT_HDT_SPECIAL_COUNT = 47,
     OT_HDT_SPECIAL_RECORD_BYTES = 37,
     OT_HDT_POWER_COUNT = 7,
     OT_HDT_POWER_RECORD_BYTES = 37,
     OT_HDT_SHIP_COUNT = 14,
     OT_HDT_SHIP_RECORD_BYTES = 41,
-    OT_HDT_OPTION_COUNT = 31,
-    OT_HDT_OPTION_RECORD_BYTES = 86,
     OT_HDT_SHIELD_COUNT = 11,
     OT_HDT_SHIELD_RECORD_BYTES = 37,
     OT_LEVEL_MAP_SHAPE_LAYER_BYTES = OT_LEVEL_MAP_SHAPE_COUNT * 2,
@@ -44,6 +40,9 @@ typedef struct {
     uint32_t level_map_bytes[3];
     OtLevelInfo level_info;
     uint32_t hdt_weapon_table_offset;
+    uint32_t hdt_port_table_offset;
+    uint32_t hdt_special_table_offset;
+    uint32_t hdt_option_table_offset;
     uint32_t hdt_enemy_table_offset;
 } OtDataState;
 
@@ -409,13 +408,19 @@ static bool parse_hdt(void)
 
     data_state.hdt_weapon_table_offset =
         (uint32_t)item_offset + OT_HDT_ITEM_COUNT_BYTES;
-    enemy_offset =
+    data_state.hdt_port_table_offset =
         data_state.hdt_weapon_table_offset +
-        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES +
-        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES +
+        OT_HDT_WEAPON_COUNT * OT_HDT_WEAPON_RECORD_BYTES;
+    data_state.hdt_special_table_offset =
+        data_state.hdt_port_table_offset +
+        OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES;
+    data_state.hdt_option_table_offset =
+        data_state.hdt_special_table_offset +
         OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
         OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
-        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES +
+        OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES;
+    enemy_offset =
+        data_state.hdt_option_table_offset +
         OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
         OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES;
     enemy_bytes = OT_HDT_ENEMY_COUNT * OT_HDT_ENEMY_RECORD_BYTES;
@@ -1544,6 +1549,124 @@ bool ot_data_hdt_weapon_read(
     return true;
 }
 
+static void hdt_item_name_copy(
+    const uint8_t *source,
+    char destination[31]
+)
+{
+    uint8_t length = source[0] <= 30 ? source[0] : 30;
+
+    memcpy(destination, source + 1, 30);
+    destination[length] = '\0';
+}
+
+bool ot_data_hdt_weapon_port_read(
+    uint8_t port_id,
+    OtWeaponPortDefinition *port
+)
+{
+    const uint8_t *source;
+    uint8_t mode;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        port == 0 ||
+        port_id >= OT_HDT_PORT_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.hdt.data +
+        data_state.hdt_port_table_offset +
+        (uint32_t)port_id * OT_HDT_PORT_RECORD_BYTES;
+    hdt_item_name_copy(source, port->name);
+    port->opnum = source[31];
+    for (mode = 0; mode < 2; mode++) {
+        uint8_t power;
+
+        for (power = 0; power < 11; power++) {
+            port->op[mode][power] = read_u16(
+                source + 32u +
+                    (uint32_t)mode * 22u +
+                    (uint32_t)power * 2u
+            );
+        }
+    }
+    port->cost = read_u16(source + 76);
+    port->itemgraphic = read_u16(source + 78);
+    port->poweruse = read_u16(source + 80);
+    return true;
+}
+
+bool ot_data_hdt_special_read(
+    uint8_t special_id,
+    OtSpecialDefinition *special
+)
+{
+    const uint8_t *source;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        special == 0 ||
+        special_id >= OT_HDT_SPECIAL_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.hdt.data +
+        data_state.hdt_special_table_offset +
+        (uint32_t)special_id * OT_HDT_SPECIAL_RECORD_BYTES;
+    hdt_item_name_copy(source, special->name);
+    special->itemgraphic = read_u16(source + 31);
+    special->power = source[33];
+    special->type = source[34];
+    special->weapon = read_u16(source + 35);
+    return true;
+}
+
+bool ot_data_hdt_option_read(
+    uint8_t option_id,
+    OtOptionDefinition *option
+)
+{
+    const uint8_t *source;
+    uint8_t index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        option == 0 ||
+        option_id >= OT_HDT_OPTION_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.hdt.data +
+        data_state.hdt_option_table_offset +
+        (uint32_t)option_id * OT_HDT_OPTION_RECORD_BYTES;
+    hdt_item_name_copy(source, option->name);
+    option->power = source[31];
+    option->itemgraphic = read_u16(source + 32);
+    option->cost = read_u16(source + 34);
+    option->style = source[36];
+    option->option = source[37];
+    option->speed = (int8_t)source[38];
+    option->animation_count = source[39];
+    for (index = 0; index < 20; index++) {
+        option->graphic[index] = read_u16(
+            source + 40u + (uint32_t)index * 2u
+        );
+    }
+    option->weapon_port = source[80];
+    option->weapon = read_u16(source + 81);
+    option->ammo = source[83];
+    option->stop = source[84] != 0;
+    option->icon_graphic = source[85];
+    return true;
+}
+
 bool ot_data_pic_view(uint8_t picture_number, OtDataView *view)
 {
     uint16_t index;
@@ -1759,6 +1882,9 @@ bool ot_data_comp_shape_bank_view(
     }
     if (shape_table == OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY) {
         return ot_data_shp_section_view(12, view);
+    }
+    if (shape_table == OT_COMP_SHAPE_TABLE_OPTIONS_SMALL) {
+        return ot_data_shp_section_view(9, view);
     }
     if (shape_table > sizeof(shape_file) / sizeof(shape_file[0])) {
         return false;

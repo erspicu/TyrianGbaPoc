@@ -256,6 +256,104 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
         (x & 7u);
 }
 
+#if TYRIAN_GBA_STRESS_LOADOUT
+/*
+ * OpenTyrian draws weapon graphic 60034 with
+ * blit_sprite_blend(OPTION_SHAPES, 33).  That authored sprite is 80x79,
+ * larger than the GBA's maximum 64x64 OBJ.  Decode the stock ROMFS stream
+ * directly and centre-crop it at 1:1; presentation then uses the GBA's
+ * semi-transparent OBJ mode.  This is a hardware-bound adapter, not a
+ * generated GBA-only replacement asset.
+ */
+static u8 source_option_projectile_build(void)
+{
+    OtShpSprite sprite;
+    const u8 *encoded;
+    u8 *target = (u8 *)source_sprite2_l2_tiles;
+    u32 source = 0;
+    u16 x = 0;
+    u16 y = 0;
+
+    source_option_projectile_valid = 0;
+    memset(
+        target,
+        0,
+        SOURCE_OPTION_PROJECTILE_BYTES
+    );
+    if (
+        !source_enemy_palette_valid ||
+        !ot_data_shp_sprite_read(
+            SOURCE_OPTION_PROJECTILE_SOURCE_TABLE,
+            SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC,
+            &sprite
+        ) ||
+        !sprite.populated ||
+        sprite.width != SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH ||
+        sprite.height != SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT
+    ) {
+        return 0;
+    }
+    encoded = sprite.encoded.data;
+    while (source < sprite.encoded.size && y < sprite.height) {
+        u8 code = encoded[source++];
+
+        if (code == 255) {
+            if (source >= sprite.encoded.size) return 0;
+            x = (u16)(x + encoded[source++]);
+        } else if (code == 254) {
+            x = sprite.width;
+        } else if (code == 253) {
+            x++;
+        } else {
+            if (
+                x >= SOURCE_OPTION_PROJECTILE_CROP_X &&
+                x <
+                    SOURCE_OPTION_PROJECTILE_CROP_X +
+                        SOURCE_OPTION_PROJECTILE_SIZE &&
+                y >= SOURCE_OPTION_PROJECTILE_CROP_Y &&
+                y <
+                    SOURCE_OPTION_PROJECTILE_CROP_Y +
+                        SOURCE_OPTION_PROJECTILE_SIZE
+            ) {
+                u8 target_x = (u8)(
+                    x - SOURCE_OPTION_PROJECTILE_CROP_X
+                );
+                u8 target_y = (u8)(
+                    y - SOURCE_OPTION_PROJECTILE_CROP_Y
+                );
+
+                target[
+                    source_sprite2_tile_offset(
+                        target_x,
+                        target_y,
+                        SOURCE_OPTION_PROJECTILE_SIZE / 8
+                    )
+                ] = source_enemy_palette_map[code];
+            }
+            x++;
+        }
+        if (x >= sprite.width) {
+            x = 0;
+            y++;
+        }
+    }
+    if (
+        y < SOURCE_OPTION_PROJECTILE_CROP_Y +
+            SOURCE_OPTION_PROJECTILE_SIZE
+    ) {
+        return 0;
+    }
+    dmaCopy(
+        target,
+        (u8 *)OBJ_BASE_ADR +
+            SOURCE_OPTION_PROJECTILE_TILE_BASE * 32,
+        SOURCE_OPTION_PROJECTILE_BYTES
+    );
+    source_option_projectile_valid = 1;
+    return 1;
+}
+#endif
+
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u32
 source_sprite2_l2_pack_raw_word(
     const u8 *raw,
@@ -838,6 +936,22 @@ static u16 source_projectile_cache_tile(u8 slot)
             slot * SOURCE_PROJECTILE_TILES_PER_SLOT
         );
     }
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        slot >=
+        SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT +
+            SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT
+    ) {
+        return (u16)(
+            SOURCE_PROJECTILE_CACHE_STRESS_TILE_BASE +
+            (
+                slot -
+                SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT -
+                SOURCE_PROJECTILE_CACHE_UPPER_SLOT_COUNT
+            ) * SOURCE_PROJECTILE_TILES_PER_SLOT
+        );
+    }
+#endif
     return (u16)(
         SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE +
         (
@@ -1295,12 +1409,20 @@ static s16 source_score_item_screen_y(const OtEnemy *enemy)
 
 static s16 source_player_shot_screen_x(const PlayerShot *shot)
 {
+#if TYRIAN_GBA_STRESS_LOADOUT
+    return source_world_to_screen_x((s16)(shot->x + 1));
+#else
     return (s16)(source_world_to_screen_x(shot->x) - 2);
+#endif
 }
 
 static s16 source_player_shot_screen_y(const PlayerShot *shot)
 {
+#if TYRIAN_GBA_STRESS_LOADOUT
+    return source_world_to_screen_y(shot->y);
+#else
     return (s16)(source_world_to_screen_y(shot->y) - 4);
+#endif
 }
 
 static s16 source_enemy_shot_screen_x(const OtEnemyShot *shot)
@@ -1340,13 +1462,14 @@ static const SourceExplosionDefinition source_explosion_definition[53] = {
     { 265, 14 },
 };
 
-static void source_spawn_fixed_pickup_explosion(
-    const OtPickupEffect *effect
+static void source_spawn_explosion(
+    s16 x,
+    s16 y,
+    s8 delta_y,
+    u8 type,
+    u8 fixed_position
 )
 {
-    u8 type = effect->explosion_type;
-    s16 x = effect->x;
-    s16 y = effect->y;
     u8 index;
 
     if (y <= -16 || y >= 190) return;
@@ -1371,10 +1494,11 @@ static void source_spawn_fixed_pickup_explosion(
         explosion->active = 1;
         explosion->x = x;
         explosion->y = y;
-        explosion->graphic = (u16)(
-            source_explosion_definition[type].sprite + 1
-        );
+        explosion->graphic =
+            source_explosion_definition[type].sprite;
         explosion->ttl = source_explosion_definition[type].ttl;
+        explosion->fixed_position = fixed_position;
+        explosion->delta_y = delta_y;
         active_pickup_explosion_count++;
         telemetry_pickup_explosion_spawns++;
         if (
@@ -1389,7 +1513,20 @@ static void source_spawn_fixed_pickup_explosion(
     telemetry_pickup_explosion_drops++;
 }
 
-static void source_update_fixed_pickup_explosions(void)
+static void source_spawn_fixed_pickup_explosion(
+    const OtPickupEffect *effect
+)
+{
+    source_spawn_explosion(
+        effect->x,
+        effect->y,
+        0,
+        effect->explosion_type,
+        1
+    );
+}
+
+static void source_update_explosions(void)
 {
     u8 index;
 
@@ -1397,6 +1534,19 @@ static void source_update_fixed_pickup_explosions(void)
         PickupExplosion *explosion = &pickup_explosions[index];
 
         if (!explosion->active) continue;
+        if (!explosion->fixed_position) {
+            s16 explode_move =
+                source_parity_level.back_move2 > 0 ?
+                    source_parity_level.back_move2 :
+                    source_parity_level.back_move;
+
+            explosion->graphic++;
+            explosion->y = (s16)(explosion->y + explode_move);
+        }
+        explosion->y = (s16)(explosion->y + explosion->delta_y);
+        if (explosion->y > 186) {
+            explosion->ttl = 0;
+        }
         if (explosion->ttl > 0) explosion->ttl--;
         if (explosion->ttl == 0) {
             explosion->active = 0;
@@ -1622,11 +1772,22 @@ static void source_apply_player_shot_result(
 )
 {
     u8 effect_index;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    u8 original_damage = shot != 0 ? shot->damage : 0;
+#endif
 
     if (!result->collided) return;
     if (shot != 0) {
-        shot->damage = result->remaining_damage;
-        if (result->consumed) shot->active = 0;
+#if TYRIAN_GBA_STRESS_LOADOUT
+        if (shot->infinite) {
+            shot->damage = original_damage;
+            shot->active = 1;
+        } else
+#endif
+        {
+            shot->damage = result->remaining_damage;
+            if (result->consumed) shot->active = 0;
+        }
     }
     player_cash += result->cash_awarded;
     for (
@@ -1736,13 +1897,62 @@ static void source_process_player_collisions(void)
         OtShotCollisionResult result;
 
         if (!shot->active) continue;
-        ot_level_port_collide_player_shot(
-            &source_parity_level,
-            shot->x,
-            shot->y,
-            shot->damage,
-            &result
-        );
+#if TYRIAN_GBA_STRESS_LOADOUT
+        if (shot->chain_weapon != 0) {
+            if (
+                ot_level_port_player_shot_overlaps(
+                    &source_parity_level,
+                    shot->x,
+                    shot->y
+                )
+            ) {
+                OtWeaponDefinition chain;
+
+                stress_shot_multi_pos[STRESS_BAY_MISC] = 0;
+                if (
+                    ot_data_hdt_weapon_read(
+                        shot->chain_weapon,
+                        &chain
+                    ) &&
+                    stress_weapon_is_valid(&chain)
+                ) {
+                    stress_spawn_weapon(
+                        &chain,
+                        STRESS_BAY_MISC,
+                        shot->x,
+                        shot->y
+                    );
+                    telemetry_player_chain_volleys++;
+                } else {
+                    telemetry_stress_loadout_failures++;
+                }
+                shot->active = 0;
+            }
+            continue;
+        }
+#endif
+#if TYRIAN_GBA_STRESS_LOADOUT
+        if (shot->render_graphic > 60000) {
+            ot_level_port_collide_player_shot_sized(
+                &source_parity_level,
+                shot->x,
+                shot->y,
+                shot->damage,
+                SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH / 2,
+                SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT / 2,
+                &result
+            );
+        } else
+#endif
+        {
+            ot_level_port_collide_player_shot(
+                &source_parity_level,
+                shot->x,
+                shot->y,
+                shot->damage,
+                &result
+            );
+        }
         source_apply_player_shot_result(shot, &result);
     }
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
@@ -1841,6 +2051,12 @@ static void source_runtime_reset(void)
     if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         source_parity_level.assets_valid = false;
     }
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (!source_option_projectile_build()) {
+        source_parity_level.assets_valid = false;
+        stress_loadout_valid = 0;
+    }
+#endif
     if (
         !source_layer_priority_self_test(
             &layer_passed_checks,

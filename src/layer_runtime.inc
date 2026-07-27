@@ -115,9 +115,33 @@ static u8 source_background3_priority(void)
     );
 }
 
+static bool source_background2_present(void)
+{
+    if (!source_background2_enabled) return false;
+    /*
+     * Direct processorType gates around draw_background_2() in tyrian2.c:
+     * smoothie 2 suppresses the layer below Pentium, while smoothie 1 does
+     * so only for the High Detail profile.  Pentium runs the corresponding
+     * filters and keeps the layer.
+     */
+    if (
+        source_parity_level.smoothies[1] &&
+        TYRIAN_GBA_DETAIL_LEVEL < TYRIAN_GBA_DETAIL_PENTIUM
+    ) {
+        return false;
+    }
+    if (
+        source_parity_level.smoothies[0] &&
+        TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_HIGH
+    ) {
+        return false;
+    }
+    return true;
+}
+
 static u8 source_object_priority(u8 object_stage)
 {
-    if (!source_background2_enabled) {
+    if (!source_background2_present()) {
         /*
          * PC Low detail has only background 1 and background 3.  Priority 2
          * keeps objects below BG3 but still above the base BG0 layer;

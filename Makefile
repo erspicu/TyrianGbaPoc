@@ -12,8 +12,12 @@ ifeq ($(DETAIL_LEVEL),low)
 DETAIL_LEVEL_VALUE := 0
 else ifeq ($(DETAIL_LEVEL),normal)
 DETAIL_LEVEL_VALUE := 1
+else ifeq ($(DETAIL_LEVEL),high)
+DETAIL_LEVEL_VALUE := 2
+else ifeq ($(DETAIL_LEVEL),pentium)
+DETAIL_LEVEL_VALUE := 3
 else
-$(error DETAIL_LEVEL must be low or normal)
+$(error DETAIL_LEVEL must be low, normal, high or pentium)
 endif
 
 ifeq ($(GAME_SPEED),low)
@@ -32,6 +36,8 @@ JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v32_$(CONFIG_SUFFIX)
 ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v32_$(CONFIG_SUFFIX)
 ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v32_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v32_$(CONFIG_SUFFIX)
+STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v33_$(CONFIG_SUFFIX)
+PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v33_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -145,7 +151,7 @@ MAIN_INCLUDES := $(wildcard src/*.inc)
 
 .PHONY: all autotest death-autotest jukebox-autotest \
 	romfs-matrix-autotest route-smoke-autotest campaign-smoke-autotest \
-	assets clean distclean
+	full-loadout-stress full-loadout-playable assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
 
@@ -160,6 +166,10 @@ romfs-matrix-autotest: $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba
 route-smoke-autotest: $(BUILD)/$(ROUTE_TEST_TARGET).gba
 
 campaign-smoke-autotest: $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba
+
+full-loadout-stress: $(BUILD)/$(STRESS_TARGET).gba
+
+full-loadout-playable: $(BUILD)/$(PLAYABLE_STRESS_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -252,6 +262,29 @@ $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_lev
 		-DAUTOTEST_CAMPAIGN_LEVEL_COUNT=$(CAMPAIGN_LEVELS) \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DAUTOTEST_FULL_LOADOUT_STRESS \
+		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=2 \
+		-DAUTOTEST_FRONTEND_ROUTE_SECTION=1 \
+		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
+		-MMD -MP -c $< -o $@
+
+$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) \
+		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -321,6 +354,20 @@ $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf: \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(CAMPAIGN_TEST_TARGET).map $^ \
+	-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(STRESS_TARGET).elf: \
+		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(STRESS_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(PLAYABLE_STRESS_TARGET).elf: \
+		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(PLAYABLE_STRESS_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
@@ -353,6 +400,15 @@ $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba: $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN CAMP" -cTYGC -m00
 
+$(BUILD)/$(STRESS_TARGET).gba: $(BUILD)/$(STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR STRESS" -cTYGS -m00
+
+$(BUILD)/$(PLAYABLE_STRESS_TARGET).gba: \
+		$(BUILD)/$(PLAYABLE_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR FULL ARM" -cTYGP -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -369,6 +425,10 @@ clean:
 		$(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -398,7 +458,13 @@ clean:
 		$(BUILD)/$(ROUTE_TEST_TARGET).map \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).elf \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).gba \
-		$(BUILD)/$(CAMPAIGN_TEST_TARGET).map
+		$(BUILD)/$(CAMPAIGN_TEST_TARGET).map \
+		$(BUILD)/$(STRESS_TARGET).elf \
+		$(BUILD)/$(STRESS_TARGET).gba \
+		$(BUILD)/$(STRESS_TARGET).map \
+		$(BUILD)/$(PLAYABLE_STRESS_TARGET).elf \
+		$(BUILD)/$(PLAYABLE_STRESS_TARGET).gba \
+		$(BUILD)/$(PLAYABLE_STRESS_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -412,6 +478,8 @@ distclean: clean
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_full_loadout_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_sprite2.d
