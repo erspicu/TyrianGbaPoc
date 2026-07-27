@@ -837,6 +837,28 @@ palette mapping 保留 32-bit grouped stores。完整 Low regression、
 - `Tyrian-GBA-Drop-Frame-ARM7-v35.md`
 - `Tyrian-GBA-Updated-Plan-v35.md`
 
+## v36 Hotpath 實測與 RNG IWRAM
+
+`TGW8` 先量出極限負載的實際呼叫量：2,096 logic ticks 只有 135 次
+RNG、14 次 ratio division 與 75 次 enemy-shot update，避免把不是瓶頸
+的程式改得更複雜。`ot_mt_rand()` 的 IRQ-masked 微基準證明
+ARM/IWRAM 由 329.08 降到 206.67 cycles/call，因此保留這個 208-byte
+IWRAM placement。
+
+手寫 modulo-624 mask 在 ARM/IWRAM 反而是 207.63 cycles/call；原始
+`if` 已被編成 `cmp`／`moveq`，所以不採用 mask。整個
+`ot_draw_enemy_pool()` 搬入 IWRAM 會讓 free space 只剩 3,120 bytes，
+低於 6 KiB gate，也不採用。
+
+相同 full-loadout workload 下 missed VBlank 588 → 583，logic average
+127,282.61 → 126,220.97 cycles；完整 Low regression、62-section
+matrix、四關 campaign、death、Jukebox 與 Episode 2 route 均通過。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Hotpath-Evaluation-v36.md`
+- `Tyrian-GBA-Updated-Plan-v36.md`
+
 ## 下一個移植階段
 
 1. 恢復 stock ammo、charge、cooldown 與裝備互斥。

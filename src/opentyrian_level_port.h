@@ -465,6 +465,9 @@ void ot_level_port_update_parallax(
 IWRAM_CODE ARM_CODE void
 ot_level_port_update_enemy_shots(OtLevelPortState *state);
 uint32_t ot_level_port_random(OtLevelPortState *state);
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+uint32_t ot_level_port_stress_round_ratio_call_count(void);
+#endif
 ARM_CODE void ot_level_port_begin_player_shot_collision_phase(
     OtLevelPortState *state
 );

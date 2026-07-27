@@ -40,7 +40,7 @@ $headless = Join-Path (
 $ucrtBin = Join-Path $workspaceRoot "tools\msys64\ucrt64\bin"
 $python = "/c/Python314/python.exe"
 $name = (
-    "tyrian_gba_full_loadout_sprite_stress_ep2_v35_" +
+    "tyrian_gba_full_loadout_sprite_stress_ep2_v36_" +
     "${Variant}_detail_${DetailLevel}_speed_normal"
 )
 $rom = Join-Path $buildDir "$name.gba"
@@ -111,11 +111,11 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 336) {
+if ($bytes.Length -lt 372) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
-if ($magic -ne "TGW7") {
+if ($magic -ne "TGW8") {
     throw "Unexpected stress telemetry schema: $magic"
 }
 function Read-U32 {
@@ -224,6 +224,19 @@ $telemetry = [ordered]@{
     vblank_recovery_loops = $vblankRecoveryLoops
     vblank_commit_frames = $commitFrames
     audio_frames = $audioFrames
+    rng_calls = Read-U32 336
+    enemy_motion_updates = Read-U32 340
+    enemy_shot_motion_updates = Read-U32 344
+    round_ratio_calls = Read-U32 348
+    enemy_shot_triggers = Read-U32 352
+    enemy_launch_successes = Read-U32 356
+    rng_benchmark_cycles = Read-U32 360
+    rng_benchmark_sink = Read-U32 364
+    rng_benchmark_calls = Read-U32 368
+    rng_benchmark_cycles_per_call = [math]::Round(
+        (Read-U32 360) / (Read-U32 368),
+        2
+    )
     logic_cycles_average = if ($logicUpdates) {
         [math]::Round($logicCyclesTotal / $logicUpdates, 2)
     } else {
@@ -281,7 +294,9 @@ if (
     $bytes[4] -ne 1 -or
     $bytes[5] -ne 1 -or
     $telemetry.loadout_failures -ne 0 -or
-    $telemetry.source_assets_valid -ne 1
+    $telemetry.source_assets_valid -ne 1 -or
+    $telemetry.rng_benchmark_calls -ne 10000 -or
+    $telemetry.rng_benchmark_cycles -eq 0
 ) {
     throw "Stress telemetry reported a validation failure"
 }

@@ -138,6 +138,11 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v36 hotpath and IWRAM evaluation](MD/Tyrian-GBA-Hotpath-Evaluation-v36.md)
+- [v36 updated plan](MD/Tyrian-GBA-Updated-Plan-v36.md)
+- [v35 fixed-timestep drop-frame and ARM7 evaluation](MD/Tyrian-GBA-Drop-Frame-ARM7-v35.md)
+- [v35 updated plan](MD/Tyrian-GBA-Updated-Plan-v35.md)
+- [v34 full-loadout optimization](MD/Tyrian-GBA-Full-Loadout-Optimization-v34.md)
 - [v32 collision-safe background cache and VRAM partition](MD/Tyrian-GBA-Background-Cache-VRAM-v32.md)
 - [v32 knowledgebase strategy evaluation](MD/Tyrian-GBA-Knowledgebase-Strategy-Evaluation-v32.md)
 - [v31 Episode 2 background performance](MD/Tyrian-GBA-EP2-Background-Performance-v31.md)

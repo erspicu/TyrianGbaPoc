@@ -1326,6 +1326,11 @@ static void autotest_romfs_level_matrix(void)
 static void autotest_full_loadout_stress_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;
+    u32 rng_benchmark_start;
+    u32 rng_benchmark_elapsed;
+    u32 rng_benchmark_sink = 0;
+    u16 rng_benchmark_ime;
+    u16 rng_benchmark_index;
     u8 active_shots = 0;
     u8 index;
 
@@ -1335,7 +1340,7 @@ static void autotest_full_loadout_stress_finish(void)
     sram[0] = 'T';
     sram[1] = 'G';
     sram[2] = 'W';
-    sram[3] = '7';
+    sram[3] = '8';
     sram[4] = 1;
     sram[5] =
         stress_loadout_valid &&
@@ -1495,6 +1500,47 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(320, telemetry_background_held_rows_max);
     sram_write_u32(328, telemetry_vblank_recovery_loops);
     sram_write_u32(332, telemetry_audio_frames);
+    sram_write_u32(336, source_parity_level.rng_call_count);
+    sram_write_u32(
+        340,
+        source_parity_level.enemy_motion_update_count
+    );
+    sram_write_u32(
+        344,
+        source_parity_level.enemy_shot_motion_update_count
+    );
+    sram_write_u32(
+        348,
+        ot_level_port_stress_round_ratio_call_count()
+    );
+    sram_write_u32(
+        352,
+        source_parity_level.enemy_shot_trigger_count
+    );
+    sram_write_u32(
+        356,
+        source_parity_level.enemy_launch_success_count
+    );
+    /*
+     * Measure the generator itself after all gameplay counters have been
+     * captured.  IRQs are masked so an audio/VBlank interrupt cannot turn
+     * this into an interrupt-latency benchmark; Timer 2/3 keeps counting.
+     */
+    rng_benchmark_ime = REG_IME;
+    REG_IME = 0;
+    rng_benchmark_start = stress_cycle_counter_read();
+    for (rng_benchmark_index = 0;
+         rng_benchmark_index < 10000;
+         rng_benchmark_index++) {
+        rng_benchmark_sink ^=
+            ot_level_port_random(&source_parity_level);
+    }
+    rng_benchmark_elapsed =
+        stress_cycle_counter_read() - rng_benchmark_start;
+    REG_IME = rng_benchmark_ime;
+    sram_write_u32(360, rng_benchmark_elapsed);
+    sram_write_u32(364, rng_benchmark_sink);
+    sram_write_u32(368, 10000);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

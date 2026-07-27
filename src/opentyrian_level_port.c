@@ -89,7 +89,8 @@ static void ot_mt_seed(OtMt19937 *rng, uint32_t seed)
     rng->pm = OT_MT_M;
 }
 
-static uint32_t ot_mt_rand(OtLevelPortState *state)
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) uint32_t
+ot_mt_rand(OtLevelPortState *state)
 {
     OtMt19937 *rng = &state->rng;
     uint32_t y;
@@ -1917,11 +1918,23 @@ static bool apply_event(
     }
 }
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static uint32_t ot_round_ratio_call_count;
+
+uint32_t ot_level_port_stress_round_ratio_call_count(void)
+{
+    return ot_round_ratio_call_count;
+}
+#endif
+
 static int16_t ot_round_ratio(
     int32_t numerator,
     int16_t denominator
 )
 {
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    ot_round_ratio_call_count++;
+#endif
     if (numerator < 0) {
         return (int16_t)(
             -((-numerator + denominator / 2) / denominator)

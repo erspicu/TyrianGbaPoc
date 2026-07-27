@@ -196,8 +196,8 @@ JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v32_$(CONFIG_SUFFIX)
 ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v32_$(CONFIG_SUFFIX)
 ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v32_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v32_$(CONFIG_SUFFIX)
-STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v35_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
-PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v35_$(CONFIG_SUFFIX)
+STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
+PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
