@@ -139,7 +139,14 @@ static u8 background_free_queued_pool
     EWRAM_BSS __attribute__((aligned(4)));
 static OtDataView background_map_view[BACKGROUND_LAYER_COUNT];
 static OtDataView background_lookup_view[BACKGROUND_LAYER_COUNT];
-static const u8 *background_shape_pixels[BACKGROUND_SHAPE_COUNT];
+/*
+ * Only two pointer reads feed each newly materialized 8x8 pattern, whereas
+ * the 4 KiB nearest-colour table is read for every pixel pair.  The enlarged
+ * stress build therefore keeps the colour LUT in IWRAM but places this
+ * 2.4 KiB bank view in EWRAM to preserve stack headroom.
+ */
+static const u8 *background_shape_pixels[BACKGROUND_SHAPE_COUNT]
+    STRESS_EWRAM_BSS;
 static u8 background_palette_nearest
     [BACKGROUND_PALETTE_BANKS][OT_PALETTE_COLOUR_COUNT];
 static u32 background_cache_approximations;
@@ -1302,6 +1309,13 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
     *target =
         (u16 *)SCREEN_BASE_BLOCK(screen_block) +
         ((row & 31u) * 32u);
+    if (
+        cache->ring_reference_rows >
+        telemetry_background_held_rows_max
+    ) {
+        telemetry_background_held_rows_max =
+            cache->ring_reference_rows;
+    }
     return 1;
 }
 
@@ -1317,7 +1331,9 @@ static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
 )
 {
     BackgroundLayerCache *cache;
-    u16 last = (u16)(top_row + BACKGROUND_VISIBLE_TILE_ROWS);
+    u16 retain_top = top_row;
+    u16 retain_last =
+        (u16)(top_row + BACKGROUND_VISIBLE_TILE_ROWS);
     u8 ring_row;
 
     if (
@@ -1328,15 +1344,48 @@ static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
     }
     cache = &background_layer_cache[layer];
     if (!cache->prepared) return;
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP && \
+    TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+    if (
+        presentation_render_pending &&
+        presentation_registers_valid &&
+        !presentation_release_held_window
+    ) {
+        u16 held_top =
+            gameplay_presentation.full_scroll_pixel[layer] >> 3;
+        u16 held_last =
+            (u16)(held_top + BACKGROUND_VISIBLE_TILE_ROWS);
+
+        /*
+         * The two viewports differ by at most the forced-presentation
+         * window.  Retaining their bounding interval is equivalent while
+         * they overlap, and remains conservative if a future scroll mode
+         * ever separates them: the gap is retained briefly, never sampled
+         * incorrectly or released too early.
+         */
+        if (held_top < retain_top) retain_top = held_top;
+        if (held_last > retain_last) retain_last = held_last;
+    }
+#endif
     for (ring_row = 0; ring_row < MAP_RING_ROWS; ring_row++) {
         u16 source_row = cache->ring_source_row[ring_row];
 
         if (
             source_row != UINT16_MAX &&
-            (source_row < top_row || source_row >= last)
+            (
+                source_row < retain_top ||
+                source_row >= retain_last
+            )
         ) {
             background_release_ring_row(layer, ring_row);
         }
+    }
+    if (
+        cache->ring_reference_rows >
+        telemetry_background_held_rows_max
+    ) {
+        telemetry_background_held_rows_max =
+            cache->ring_reference_rows;
     }
 }
 

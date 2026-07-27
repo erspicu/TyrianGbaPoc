@@ -23,6 +23,44 @@
 #error TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK must be 0 or 1
 #endif
 
+/*
+ * Measured collision-kernel experiments.  They are separate from the
+ * active-mask semantic switch so the deterministic full-loadout harness can
+ * compare one code-generation change at a time.
+ */
+#ifndef TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+#define TYRIAN_GBA_COLLISION_UNSIGNED_RANGE 0
+#endif
+#ifndef TYRIAN_GBA_COLLISION_MASK_FAST_PATH
+#define TYRIAN_GBA_COLLISION_MASK_FAST_PATH 1
+#endif
+#ifndef TYRIAN_GBA_COLLISION_LAZY_RESULT
+#define TYRIAN_GBA_COLLISION_LAZY_RESULT 1
+#endif
+#ifndef TYRIAN_GBA_COLLISION_PACKED_CALL
+#define TYRIAN_GBA_COLLISION_PACKED_CALL 0
+#endif
+#if TYRIAN_GBA_COLLISION_UNSIGNED_RANGE != 0 && \
+    TYRIAN_GBA_COLLISION_UNSIGNED_RANGE != 1
+#error TYRIAN_GBA_COLLISION_UNSIGNED_RANGE must be 0 or 1
+#endif
+#if TYRIAN_GBA_COLLISION_MASK_FAST_PATH != 0 && \
+    TYRIAN_GBA_COLLISION_MASK_FAST_PATH != 1
+#error TYRIAN_GBA_COLLISION_MASK_FAST_PATH must be 0 or 1
+#endif
+#if TYRIAN_GBA_COLLISION_LAZY_RESULT != 0 && \
+    TYRIAN_GBA_COLLISION_LAZY_RESULT != 1
+#error TYRIAN_GBA_COLLISION_LAZY_RESULT must be 0 or 1
+#endif
+#if TYRIAN_GBA_COLLISION_PACKED_CALL != 0 && \
+    TYRIAN_GBA_COLLISION_PACKED_CALL != 1
+#error TYRIAN_GBA_COLLISION_PACKED_CALL must be 0 or 1
+#endif
+#if TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
+    !TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#error TYRIAN_GBA_COLLISION_MASK_FAST_PATH requires the active mask
+#endif
+
 enum {
     OT_LOGICAL_SCREEN_WIDTH = 320,
     OT_LOGICAL_SCREEN_HEIGHT = 200,
@@ -424,7 +462,8 @@ void ot_level_port_update_parallax(
     OtLevelPortState *state,
     int16_t player_x
 );
-void ot_level_port_update_enemy_shots(OtLevelPortState *state);
+IWRAM_CODE ARM_CODE void
+ot_level_port_update_enemy_shots(OtLevelPortState *state);
 uint32_t ot_level_port_random(OtLevelPortState *state);
 ARM_CODE void ot_level_port_begin_player_shot_collision_phase(
     OtLevelPortState *state
@@ -447,6 +486,13 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_sized(
     uint8_t radius_w,
     uint8_t radius_h,
     OtShotCollisionResult *result
+);
+IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_packed(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
 );
 IWRAM_CODE ARM_CODE bool ot_level_port_player_shot_overlaps(
     OtLevelPortState *state,

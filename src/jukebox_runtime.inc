@@ -54,16 +54,16 @@ static u8 jukebox_palette_phase;
 static u8 jukebox_text_map_dirty;
 static u8 jukebox_palette_dirty;
 
-volatile u32 telemetry_jukebox_frames;
-volatile u32 telemetry_jukebox_track_changes;
-volatile u32 telemetry_jukebox_previous_wraps;
-volatile u32 telemetry_jukebox_next_wraps;
-volatile u32 telemetry_jukebox_text_toggles;
-volatile u32 telemetry_jukebox_text_map_commits;
-volatile u32 telemetry_jukebox_palette_commits;
-volatile u32 telemetry_jukebox_natural_advances;
-volatile u32 telemetry_jukebox_max_oam;
-volatile u32 telemetry_jukebox_exits;
+volatile u32 telemetry_jukebox_frames STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_track_changes STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_previous_wraps STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_next_wraps STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_text_toggles STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_text_map_commits STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_palette_commits STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_natural_advances STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_max_oam STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_exits STRESS_COLD_BSS;
 
 _Static_assert(
     JUKEBOX_STAR_COUNT < HARDWARE_OAM_ENTRIES,

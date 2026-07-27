@@ -6,8 +6,34 @@
 
 static void vblank_handler(void)
 {
+#if TYRIAN_GBA_PERF_TIMER
+    u32 cycle_start = 0;
+
+    if (perf_timer_ready) {
+        cycle_start = stress_cycle_counter_read();
+    }
+#endif
     telemetry_vblank_irqs++;
     mmVBlank();
+#if TYRIAN_GBA_PERF_TIMER
+    if (perf_timer_ready) {
+        u32 cycle_end = stress_cycle_counter_read();
+        u32 elapsed = cycle_end - cycle_start;
+
+        telemetry_perf_vblank_irq_cycles_last = elapsed;
+        telemetry_perf_vblank_irq_cycles_total += elapsed;
+        if (elapsed > telemetry_perf_vblank_irq_cycles_max) {
+            telemetry_perf_vblank_irq_cycles_max = elapsed;
+        }
+        /*
+         * The main loop may consume this IRQ after the raster has already
+         * left VBlank.  Keep the IRQ-end timestamp so presentation decisions
+         * use the real LCD deadline rather than granting a recovery loop an
+         * artificial full frame.
+         */
+        perf_vblank_cycle_stamp = cycle_end;
+    }
+#endif
 }
 
 static void hide_all_sprites(void)
@@ -32,6 +58,210 @@ static void commit_background_row(const u8 *source, u16 *left_target)
         MAP_HALF_ROW_BYTES
     );
 }
+
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+static void gameplay_presentation_capture_registers(void)
+{
+    u8 background2_priority = source_background2_priority();
+    u8 background3_priority = source_background3_priority();
+    u8 background2_present = source_background2_present();
+    u16 blend_first = 0;
+    u16 blend_second = 0;
+
+    gameplay_presentation.hofs[0] = source_background_hofs(0);
+    gameplay_presentation.hofs[1] = source_background_hofs(1);
+    gameplay_presentation.hofs[2] = source_background_hofs(2);
+    gameplay_presentation.vofs[0] =
+        bg1_presentation_scroll_pixel & 255;
+    gameplay_presentation.vofs[1] =
+        bg2_presentation_scroll_pixel & 255;
+    gameplay_presentation.vofs[2] =
+        bg3_presentation_scroll_pixel & 255;
+    gameplay_presentation.full_scroll_pixel[0] =
+        bg1_presentation_scroll_pixel;
+    gameplay_presentation.full_scroll_pixel[1] =
+        bg2_presentation_scroll_pixel;
+    gameplay_presentation.full_scroll_pixel[2] =
+        bg3_presentation_scroll_pixel;
+    gameplay_presentation.bg1cnt =
+        BG_PRIORITY(background2_priority) |
+        CHAR_BASE(background_cache_char_base[1]) |
+        SCREEN_BASE(BG1_SCREEN_BLOCK) |
+        BG_16_COLOR | BG_SIZE_1;
+    gameplay_presentation.bg2cnt =
+        BG_PRIORITY(background3_priority) |
+        CHAR_BASE(background_cache_char_base[2]) |
+        SCREEN_BASE(BG2_SCREEN_BLOCK) |
+        BG_16_COLOR | BG_SIZE_1;
+    gameplay_presentation.dispcnt =
+        MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
+        (background2_present ? BG1_ON : 0);
+#if TYRIAN_GBA_STRESS_LOADOUT
+    blend_first |= 1u << 4;
+    blend_second |= 1u | 2u | 4u | 32u;
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    if (
+        background2_present &&
+        !source_parity_level.background2_not_transparent
+    ) {
+        blend_first |= 1u << 1;
+        blend_second |= 1u | 4u | 32u;
+    }
+#endif
+    if (blend_first != 0) {
+        gameplay_presentation.bldcnt =
+            blend_first | (1u << 6) | (blend_second << 8);
+        gameplay_presentation.bldalpha = 8u | (8u << 8);
+    } else {
+        gameplay_presentation.bldcnt = 0;
+        gameplay_presentation.bldalpha = 0;
+    }
+    presentation_registers_valid = 1;
+}
+
+static void gameplay_presentation_mark_logic_update(void)
+{
+    if (presentation_render_pending) {
+        telemetry_presentation_superseded++;
+    } else {
+        presentation_render_pending = 1;
+    }
+    if (presentation_pending_logic_ticks != 0xff) {
+        presentation_pending_logic_ticks++;
+    }
+    if (
+        presentation_pending_logic_ticks >
+        telemetry_presentation_pending_logic_max
+    ) {
+        telemetry_presentation_pending_logic_max =
+            presentation_pending_logic_ticks;
+    }
+}
+
+static u8 gameplay_presentation_should_render(
+    u32 frame_cycle_start,
+    u8 state_transition_forces_render
+)
+{
+#if TYRIAN_GBA_PRESENTATION_DEFER
+    u32 now;
+    u32 elapsed;
+    u32 deadline;
+    u8 layer;
+    u8 current_held_rows = 0;
+    u8 forced = state_transition_forces_render;
+#endif
+
+    if (!presentation_render_pending) return 0;
+    telemetry_presentation_render_attempts++;
+#if !TYRIAN_GBA_PRESENTATION_DEFER
+    (void)frame_cycle_start;
+    (void)state_transition_forces_render;
+    telemetry_presentation_render_forced++;
+    return 1;
+#else
+    for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        if (
+            background_layer_cache[layer].ring_reference_rows >
+            current_held_rows
+        ) {
+            current_held_rows =
+                background_layer_cache[layer].ring_reference_rows;
+        }
+    }
+    if (
+        presentation_pending_logic_ticks >=
+            PRESENTATION_MAX_PENDING_LOGIC_TICKS ||
+        current_held_rows >
+            BACKGROUND_VISIBLE_TILE_ROWS + 1
+    ) {
+        forced = 1;
+    }
+    if (forced) {
+        telemetry_presentation_render_forced++;
+        return 1;
+    }
+
+    now = stress_cycle_counter_read();
+    elapsed = now - frame_cycle_start;
+    if (
+        elapsed >
+        telemetry_presentation_deadline_elapsed_max
+    ) {
+        telemetry_presentation_deadline_elapsed_max = elapsed;
+    }
+    deadline = GBA_DISPLAY_FRAME_CYCLES;
+    if (
+        telemetry_perf_vblank_irq_cycles_last +
+            PRESENTATION_DEADLINE_GUARD_CYCLES <
+        deadline
+    ) {
+        deadline -=
+            telemetry_perf_vblank_irq_cycles_last +
+            PRESENTATION_DEADLINE_GUARD_CYCLES;
+    } else {
+        deadline = 0;
+    }
+    if (
+        elapsed >= deadline ||
+        presentation_render_estimate > deadline - elapsed
+    ) {
+        telemetry_presentation_render_deferred++;
+        return 0;
+    }
+    return 1;
+#endif
+}
+
+static void gameplay_presentation_complete(u32 actual_render_cycles)
+{
+    u32 delta;
+
+    if (actual_render_cycles >= presentation_render_ewma) {
+        delta = actual_render_cycles - presentation_render_ewma;
+        presentation_render_ewma += delta >> 3;
+    } else {
+        delta = presentation_render_ewma - actual_render_cycles;
+        presentation_render_ewma -= delta >> 3;
+    }
+    if (delta >= presentation_render_deviation) {
+        presentation_render_deviation +=
+            (delta - presentation_render_deviation) >> 3;
+    } else {
+        presentation_render_deviation -=
+            (presentation_render_deviation - delta) >> 3;
+    }
+    presentation_render_estimate =
+        presentation_render_ewma +
+        (presentation_render_deviation << 1) +
+        PRESENTATION_DEADLINE_GUARD_CYCLES;
+    /*
+     * A single cold Sprite2/cache frame can exceed one entire LCD period.
+     * Keeping that raw peak as the next prediction deadlocks the scheduler:
+     * no idle frame is ever tried, so the estimate can only decay on forced
+     * renders.  Cap the envelope below the measured idle-frame budget; a
+     * rare cold miss may still overrun once, while warm scenes resume on the
+     * immediately following logic-idle frame.
+     */
+    if (presentation_render_estimate > 200000u) {
+        presentation_render_estimate = 200000u;
+    } else if (presentation_render_estimate < 60000u) {
+        presentation_render_estimate = 60000u;
+    }
+    if (
+        presentation_render_estimate >
+        telemetry_presentation_estimate_max
+    ) {
+        telemetry_presentation_estimate_max =
+            presentation_render_estimate;
+    }
+    presentation_render_pending = 0;
+    presentation_pending_logic_ticks = 0;
+    presentation_release_held_window = 0;
+    telemetry_presentation_render_completed++;
+}
+#endif
 
 static void commit_vblank_work(void)
 {
@@ -86,6 +316,26 @@ static void commit_vblank_work(void)
         game_state == STATE_PLAY ||
         game_state == STATE_GAME_OVER
     ) {
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#if !TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+        gameplay_presentation_capture_registers();
+#else
+        if (!presentation_registers_valid) {
+            gameplay_presentation_capture_registers();
+        }
+#endif
+        REG_BG0HOFS = gameplay_presentation.hofs[0];
+        REG_BG1HOFS = gameplay_presentation.hofs[1];
+        REG_BG2HOFS = gameplay_presentation.hofs[2];
+        REG_BG0VOFS = gameplay_presentation.vofs[0];
+        REG_BG1VOFS = gameplay_presentation.vofs[1];
+        REG_BG2VOFS = gameplay_presentation.vofs[2];
+        REG_BG1CNT = gameplay_presentation.bg1cnt;
+        REG_BG2CNT = gameplay_presentation.bg2cnt;
+        REG_DISPCNT = gameplay_presentation.dispcnt;
+        REG_BLDCNT = gameplay_presentation.bldcnt;
+        REG_BLDALPHA = gameplay_presentation.bldalpha;
+#else
         u8 background2_priority = 2;
         u8 background3_priority = 1;
         u8 background2_present;
@@ -110,6 +360,7 @@ static void commit_vblank_work(void)
         REG_DISPCNT =
             MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
             (background2_present ? BG1_ON : 0);
+#endif
         /*
          * Count the source software-filter requests independently from the
          * GBA presentation.  This distinguishes a cheap hardware detail
@@ -137,12 +388,13 @@ static void commit_vblank_work(void)
 #endif
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
         if (
-            background2_present &&
+            source_background2_present() &&
             !source_parity_level.background2_not_transparent
         ) {
             telemetry_detail_wild_frames++;
         }
 #endif
+#if !TYRIAN_GBA_DYNAMIC_FRAME_DROP
         {
             u16 blend_first = 0;
             u16 blend_second = 0;
@@ -181,6 +433,7 @@ static void commit_vblank_work(void)
                 REG_BLDALPHA = 0;
             }
         }
+#endif
         if (boss_obj_palette_restore_pending) {
             dmaCopy(
                 obj_palette,

@@ -259,6 +259,21 @@ static u8 enter_level(u16 selected_section)
     telemetry_player_chain_volleys = 0;
     telemetry_stress_option_blend_draws = 0;
     telemetry_stress_psg_triggers = 0;
+    telemetry_wall_vblanks = 0;
+    telemetry_presentation_render_attempts = 0;
+    telemetry_presentation_render_completed = 0;
+    telemetry_presentation_render_deferred = 0;
+    telemetry_presentation_render_forced = 0;
+    telemetry_presentation_superseded = 0;
+    telemetry_presentation_pending_logic_max = 0;
+    telemetry_presentation_estimate_max = 0;
+    telemetry_presentation_deadline_elapsed_max = 0;
+    telemetry_logic_catchup_updates = 0;
+    telemetry_logic_updates_per_loop_max = 0;
+    telemetry_logic_backlog_frames_max = 0;
+    telemetry_background_held_rows_max = 0;
+    telemetry_vblank_recovery_loops = 0;
+    telemetry_audio_frames = 0;
 #if TYRIAN_GBA_STRESS_LOADOUT
     telemetry_projectile_culled_offscreen_before_cache = 0;
     telemetry_projectile_culled_oam_full_before_cache = 0;
@@ -272,6 +287,17 @@ static u8 enter_level(u16 selected_section)
     telemetry_stress_render_cycles_max = 0;
     telemetry_stress_collision_cycles_total = 0;
     telemetry_stress_collision_cycles_max = 0;
+#endif
+#if TYRIAN_GBA_PERF_TIMER
+    telemetry_perf_vblank_irq_cycles_last = 0;
+    telemetry_perf_vblank_irq_cycles_total = 0;
+    telemetry_perf_vblank_irq_cycles_max = 0;
+    telemetry_perf_commit_cycles_total = 0;
+    telemetry_perf_commit_cycles_max = 0;
+    telemetry_perf_audio_input_cycles_total = 0;
+    telemetry_perf_audio_input_cycles_max = 0;
+    telemetry_perf_prelogic_cycles_total = 0;
+    telemetry_perf_prelogic_cycles_max = 0;
 #endif
     telemetry_detail_lava_frames = 0;
     telemetry_detail_water_frames = 0;
@@ -307,6 +333,19 @@ static u8 enter_level(u16 selected_section)
     telemetry_game_over_exits = 0;
     last_vblank_seen = telemetry_vblank_irqs;
 
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+    presentation_render_ewma = 133630;
+    presentation_render_deviation = 8192;
+    presentation_render_estimate =
+        PRESENTATION_INITIAL_RENDER_ESTIMATE;
+    telemetry_presentation_estimate_max =
+        presentation_render_estimate;
+    presentation_render_pending = 0;
+    presentation_pending_logic_ticks = 0;
+    presentation_registers_valid = 0;
+    presentation_release_held_window = 0;
+    gameplay_presentation_capture_registers();
+#endif
     REG_BG0HOFS = source_background_hofs(0);
     REG_BG1HOFS = source_background_hofs(1);
     REG_BG2HOFS = source_background_hofs(2);

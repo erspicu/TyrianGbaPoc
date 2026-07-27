@@ -808,13 +808,42 @@ route 維持 3／10,475，所有 gameplay／Boss、death、Jukebox、
 - `Tyrian-GBA-Full-Loadout-Optimization-v34.md`
 - `Tyrian-GBA-Updated-Plan-v34.md`
 
+## v35 Fixed-timestep Drop-frame 與 VBlank Recovery
+
+全武器上限版現在把 OpenTyrian logic 與 presentation 解耦。Logic 依
+實際 VBlank period 以固定 34.7826 Hz 推進；deadline 不足時省略完整
+scene，下一次直接呈現最新 state。BG registers、背景 row ownership、
+OBJ cache 與 OAM 一起 freeze，沒有 BG-live／OAM-repeat 的相對滑動。
+
+Maxmod `mmFrame()` 必須每 frame 呼叫。舊 `VBlankIntrWait()` 在 overrun
+後會丟棄已 latch 的 IRQ並多睡一幀；v35 用 IRQ counter 逐一 recovery，
+active display 只補 audio／input／logic，不做 VRAM DMA。相同 3,600 個
+wall VBlanks、2,096 logic updates 與 12,374 shot spawns 下：
+
+- missed VBlank：719 → 590；
+- audio frames：2,881 → 3,600／3,600；
+- completed new scenes：1,381 → 1,470；
+- logic backlog：0；
+- unknown visuals、background approximation、L2 drop：0。
+
+使用者提出的全 branchless AABB 經 A/B 反而讓 collision 平均增加
+13.60%，且 inclusive unsigned interval 多出 1-pixel hit ring，因此未
+採用。Enemy-shot 原控制流搬入 ARM/IWRAM 有小幅正收益；Sprite2 raw
+palette mapping 保留 32-bit grouped stores。完整 Low regression、
+62-section matrix、四關 campaign、death 與 Jukebox 均通過。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Drop-Frame-ARM7-v35.md`
+- `Tyrian-GBA-Updated-Plan-v35.md`
+
 ## 下一個移植階段
 
-1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
-   Episode 2 轉場。
-2. 保存關卡間的 player、cash、cube、weapon 與 global flag 狀態。
-3. 逐行翻寫 front／rear／special weapon，移除 route-test combat assist，
-   並完成 turret 251..255 magnet／special effects 與 misc-shot 104。
+1. 恢復 stock ammo、charge、cooldown 與裝備互斥。
+2. 建立合法 front／rear／sidekick／special 組合效能矩陣。
+3. 將四關 campaign 擴大成 Episode 1 完整 Full Game 與 Episode 2
+   轉場，保存關卡間 player、cash、cube、weapon 與 global flags。
+4. 完成 turret 251..255、magnet、special effects 與 misc-shot 104。
 
 ## 建置
 

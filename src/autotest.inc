@@ -1335,7 +1335,7 @@ static void autotest_full_loadout_stress_finish(void)
     sram[0] = 'T';
     sram[1] = 'G';
     sram[2] = 'W';
-    sram[3] = '4';
+    sram[3] = '7';
     sram[4] = 1;
     sram[5] =
         stress_loadout_valid &&
@@ -1410,7 +1410,16 @@ static void autotest_full_loadout_stress_finish(void)
                 TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER <<
                 2
             ) |
-            (TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK << 3)
+            (TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK << 3) |
+            (TYRIAN_GBA_DYNAMIC_FRAME_DROP << 4) |
+            (TYRIAN_GBA_WALL_CLOCK_LOGIC << 5) |
+            (TYRIAN_GBA_COLLISION_UNSIGNED_RANGE << 6) |
+            (TYRIAN_GBA_COLLISION_MASK_FAST_PATH << 7) |
+            (TYRIAN_GBA_PRESENTATION_DEFER << 8) |
+            (TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER << 9) |
+            (TYRIAN_GBA_COLLISION_LAZY_RESULT << 10) |
+            (TYRIAN_GBA_COLLISION_PACKED_CALL << 11) |
+            (TYRIAN_GBA_RECOVER_MISSED_VBLANK << 12)
     );
     sram_write_u32(204, telemetry_projectile_cache_hits);
     sram_write_u32(208, telemetry_projectile_cache_misses);
@@ -1432,6 +1441,60 @@ static void autotest_full_loadout_stress_finish(void)
         232,
         source_parity_level.player_shot_collision_mask_active
     );
+    sram_write_u32(236, telemetry_perf_vblank_irq_cycles_total);
+    sram_write_u32(240, telemetry_perf_vblank_irq_cycles_max);
+    sram_write_u32(244, telemetry_perf_commit_cycles_total);
+    sram_write_u32(248, telemetry_perf_commit_cycles_max);
+    sram_write_u32(252, telemetry_perf_audio_input_cycles_total);
+    sram_write_u32(256, telemetry_perf_audio_input_cycles_max);
+    sram_write_u32(260, telemetry_perf_prelogic_cycles_total);
+    sram_write_u32(264, telemetry_perf_prelogic_cycles_max);
+    sram_write_u32(268, telemetry_wall_vblanks);
+    sram_write_u32(
+        272,
+        telemetry_presentation_render_attempts
+    );
+    sram_write_u32(
+        276,
+        telemetry_presentation_render_completed
+    );
+    sram_write_u32(
+        280,
+        telemetry_presentation_render_deferred
+    );
+    sram_write_u32(
+        284,
+        telemetry_presentation_render_forced
+    );
+    sram_write_u32(288, telemetry_presentation_superseded);
+    sram_write_u32(
+        292,
+        telemetry_presentation_pending_logic_max
+    );
+    sram_write_u32(
+        296,
+        telemetry_presentation_estimate_max
+    );
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+    sram_write_u32(300, presentation_render_estimate);
+    sram_write_u32(324, presentation_render_pending);
+#else
+    sram_write_u32(300, 0);
+    sram_write_u32(324, 0);
+#endif
+    sram_write_u32(
+        304,
+        telemetry_presentation_deadline_elapsed_max
+    );
+    sram_write_u32(308, telemetry_logic_catchup_updates);
+    sram_write_u32(
+        312,
+        telemetry_logic_updates_per_loop_max
+    );
+    sram_write_u32(316, telemetry_logic_backlog_frames_max);
+    sram_write_u32(320, telemetry_background_held_rows_max);
+    sram_write_u32(328, telemetry_vblank_recovery_loops);
+    sram_write_u32(332, telemetry_audio_frames);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

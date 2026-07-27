@@ -1887,12 +1887,18 @@ source_autotest_route_combat_assist(void)
         uint8_t damage = enemy->armorleft;
 
         if (damage == 0) damage = 1;
+        ot_level_port_begin_player_shot_collision_phase(
+            &source_parity_level
+        );
         ot_level_port_collide_player_shot(
             &source_parity_level,
             (int16_t)(enemy->ex + enemy->mapoffset),
             (int16_t)(enemy->ey - 6),
             damage,
             &result
+        );
+        ot_level_port_end_player_shot_collision_phase(
+            &source_parity_level
         );
         if (result.collided) {
             telemetry_autotest_combat_assists++;
@@ -1971,6 +1977,37 @@ source_process_player_collisions(void)
             continue;
         }
 #endif
+#if TYRIAN_GBA_COLLISION_PACKED_CALL
+        {
+            u32 damage_and_radii = shot->damage;
+
+#if TYRIAN_GBA_STRESS_LOADOUT
+            if (shot->render_graphic > 60000) {
+                damage_and_radii |=
+                    (
+                        (u32)(
+                            SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH /
+                            2
+                        )
+                    ) << 8;
+                damage_and_radii |=
+                    (
+                        (u32)(
+                            SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT /
+                            2
+                        )
+                    ) << 16;
+            }
+#endif
+            ot_level_port_collide_player_shot_packed(
+                &source_parity_level,
+                shot->x,
+                shot->y,
+                &result,
+                damage_and_radii
+            );
+        }
+#else
 #if TYRIAN_GBA_STRESS_LOADOUT
         if (shot->render_graphic > 60000) {
             ot_level_port_collide_player_shot_sized(
@@ -1993,6 +2030,7 @@ source_process_player_collisions(void)
                 &result
             );
         }
+#endif
         source_apply_player_shot_result(shot, &result);
     }
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK

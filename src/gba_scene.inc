@@ -616,5 +616,8 @@ static void render_game(void)
     if (visible_count > telemetry_max_oam) {
         telemetry_max_oam = visible_count;
     }
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+    gameplay_presentation_capture_registers();
+#endif
     oam_dirty = 1;
 }

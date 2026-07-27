@@ -12,6 +12,13 @@
 #include "src/opentyrian_rom_io.h"
 #include "src/opentyrian_sprite2.h"
 
+#if defined(AUTOTEST_FULL_LOADOUT_STRESS) || \
+    TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#define TYRIAN_GBA_PERF_TIMER 1
+#else
+#define TYRIAN_GBA_PERF_TIMER 0
+#endif
+
 #define GBA_WAITCNT (*(volatile u16 *)0x04000204)
 #define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
 
@@ -39,6 +46,18 @@
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT != 0 && TYRIAN_GBA_STRESS_LOADOUT != 1
 #error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
+#endif
+#if TYRIAN_GBA_STRESS_LOADOUT
+/*
+ * The upper-bound build spends IWRAM on larger hot collision/render paths.
+ * Its cold report-only counters can live in EWRAM, preserving the 6 KiB
+ * stack/heap safety margin without slowing gameplay work.
+ */
+#define STRESS_EWRAM_BSS EWRAM_BSS
+#define STRESS_COLD_BSS STRESS_EWRAM_BSS
+#else
+#define STRESS_EWRAM_BSS
+#define STRESS_COLD_BSS
 #endif
 
 /*
@@ -98,6 +117,20 @@
 #define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
 #define MAP_HALF_ROW_BYTES (32 * sizeof(u16))
 #define MAP_SCREEN_BLOCK_WORDS (32 * 32)
+
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+enum {
+    GBA_DISPLAY_FRAME_CYCLES = 280896,
+    PRESENTATION_DEADLINE_GUARD_CYCLES = 8192,
+    PRESENTATION_INITIAL_RENDER_ESTIMATE = 150000,
+    PRESENTATION_MAX_CATCHUP_TICKS = 3,
+};
+#if TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+#define PRESENTATION_MAX_PENDING_LOGIC_TICKS 2
+#else
+#define PRESENTATION_MAX_PENDING_LOGIC_TICKS 3
+#endif
+#endif
 
 /*
  * GBA has 128 hardware OBJ entries and substantially more CPU time than the
@@ -827,6 +860,28 @@ static u16 *bg1_row_target;
 static u16 *bg2_row_target;
 static u16 *bg3_row_target;
 
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+typedef struct {
+    u16 hofs[3];
+    u16 vofs[3];
+    u16 bg1cnt;
+    u16 bg2cnt;
+    u16 dispcnt;
+    u16 bldcnt;
+    u16 bldalpha;
+    u16 full_scroll_pixel[3];
+} GameplayPresentationRegisters;
+
+static GameplayPresentationRegisters gameplay_presentation;
+static u32 presentation_render_estimate;
+static u32 presentation_render_ewma;
+static u32 presentation_render_deviation;
+static u8 presentation_render_pending;
+static u8 presentation_pending_logic_ticks;
+static u8 presentation_registers_valid;
+static u8 presentation_release_held_window;
+#endif
+
 static u8 oam_count;
 static u8 previous_oam_count;
 static u8 oam_dirty;
@@ -943,12 +998,12 @@ volatile u32 telemetry_effect_cache_upload_bytes;
 volatile u32 telemetry_effect_cache_max_uploads;
 volatile u32 telemetry_effect_cache_max_visible_unique;
 volatile u32 telemetry_state_transitions;
-volatile u32 telemetry_romfs_entries;
-volatile u32 telemetry_romfs_image_bytes;
-volatile u32 telemetry_romfs_payload_bytes;
-volatile u32 telemetry_romfs_checks;
-volatile u32 telemetry_romfs_failures;
-volatile u32 telemetry_romfs_manifest_crc32;
+volatile u32 telemetry_romfs_entries STRESS_COLD_BSS;
+volatile u32 telemetry_romfs_image_bytes STRESS_COLD_BSS;
+volatile u32 telemetry_romfs_payload_bytes STRESS_COLD_BSS;
+volatile u32 telemetry_romfs_checks STRESS_COLD_BSS;
+volatile u32 telemetry_romfs_failures STRESS_COLD_BSS;
+volatile u32 telemetry_romfs_manifest_crc32 STRESS_COLD_BSS;
 volatile u32 telemetry_layer_rule_checks;
 volatile u32 telemetry_layer_rule_failures;
 volatile u32 telemetry_pickup_explosion_spawns;
@@ -968,16 +1023,16 @@ volatile u32 telemetry_player_death_music_fade_steps;
 volatile u32 telemetry_game_over_music_starts;
 volatile u32 telemetry_game_over_overlay_frames;
 volatile u32 telemetry_game_over_exits;
-volatile u32 telemetry_boss_perf_started;
-volatile u32 telemetry_boss_perf_completed;
-volatile u32 telemetry_boss_perf_start_position;
-volatile u32 telemetry_boss_perf_end_position;
-volatile u32 telemetry_boss_perf_display_frames;
-volatile u32 telemetry_boss_perf_missed_vblanks;
-volatile u32 telemetry_boss_perf_sprite2_misses;
-volatile u32 telemetry_boss_perf_sprite2_evictions;
-volatile u32 telemetry_boss_perf_sprite2_upload_bytes;
-volatile u32 telemetry_boss_perf_projectile_misses;
+volatile u32 telemetry_boss_perf_started STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_completed STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_start_position STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_end_position STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_display_frames STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_missed_vblanks STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_sprite2_misses STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_sprite2_evictions STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_sprite2_upload_bytes STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_projectile_misses STRESS_COLD_BSS;
 volatile u32 telemetry_sprite2_l2_hits;
 volatile u32 telemetry_sprite2_l2_misses;
 volatile u32 telemetry_sprite2_l2_evictions;
@@ -986,12 +1041,27 @@ volatile u32 telemetry_sprite2_l2_flushes;
 volatile u32 telemetry_sprite2_l2_raw_builds;
 volatile u32 telemetry_sprite2_l2_rle_fallbacks;
 volatile u32 telemetry_sprite2_l2_max_visible_unique;
-volatile u32 telemetry_boss_perf_l2_hits;
-volatile u32 telemetry_boss_perf_l2_misses;
-volatile u32 telemetry_boss_perf_l2_evictions;
-volatile u32 telemetry_boss_perf_l2_raw_builds;
-volatile u32 telemetry_boss_perf_l2_fallbacks;
+volatile u32 telemetry_boss_perf_l2_hits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_l2_misses STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_l2_evictions STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_l2_raw_builds STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_l2_fallbacks STRESS_COLD_BSS;
 volatile u32 telemetry_waitcnt;
+volatile u32 telemetry_wall_vblanks;
+volatile u32 telemetry_presentation_render_attempts;
+volatile u32 telemetry_presentation_render_completed;
+volatile u32 telemetry_presentation_render_deferred;
+volatile u32 telemetry_presentation_render_forced;
+volatile u32 telemetry_presentation_superseded;
+volatile u32 telemetry_presentation_pending_logic_max;
+volatile u32 telemetry_presentation_estimate_max;
+volatile u32 telemetry_presentation_deadline_elapsed_max;
+volatile u32 telemetry_logic_catchup_updates;
+volatile u32 telemetry_logic_updates_per_loop_max;
+volatile u32 telemetry_logic_backlog_frames_max;
+volatile u32 telemetry_background_held_rows_max;
+volatile u32 telemetry_vblank_recovery_loops;
+volatile u32 telemetry_audio_frames;
 
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
 volatile u32 telemetry_stress_logic_cycles_total;
@@ -1001,18 +1071,31 @@ volatile u32 telemetry_stress_render_cycles_max;
 volatile u32 telemetry_stress_collision_cycles_total;
 volatile u32 telemetry_stress_collision_cycles_max;
 #endif
+#if TYRIAN_GBA_PERF_TIMER
+static volatile u8 perf_timer_ready;
+static volatile u32 perf_vblank_cycle_stamp;
+volatile u32 telemetry_perf_vblank_irq_cycles_last;
+volatile u32 telemetry_perf_vblank_irq_cycles_total;
+volatile u32 telemetry_perf_vblank_irq_cycles_max;
+volatile u32 telemetry_perf_commit_cycles_total;
+volatile u32 telemetry_perf_commit_cycles_max;
+volatile u32 telemetry_perf_audio_input_cycles_total;
+volatile u32 telemetry_perf_audio_input_cycles_max;
+volatile u32 telemetry_perf_prelogic_cycles_total;
+volatile u32 telemetry_perf_prelogic_cycles_max;
+#endif
 
-static u32 boss_perf_start_display_frames;
-static u32 boss_perf_start_missed_vblanks;
-static u32 boss_perf_start_sprite2_misses;
-static u32 boss_perf_start_sprite2_evictions;
-static u32 boss_perf_start_sprite2_upload_bytes;
-static u32 boss_perf_start_projectile_misses;
-static u32 boss_perf_start_l2_hits;
-static u32 boss_perf_start_l2_misses;
-static u32 boss_perf_start_l2_evictions;
-static u32 boss_perf_start_l2_raw_builds;
-static u32 boss_perf_start_l2_fallbacks;
+static u32 boss_perf_start_display_frames STRESS_COLD_BSS;
+static u32 boss_perf_start_missed_vblanks STRESS_COLD_BSS;
+static u32 boss_perf_start_sprite2_misses STRESS_COLD_BSS;
+static u32 boss_perf_start_sprite2_evictions STRESS_COLD_BSS;
+static u32 boss_perf_start_sprite2_upload_bytes STRESS_COLD_BSS;
+static u32 boss_perf_start_projectile_misses STRESS_COLD_BSS;
+static u32 boss_perf_start_l2_hits STRESS_COLD_BSS;
+static u32 boss_perf_start_l2_misses STRESS_COLD_BSS;
+static u32 boss_perf_start_l2_evictions STRESS_COLD_BSS;
+static u32 boss_perf_start_l2_raw_builds STRESS_COLD_BSS;
+static u32 boss_perf_start_l2_fallbacks STRESS_COLD_BSS;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -1125,7 +1208,7 @@ static void stress_spawn_weapon(
     s16 origin_y
 );
 #endif
-#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+#if TYRIAN_GBA_PERF_TIMER
 static inline u32 stress_cycle_counter_read(void)
 {
     u16 high_before;
@@ -1178,9 +1261,16 @@ static void jukebox_render(void);
 int main(void)
 {
     u32 current_vblank;
+    u32 vblank_steps;
     u8 logic_updated;
-#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    u8 commit_vblank_now;
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+    u32 observed_vblank;
+    u32 vblank_irq_latch_consumed = 0;
+#endif
+#if TYRIAN_GBA_PERF_TIMER
     u32 stress_cycle_start;
+    u32 perf_frame_cycle_start;
 #endif
     uint32_t romfs_passed_checks = 0;
     uint32_t romfs_failed_checks = 0;
@@ -1224,13 +1314,14 @@ int main(void)
      */
     mmInitDefault((mm_addr)soundbank, 16);
 
-#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+#if TYRIAN_GBA_PERF_TIMER
     REG_TM2CNT_H = 0;
     REG_TM3CNT_H = 0;
     REG_TM2CNT_L = 0;
     REG_TM3CNT_L = 0;
     REG_TM3CNT_H = TIMER_COUNT | TIMER_START;
     REG_TM2CNT_H = TIMER_START;
+    perf_timer_ready = 1;
 #endif
     telemetry_vblank_irqs = 0;
     telemetry_state_transitions = 0;
@@ -1257,24 +1348,142 @@ int main(void)
 
     for (;;) {
         logic_updated = 0;
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+        /*
+         * A heavy logic/render pass can finish after one or more VBlank IRQs
+         * have already run.  Do not call VBlankIntrWait() in that case: SWI 5
+         * discards the latched IRQ and would sleep through one extra frame.
+         * Consume one counted LCD period per loop so mmFrame(), input and the
+         * wall-clock logic accumulator all recover at the correct 59.73 Hz.
+         *
+         * Active-display recovery loops must not DMA pending rows/OAM.  The
+         * next genuinely waited VBlank commits the newest complete scene.
+         */
+        observed_vblank = telemetry_vblank_irqs;
+        if (
+            last_vblank_seen &&
+            observed_vblank > last_vblank_seen
+        ) {
+            /*
+             * BIOS keeps only a bit for an already-serviced VBlank.  Consume
+             * that latch exactly once per newest IRQ count; ReturnFlag=0 is
+             * guaranteed to return immediately here because the dispatcher
+             * set it before invoking vblank_handler().  Without this step a
+             * later wait would mistake the stale latch for a new LCD period.
+             */
+            if (observed_vblank > vblank_irq_latch_consumed) {
+                IntrWait(0, IRQ_VBLANK);
+                observed_vblank = telemetry_vblank_irqs;
+                vblank_irq_latch_consumed = observed_vblank;
+            }
+            current_vblank = last_vblank_seen + 1;
+            vblank_steps = 1;
+            commit_vblank_now = 0;
+            telemetry_missed_vblanks++;
+            telemetry_vblank_recovery_loops++;
+        } else {
+            commit_vblank_now = 1;
+            /*
+             * ReturnFlag=0 also closes the small race between the counter
+             * check above and entering BIOS: an IRQ arriving there is
+             * consumed immediately instead of being discarded.
+             */
+            IntrWait(0, IRQ_VBLANK);
+            observed_vblank = telemetry_vblank_irqs;
+            vblank_irq_latch_consumed = observed_vblank;
+            if (
+                last_vblank_seen &&
+                observed_vblank > last_vblank_seen
+            ) {
+                /*
+                 * Normally this is exactly +1.  Consuming only one keeps the
+                 * audio/logic accounting correct even if an emulator or an
+                 * unusually long IRQ reports more than one at once.
+                 */
+                current_vblank = last_vblank_seen + 1;
+            } else {
+                current_vblank = observed_vblank;
+            }
+            vblank_steps = 1;
+        }
+#else
+        commit_vblank_now = 1;
         VBlankIntrWait();
         current_vblank = telemetry_vblank_irqs;
+        vblank_steps = 1;
+        if (
+            last_vblank_seen &&
+            current_vblank > last_vblank_seen
+        ) {
+            vblank_steps = current_vblank - last_vblank_seen;
+        }
         if (last_vblank_seen && current_vblank > last_vblank_seen + 1) {
             telemetry_missed_vblanks += current_vblank - last_vblank_seen - 1;
         }
+#endif
         last_vblank_seen = current_vblank;
-        commit_vblank_work();
+#if TYRIAN_GBA_PERF_TIMER
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+        perf_frame_cycle_start = perf_vblank_cycle_stamp;
+        if (!perf_frame_cycle_start) {
+            perf_frame_cycle_start = stress_cycle_counter_read();
+        }
+#else
+        perf_frame_cycle_start = stress_cycle_counter_read();
+#endif
+        stress_cycle_start = stress_cycle_counter_read();
+#endif
+        if (commit_vblank_now) {
+            commit_vblank_work();
+        }
+#if TYRIAN_GBA_PERF_TIMER
+        if (commit_vblank_now) {
+            stress_cycle_accumulate(
+                stress_cycle_start,
+                &telemetry_perf_commit_cycles_total,
+                &telemetry_perf_commit_cycles_max
+            );
+        }
+#endif
 #ifdef AUTOTEST_SCREENSHOT_ENABLED
         if (autotest_screenshot_delay &&
             --autotest_screenshot_delay == 0) {
             __asm__ volatile("swi 3");
         }
 #endif
+#if TYRIAN_GBA_PERF_TIMER
+        stress_cycle_start = stress_cycle_counter_read();
+#endif
         mmFrame();
+        if (
+            game_state == STATE_PLAY ||
+            game_state == STATE_GAME_OVER
+        ) {
+            telemetry_audio_frames++;
+        }
 
         scanKeys();
         pad_now = keysHeld();
         pad_pressed = keysDown();
+#if TYRIAN_GBA_PERF_TIMER
+        stress_cycle_accumulate(
+            stress_cycle_start,
+            &telemetry_perf_audio_input_cycles_total,
+            &telemetry_perf_audio_input_cycles_max
+        );
+        {
+            u32 prelogic_elapsed =
+                stress_cycle_counter_read() - perf_frame_cycle_start;
+
+            telemetry_perf_prelogic_cycles_total += prelogic_elapsed;
+            if (
+                prelogic_elapsed >
+                telemetry_perf_prelogic_cycles_max
+            ) {
+                telemetry_perf_prelogic_cycles_max = prelogic_elapsed;
+            }
+        }
+#endif
 #ifdef AUTOTEST
         if (game_state == STATE_GAME_OVER) {
             pad_now = 0;
@@ -1447,6 +1656,13 @@ int main(void)
             }
 #endif
         } else {
+            u8 logic_updates_this_loop = 0;
+            u8 rendered_this_loop = 0;
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+            u8 game_state_before_logic = game_state;
+#endif
+
+            telemetry_wall_vblanks += vblank_steps;
             if (
                 game_state == STATE_PLAY &&
                 (pad_pressed & KEY_START)
@@ -1456,18 +1672,61 @@ int main(void)
             if (game_paused) {
                 telemetry_paused_frames++;
                 render_game();
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                presentation_render_pending = 0;
+                presentation_pending_logic_ticks = 0;
+#endif
+                rendered_this_loop = 1;
 #ifdef AUTOTEST_SCREENSHOT_PAUSE
                 if (!autotest_screenshot_delay) {
                     autotest_screenshot_delay = 2;
                 }
 #endif
             } else {
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                logic_accumulator +=
+                    vblank_steps * TYRIAN_GBA_LOGIC_NUMERATOR;
+#else
                 logic_accumulator += TYRIAN_GBA_LOGIC_NUMERATOR;
-                if (logic_accumulator >= TYRIAN_GBA_LOGIC_DENOMINATOR) {
+#endif
+                while (
+                    logic_accumulator >=
+                        TYRIAN_GBA_LOGIC_DENOMINATOR
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                    &&
+                    logic_updates_this_loop <
+                        PRESENTATION_MAX_CATCHUP_TICKS
+#else
+                    &&
+                    logic_updates_this_loop == 0
+#endif
+                ) {
                     logic_accumulator -= TYRIAN_GBA_LOGIC_DENOMINATOR;
                     logic_updated = 1;
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                    /*
+                     * Wall-clock catch-up may execute more than one source
+                     * tick after a delayed VBlank.  Regenerate the scripted
+                     * input from the current authoritative state for each
+                     * tick so the stress workload remains identical to the
+                     * one-tick-per-loop baseline.
+                     */
+                    pad_now = autotest_input();
                     stress_cycle_start = stress_cycle_counter_read();
+#endif
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP && \
+    TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+                    if (presentation_render_pending) {
+                        /*
+                         * This update supersedes a scene already waiting for
+                         * presentation, so the scheduler will force a render
+                         * afterward.  Let background streaming release the
+                         * old display-only row before it allocates the new
+                         * one; both VRAM and register changes commit together
+                         * at the next VBlank.
+                         */
+                        presentation_release_held_window = 1;
+                    }
 #endif
                     update_logic();
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
@@ -1477,22 +1736,54 @@ int main(void)
                         &telemetry_stress_logic_cycles_max
                     );
 #endif
+                    logic_updates_this_loop++;
+                    /*
+                     * keysDown() describes one physical sample, not every
+                     * source tick recovered after an overrun.  Held input
+                     * remains in pad_now; consume edge-triggered input only
+                     * on the first catch-up update.
+                     */
+                    pad_pressed = 0;
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                    gameplay_presentation_mark_logic_update();
+#endif
                     if (
-                        game_state == STATE_PLAY ||
-                        game_state == STATE_GAME_OVER
+                        game_state != STATE_PLAY &&
+                        game_state != STATE_GAME_OVER
                     ) {
+                        break;
+                    }
+#if !TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                    if (game_state == STATE_PLAY ||
+                        game_state == STATE_GAME_OVER) {
+                        u32 render_elapsed;
+
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
                         stress_cycle_start = stress_cycle_counter_read();
 #endif
                         render_game();
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
-                        stress_cycle_accumulate(
-                            stress_cycle_start,
-                            &telemetry_stress_render_cycles_total,
-                            &telemetry_stress_render_cycles_max
-                        );
+                        render_elapsed =
+                            stress_cycle_counter_read() -
+                            stress_cycle_start;
+                        telemetry_stress_render_cycles_total +=
+                            render_elapsed;
+                        if (
+                            render_elapsed >
+                            telemetry_stress_render_cycles_max
+                        ) {
+                            telemetry_stress_render_cycles_max =
+                                render_elapsed;
+                        }
+#else
+                        render_elapsed = 0;
 #endif
+                        (void)render_elapsed;
+                        telemetry_presentation_render_attempts++;
+                        telemetry_presentation_render_completed++;
+                        rendered_this_loop = 1;
                     }
+#endif
                     if (game_state == STATE_PLAY) {
 #ifdef AUTOTEST_SCREENSHOT_TICK
                         if (
@@ -1541,10 +1832,80 @@ int main(void)
 #endif
                     }
                 }
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                if (logic_updates_this_loop > 1) {
+                    telemetry_logic_catchup_updates +=
+                        logic_updates_this_loop - 1;
+                }
+                if (
+                    logic_accumulator >=
+                    TYRIAN_GBA_LOGIC_DENOMINATOR
+                ) {
+                    u32 backlog =
+                        logic_accumulator /
+                        TYRIAN_GBA_LOGIC_DENOMINATOR;
+
+                    if (
+                        backlog >
+                        telemetry_logic_backlog_frames_max
+                    ) {
+                        telemetry_logic_backlog_frames_max =
+                            backlog;
+                    }
+                }
+#endif
+                if (
+                    logic_updates_this_loop >
+                    telemetry_logic_updates_per_loop_max
+                ) {
+                    telemetry_logic_updates_per_loop_max =
+                        logic_updates_this_loop;
+                }
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                if (
+                    presentation_render_pending &&
+                    (
+                        game_state == STATE_PLAY ||
+                        game_state == STATE_GAME_OVER
+                    )
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+                    &&
+                    current_vblank >= telemetry_vblank_irqs
+#endif
+                    &&
+                    gameplay_presentation_should_render(
+                        perf_frame_cycle_start,
+                        game_state != game_state_before_logic
+                    )
+                ) {
+                    u32 render_start =
+                        stress_cycle_counter_read();
+                    u32 render_elapsed;
+
+                    render_game();
+                    render_elapsed =
+                        stress_cycle_counter_read() - render_start;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                    telemetry_stress_render_cycles_total +=
+                        render_elapsed;
+                    if (
+                        render_elapsed >
+                        telemetry_stress_render_cycles_max
+                    ) {
+                        telemetry_stress_render_cycles_max =
+                            render_elapsed;
+                    }
+#endif
+                    gameplay_presentation_complete(render_elapsed);
+                    rendered_this_loop = 1;
+                }
+#endif
             }
             if (game_state == STATE_PLAY) {
                 background_prefetch_step(
-                    logic_updated ? 0 : BACKGROUND_PREFETCH_IDLE_MISSES
+                    logic_updated || rendered_this_loop ?
+                        0 :
+                        BACKGROUND_PREFETCH_IDLE_MISSES
                 );
             }
             telemetry_display_frames++;
@@ -1552,7 +1913,11 @@ int main(void)
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
             if (
                 game_state == STATE_PLAY &&
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                telemetry_wall_vblanks >= 3600
+#else
                 telemetry_display_frames >= 3600
+#endif
             ) {
                 autotest_full_loadout_stress_finish();
             }

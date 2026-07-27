@@ -137,6 +137,27 @@ static int16_t ot_abs_s16(int16_t value)
     return (int16_t)(value < 0 ? -value : value);
 }
 
+static inline bool ot_player_shot_axis_overlaps(
+    int16_t delta,
+    uint16_t radius
+)
+{
+#if TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+    /*
+     * Strict -radius < delta < radius written as one unsigned interval.
+     * The caller performs the source's explicit int16_t truncation before
+     * entering here; promotion to int32_t then prevents intermediate wrap.
+     * Authored gameplay coordinates never reach INT16_MIN, the sole value
+     * for which the legacy int16-returning abs helper is not representable.
+     */
+    return
+        (uint32_t)((int32_t)delta + radius - 1) <
+        (uint32_t)(radius * 2u - 1u);
+#else
+    return ot_abs_s16(delta) < (int16_t)radius;
+#endif
+}
+
 enum {
     OT_ENEMY_SHAPE_SLOT_FIXED_21 = 0xfd,
     OT_ENEMY_SHAPE_SLOT_FIXED_26 = 0xfe,
@@ -2804,12 +2825,14 @@ static inline bool ot_next_player_shot_collision_candidate(
 {
     uint8_t search = *cursor;
 
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
     if (!state->player_shot_collision_mask_active) {
         if (search >= OT_ENEMY_COUNT) return false;
         *enemy_index = search;
         *cursor = (uint8_t)(search + 1);
         return true;
     }
+#endif
 
     while (search < OT_ENEMY_COUNT) {
         uint8_t word_index = (uint8_t)(search >> 5);
@@ -2871,30 +2894,38 @@ ot_level_port_player_shot_overlaps(
         const OtEnemy *enemy;
 
         visits++;
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
         if (state->enemy_avail[index] != 0) continue;
+#endif
         enemy = &state->enemy[index];
         if (
             (
                 enemy->enemycycle == 0 &&
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset - shot_x
-                    )
-                ) < 25 &&
-                ot_abs_s16(
+                    ),
+                    25
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(enemy->ey - shot_y - 12)
-                ) < 29
+                    ,
+                    29
+                )
             ) ||
             (
                 enemy->enemycycle != 0 &&
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset - shot_x
-                    )
-                ) < 13 &&
-                ot_abs_s16(
+                    ),
+                    13
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(enemy->ey - shot_y - 6)
-                ) < 15
+                    ,
+                    15
+                )
             )
         ) {
             ot_record_player_shot_collision_visits(state, visits);
@@ -2911,25 +2942,31 @@ ot_level_port_player_shot_overlaps(
         if (
             (
                 enemy->enemycycle == 0 &&
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset - shot_x
-                    )
-                ) < 25 &&
-                ot_abs_s16(
+                    ),
+                    25
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(enemy->ey - shot_y - 12)
-                ) < 29
+                    ,
+                    29
+                )
             ) ||
             (
                 enemy->enemycycle != 0 &&
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset - shot_x
-                    )
-                ) < 13 &&
-                ot_abs_s16(
+                    ),
+                    13
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(enemy->ey - shot_y - 6)
-                ) < 15
+                    ,
+                    15
+                )
             )
         ) {
             return true;
@@ -2940,16 +2977,17 @@ ot_level_port_player_shot_overlaps(
 }
 
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
-ot_level_port_collide_player_shot_sized(
+ot_level_port_collide_player_shot_packed(
     OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y,
-    uint8_t damage,
-    uint8_t radius_w,
-    uint8_t radius_h,
-    OtShotCollisionResult *result
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
 )
 {
+    uint8_t damage = (uint8_t)damage_and_radii;
+    uint8_t radius_w = (uint8_t)(damage_and_radii >> 8);
+    uint8_t radius_h = (uint8_t)(damage_and_radii >> 16);
     uint8_t index;
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
     uint8_t cursor = 0;
@@ -2963,6 +3001,7 @@ ot_level_port_collide_player_shot_sized(
      * bandwidth (several KiB per gameplay tick under the stress loadout).
      */
     result->collided = false;
+#if !TYRIAN_GBA_COLLISION_LAZY_RESULT
     result->consumed = false;
     result->remaining_damage = damage;
     result->hit_count = 0;
@@ -2970,6 +3009,7 @@ ot_level_port_collide_player_shot_sized(
     result->effect_count = 0;
     result->data_cubes_awarded = 0;
     result->cash_awarded = 0;
+#endif
     if (state == 0 || damage == 0) return;
 
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
@@ -2992,38 +3032,63 @@ ot_level_port_collide_player_shot_sized(
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
         visits++;
 #endif
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
         if (state->enemy_avail[index] != 0) continue;
+#endif
         enemy = &state->enemy[index];
         if (enemy->enemycycle == 0) {
             collided =
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset -
                             shot_x - radius_w
-                    )
-                ) < 25 + radius_w &&
-                ot_abs_s16(
+                    ),
+                    (uint16_t)(25u + radius_w)
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ey - shot_y - 12 - radius_h
-                    )
-                ) < 29 + radius_h;
+                    ),
+                    (uint16_t)(29u + radius_h)
+                );
         } else {
             collided =
-                ot_abs_s16(
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ex + enemy->mapoffset -
                             shot_x - radius_w
-                    )
-                ) < 13 + radius_w &&
-                ot_abs_s16(
+                    ),
+                    (uint16_t)(13u + radius_w)
+                ) &&
+                ot_player_shot_axis_overlaps(
                     (int16_t)(
                         enemy->ey - shot_y - 6 - radius_h
-                    )
-                ) < 15 + radius_h;
+                    ),
+                    (uint16_t)(15u + radius_h)
+                );
         }
         if (!collided) continue;
 
+#if TYRIAN_GBA_COLLISION_LAZY_RESULT
+        if (!result->collided) {
+            /*
+             * Misses dominate the full-loadout trace.  A miss only promises
+             * collided=false; length-delimited result fields become live at
+             * the first actual hit, immediately before any consumer or
+             * damage path can observe them.
+             */
+            result->consumed = false;
+            result->remaining_damage = damage;
+            result->hit_count = 0;
+            result->kill_count = 0;
+            result->effect_count = 0;
+            result->data_cubes_awarded = 0;
+            result->cash_awarded = 0;
+            result->collided = true;
+        }
+#else
         result->collided = true;
+#endif
         result->hit_count++;
         state->player_shot_collision_count++;
         armor = enemy->armorleft;
@@ -3088,6 +3153,28 @@ ot_level_port_collide_player_shot_sized(
 }
 
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot_sized(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    uint8_t radius_w,
+    uint8_t radius_h,
+    OtShotCollisionResult *result
+)
+{
+    ot_level_port_collide_player_shot_packed(
+        state,
+        shot_x,
+        shot_y,
+        result,
+        (uint32_t)damage |
+            ((uint32_t)radius_w << 8) |
+            ((uint32_t)radius_h << 16)
+    );
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
 ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,
@@ -3096,14 +3183,12 @@ ot_level_port_collide_player_shot(
     OtShotCollisionResult *result
 )
 {
-    ot_level_port_collide_player_shot_sized(
+    ot_level_port_collide_player_shot_packed(
         state,
         shot_x,
         shot_y,
-        damage,
-        0,
-        0,
-        result
+        result,
+        damage
     );
 }
 
@@ -3354,7 +3439,8 @@ void ot_level_port_collide_player(
     }
 }
 
-void ot_level_port_update_enemy_shots(OtLevelPortState *state)
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_update_enemy_shots(OtLevelPortState *state)
 {
     uint8_t index;
 

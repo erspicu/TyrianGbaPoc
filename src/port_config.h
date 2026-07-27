@@ -55,6 +55,67 @@
 #endif
 
 /*
+ * Presentation-only deadline recovery.  The ordinary source-parity release
+ * leaves it disabled; the deliberately overcommitted full-loadout study can
+ * enable it without changing OpenTyrian's logic rate.
+ */
+#ifndef TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#define TYRIAN_GBA_DYNAMIC_FRAME_DROP 0
+#endif
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP != 0 && \
+    TYRIAN_GBA_DYNAMIC_FRAME_DROP != 1
+#error TYRIAN_GBA_DYNAMIC_FRAME_DROP must be 0 or 1
+#endif
+#ifndef TYRIAN_GBA_WALL_CLOCK_LOGIC
+#define TYRIAN_GBA_WALL_CLOCK_LOGIC TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#endif
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC != 0 && \
+    TYRIAN_GBA_WALL_CLOCK_LOGIC != 1
+#error TYRIAN_GBA_WALL_CLOCK_LOGIC must be 0 or 1
+#endif
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC && \
+    !TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#error TYRIAN_GBA_WALL_CLOCK_LOGIC requires dynamic presentation scheduling
+#endif
+/*
+ * VBlankIntrWait() deliberately discards an already-latched VBlank.  After
+ * an overrun that would make the main loop wait through one additional LCD
+ * period, and Maxmod's required once-per-frame mmFrame() call would fall
+ * progressively behind.  Dynamic builds instead consume every VBlank IRQ
+ * counted by the handler: overdue periods run an audio/input/logic recovery
+ * iteration without attempting an unsafe active-display VRAM commit.
+ */
+#ifndef TYRIAN_GBA_RECOVER_MISSED_VBLANK
+#define TYRIAN_GBA_RECOVER_MISSED_VBLANK TYRIAN_GBA_WALL_CLOCK_LOGIC
+#endif
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK != 0 && \
+    TYRIAN_GBA_RECOVER_MISSED_VBLANK != 1
+#error TYRIAN_GBA_RECOVER_MISSED_VBLANK must be 0 or 1
+#endif
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK && \
+    !TYRIAN_GBA_WALL_CLOCK_LOGIC
+#error Missed-VBlank recovery requires wall-clock logic
+#endif
+#ifndef TYRIAN_GBA_PRESENTATION_DEFER
+#define TYRIAN_GBA_PRESENTATION_DEFER TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#endif
+#ifndef TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+#define TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER 1
+#endif
+#if TYRIAN_GBA_PRESENTATION_DEFER != 0 && \
+    TYRIAN_GBA_PRESENTATION_DEFER != 1
+#error TYRIAN_GBA_PRESENTATION_DEFER must be 0 or 1
+#endif
+#if TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER != 0 && \
+    TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER != 1
+#error TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER must be 0 or 1
+#endif
+#if TYRIAN_GBA_PRESENTATION_DEFER && \
+    !TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#error TYRIAN_GBA_PRESENTATION_DEFER requires dynamic presentation scheduling
+#endif
+
+/*
  * OpenTyrian Normal is PIT speed 0x4300 with frameCountMax=2.  Its Low/Slow
  * choice uses the same PIT speed and alternates frameCountMax between 2 and
  * 3, so its average logic rate is exactly four fifths of Normal.
