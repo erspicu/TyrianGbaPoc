@@ -760,6 +760,30 @@ workaround。`build.ps1` 已加入 Episode 2 section 1 的永久 route
 - `Tyrian-GBA-EP2-Background-Performance-v31.md`
 - `Tyrian-GBA-EP2-Performance-Evaluation-2026-07-27.md`
 
+## v32 Collision-safe 背景快取與全域 VRAM Partition
+
+Knowledgebase 建議以非對稱 character VRAM 解決極端關卡，但其
+`1024/256/256` 範例無法容納 Episode 2 logical level 6 的
+`520/311/1` 工作集。使用 runtime 相同演算法掃描全部 62 關後，
+各 layer 最大值為 `533/434/454`，因此 v32 採用所有關卡共用的
+`576/480/480` physical partition，不需要 per-level table 或
+load-time 全圖掃描。
+
+在擴充容量之前，v32 也修正 `pattern_index[512]` 的 direct-map
+collision。舊 index 會忘記仍 resident 的 pattern 並重複配置 slot；
+這正是 Episode 2 第一關 unique peak 只有 501，卻仍產生 28 次
+approximation 的原因。collision-safe bucket chain 使用相同量級的
+metadata，把 Low Detail／Normal Speed 的 missed VBlank 降到 3，
+並讓 approximation 歸零。
+
+Normal Detail／Normal Speed 為 5／0，Low Detail／Low Speed 為
+2／0。Maxmod 保留，沒有建立新的 GBA-only 關卡背景。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Background-Cache-VRAM-v32.md`
+- `Tyrian-GBA-Knowledgebase-Strategy-Evaluation-v32.md`
+
 ## 下一個移植階段
 
 1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
@@ -774,10 +798,10 @@ workaround。`build.ps1` 已加入 Episode 2 section 1 的永久 route
 .\build.ps1
 ```
 
-目前 ROMFS v31 預設 ROM：
+目前 ROMFS v32 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v31_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v32_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

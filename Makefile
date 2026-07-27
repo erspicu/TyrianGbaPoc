@@ -25,13 +25,13 @@ $(error GAME_SPEED must be low or normal)
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v31_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v31_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v31_$(CONFIG_SUFFIX)
-JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v31_$(CONFIG_SUFFIX)
-ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v31_$(CONFIG_SUFFIX)
-ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v31_$(CONFIG_SUFFIX)
-CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v31_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v32_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v32_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v32_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v32_$(CONFIG_SUFFIX)
+ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v32_$(CONFIG_SUFFIX)
+ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v32_$(CONFIG_SUFFIX)
+CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v32_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 

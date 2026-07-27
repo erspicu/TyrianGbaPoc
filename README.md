@@ -92,6 +92,14 @@ Sprite2 stores and an explicit Episode 2 performance regression are included.
 Disabling all music and sound after this fix changes 30 to only 29, so the
 full Maxmod soundtrack remains enabled instead of being degraded to PSG.
 
+The v32 collision-safe pattern index removes false duplicate allocations:
+Episode 2 level 1 now reaches zero background approximations and only three
+missed VBlanks at Low Detail/Normal Speed, with identical gameplay and
+Sprite2 workload. A full 62-level scan also replaces the fixed 512/512/512
+character caches with one source-wide 576/480/480 partition. It fits the
+known 533/434/454 per-layer maxima without per-level tables, load-time map
+scans or generated GBA-only backgrounds.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -112,7 +120,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v31_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v32_detail_low_speed_normal.gba
 ```
 
 `build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
@@ -130,6 +138,8 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v32 collision-safe background cache and VRAM partition](MD/Tyrian-GBA-Background-Cache-VRAM-v32.md)
+- [v32 knowledgebase strategy evaluation](MD/Tyrian-GBA-Knowledgebase-Strategy-Evaluation-v32.md)
 - [v31 Episode 2 background performance](MD/Tyrian-GBA-EP2-Background-Performance-v31.md)
 - [v31 pre-implementation performance evaluation](MD/Tyrian-GBA-EP2-Performance-Evaluation-2026-07-27.md)
 - [v31 updated plan](MD/Tyrian-GBA-Updated-Plan-v31.md)

@@ -18,13 +18,13 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v31_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v31_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v31_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v31_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v31_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v31_$configSuffix"
-$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v31_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v32_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v32_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v32_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v32_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v32_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v32_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v32_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -1702,6 +1702,9 @@ $episode2Telemetry = [ordered]@{
     configured_detail_level = Read-Episode2TelemetryU32 600
     configured_game_speed = Read-Episode2TelemetryU32 604
     background_approximations = Read-Episode2TelemetryU32 648
+    background_layer0_valid = Read-Episode2TelemetryU32 660
+    background_layer1_valid = Read-Episode2TelemetryU32 664
+    background_layer2_valid = Read-Episode2TelemetryU32 668
     background_prefetch_late_columns = Read-Episode2TelemetryU32 684
     route_episode = Read-Episode2TelemetryU32 720
     route_section = Read-Episode2TelemetryU32 724
@@ -1784,10 +1787,16 @@ $episode2Checks = [ordered]@{
             $expectedGameSpeed
     )
     background_working_set_budget = (
-        $episode2Telemetry.background_approximations -le 64
+        $episode2Telemetry.background_approximations -eq 0
+    )
+    background_partition = (
+        $episode2Telemetry.background_layer0_valid -eq 576 -and
+        $episode2Telemetry.background_layer1_valid -eq
+            $(if ($DetailLevel -eq "normal") { 1 } else { 0 }) -and
+        $episode2Telemetry.background_layer2_valid -eq 1
     )
     full_level_vblank_budget = (
-        $episode2Telemetry.missed_vblanks -le 50
+        $episode2Telemetry.missed_vblanks -le 10
     )
 }
 $failedEpisode2Checks = @(

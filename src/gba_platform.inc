@@ -98,10 +98,12 @@ static void commit_vblank_work(void)
         REG_BG1VOFS = bg2_presentation_scroll_pixel & 255;
         REG_BG2VOFS = bg3_presentation_scroll_pixel & 255;
         REG_BG1CNT = BG_PRIORITY(background2_priority) |
-                     CHAR_BASE(1) | SCREEN_BASE(BG1_SCREEN_BLOCK) |
+                     CHAR_BASE(background_cache_char_base[1]) |
+                     SCREEN_BASE(BG1_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_1;
         REG_BG2CNT = BG_PRIORITY(background3_priority) |
-                     CHAR_BASE(2) | SCREEN_BASE(BG2_SCREEN_BLOCK) |
+                     CHAR_BASE(background_cache_char_base[2]) |
+                     SCREEN_BASE(BG2_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_1;
         REG_DISPCNT =
             MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |

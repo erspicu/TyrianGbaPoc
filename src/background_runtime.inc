@@ -11,7 +11,14 @@
 
 enum {
     BACKGROUND_LAYER_COUNT = 3,
-    BACKGROUND_CACHE_SLOTS = 512,
+    BACKGROUND_LAYER0_CACHE_SLOTS = 576,
+    BACKGROUND_LAYER1_CACHE_SLOTS = 480,
+    BACKGROUND_LAYER2_CACHE_SLOTS = 480,
+    BACKGROUND_TOTAL_CACHE_SLOTS =
+        BACKGROUND_LAYER0_CACHE_SLOTS +
+        BACKGROUND_LAYER1_CACHE_SLOTS +
+        BACKGROUND_LAYER2_CACHE_SLOTS,
+    BACKGROUND_PATTERN_BUCKETS = 512,
     BACKGROUND_TILE_BYTES = 32,
     BACKGROUND_ROW_TILES = 64,
     BACKGROUND_SHAPE_COUNT = 600,
@@ -58,23 +65,32 @@ typedef struct {
 } BackgroundSemanticEntry;
 
 typedef struct {
-    u32 hash;
-    u16 slot;
-    u16 slot_generation;
-} BackgroundPatternEntry;
-
-typedef struct {
-    u8 pattern[BACKGROUND_CACHE_SLOTS][BACKGROUND_TILE_BYTES];
-    u16 reference_count[BACKGROUND_CACHE_SLOTS];
-    u16 generation[BACKGROUND_CACHE_SLOTS];
-    u8 valid[BACKGROUND_CACHE_SLOTS];
+    u8 (*pattern)[BACKGROUND_TILE_BYTES];
+    u16 *reference_count;
+    u16 *generation;
+    u8 *valid;
+    u32 *pattern_hash;
+    u16 *pattern_next;
+    u16 *free_queue;
+    u8 *free_queued;
+    u16 capacity;
+    u16 pool_offset;
+    u16 physical_start;
+    u16 tile_index_offset;
+    u8 char_base;
     BackgroundSemanticEntry
         semantic[BACKGROUND_SEMANTIC_CACHE_SIZE];
     u8 semantic_replace[BACKGROUND_SEMANTIC_SETS];
-    BackgroundPatternEntry
-        pattern_index[BACKGROUND_CACHE_SLOTS];
-    u16 free_queue[BACKGROUND_CACHE_SLOTS];
-    u8 free_queued[BACKGROUND_CACHE_SLOTS];
+    /*
+     * Collision-safe pattern index.  The former one-entry-per-bucket table
+     * could forget a still-resident pattern when another hash landed in the
+     * same bucket, then allocate a duplicate slot.  Near a 512-pattern
+     * visible set those duplicates could trigger a false capacity fallback.
+     * Across all three layers, hash + next + bucket heads uses the same
+     * 12 KiB as the old three direct tables while preserving every resident
+     * pattern.
+     */
+    u16 pattern_bucket_head[BACKGROUND_PATTERN_BUCKETS];
     u16 ring_word[MAP_RING_ROWS][BACKGROUND_ROW_TILES];
     u16 ring_source_row[MAP_RING_ROWS];
     u8 ring_reference_rows;
@@ -97,6 +113,30 @@ typedef struct {
 static BackgroundLayerCache
     background_layer_cache[BACKGROUND_LAYER_COUNT]
     EWRAM_BSS __attribute__((aligned(4)));
+static u8 background_pattern_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS][BACKGROUND_TILE_BYTES]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 background_reference_count_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 background_generation_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u8 background_valid_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u32 background_pattern_hash_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 background_pattern_next_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 background_free_queue_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u8 background_free_queued_pool
+    [BACKGROUND_TOTAL_CACHE_SLOTS]
+    EWRAM_BSS __attribute__((aligned(4)));
 static OtDataView background_map_view[BACKGROUND_LAYER_COUNT];
 static OtDataView background_lookup_view[BACKGROUND_LAYER_COUNT];
 static const u8 *background_shape_pixels[BACKGROUND_SHAPE_COUNT];
@@ -112,6 +152,67 @@ static u32 background_prefetch_late_columns;
 static u32 background_tile_render_count;
 static u8 background_runtime_valid;
 static u8 background_prefetch_round_robin;
+
+/*
+ * A full-source scan of all 62 logical levels found per-layer 22-row maxima
+ * of 533 / 434 / 454 patterns.  This single cartridge-wide partition keeps
+ * a safety margin without level tables or load-time whole-map analysis.
+ *
+ * Physical slots:
+ *   layer 0:   0..575  through char base 0, indices   0..575
+ *   layer 1: 576..1055 through char base 1, indices  64..543
+ *   layer 2: 1056..1535 through char base 2, indices 32..511
+ */
+static const u16 background_cache_capacity[BACKGROUND_LAYER_COUNT] = {
+    BACKGROUND_LAYER0_CACHE_SLOTS,
+    BACKGROUND_LAYER1_CACHE_SLOTS,
+    BACKGROUND_LAYER2_CACHE_SLOTS,
+};
+
+static const u16 background_cache_pool_offset[BACKGROUND_LAYER_COUNT] = {
+    0,
+    BACKGROUND_LAYER0_CACHE_SLOTS,
+    BACKGROUND_LAYER0_CACHE_SLOTS + BACKGROUND_LAYER1_CACHE_SLOTS,
+};
+
+static const u16 background_cache_physical_start
+    [BACKGROUND_LAYER_COUNT] = {
+        0,
+        BACKGROUND_LAYER0_CACHE_SLOTS,
+        BACKGROUND_LAYER0_CACHE_SLOTS +
+            BACKGROUND_LAYER1_CACHE_SLOTS,
+    };
+
+static const u16 background_cache_tile_index_offset
+    [BACKGROUND_LAYER_COUNT] = {
+        0,
+        BACKGROUND_LAYER0_CACHE_SLOTS - 512,
+        BACKGROUND_LAYER0_CACHE_SLOTS +
+            BACKGROUND_LAYER1_CACHE_SLOTS - 1024,
+    };
+
+static const u8 background_cache_char_base[BACKGROUND_LAYER_COUNT] = {
+    0, 1, 2,
+};
+
+_Static_assert(
+    BACKGROUND_TOTAL_CACHE_SLOTS == 1536,
+    "BG character pool must occupy exactly charblocks 0..2"
+);
+_Static_assert(
+    BACKGROUND_LAYER0_CACHE_SLOTS <= 1024 &&
+        BACKGROUND_LAYER0_CACHE_SLOTS - 512 +
+            BACKGROUND_LAYER1_CACHE_SLOTS <= 1024 &&
+        BACKGROUND_LAYER0_CACHE_SLOTS +
+            BACKGROUND_LAYER1_CACHE_SLOTS - 1024 +
+            BACKGROUND_LAYER2_CACHE_SLOTS <= 1024,
+    "each BG partition must fit its 10-bit character-index window"
+);
+_Static_assert(
+    BACKGROUND_TOTAL_CACHE_SLOTS * BACKGROUND_TILE_BYTES ==
+        BG0_SCREEN_BLOCK * 2048,
+    "BG character pool must stop at the first gameplay screen block"
+);
 
 static const u16 background_map_first_row[BACKGROUND_LAYER_COUNT] = {
     OT_LEVEL_MAP1_FIRST_SOURCE_ROW,
@@ -497,6 +598,32 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
     *palette_bank = best_bank;
 }
 
+static inline u16 background_word_local_slot(
+    const BackgroundLayerCache *cache,
+    u16 word
+)
+{
+    u16 hardware_index = word & 0x03ffu;
+
+    if (
+        hardware_index < cache->tile_index_offset ||
+        hardware_index >=
+            cache->tile_index_offset + cache->capacity
+    ) {
+        return cache->capacity;
+    }
+    return (u16)(hardware_index - cache->tile_index_offset);
+}
+
+static inline u16 background_cache_next(
+    u16 value,
+    u16 capacity
+)
+{
+    value++;
+    return value < capacity ? value : 0;
+}
+
 static IWRAM_CODE ARM_CODE u8 background_semantic_lookup(
     u8 layer,
     u32 key,
@@ -521,8 +648,9 @@ static IWRAM_CODE ARM_CODE u8 background_semantic_lookup(
         u16 slot;
 
         if (entry->key != key) continue;
-        slot = entry->word & 0x01ffu;
+        slot = background_word_local_slot(cache, entry->word);
         if (
+            slot < cache->capacity &&
             cache->valid[slot] &&
             entry->slot_generation == cache->generation[slot]
         ) {
@@ -533,7 +661,8 @@ static IWRAM_CODE ARM_CODE u8 background_semantic_lookup(
     return 0;
 }
 
-static IWRAM_CODE ARM_CODE void background_semantic_store(
+static __attribute__((noinline, noclone)) void
+background_semantic_store(
     u8 layer,
     u32 key,
     u16 word
@@ -554,7 +683,7 @@ static IWRAM_CODE ARM_CODE void background_semantic_store(
     for (way = 0; way < BACKGROUND_SEMANTIC_WAYS; way++) {
         BackgroundSemanticEntry *entry =
             &cache->semantic[base + way];
-        u16 slot = entry->word & 0x01ffu;
+        u16 slot = background_word_local_slot(cache, entry->word);
 
         if (entry->key == key || entry->key == 0) {
             replacement = (u16)(base + way);
@@ -563,6 +692,7 @@ static IWRAM_CODE ARM_CODE void background_semantic_store(
         if (
             replacement == UINT16_MAX &&
             (
+                slot >= cache->capacity ||
                 !cache->valid[slot] ||
                 entry->slot_generation != cache->generation[slot]
             )
@@ -580,7 +710,7 @@ static IWRAM_CODE ARM_CODE void background_semantic_store(
     cache->semantic[replacement].key = key;
     cache->semantic[replacement].word = word;
     cache->semantic[replacement].slot_generation =
-        cache->generation[word & 0x01ffu];
+        cache->generation[background_word_local_slot(cache, word)];
 }
 
 static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
@@ -620,7 +750,13 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_word(
         pattern,
         queue_upload
     );
-    word = (u16)(slot | ((u16)palette_bank << 12));
+    word = (u16)(
+        (
+            slot +
+            background_layer_cache[layer].tile_index_offset
+        ) |
+        ((u16)palette_bank << 12)
+    );
     background_semantic_store(layer, key, word);
     return word;
 }
@@ -637,7 +773,7 @@ static IWRAM_CODE ARM_CODE u32 background_tile_hash(const u8 *pattern)
     return hash;
 }
 
-static IWRAM_CODE ARM_CODE u16 background_pattern_difference(
+static u16 background_pattern_difference(
     const u8 *left,
     const u8 *right
 )
@@ -654,6 +790,99 @@ static IWRAM_CODE ARM_CODE u16 background_pattern_difference(
     return difference;
 }
 
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u16
+background_pattern_lookup(
+    const BackgroundLayerCache *cache,
+    const u8 *pattern,
+    u32 hash
+)
+{
+    u16 bucket = (u16)(
+        (hash ^ (hash >> 16)) &
+        (BACKGROUND_PATTERN_BUCKETS - 1u)
+    );
+    u16 slot = cache->pattern_bucket_head[bucket];
+
+    while (slot != UINT16_MAX) {
+        if (
+            slot >= cache->capacity ||
+            !cache->valid[slot]
+        ) {
+            break;
+        }
+        if (
+            cache->pattern_hash[slot] == hash &&
+            memcmp(
+                cache->pattern[slot],
+                pattern,
+                BACKGROUND_TILE_BYTES
+            ) == 0
+        ) {
+            return slot;
+        }
+        slot = cache->pattern_next[slot];
+    }
+    return cache->capacity;
+}
+
+static __attribute__((noinline, noclone)) void
+background_pattern_unlink(
+    BackgroundLayerCache *cache,
+    u16 slot
+)
+{
+    u32 hash;
+    u16 bucket;
+    u16 current;
+    u16 previous = UINT16_MAX;
+
+    if (
+        slot >= cache->capacity ||
+        !cache->valid[slot]
+    ) {
+        return;
+    }
+    hash = cache->pattern_hash[slot];
+    bucket = (u16)(
+        (hash ^ (hash >> 16)) &
+        (BACKGROUND_PATTERN_BUCKETS - 1u)
+    );
+    current = cache->pattern_bucket_head[bucket];
+    while (current != UINT16_MAX) {
+        if (current == slot) {
+            if (previous == UINT16_MAX) {
+                cache->pattern_bucket_head[bucket] =
+                    cache->pattern_next[current];
+            } else {
+                cache->pattern_next[previous] =
+                    cache->pattern_next[current];
+            }
+            break;
+        }
+        if (current >= cache->capacity) break;
+        previous = current;
+        current = cache->pattern_next[current];
+    }
+    cache->pattern_next[slot] = UINT16_MAX;
+}
+
+static void background_pattern_insert(
+    BackgroundLayerCache *cache,
+    u16 slot,
+    u32 hash
+)
+{
+    u16 bucket = (u16)(
+        (hash ^ (hash >> 16)) &
+        (BACKGROUND_PATTERN_BUCKETS - 1u)
+    );
+
+    cache->pattern_hash[slot] = hash;
+    cache->pattern_next[slot] =
+        cache->pattern_bucket_head[bucket];
+    cache->pattern_bucket_head[bucket] = slot;
+}
+
 static IWRAM_CODE ARM_CODE void background_queue_unreferenced(
     BackgroundLayerCache *cache,
     u16 slot
@@ -662,14 +891,14 @@ static IWRAM_CODE ARM_CODE void background_queue_unreferenced(
     if (
         cache->reference_count[slot] != 0 ||
         cache->free_queued[slot] ||
-        cache->free_count >= BACKGROUND_CACHE_SLOTS
+        cache->free_count >= cache->capacity
     ) {
         return;
     }
     cache->free_queue[cache->free_tail] = slot;
-    cache->free_tail = (u16)(
-        (cache->free_tail + 1u) &
-        (BACKGROUND_CACHE_SLOTS - 1u)
+    cache->free_tail = background_cache_next(
+        cache->free_tail,
+        cache->capacity
     );
     cache->free_count++;
     cache->free_queued[slot] = 1;
@@ -683,36 +912,21 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
 {
     BackgroundLayerCache *cache = &background_layer_cache[layer];
     u32 hash = background_tile_hash(pattern);
-    u16 pattern_index = (u16)(
-        (hash ^ (hash >> 16)) &
-        (BACKGROUND_CACHE_SLOTS - 1u)
-    );
-    BackgroundPatternEntry *indexed =
-        &cache->pattern_index[pattern_index];
     u16 slot;
     u16 replacement;
 
-    slot = indexed->slot;
-    if (
-        indexed->hash == hash &&
-        slot < BACKGROUND_CACHE_SLOTS &&
-        cache->valid[slot] &&
-        indexed->slot_generation == cache->generation[slot] &&
-        memcmp(
-            cache->pattern[slot],
-            pattern,
-            BACKGROUND_TILE_BYTES
-        ) == 0
-    ) {
-        return slot;
-    }
-    replacement = BACKGROUND_CACHE_SLOTS;
-    if (cache->valid_count < BACKGROUND_CACHE_SLOTS) {
-        for (slot = 0; slot < BACKGROUND_CACHE_SLOTS; slot++) {
+    slot = background_pattern_lookup(cache, pattern, hash);
+    if (slot < cache->capacity) return slot;
+    replacement = cache->capacity;
+    if (cache->valid_count < cache->capacity) {
+        for (slot = 0; slot < cache->capacity; slot++) {
             u16 candidate = (u16)(
-                (cache->allocation_cursor + slot) &
-                (BACKGROUND_CACHE_SLOTS - 1u)
+                cache->allocation_cursor + slot
             );
+
+            if (candidate >= cache->capacity) {
+                candidate = (u16)(candidate - cache->capacity);
+            }
 
             if (!cache->valid[candidate]) {
                 replacement = candidate;
@@ -724,9 +938,9 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
         while (cache->free_count != 0) {
             u16 candidate = cache->free_queue[cache->free_head];
 
-            cache->free_head = (u16)(
-                (cache->free_head + 1u) &
-                (BACKGROUND_CACHE_SLOTS - 1u)
+            cache->free_head = background_cache_next(
+                cache->free_head,
+                cache->capacity
             );
             cache->free_count--;
             cache->free_queued[candidate] = 0;
@@ -737,14 +951,17 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
         }
     }
     if (
-        cache->valid_count == BACKGROUND_CACHE_SLOTS &&
-        replacement == BACKGROUND_CACHE_SLOTS
+        cache->valid_count == cache->capacity &&
+        replacement == cache->capacity
     ) {
-        for (slot = 0; slot < BACKGROUND_CACHE_SLOTS; slot++) {
+        for (slot = 0; slot < cache->capacity; slot++) {
             u16 candidate = (u16)(
-                (cache->allocation_cursor + slot) &
-                (BACKGROUND_CACHE_SLOTS - 1u)
+                cache->allocation_cursor + slot
             );
+
+            if (candidate >= cache->capacity) {
+                candidate = (u16)(candidate - cache->capacity);
+            }
 
             if (cache->reference_count[candidate] == 0) {
                 replacement = candidate;
@@ -752,15 +969,16 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
             }
         }
     }
-    if (replacement == BACKGROUND_CACHE_SLOTS) {
+    if (replacement == cache->capacity) {
         u16 best_difference = UINT16_MAX;
 
         /*
-         * More than 512 distinct patterns are simultaneously visible.
-         * Preserve the authored palette and select only the nearest cached
-         * 4bpp pattern; this is the sole lossy hardware-limit fallback.
+         * More distinct patterns than this layer's cartridge-wide partition
+         * are simultaneously visible. Preserve the authored palette and
+         * select only the nearest cached 4bpp pattern; this is the sole
+         * lossy hardware-limit fallback.
          */
-        for (slot = 0; slot < BACKGROUND_CACHE_SLOTS; slot++) {
+        for (slot = 0; slot < cache->capacity; slot++) {
             u16 difference = background_pattern_difference(
                 pattern,
                 cache->pattern[slot]
@@ -775,11 +993,14 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
         background_cache_approximations++;
         return replacement;
     }
-    cache->allocation_cursor = (u16)(
-        (replacement + 1u) &
-        (BACKGROUND_CACHE_SLOTS - 1u)
+    cache->allocation_cursor = background_cache_next(
+        replacement,
+        cache->capacity
     );
-    if (cache->valid[replacement]) background_cache_evictions++;
+    if (cache->valid[replacement]) {
+        background_pattern_unlink(cache, replacement);
+        background_cache_evictions++;
+    }
     memcpy(
         cache->pattern[replacement],
         pattern,
@@ -790,9 +1011,7 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
     if (cache->generation[replacement] == 0) {
         cache->generation[replacement] = 1;
     }
-    indexed->hash = hash;
-    indexed->slot = replacement;
-    indexed->slot_generation = cache->generation[replacement];
+    background_pattern_insert(cache, replacement, hash);
     if (
         queue_upload &&
         cache->upload_count < BACKGROUND_MAX_ROW_UPLOADS
@@ -802,7 +1021,8 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
     return replacement;
 }
 
-static IWRAM_CODE ARM_CODE void background_release_ring_row(
+static __attribute__((noinline, noclone)) void
+background_release_ring_row(
     u8 layer,
     u8 ring_row
 )
@@ -812,9 +1032,15 @@ static IWRAM_CODE ARM_CODE void background_release_ring_row(
 
     if (cache->ring_source_row[ring_row] == UINT16_MAX) return;
     for (column = 0; column < BACKGROUND_ROW_TILES; column++) {
-        u16 slot = cache->ring_word[ring_row][column] & 0x01ffu;
+        u16 slot = background_word_local_slot(
+            cache,
+            cache->ring_word[ring_row][column]
+        );
 
-        if (cache->reference_count[slot] != 0) {
+        if (
+            slot < cache->capacity &&
+            cache->reference_count[slot] != 0
+        ) {
             cache->reference_count[slot]--;
             if (cache->reference_count[slot] == 0) {
                 background_queue_unreferenced(cache, slot);
@@ -847,10 +1073,12 @@ static void background_build_ring_row(
             replacing,
             0
         );
-        u16 slot = word & 0x01ffu;
+        u16 slot = background_word_local_slot(cache, word);
 
         cache->ring_word[ring_row][column] = word;
-        cache->reference_count[slot]++;
+        if (slot < cache->capacity) {
+            cache->reference_count[slot]++;
+        }
     }
     cache->ring_source_row[ring_row] = source_row;
     cache->ring_reference_rows++;
@@ -895,6 +1123,66 @@ static u8 background_prepare_layer(u8 layer, u16 top_row)
     }
     cache = &background_layer_cache[layer];
     memset(cache, 0, sizeof(*cache));
+    cache->capacity = background_cache_capacity[layer];
+    cache->pool_offset = background_cache_pool_offset[layer];
+    cache->physical_start =
+        background_cache_physical_start[layer];
+    cache->tile_index_offset =
+        background_cache_tile_index_offset[layer];
+    cache->char_base = background_cache_char_base[layer];
+    cache->pattern =
+        background_pattern_pool + cache->pool_offset;
+    cache->reference_count =
+        background_reference_count_pool + cache->pool_offset;
+    cache->generation =
+        background_generation_pool + cache->pool_offset;
+    cache->valid =
+        background_valid_pool + cache->pool_offset;
+    cache->pattern_hash =
+        background_pattern_hash_pool + cache->pool_offset;
+    cache->pattern_next =
+        background_pattern_next_pool + cache->pool_offset;
+    cache->free_queue =
+        background_free_queue_pool + cache->pool_offset;
+    cache->free_queued =
+        background_free_queued_pool + cache->pool_offset;
+    memset(
+        cache->pattern,
+        0,
+        (u32)cache->capacity * BACKGROUND_TILE_BYTES
+    );
+    memset(
+        cache->reference_count,
+        0,
+        (u32)cache->capacity * sizeof(*cache->reference_count)
+    );
+    memset(
+        cache->generation,
+        0,
+        (u32)cache->capacity * sizeof(*cache->generation)
+    );
+    memset(cache->valid, 0, cache->capacity);
+    memset(
+        cache->pattern_hash,
+        0,
+        (u32)cache->capacity * sizeof(*cache->pattern_hash)
+    );
+    memset(
+        cache->pattern_next,
+        0xff,
+        (u32)cache->capacity * sizeof(*cache->pattern_next)
+    );
+    memset(
+        cache->free_queue,
+        0,
+        (u32)cache->capacity * sizeof(*cache->free_queue)
+    );
+    memset(cache->free_queued, 0, cache->capacity);
+    memset(
+        cache->pattern_bucket_head,
+        0xff,
+        sizeof(cache->pattern_bucket_head)
+    );
     for (row = 0; row < MAP_RING_ROWS; row++) {
         cache->ring_source_row[row] = UINT16_MAX;
     }
@@ -919,8 +1207,9 @@ static void background_commit_full_layer(
 
     dmaCopy(
         cache->pattern,
-        CHAR_BASE_BLOCK(layer),
-        BACKGROUND_CACHE_SLOTS * BACKGROUND_TILE_BYTES
+        (u8 *)CHAR_BASE_BLOCK(0) +
+            (u32)cache->physical_start * BACKGROUND_TILE_BYTES,
+        (u32)cache->capacity * BACKGROUND_TILE_BYTES
     );
     {
         static const u32 blank_word = 0;
@@ -1060,9 +1349,15 @@ static IWRAM_CODE ARM_CODE void background_cancel_prefetch(u8 layer)
         return;
     }
     for (column = 0; column < cache->prefetch_column; column++) {
-        u16 slot = cache->prefetch_word[column] & 0x01ffu;
+        u16 slot = background_word_local_slot(
+            cache,
+            cache->prefetch_word[column]
+        );
 
-        if (cache->reference_count[slot] != 0) {
+        if (
+            slot < cache->capacity &&
+            cache->reference_count[slot] != 0
+        ) {
             cache->reference_count[slot]--;
             if (cache->reference_count[slot] == 0) {
                 background_queue_unreferenced(cache, slot);
@@ -1120,10 +1415,12 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
             1,
             &rendered
         );
-        u16 slot = word & 0x01ffu;
+        u16 slot = background_word_local_slot(cache, word);
 
         cache->prefetch_word[cache->prefetch_column++] = word;
-        cache->reference_count[slot]++;
+        if (slot < cache->capacity) {
+            cache->reference_count[slot]++;
+        }
         work = (u8)(work + rendered);
     }
     if (cache->prefetch_column == BACKGROUND_ROW_TILES) {
@@ -1236,8 +1533,10 @@ static IWRAM_CODE ARM_CODE void background_commit_row_uploads(u8 layer)
 
         dmaCopy(
             cache->pattern[slot],
-            (u8 *)CHAR_BASE_BLOCK(layer) +
-                (u32)slot * BACKGROUND_TILE_BYTES,
+            (u8 *)CHAR_BASE_BLOCK(0) +
+                (
+                    (u32)cache->physical_start + slot
+                ) * BACKGROUND_TILE_BYTES,
             BACKGROUND_TILE_BYTES
         );
         background_cache_uploads++;

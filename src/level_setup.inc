@@ -87,11 +87,14 @@ static u8 enter_level(u16 selected_section)
     boss_bar_flash = 0;
     boss_bar_palette_dirty = 1;
 
-    REG_BG0CNT = BG_PRIORITY(3) | CHAR_BASE(0) |
+    REG_BG0CNT = BG_PRIORITY(3) |
+                 CHAR_BASE(background_cache_char_base[0]) |
                  SCREEN_BASE(BG0_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
-    REG_BG1CNT = BG_PRIORITY(2) | CHAR_BASE(1) |
+    REG_BG1CNT = BG_PRIORITY(2) |
+                 CHAR_BASE(background_cache_char_base[1]) |
                  SCREEN_BASE(BG1_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
-    REG_BG2CNT = BG_PRIORITY(1) | CHAR_BASE(2) |
+    REG_BG2CNT = BG_PRIORITY(1) |
+                 CHAR_BASE(background_cache_char_base[2]) |
                  SCREEN_BASE(BG2_SCREEN_BLOCK) | BG_16_COLOR | BG_SIZE_1;
 
     bg1_scroll_pixel = BG1_INITIAL_SCROLL;
