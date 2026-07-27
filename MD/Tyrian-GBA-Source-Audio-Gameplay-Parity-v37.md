@@ -128,7 +128,7 @@ Episode 4 section 1、High／Normal 的 mGBA route 結果：
 
 - `DETAIL_LEVEL` 與 `build.ps1` 預設改為 `high`；
 - `GAME_SPEED` 保持 `normal`；
-- 金額文字由 GBA `(22,140)` 下移 12 pixels 至 `(22,152)`；
+- 金額文字由 GBA `(22,140)` 下移 8 pixels 至 `(22,148)`；
 - 底部 banner 仍不移植；
 - 開發驗證版仍保留 `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1`。
 

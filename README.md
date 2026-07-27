@@ -104,7 +104,7 @@ The v37 release returns from the six-system stress fixture to the stock
 Port 1 Pulse-Cannon at power 11 and defaults to High Detail. It packs the
 complete 38-entry source sound catalog, restores gameplay voices and
 explosions, translates the Secret Level portal response, moves the cash
-readout down 12 pixels, and resets all four enemy shape slots at every level
+readout down 8 pixels, and resets all four enemy shape slots at every level
 boundary exactly like OpenTyrian. Episode 4 section 1 completes with zero
 unknown visuals, decode failures, cache drops or RLE fallbacks.
 

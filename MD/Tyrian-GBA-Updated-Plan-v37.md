@@ -13,7 +13,7 @@
   Level Complete 等來源聲音。
 - Secret Level portal、song 30、150-tick 閃字及 route override。
 - 每關清空四個 enemy shape slots，修復 Episode 4 跨關卡 bank 汙染。
-- 金額提示下移 12 pixels。
+- 金額提示下移 8 pixels。
 - 新增 source sound bitset 與 Secret Level collision 永久回歸。
 - High／Normal 的 gameplay、death、Jukebox、62-level matrix、
   four-level campaign、Episode 2 與 Episode 4 均通過。

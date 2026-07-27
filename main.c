@@ -258,7 +258,7 @@ enum {
 #define REWARD_TILES_PER_FRAME 4
 #define REWARD_SEQUENCE_COUNT 5
 #define CASH_COUNTER_X 22
-#define CASH_COUNTER_Y 152
+#define CASH_COUNTER_Y 148
 /*
  * Runtime Sprite2 presentation.  The original PC 256-colour indices are
  * decoded from ROMFS and presented through eight time-shared OBJ banks.

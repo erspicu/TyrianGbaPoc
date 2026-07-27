@@ -12,7 +12,7 @@ static void render_cash_counter(void)
      * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
      * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  That point falls
      * below the 1:1 gameplay crop.  With the old bottom banner removed, the
-     * retained minimal GBA HUD places it at (22,152), twelve pixels below
+     * retained minimal GBA HUD places it at (22,148), eight pixels below
      * the prior adapter position. Gameplay/world coordinates never use this
      * exception. There is no pickup icon or five-digit cap in the source.
      */
