@@ -4,12 +4,16 @@
 
 #include "res/asset_meta.h"
 #include "res/soundbank.h"
+#include "res/sprite2_raw_meta.h"
 #include "res/tyrian_romfs_meta.h"
 #include "src/port_config.h"
 #include "src/opentyrian_data.h"
 #include "src/opentyrian_level_port.h"
 #include "src/opentyrian_rom_io.h"
 #include "src/opentyrian_sprite2.h"
+
+#define GBA_WAITCNT (*(volatile u16 *)0x04000204)
+#define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
 
 /*
  * Development-validation switch.  Keep this at 1 (true) while inspecting
@@ -148,6 +152,8 @@
 #define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
 #define SOURCE_ENEMY_FRAME_BYTES 1024
 #define SOURCE_ENEMY_TILES_PER_SLOT 32
+#define SOURCE_SPRITE2_L2_SLOT_COUNT 64
+#define SOURCE_SPRITE2_L2_FRAME_BYTES SOURCE_ENEMY_FRAME_BYTES
 /*
  * The old POC's pre-rendered boss atlas occupied OBJ tiles 32..95, but the
  * source-parity runtime draws every boss component from ROMFS Sprite2 data.
@@ -259,6 +265,21 @@ _Static_assert(
     SOURCE_ENEMY_FRAME_BYTES ==
         OT_SPRITE2_FRAME_PIXELS,
     "one 8bpp enemy cache frame must contain a 32x32 Sprite2 canvas"
+);
+_Static_assert(
+    SOURCE_SPRITE2_L2_SLOT_COUNT *
+        SOURCE_SPRITE2_L2_FRAME_BYTES >=
+        FRONTEND_FRAME_BYTES,
+    "frontend/gameplay overlay must fit the Mode-4 scratch frame"
+);
+_Static_assert(
+    SPRITE2_RAW_TABLE_COUNT ==
+        OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY &&
+        SPRITE2_RAW_COMPONENT_WIDTH ==
+            OT_SPRITE2_COMPONENT_WIDTH &&
+        SPRITE2_RAW_COMPONENT_HEIGHT ==
+            OT_SPRITE2_COMPONENT_HEIGHT,
+    "build-time Sprite2 raw catalog geometry changed"
 );
 _Static_assert(
     SOURCE_ENEMY_FRAME_BYTES ==
@@ -541,7 +562,24 @@ static u8 frontend_patch_old_selection;
 static u8 frontend_patch_new_selection;
 static const u8 *frontend_pending_frame;
 static const u8 *frontend_pending_palette;
-static u8 frontend_frame_scratch[FRONTEND_FRAME_BYTES] EWRAM_BSS;
+/*
+ * Mode-4 menus and gameplay never execute concurrently.  Share their largest
+ * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
+ * remaining EWRAM heap/stack margin.
+ */
+typedef union {
+    u8 frontend_frame[FRONTEND_FRAME_BYTES];
+    u8 sprite2_l2[
+        SOURCE_SPRITE2_L2_SLOT_COUNT
+    ][SOURCE_SPRITE2_L2_FRAME_BYTES];
+} FrontendGameplayArena;
+
+static FrontendGameplayArena frontend_gameplay_arena
+    EWRAM_BSS __attribute__((aligned(4)));
+#define frontend_frame_scratch \
+    (frontend_gameplay_arena.frontend_frame)
+#define source_sprite2_l2_tiles \
+    (frontend_gameplay_arena.sprite2_l2)
 /* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
 static s16 player_source_x;
 static s16 player_source_y;
@@ -726,6 +764,42 @@ volatile u32 telemetry_player_death_music_fade_steps;
 volatile u32 telemetry_game_over_music_starts;
 volatile u32 telemetry_game_over_overlay_frames;
 volatile u32 telemetry_game_over_exits;
+volatile u32 telemetry_boss_perf_started;
+volatile u32 telemetry_boss_perf_completed;
+volatile u32 telemetry_boss_perf_start_position;
+volatile u32 telemetry_boss_perf_end_position;
+volatile u32 telemetry_boss_perf_display_frames;
+volatile u32 telemetry_boss_perf_missed_vblanks;
+volatile u32 telemetry_boss_perf_sprite2_misses;
+volatile u32 telemetry_boss_perf_sprite2_evictions;
+volatile u32 telemetry_boss_perf_sprite2_upload_bytes;
+volatile u32 telemetry_boss_perf_projectile_misses;
+volatile u32 telemetry_sprite2_l2_hits;
+volatile u32 telemetry_sprite2_l2_misses;
+volatile u32 telemetry_sprite2_l2_evictions;
+volatile u32 telemetry_sprite2_l2_drops;
+volatile u32 telemetry_sprite2_l2_flushes;
+volatile u32 telemetry_sprite2_l2_raw_builds;
+volatile u32 telemetry_sprite2_l2_rle_fallbacks;
+volatile u32 telemetry_sprite2_l2_max_visible_unique;
+volatile u32 telemetry_boss_perf_l2_hits;
+volatile u32 telemetry_boss_perf_l2_misses;
+volatile u32 telemetry_boss_perf_l2_evictions;
+volatile u32 telemetry_boss_perf_l2_raw_builds;
+volatile u32 telemetry_boss_perf_l2_fallbacks;
+volatile u32 telemetry_waitcnt;
+
+static u32 boss_perf_start_display_frames;
+static u32 boss_perf_start_missed_vblanks;
+static u32 boss_perf_start_sprite2_misses;
+static u32 boss_perf_start_sprite2_evictions;
+static u32 boss_perf_start_sprite2_upload_bytes;
+static u32 boss_perf_start_projectile_misses;
+static u32 boss_perf_start_l2_hits;
+static u32 boss_perf_start_l2_misses;
+static u32 boss_perf_start_l2_evictions;
+static u32 boss_perf_start_l2_raw_builds;
+static u32 boss_perf_start_l2_fallbacks;
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
@@ -849,6 +923,12 @@ int main(void)
     uint32_t romfs_failed_checks = 0;
     const OtRomFs *mounted_romfs;
 
+    /*
+     * WS0 3/1-cycle reads plus Game Pak prefetch.  Sprite2 raw data, ROMFS
+     * and executable code all live in the Game Pak address space.
+     */
+    GBA_WAITCNT = GBA_WAITCNT_ROM_PREFETCH_3_1;
+    telemetry_waitcnt = GBA_WAITCNT;
     irqInit();
     irqSet(IRQ_VBLANK, vblank_handler);
     irqEnable(IRQ_VBLANK);

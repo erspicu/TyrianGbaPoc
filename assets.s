@@ -76,6 +76,13 @@ jukebox_sine:
 	.incbin "res/jukebox_sine.bin"
 
 	.balign 4
+	.global sprite2_raw_components
+sprite2_raw_components:
+	.incbin "res/sprite2_raw_components.bin"
+	.global sprite2_raw_components_end
+sprite2_raw_components_end:
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

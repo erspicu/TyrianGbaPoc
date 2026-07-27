@@ -25,26 +25,25 @@ The current scope is deliberately narrow:
 - Mode-4 double-buffered menu transitions and selection-row-only updates;
   invalid keys perform no redraw
 - three independently scrolling Mode-0 background layers (MAP1, MAP2 and MAP3)
-- all 1,009 source records remain directly addressable; the deterministic
+- all source records remain directly addressable; the deterministic
   first-level route consumes 935 records through the authored boss exit
-  (926 applied, five deferred and four conditionally skipped)
+  (931 applied and four conditionally skipped)
 - PC `curLoc` timing and source enemy identity, pool, position, movement,
   armor, animation, link, turret and death fields
 - the original four 25-slot enemy groups: 473/473 event spawns, three successful
   death spawns, a peak of 39 active objects and no pool-full loss
 - a concrete 60-entry OpenTyrian projectile pool: 428 source shots, peak 32,
-  17,466 movement updates and zero projectile drops
+  17,504 movement updates and zero projectile drops
 - source player-shot ordering and collision formulas, armor damage,
   `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
   `eenemydie` children
 - three physical pickups spawned, two collected and the data-cube branch
   crossed by the deterministic route
-- runtime decoding of the stock ROMFS `newsh*.shp` and compact
-  `tyrian.shp` Sprite2 streams, keyed by
-  `(shape_table, egr[enemycycle - 1], size, filter)`; there is no event-limited
-  Python enemy-frame catalog
-- a 21-slot split 8bpp OBJ cache with zero Sprite2 decode failures or cache
-  drops, plus all 128 GBA OAM entries with a measured peak of 89
+- a complete, lossless build-time expansion of all 37 stock Sprite2 banks;
+  runtime still selects `(shape_table, egr[enemycycle - 1], size, filter)`
+  from LVL/HDT and applies the active PC palette
+- a 24-slot OBJ L1 backed by a 64-slot palette-aware EWRAM L2, with zero
+  Sprite2 failures, drops or RLE fallbacks, plus all 128 GBA OAM entries
 - the complete OpenTyrian background2/background3, ground, sky, top, player,
   projectile and effect draw order translated to dynamic GBA BG/OBJ priority
   and reverse OAM emission; all 252 layer relations pass an exhaustive test
@@ -65,17 +64,16 @@ The current scope is deliberately narrow:
 - complete first-level tracker music, seven converted Tyrian sound effects and
   the original Normal-speed target of about 34.78 logic updates/second
 
-The v23 validation build keeps the player invincible without suppressing
+The validation build keeps the player invincible without suppressing
 collision telemetry. A dedicated forced-death regression compiles the flag
 off and verifies that Game Over selects stock MUS song 29 (the title/menu
 music) instead of leaving level song 17 active. The normal level-statistics
 return now makes the same explicit music transition.
 
-The v22 front-end stress test changes the Title selection every frame for
-600 frames. Its result is pixel-identical to the generated target frame and
-adds zero delayed VBlanks over the no-redraw baseline. The full route passes
-schema-20 SRAM telemetry with 100 source enemy kills and the boss group fully
-cleared.
+The v29 full route passes schema-25 SRAM telemetry with 100 source enemy kills
+and the boss group fully cleared. Its Sprite2 L2 reduces first-level missed
+VBlanks from 625 to 13 and the authored Boss interval from 437 to 4, while the
+L1 miss/eviction workload remains unchanged.
 
 ## Controls
 
@@ -97,7 +95,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v23.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v29_detail_low_speed_normal.gba
 ```
 
 `build.ps1` also builds a deterministic auto-test ROM, runs the entire route
@@ -113,6 +111,9 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v29 Boss Sprite2 raw/L2 performance](MD/Tyrian-GBA-Boss-Sprite2-L2-v29.md)
+- [v29 updated plan](MD/Tyrian-GBA-Updated-Plan-v29.md)
+- [v28 all-level ROMFS runtime](MD/Tyrian-GBA-ROMFS-All-Levels-v28.md)
 - [Source-parity first-level port](MD/Tyrian-GBA-Source-Parity-Port.md)
 - [v23 development invincibility and menu-music transition](MD/Tyrian-GBA-Dev-Invincibility-Music-v23.md)
 - [v22 Mode-4 front-end and benchmark](MD/Tyrian-GBA-Frontend-Mode4-v22.md)

@@ -17,15 +17,25 @@ typedef struct {
 
 typedef struct {
     u8 slot;
+    u8 l2_slot;
 } SourceEnemyUpload;
+
+typedef struct {
+    u32 last_epoch;
+    u16 graphic;
+    u8 shape_table;
+    u8 size;
+    u8 filter;
+    u8 valid;
+} SourceSprite2L2Slot;
 
 static SourceEnemyCacheSlot
     source_enemy_cache[SOURCE_ENEMY_CACHE_SLOT_COUNT] EWRAM_BSS;
 static SourceEnemyUpload
     source_enemy_uploads[SOURCE_ENEMY_CACHE_SLOT_COUNT] EWRAM_BSS;
-static u8 source_enemy_cache_tiles
-    [SOURCE_ENEMY_CACHE_SLOT_COUNT][SOURCE_ENEMY_FRAME_BYTES]
-    EWRAM_BSS __attribute__((aligned(4)));
+static SourceSprite2L2Slot source_sprite2_l2[
+    SOURCE_SPRITE2_L2_SLOT_COUNT
+] EWRAM_BSS;
 static u16 source_enemy_decode_pixels[OT_SPRITE2_FRAME_PIXELS]
     EWRAM_BSS __attribute__((aligned(4)));
 static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
@@ -46,6 +56,7 @@ static s16 source_enemy_first_decode_failure_x;
 static s16 source_enemy_first_decode_failure_y;
 static u8 source_enemy_first_decode_failure_cycle;
 static u32 source_enemy_first_decode_failure_shape_banks;
+static u32 source_sprite2_l2_epoch;
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
 static u8 source_autotest_unreachable_stop_ticks;
 #endif
@@ -91,12 +102,20 @@ static u8 source_enemy_palette_destination(u8 logical_index)
     return (u8)(bank * 16 + logical_index % 16);
 }
 
+static void source_sprite2_l2_flush(void)
+{
+    memset(source_sprite2_l2, 0, sizeof(source_sprite2_l2));
+    source_sprite2_l2_epoch = 0;
+    telemetry_sprite2_l2_flushes++;
+}
+
 static u8 source_enemy_palette_setup(u8 palette_index)
 {
     OtDataView palette;
     u8 hue;
 
     source_enemy_palette_valid = 0;
+    source_sprite2_l2_flush();
     if (!ot_data_palette_view(palette_index, &palette)) return 0;
 
     for (hue = 0; hue < 16; hue++) {
@@ -166,6 +185,303 @@ static u8 source_enemy_palette_setup(u8 palette_index)
     return 1;
 }
 
+static void source_sprite2_l2_begin_frame(void)
+{
+    source_sprite2_l2_epoch++;
+    if (source_sprite2_l2_epoch == 0) {
+        u8 index;
+
+        source_sprite2_l2_epoch = 1;
+        for (
+            index = 0;
+            index < SOURCE_SPRITE2_L2_SLOT_COUNT;
+            index++
+        ) {
+            source_sprite2_l2[index].last_epoch = 0;
+        }
+    }
+}
+
+static void source_sprite2_l2_end_frame(void)
+{
+    u8 index;
+    u8 visible_unique = 0;
+
+    for (
+        index = 0;
+        index < SOURCE_SPRITE2_L2_SLOT_COUNT;
+        index++
+    ) {
+        if (
+            source_sprite2_l2[index].valid &&
+            source_sprite2_l2[index].last_epoch ==
+                source_sprite2_l2_epoch
+        ) {
+            visible_unique++;
+        }
+    }
+    if (
+        visible_unique >
+        telemetry_sprite2_l2_max_visible_unique
+    ) {
+        telemetry_sprite2_l2_max_visible_unique = visible_unique;
+    }
+}
+
+static IWRAM_CODE ARM_CODE void source_sprite2_l2_clear_frame(
+    u8 *target
+)
+{
+    u32 *words = (u32 *)target;
+    u16 index;
+
+    for (
+        index = 0;
+        index < SOURCE_SPRITE2_L2_FRAME_BYTES / sizeof(u32);
+        index++
+    ) {
+        words[index] = 0;
+    }
+}
+
+static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
+    u8 x,
+    u8 y,
+    u8 tile_columns
+)
+{
+    return
+        (u32)((y >> 3) * tile_columns + (x >> 3)) * 64u +
+        (u32)(y & 7u) * 8u +
+        (x & 7u);
+}
+
+static IWRAM_CODE ARM_CODE u8 source_sprite2_l2_write_raw_component(
+    u8 *target,
+    u8 tile_columns,
+    u8 shape_table,
+    u16 graphic,
+    u8 filter,
+    u8 origin_x,
+    u8 origin_y
+)
+{
+    const u8 *raw = ot_sprite2_raw_component(
+        shape_table,
+        graphic
+    );
+    u8 y;
+
+    if (raw == 0) return 0;
+    for (y = 0; y < SPRITE2_RAW_COMPONENT_HEIGHT; y++) {
+        u8 x;
+
+        for (x = 0; x < SPRITE2_RAW_COMPONENT_WIDTH; x++) {
+            u8 pixel = raw[
+                (u32)y * SPRITE2_RAW_COMPONENT_WIDTH + x
+            ];
+
+            if (pixel != 0) {
+                if (filter != 0) {
+                    pixel = (u8)(filter | (pixel & 0x0f));
+                }
+                target[source_sprite2_tile_offset(
+                    (u8)(origin_x + x),
+                    (u8)(origin_y + y),
+                    tile_columns
+                )] = source_enemy_palette_map[pixel];
+            }
+        }
+    }
+    return 1;
+}
+
+static IWRAM_CODE ARM_CODE void source_sprite2_l2_pack_decoded(
+    u8 *target,
+    u8 tile_columns,
+    u8 source_x,
+    u8 source_y,
+    u8 width,
+    u8 height
+)
+{
+    u8 y;
+
+    for (y = 0; y < height; y++) {
+        u8 x;
+
+        for (x = 0; x < width; x++) {
+            u16 source_pixel = source_enemy_decode_pixels[
+                (u32)(source_y + y) * OT_SPRITE2_FRAME_WIDTH +
+                source_x + x
+            ];
+
+            if (source_pixel != 0) {
+                target[source_sprite2_tile_offset(
+                    x,
+                    y,
+                    tile_columns
+                )] = source_enemy_palette_map[
+                    (u8)(source_pixel - 1u)
+                ];
+            }
+        }
+    }
+}
+
+static u8 source_sprite2_l2_build(
+    u8 slot,
+    u8 shape_table,
+    u16 graphic,
+    u8 size,
+    u8 filter
+)
+{
+    u8 *target = source_sprite2_l2_tiles[slot];
+    u8 projectile =
+        shape_table == OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY ||
+        shape_table == OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY;
+    u8 raw_valid;
+
+    source_sprite2_l2_clear_frame(target);
+    if (size == 1) {
+        raw_valid =
+            source_sprite2_l2_write_raw_component(
+                target, 4, shape_table, graphic, filter, 4, 2
+            ) &&
+            source_sprite2_l2_write_raw_component(
+                target, 4, shape_table,
+                (u16)(graphic + 1u), filter, 16, 2
+            ) &&
+            source_sprite2_l2_write_raw_component(
+                target, 4, shape_table,
+                (u16)(graphic + 19u), filter, 4, 16
+            ) &&
+            source_sprite2_l2_write_raw_component(
+                target, 4, shape_table,
+                (u16)(graphic + 20u), filter, 16, 16
+            );
+    } else if (projectile) {
+        raw_valid = source_sprite2_l2_write_raw_component(
+            target, 2, shape_table, graphic, filter, 0, 0
+        );
+    } else {
+        raw_valid = source_sprite2_l2_write_raw_component(
+            target, 4, shape_table, graphic, filter, 10, 9
+        );
+    }
+    if (raw_valid) {
+        telemetry_sprite2_l2_raw_builds++;
+        return 1;
+    }
+
+    /*
+     * The exhaustive build-time catalog should make this unreachable.
+     * Preserve the original ROMFS RLE decoder as a parity/debug fallback.
+     */
+    telemetry_sprite2_l2_rle_fallbacks++;
+    if (
+        !ot_sprite2_frame_decode(
+            shape_table,
+            graphic,
+            size,
+            filter,
+            source_enemy_decode_pixels,
+            OT_SPRITE2_FRAME_PIXELS
+        )
+    ) {
+        return 0;
+    }
+    source_sprite2_l2_clear_frame(target);
+    if (projectile && size == 0) {
+        source_sprite2_l2_pack_decoded(
+            target, 2, 10, 9, 16, 16
+        );
+    } else {
+        source_sprite2_l2_pack_decoded(
+            target, 4, 0, 0, 32, 32
+        );
+    }
+    return 1;
+}
+
+static u8 source_sprite2_l2_acquire(
+    u8 shape_table,
+    u16 graphic,
+    u8 size,
+    u8 filter
+)
+{
+    u8 index;
+    u8 free_slot = SOURCE_SPRITE2_L2_SLOT_COUNT;
+    u8 eviction_slot = SOURCE_SPRITE2_L2_SLOT_COUNT;
+    u8 selected;
+    u32 oldest_epoch = 0xffffffffu;
+
+    for (
+        index = 0;
+        index < SOURCE_SPRITE2_L2_SLOT_COUNT;
+        index++
+    ) {
+        SourceSprite2L2Slot *slot = &source_sprite2_l2[index];
+
+        if (
+            slot->valid &&
+            slot->shape_table == shape_table &&
+            slot->graphic == graphic &&
+            slot->size == size &&
+            slot->filter == filter
+        ) {
+            slot->last_epoch = source_sprite2_l2_epoch;
+            telemetry_sprite2_l2_hits++;
+            return index;
+        }
+        if (!slot->valid) {
+            if (free_slot == SOURCE_SPRITE2_L2_SLOT_COUNT) {
+                free_slot = index;
+            }
+        } else if (
+            slot->last_epoch != source_sprite2_l2_epoch &&
+            slot->last_epoch < oldest_epoch
+        ) {
+            eviction_slot = index;
+            oldest_epoch = slot->last_epoch;
+        }
+    }
+    selected = free_slot != SOURCE_SPRITE2_L2_SLOT_COUNT ?
+        free_slot :
+        eviction_slot;
+    telemetry_sprite2_l2_misses++;
+    if (selected == SOURCE_SPRITE2_L2_SLOT_COUNT) {
+        telemetry_sprite2_l2_drops++;
+        return 0xff;
+    }
+    if (
+        !source_sprite2_l2_build(
+            selected,
+            shape_table,
+            graphic,
+            size,
+            filter
+        )
+    ) {
+        telemetry_sprite2_l2_drops++;
+        source_sprite2_l2[selected].valid = 0;
+        return 0xff;
+    }
+    if (source_sprite2_l2[selected].valid) {
+        telemetry_sprite2_l2_evictions++;
+    }
+    source_sprite2_l2[selected].last_epoch =
+        source_sprite2_l2_epoch;
+    source_sprite2_l2[selected].graphic = graphic;
+    source_sprite2_l2[selected].shape_table = shape_table;
+    source_sprite2_l2[selected].size = size;
+    source_sprite2_l2[selected].filter = filter;
+    source_sprite2_l2[selected].valid = 1;
+    return selected;
+}
+
 static u16 source_enemy_cache_tile(u8 slot)
 {
     if (slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) {
@@ -208,83 +524,6 @@ static u8 source_enemy_cache_tile_is_compact(u16 tile)
             SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
                 SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT *
                     SOURCE_ENEMY_COMPACT_TILES_PER_SLOT;
-}
-
-static void source_enemy_pack_8bpp(u8 slot)
-{
-    u8 *target = source_enemy_cache_tiles[slot];
-    u8 tile_y;
-
-    for (tile_y = 0; tile_y < 4; tile_y++) {
-        u8 tile_x;
-
-        for (tile_x = 0; tile_x < 4; tile_x++) {
-            u8 row;
-
-            for (row = 0; row < 8; row++) {
-                u8 column;
-
-                for (column = 0; column < 8; column++) {
-                    u16 source_pixel = source_enemy_decode_pixels[
-                        (u32)(tile_y * 8 + row) *
-                            OT_SPRITE2_FRAME_WIDTH +
-                        tile_x * 8 + column
-                    ];
-                    u32 target_offset =
-                        (u32)(tile_y * 4 + tile_x) * 64 +
-                        row * 8 +
-                        column;
-
-                    target[target_offset] = source_pixel == 0 ?
-                        0 :
-                        source_enemy_palette_map[
-                            (u8)(source_pixel - 1)
-                        ];
-                }
-            }
-        }
-    }
-}
-
-static void source_enemy_pack_8bpp_compact(u8 slot)
-{
-    u8 *target = source_enemy_cache_tiles[slot];
-    u8 tile_y;
-
-    /*
-     * A normal Sprite2 is 12x14 at (10,9) in the shared 32x32 decoder
-     * canvas.  Retain canvas (8,8)..(23,23), then present this cache slot
-     * eight pixels inside the ordinary 32x32 OAM origin.
-     */
-    for (tile_y = 0; tile_y < 2; tile_y++) {
-        u8 tile_x;
-
-        for (tile_x = 0; tile_x < 2; tile_x++) {
-            u8 row;
-
-            for (row = 0; row < 8; row++) {
-                u8 column;
-
-                for (column = 0; column < 8; column++) {
-                    u16 source_pixel = source_enemy_decode_pixels[
-                        (u32)(8 + tile_y * 8 + row) *
-                            OT_SPRITE2_FRAME_WIDTH +
-                        8 + tile_x * 8 + column
-                    ];
-                    u32 target_offset =
-                        (u32)(tile_y * 2 + tile_x) * 64 +
-                        row * 8 +
-                        column;
-
-                    target[target_offset] = source_pixel == 0 ?
-                        0 :
-                        source_enemy_palette_map[
-                            (u8)(source_pixel - 1)
-                        ];
-                }
-            }
-        }
-    }
 }
 
 static void source_enemy_cache_begin_frame(void)
@@ -339,6 +578,7 @@ static u16 source_enemy_cache_acquire(
     u8 selected = SOURCE_ENEMY_CACHE_SLOT_COUNT;
     u8 free_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
     u8 eviction_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
+    u8 l2_slot;
     u32 oldest_epoch = 0xffffffffu;
 
     if (draw->shape_table == 0) {
@@ -420,16 +660,13 @@ static u16 source_enemy_cache_acquire(
     source_enemy_cache[selected].filter = draw->filter;
     source_enemy_cache[selected].last_epoch = source_enemy_cache_epoch;
     telemetry_sprite2_cache_misses++;
-    if (
-        !ot_sprite2_frame_decode(
-            draw->shape_table,
-            draw->graphic,
-            draw->size,
-            draw->filter,
-            source_enemy_decode_pixels,
-            OT_SPRITE2_FRAME_PIXELS
-        )
-    ) {
+    l2_slot = source_sprite2_l2_acquire(
+        draw->shape_table,
+        draw->graphic,
+        draw->size,
+        draw->filter
+    );
+    if (l2_slot == 0xff) {
         if (!source_enemy_first_decode_failure_valid) {
             source_enemy_first_decode_failure_valid = 1;
             source_enemy_first_decode_failure_shape_table =
@@ -459,11 +696,6 @@ static u16 source_enemy_cache_acquire(
         source_enemy_cache[selected].valid = 0;
         return 0xffff;
     }
-    if (source_enemy_cache_slot_is_compact(selected)) {
-        source_enemy_pack_8bpp_compact(selected);
-    } else {
-        source_enemy_pack_8bpp(selected);
-    }
 
     if (
         source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT
@@ -473,6 +705,7 @@ static u16 source_enemy_cache_acquire(
         return 0xffff;
     }
     source_enemy_uploads[source_enemy_upload_count].slot = selected;
+    source_enemy_uploads[source_enemy_upload_count].l2_slot = l2_slot;
     source_enemy_upload_count++;
     if (
         source_enemy_upload_count >
@@ -489,7 +722,8 @@ static void source_enemy_cache_commit(void)
 
     for (index = 0; index < source_enemy_upload_count; index++) {
         const SourceEnemyUpload *upload = &source_enemy_uploads[index];
-        const u8 *source = source_enemy_cache_tiles[upload->slot];
+        const u8 *source =
+            source_sprite2_l2_tiles[upload->l2_slot];
         u8 *target =
             (u8 *)OBJ_BASE_ADR +
             source_enemy_cache_tile(upload->slot) * 32;
@@ -497,7 +731,18 @@ static void source_enemy_cache_commit(void)
             SOURCE_ENEMY_COMPACT_FRAME_BYTES :
             SOURCE_ENEMY_FRAME_BYTES;
 
-        dmaCopy(source, target, bytes);
+        if (source_enemy_cache_slot_is_compact(upload->slot)) {
+            /*
+             * The compact 16x16 slot is canvas (8,8)..(23,23), i.e. tiles
+             * 5,6,9,10 of the L2's ordinary 4x4 tile-order frame.
+             */
+            dmaCopy(source + 5 * 64, target, 64);
+            dmaCopy(source + 6 * 64, target + 64, 64);
+            dmaCopy(source + 9 * 64, target + 128, 64);
+            dmaCopy(source + 10 * 64, target + 192, 64);
+        } else {
+            dmaCopy(source, target, bytes);
+        }
         telemetry_sprite2_uploads++;
         if (source_enemy_cache_slot_is_compact(upload->slot)) {
             telemetry_sprite2_compact_uploads++;
@@ -516,6 +761,7 @@ typedef struct {
 
 typedef struct {
     u8 slot;
+    u8 l2_slot;
 } SourceProjectileUpload;
 
 static SourceProjectileCacheSlot source_projectile_cache[
@@ -524,10 +770,6 @@ static SourceProjectileCacheSlot source_projectile_cache[
 static SourceProjectileUpload source_projectile_uploads[
     SOURCE_PROJECTILE_CACHE_SLOT_COUNT
 ] EWRAM_BSS;
-static u8 source_projectile_cache_tiles[
-    SOURCE_PROJECTILE_CACHE_SLOT_COUNT
-][SOURCE_PROJECTILE_FRAME_BYTES] EWRAM_BSS
-    __attribute__((aligned(4)));
 static u32 source_projectile_cache_epoch;
 static u8 source_projectile_upload_count;
 
@@ -545,47 +787,6 @@ static u16 source_projectile_cache_tile(u8 slot)
             slot - SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT
         ) * SOURCE_PROJECTILE_TILES_PER_SLOT
     );
-}
-
-static void source_projectile_pack_8bpp(u8 slot)
-{
-    u8 *target = source_projectile_cache_tiles[slot];
-    u8 tile_y;
-
-    /*
-     * Every Sprite2 projectile is a 12x14 component.  The shared decoder
-     * places it at (10,9) in a 32x32 canvas; retain the enclosing 16x16
-     * region and pack it as four GBA 8bpp tiles.
-     */
-    for (tile_y = 0; tile_y < 2; tile_y++) {
-        u8 tile_x;
-
-        for (tile_x = 0; tile_x < 2; tile_x++) {
-            u8 row;
-
-            for (row = 0; row < 8; row++) {
-                u8 column;
-
-                for (column = 0; column < 8; column++) {
-                    u16 source_pixel = source_enemy_decode_pixels[
-                        (u32)(9 + tile_y * 8 + row) *
-                            OT_SPRITE2_FRAME_WIDTH +
-                        10 + tile_x * 8 + column
-                    ];
-                    u32 target_offset =
-                        (u32)(tile_y * 2 + tile_x) * 64 +
-                        row * 8 +
-                        column;
-
-                    target[target_offset] = source_pixel == 0 ?
-                        0 :
-                        source_enemy_palette_map[
-                            (u8)(source_pixel - 1)
-                        ];
-                }
-            }
-        }
-    }
 }
 
 static void source_projectile_cache_begin_frame(void)
@@ -615,6 +816,7 @@ static u16 source_projectile_cache_acquire(
     u8 free_slot = SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
     u8 eviction_slot = SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
     u8 selected;
+    u8 l2_slot;
     u32 oldest_epoch = 0xffffffffu;
 
     if (!source_enemy_palette_valid || graphic == 0) {
@@ -666,21 +868,17 @@ static u16 source_projectile_cache_acquire(
     source_projectile_cache[selected].last_epoch =
         source_projectile_cache_epoch;
     telemetry_projectile_cache_misses++;
-    if (
-        !ot_sprite2_frame_decode(
-            shape_table,
-            graphic,
-            0,
-            0,
-            source_enemy_decode_pixels,
-            OT_SPRITE2_FRAME_PIXELS
-        )
-    ) {
+    l2_slot = source_sprite2_l2_acquire(
+        shape_table,
+        graphic,
+        0,
+        0
+    );
+    if (l2_slot == 0xff) {
         source_projectile_cache[selected].valid = 0;
         telemetry_projectile_cache_drops++;
         return 0xffff;
     }
-    source_projectile_pack_8bpp(selected);
     if (
         source_projectile_upload_count >=
         SOURCE_PROJECTILE_CACHE_SLOT_COUNT
@@ -690,8 +888,12 @@ static u16 source_projectile_cache_acquire(
         return 0xffff;
     }
     source_projectile_uploads[
-        source_projectile_upload_count++
+        source_projectile_upload_count
     ].slot = selected;
+    source_projectile_uploads[
+        source_projectile_upload_count
+    ].l2_slot = l2_slot;
+    source_projectile_upload_count++;
     if (
         source_projectile_upload_count >
         telemetry_projectile_cache_max_uploads
@@ -739,9 +941,10 @@ static void source_projectile_cache_commit(void)
         index++
     ) {
         u8 slot = source_projectile_uploads[index].slot;
+        u8 l2_slot = source_projectile_uploads[index].l2_slot;
 
         dmaCopy(
-            source_projectile_cache_tiles[slot],
+            source_sprite2_l2_tiles[l2_slot],
             (u8 *)OBJ_BASE_ADR +
                 source_projectile_cache_tile(slot) * 32,
             SOURCE_PROJECTILE_FRAME_BYTES
@@ -1552,12 +1755,32 @@ static void source_runtime_reset(void)
 
     memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
     memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
+    memset(
+        source_projectile_cache,
+        0,
+        sizeof(source_projectile_cache)
+    );
+    memset(
+        source_projectile_uploads,
+        0,
+        sizeof(source_projectile_uploads)
+    );
     memset(source_effect_cache, 0, sizeof(source_effect_cache));
     memset(source_effect_uploads, 0, sizeof(source_effect_uploads));
     source_enemy_cache_epoch = 0;
     source_enemy_upload_count = 0;
+    source_projectile_cache_epoch = 0;
+    source_projectile_upload_count = 0;
     source_effect_cache_epoch = 0;
     source_effect_upload_count = 0;
+    telemetry_sprite2_l2_hits = 0;
+    telemetry_sprite2_l2_misses = 0;
+    telemetry_sprite2_l2_evictions = 0;
+    telemetry_sprite2_l2_drops = 0;
+    telemetry_sprite2_l2_flushes = 0;
+    telemetry_sprite2_l2_raw_builds = 0;
+    telemetry_sprite2_l2_rle_fallbacks = 0;
+    telemetry_sprite2_l2_max_visible_unique = 0;
     if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         source_parity_level.assets_valid = false;
     }
@@ -1600,6 +1823,32 @@ static void source_runtime_reset(void)
     telemetry_sprite2_compact_uploads = 0;
     telemetry_sprite2_max_uploads = 0;
     telemetry_sprite2_max_visible_unique = 0;
+    telemetry_boss_perf_started = 0;
+    telemetry_boss_perf_completed = 0;
+    telemetry_boss_perf_start_position = 0;
+    telemetry_boss_perf_end_position = 0;
+    telemetry_boss_perf_display_frames = 0;
+    telemetry_boss_perf_missed_vblanks = 0;
+    telemetry_boss_perf_sprite2_misses = 0;
+    telemetry_boss_perf_sprite2_evictions = 0;
+    telemetry_boss_perf_sprite2_upload_bytes = 0;
+    telemetry_boss_perf_projectile_misses = 0;
+    telemetry_boss_perf_l2_hits = 0;
+    telemetry_boss_perf_l2_misses = 0;
+    telemetry_boss_perf_l2_evictions = 0;
+    telemetry_boss_perf_l2_raw_builds = 0;
+    telemetry_boss_perf_l2_fallbacks = 0;
+    boss_perf_start_display_frames = 0;
+    boss_perf_start_missed_vblanks = 0;
+    boss_perf_start_sprite2_misses = 0;
+    boss_perf_start_sprite2_evictions = 0;
+    boss_perf_start_sprite2_upload_bytes = 0;
+    boss_perf_start_projectile_misses = 0;
+    boss_perf_start_l2_hits = 0;
+    boss_perf_start_l2_misses = 0;
+    boss_perf_start_l2_evictions = 0;
+    boss_perf_start_l2_raw_builds = 0;
+    boss_perf_start_l2_fallbacks = 0;
     telemetry_effect_cache_hits = 0;
     telemetry_effect_cache_misses = 0;
     telemetry_effect_cache_evictions = 0;

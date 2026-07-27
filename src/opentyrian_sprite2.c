@@ -8,7 +8,117 @@
 
 #include <string.h>
 
+#include "res/sprite2_raw_meta.h"
 #include "opentyrian_data.h"
+
+extern const uint8_t sprite2_raw_components[];
+extern const uint8_t sprite2_raw_components_end[];
+
+bool ot_sprite2_raw_catalog_valid(void)
+{
+    return
+        SPRITE2_RAW_VERSION == 1u &&
+        SPRITE2_RAW_TABLE_COUNT ==
+            OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY &&
+        SPRITE2_RAW_COMPONENT_WIDTH ==
+            OT_SPRITE2_COMPONENT_WIDTH &&
+        SPRITE2_RAW_COMPONENT_HEIGHT ==
+            OT_SPRITE2_COMPONENT_HEIGHT &&
+        (uint32_t)(
+            sprite2_raw_components_end -
+            sprite2_raw_components
+        ) == SPRITE2_RAW_DATA_BYTES &&
+        SPRITE2_RAW_COMPONENT_COUNT ==
+            SPRITE2_RAW_TABLE_COUNT *
+                SPRITE2_RAW_COMPONENTS_PER_TABLE &&
+        SPRITE2_RAW_ROUNDTRIP_COMPONENTS ==
+            SPRITE2_RAW_COMPONENT_COUNT;
+}
+
+const uint8_t *ot_sprite2_raw_component(
+    uint8_t shape_table,
+    uint16_t sprite_number
+)
+{
+    uint32_t component;
+
+    if (
+        !ot_sprite2_raw_catalog_valid() ||
+        shape_table == 0 ||
+        shape_table > SPRITE2_RAW_TABLE_COUNT ||
+        sprite_number == 0 ||
+        sprite_number > SPRITE2_RAW_COMPONENTS_PER_TABLE
+    ) {
+        return 0;
+    }
+    component =
+        (uint32_t)(shape_table - 1u) *
+            SPRITE2_RAW_COMPONENTS_PER_TABLE +
+        (uint32_t)(sprite_number - 1u);
+    return
+        sprite2_raw_components +
+        component * SPRITE2_RAW_COMPONENT_BYTES;
+}
+
+bool ot_sprite2_raw_component_matches_rle(
+    uint8_t shape_table,
+    uint16_t sprite_number,
+    uint16_t *scratch,
+    uint32_t scratch_pixels
+)
+{
+    const uint8_t *raw = ot_sprite2_raw_component(
+        shape_table,
+        sprite_number
+    );
+    uint8_t y;
+
+    if (
+        raw == 0 ||
+        scratch == 0 ||
+        scratch_pixels < OT_SPRITE2_FRAME_PIXELS ||
+        !ot_sprite2_frame_decode(
+            shape_table,
+            sprite_number,
+            0,
+            0,
+            scratch,
+            scratch_pixels
+        )
+    ) {
+        return false;
+    }
+    for (y = 0; y < OT_SPRITE2_FRAME_HEIGHT; y++) {
+        uint8_t x;
+
+        for (x = 0; x < OT_SPRITE2_FRAME_WIDTH; x++) {
+            uint16_t expected = 0;
+
+            if (
+                x >= 10 &&
+                x < 10 + SPRITE2_RAW_COMPONENT_WIDTH &&
+                y >= 9 &&
+                y < 9 + SPRITE2_RAW_COMPONENT_HEIGHT
+            ) {
+                uint8_t pixel = raw[
+                    (uint32_t)(y - 9) *
+                        SPRITE2_RAW_COMPONENT_WIDTH +
+                    (x - 10)
+                ];
+
+                if (pixel != 0) expected = (uint16_t)pixel + 1u;
+            }
+            if (
+                scratch[
+                    (uint32_t)y * OT_SPRITE2_FRAME_WIDTH + x
+                ] != expected
+            ) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 static bool decode_component(
     uint8_t shape_table,

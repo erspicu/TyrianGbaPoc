@@ -25,13 +25,13 @@ $(error GAME_SPEED must be low or normal)
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v28_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v28_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v28_$(CONFIG_SUFFIX)
-JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v28_$(CONFIG_SUFFIX)
-ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v28_$(CONFIG_SUFFIX)
-ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v28_$(CONFIG_SUFFIX)
-CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v28_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v29_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v29_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v29_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v29_$(CONFIG_SUFFIX)
+ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v29_$(CONFIG_SUFFIX)
+ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v29_$(CONFIG_SUFFIX)
+CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v29_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
 
@@ -77,6 +77,7 @@ ASSET_INPUTS := \
 	../../org/AprCSTyrian/Build/data/tyrian.hdt \
 	../../org/AprCSTyrian/Build/data/tyrian.pic \
 	../../org/AprCSTyrian/Build/data/tyrian.shp \
+	$(wildcard ../../org/AprCSTyrian/Build/data/newsh*.shp) \
 	../../org/AprCSTyrian/Build/data/palette.dat \
 	../../org/AprCSTyrian/Build/data/tyrian.snd \
 	../../org/AprCSTyrian/Build/data/voices.snd \
@@ -107,7 +108,8 @@ ASSET_BINARIES := \
 	$(RES)/jukebox_obj_palette.bin \
 	$(RES)/jukebox_titles.bin \
 	$(RES)/jukebox_reciprocal.bin \
-	$(RES)/jukebox_sine.bin
+	$(RES)/jukebox_sine.bin \
+	$(RES)/sprite2_raw_components.bin
 
 TYRIAN_MUSIC_TRACKS := \
 	00 01 02 03 04 05 06 07 08 09 \
@@ -170,7 +172,8 @@ $(ASSET_STAMP): $(ASSET_INPUTS) | $(BUILD)/preview
 		--output "$(CURDIR)/$(RES)" \
 		--preview-dir "$(CURDIR)/$(BUILD)/preview"
 
-$(ASSET_BINARIES) $(AUDIO_INPUTS) $(RES)/asset_meta.h: $(ASSET_STAMP)
+$(ASSET_BINARIES) $(AUDIO_INPUTS) $(RES)/asset_meta.h \
+		$(RES)/sprite2_raw_meta.h: $(ASSET_STAMP)
 
 $(RES)/soundbank.bin: $(ASSET_STAMP) $(AUDIO_INPUTS) | $(BUILD)
 	$(TOOLS)/mmutil $(AUDIO_INPUTS) \
@@ -189,19 +192,22 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 $(BUILD)/main_release_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
 
 $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FORCE_PLAYER_DEATH \
 		-DAUTOTEST_DEATH_FLOW \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0 \
@@ -210,14 +216,16 @@ $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_JUKEBOX_FLOW \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_ROMFS_LEVEL_MATRIX \
 		-MMD -MP -c $< -o $@
 
@@ -225,7 +233,8 @@ $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUF
 		main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(ROUTE_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(ROUTE_SECTION) \
@@ -235,7 +244,8 @@ $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_lev
 		main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
-		$(RES)/asset_meta.h $(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(CAMPAIGN_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(CAMPAIGN_SECTION) \
@@ -254,7 +264,8 @@ $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/opentyrian_sprite2.o: src/opentyrian_sprite2.c \
-		src/opentyrian_sprite2.h src/opentyrian_data.h | $(BUILD)
+		src/opentyrian_sprite2.h src/opentyrian_data.h \
+		$(RES)/sprite2_raw_meta.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/romfs.o: src/romfs.c src/romfs.h | $(BUILD)
@@ -265,7 +276,8 @@ $(BUILD)/opentyrian_rom_io.o: src/opentyrian_rom_io.c \
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/assets.o: assets.s $(ASSET_BINARIES) \
-		$(RES)/soundbank.bin $(VFS_IMAGE) | $(BUILD)
+		$(RES)/soundbank.bin $(VFS_IMAGE) \
+		$(RES)/sprite2_raw_meta.h | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 $(BUILD)/$(TARGET).elf: \

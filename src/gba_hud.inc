@@ -160,6 +160,32 @@ static void render_source_boss_bars(void)
     u8 armor[2];
     u8 count = 0;
     u8 index;
+    u8 had_link =
+        source_parity_level.boss_bar_link[0] != 0 ||
+        source_parity_level.boss_bar_link[1] != 0;
+
+    if (had_link && !telemetry_boss_perf_started) {
+        telemetry_boss_perf_started = 1;
+        telemetry_boss_perf_start_position = level_position;
+        boss_perf_start_display_frames = telemetry_display_frames;
+        boss_perf_start_missed_vblanks = telemetry_missed_vblanks;
+        boss_perf_start_sprite2_misses =
+            telemetry_sprite2_cache_misses;
+        boss_perf_start_sprite2_evictions =
+            telemetry_sprite2_cache_evictions;
+        boss_perf_start_sprite2_upload_bytes =
+            telemetry_sprite2_upload_bytes;
+        boss_perf_start_projectile_misses =
+            telemetry_projectile_cache_misses;
+        boss_perf_start_l2_hits = telemetry_sprite2_l2_hits;
+        boss_perf_start_l2_misses = telemetry_sprite2_l2_misses;
+        boss_perf_start_l2_evictions =
+            telemetry_sprite2_l2_evictions;
+        boss_perf_start_l2_raw_builds =
+            telemetry_sprite2_l2_raw_builds;
+        boss_perf_start_l2_fallbacks =
+            telemetry_sprite2_l2_rle_fallbacks;
+    }
 
     for (index = 0; index < 2; index++) {
         u8 value = source_boss_bar_armor(index);
@@ -171,5 +197,47 @@ static void render_source_boss_bars(void)
     } else if (count == 2) {
         render_boss_bar_at(armor[0], 94);
         render_boss_bar_at(armor[1], 139);
+    }
+    if (
+        telemetry_boss_perf_started &&
+        !telemetry_boss_perf_completed &&
+        source_parity_level.boss_bar_link[0] == 0 &&
+        source_parity_level.boss_bar_link[1] == 0
+    ) {
+        telemetry_boss_perf_completed = 1;
+        telemetry_boss_perf_end_position = level_position;
+        telemetry_boss_perf_display_frames =
+            telemetry_display_frames -
+            boss_perf_start_display_frames;
+        telemetry_boss_perf_missed_vblanks =
+            telemetry_missed_vblanks -
+            boss_perf_start_missed_vblanks;
+        telemetry_boss_perf_sprite2_misses =
+            telemetry_sprite2_cache_misses -
+            boss_perf_start_sprite2_misses;
+        telemetry_boss_perf_sprite2_evictions =
+            telemetry_sprite2_cache_evictions -
+            boss_perf_start_sprite2_evictions;
+        telemetry_boss_perf_sprite2_upload_bytes =
+            telemetry_sprite2_upload_bytes -
+            boss_perf_start_sprite2_upload_bytes;
+        telemetry_boss_perf_projectile_misses =
+            telemetry_projectile_cache_misses -
+            boss_perf_start_projectile_misses;
+        telemetry_boss_perf_l2_hits =
+            telemetry_sprite2_l2_hits -
+            boss_perf_start_l2_hits;
+        telemetry_boss_perf_l2_misses =
+            telemetry_sprite2_l2_misses -
+            boss_perf_start_l2_misses;
+        telemetry_boss_perf_l2_evictions =
+            telemetry_sprite2_l2_evictions -
+            boss_perf_start_l2_evictions;
+        telemetry_boss_perf_l2_raw_builds =
+            telemetry_sprite2_l2_raw_builds -
+            boss_perf_start_l2_raw_builds;
+        telemetry_boss_perf_l2_fallbacks =
+            telemetry_sprite2_l2_rle_fallbacks -
+            boss_perf_start_l2_fallbacks;
     }
 }

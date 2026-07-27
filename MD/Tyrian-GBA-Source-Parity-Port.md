@@ -596,14 +596,14 @@ typed little-endian read、EOF、path normalization、read-only mode 及
 | `src/level_setup.inc` | 關卡進出與 VRAM 資源設定 |
 | `src/entity_runtime.inc` | GBA explosion／測試 reward presentation pool |
 | `src/combat_runtime.inc` | GBA 玩家輸入、玩家彈及簡化 Boss projectile adapter |
-| `src/source_runtime.inc` | source 座標、OAM、音效、效果與 telemetry adapter |
+| `src/source_runtime.inc` | source 座標、OAM、Sprite2 L1/L2、音效、效果與 telemetry adapter |
 | `src/level_update.inc` | source phase orchestration、背景及簡化 Boss |
 | `src/gba_oam.inc` | OAM primitive 及 projectile presentation |
 | `src/gba_hud.inc` | GBA 保留的最小 HUD |
 | `src/gba_scene.inc` | scene-to-OAM renderer |
 | `src/autotest.inc` | mGBA deterministic regression harness |
 | `src/opentyrian_data.c` | ROMFS MUS/SHP/PIC/HDT/LVL 原始格式 reader |
-| `src/opentyrian_sprite2.c` | ROMFS Sprite2 skip/fill 與 filter 直接 decoder |
+| `src/opentyrian_sprite2.c` | 全 bank raw component reader 與 ROMFS RLE parity/fallback decoder |
 | `src/opentyrian_level_port.c` | 第一關本體 authoritative source runtime |
 
 GBA presentation `.inc` 仍由同一 translation unit 編譯；原始事件、敵人、
@@ -689,6 +689,27 @@ v28 已把第一關專用 reader 改成 selected-level runtime：
 - `Tyrian-GBA-ROMFS-All-Levels-v28.md`
 - `Tyrian-GBA-Updated-Plan-v28.md`
 
+## v29 Boss Sprite2 效能進度
+
+v29 將 Sprite2 不變的 RLE 解壓移到 build 階段，runtime 的來源選擇與
+palette/filter 語意不變：
+
+1. 37 個 logical banks、11,248 個 12×14 components 完整無損展開；不是
+   per-level 或 event-limited catalog。
+2. 24-slot OBJ L1 後加入 64×1 KiB EWRAM L2，enemy／projectile 共用。
+3. L2 與 Mode-4 front-end scratch 使用 union overlay；release 尚餘
+   53,764 bytes EWRAM。
+4. `WAITCNT=0x4317`，palette mapping 熱路徑使用 ARM/IWRAM。
+5. 第一關 missed VBlank 625 → 13；Boss 區段 437 → 4，而 Boss 的
+   432 次 L1 miss、432 次 eviction 與 411,648 upload bytes 完全不變。
+6. `TGLM schema 2` 對 6,098 個 runtime frames 執行 6,146,816 個
+   palette/filter/tile-order pixel parity，全部通過。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Boss-Sprite2-L2-v29.md`
+- `Tyrian-GBA-Updated-Plan-v29.md`
+
 ## 下一個移植階段
 
 1. 將目前四關 campaign 擴大成 Episode 1 的完整 Full Game 路徑與
@@ -703,10 +724,10 @@ v28 已把第一關專用 reader 改成 selected-level runtime：
 .\build.ps1
 ```
 
-目前 ROMFS v28 預設 ROM：
+目前 ROMFS v29 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v28_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v29_detail_low_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

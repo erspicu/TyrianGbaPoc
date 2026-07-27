@@ -22,6 +22,23 @@ enum {
 };
 
 /*
+ * Build-time lossless expansion of every logical Sprite2 bank.  The returned
+ * 12x14 row-major component stores zero for transparency and the unchanged
+ * PC palette index (1..255) for opaque pixels.
+ */
+const uint8_t *ot_sprite2_raw_component(
+    uint8_t shape_table,
+    uint16_t sprite_number
+);
+bool ot_sprite2_raw_catalog_valid(void);
+bool ot_sprite2_raw_component_matches_rle(
+    uint8_t shape_table,
+    uint16_t sprite_number,
+    uint16_t *scratch,
+    uint32_t scratch_pixels
+);
+
+/*
  * graphic retains OpenTyrian's one-based Sprite2 index.  A size value of
  * one composes graphic, +1, +19 and +20 exactly like JE_drawEnemy();
  * every other value decodes the single component.

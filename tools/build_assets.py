@@ -153,6 +153,14 @@ ENEMY_STRUCTURE_FRAME_KEYS = frozenset(
 )
 ENEMY_FILTER_PALETTE_BANK = 15
 SHAPE_TABLE_CHARACTERS = "2478ABCDEFGHIJKLMNOPQRSTU5#V0@3^59"
+SPRITE2_RAW_VERSION = 1
+SPRITE2_RAW_TABLE_COUNT = 37
+SPRITE2_RAW_COMPONENTS_PER_TABLE = 304
+SPRITE2_RAW_COMPONENT_WIDTH = 12
+SPRITE2_RAW_COMPONENT_HEIGHT = 14
+SPRITE2_RAW_COMPONENT_BYTES = (
+    SPRITE2_RAW_COMPONENT_WIDTH * SPRITE2_RAW_COMPONENT_HEIGHT
+)
 JUKEBOX_MUSIC_COUNT = 41
 JUKEBOX_TITLE_BYTES = 48
 JUKEBOX_FONT_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-"
@@ -205,6 +213,261 @@ def read_git_head(repo: Path) -> str:
     if len(head) != 40 or any(char not in "0123456789abcdef" for char in head):
         raise ValueError(f"unexpected Git HEAD value: {head}")
     return head
+
+
+def sprite2_tyrian_shp_section(
+    tyrian_shp: bytes,
+    section: int,
+) -> bytes:
+    """Return a one-based tyrian.shp section exactly as the ROM reader does."""
+    section_count = struct.unpack_from("<H", tyrian_shp, 0)[0]
+    if not 1 <= section <= section_count:
+        raise ValueError(f"tyrian.shp section outside table: {section}")
+    offsets = struct.unpack_from(
+        f"<{section_count}I",
+        tyrian_shp,
+        2,
+    )
+    start = offsets[section - 1]
+    end = offsets[section] if section < section_count else len(tyrian_shp)
+    if not 0 <= start < end <= len(tyrian_shp):
+        raise ValueError(
+            f"malformed tyrian.shp section {section}: {start}..{end}"
+        )
+    return tyrian_shp[start:end]
+
+
+def sprite2_logical_bank(
+    data_root: Path,
+    tyrian_shp: bytes,
+    shape_table: int,
+) -> bytes:
+    """Mirror ot_data_comp_shape_bank_view() for all logical Sprite2 banks."""
+    if shape_table == 21:
+        return sprite2_tyrian_shp_section(tyrian_shp, 11)
+    if shape_table == 26:
+        return sprite2_tyrian_shp_section(tyrian_shp, 10)
+    if shape_table == 35:
+        return (data_root / "newsh6.shp").read_bytes()
+    if shape_table == 36:
+        return sprite2_tyrian_shp_section(tyrian_shp, 8)
+    if shape_table == 37:
+        return sprite2_tyrian_shp_section(tyrian_shp, 12)
+    if not 1 <= shape_table <= len(SHAPE_TABLE_CHARACTERS):
+        raise ValueError(f"Sprite2 logical bank outside table: {shape_table}")
+    character = SHAPE_TABLE_CHARACTERS[shape_table - 1].lower()
+    if character == "@":
+        character = "~"
+    return (data_root / f"newsh{character}.shp").read_bytes()
+
+
+def sprite2_component_stream(
+    bank: bytes,
+    sprite_number: int,
+) -> bytes:
+    """Apply Sprite2's first-offset/count and one-based offset semantics."""
+    if len(bank) < 2:
+        raise ValueError("Sprite2 bank is shorter than its first offset")
+    first_offset = struct.unpack_from("<H", bank, 0)[0]
+    if first_offset < 2 or first_offset & 1 or first_offset > len(bank):
+        raise ValueError(f"malformed Sprite2 first offset: {first_offset}")
+    sprite_count = first_offset // 2
+    if not 1 <= sprite_number <= sprite_count:
+        raise ValueError(
+            f"Sprite2 number outside bank: {sprite_number}/{sprite_count}"
+        )
+    start = struct.unpack_from("<H", bank, (sprite_number - 1) * 2)[0]
+    end = (
+        struct.unpack_from("<H", bank, sprite_number * 2)[0]
+        if sprite_number < sprite_count
+        else len(bank)
+    )
+    if start < first_offset or end <= start or end > len(bank):
+        raise ValueError(
+            f"malformed Sprite2 stream {sprite_number}: {start}..{end}"
+        )
+    return bank[start:end]
+
+
+def decode_sprite2_raw_component(encoded: bytes) -> bytes:
+    """Losslessly decode one 12x14 Sprite2 stream to palette-index bytes."""
+    output = bytearray(SPRITE2_RAW_COMPONENT_BYTES)
+    source = 0
+    x = 0
+    y = 0
+    terminated = False
+
+    while source < len(encoded):
+        code = encoded[source]
+        source += 1
+        if code == 0x0F:
+            terminated = True
+            break
+        skip_count = code & 0x0F
+        fill_count = code >> 4
+        x += skip_count
+        if fill_count == 0:
+            if x != SPRITE2_RAW_COMPONENT_WIDTH or (
+                y >= SPRITE2_RAW_COMPONENT_HEIGHT
+            ):
+                raise ValueError(
+                    f"malformed Sprite2 row ending at ({x}, {y})"
+                )
+            x = 0
+            y += 1
+            continue
+        if (
+            y >= SPRITE2_RAW_COMPONENT_HEIGHT
+            or x + fill_count > SPRITE2_RAW_COMPONENT_WIDTH
+            or source + fill_count > len(encoded)
+        ):
+            raise ValueError(
+                f"malformed Sprite2 fill at ({x}, {y}), count={fill_count}"
+            )
+        for pixel in encoded[source : source + fill_count]:
+            # Stock Sprite2 does not use opaque palette index zero.  Keeping
+            # zero as transparent therefore preserves every authored pixel
+            # in one byte instead of requiring a separate alpha mask.
+            if pixel == 0:
+                raise ValueError(
+                    "opaque Sprite2 palette index zero cannot be represented"
+                )
+            output[
+                y * SPRITE2_RAW_COMPONENT_WIDTH + x
+            ] = pixel
+            x += 1
+        source += fill_count
+    if not terminated:
+        raise ValueError("Sprite2 stream has no 0x0f terminator")
+
+    # Independent replay: every encoded skip must address a transparent raw
+    # byte and every fill must recover the exact original palette index.
+    source = 0
+    x = 0
+    y = 0
+    while source < len(encoded):
+        code = encoded[source]
+        source += 1
+        if code == 0x0F:
+            break
+        skip_count = code & 0x0F
+        fill_count = code >> 4
+        for skipped_x in range(x, x + skip_count):
+            if output[
+                y * SPRITE2_RAW_COMPONENT_WIDTH + skipped_x
+            ] != 0:
+                raise ValueError("Sprite2 raw round-trip changed a skip")
+        x += skip_count
+        if fill_count == 0:
+            x = 0
+            y += 1
+            continue
+        for pixel in encoded[source : source + fill_count]:
+            if output[
+                y * SPRITE2_RAW_COMPONENT_WIDTH + x
+            ] != pixel:
+                raise ValueError("Sprite2 raw round-trip changed a fill")
+            x += 1
+        source += fill_count
+    return bytes(output)
+
+
+def build_sprite2_raw_components(
+    data_root: Path,
+) -> tuple[bytes, dict[str, int | str]]:
+    """
+    Decode every logical newsh/tyrian.shp component, never an event-limited
+    subset.  Runtime still chooses shape_table/graphic from stock LVL/HDT.
+    """
+    tyrian_shp = (data_root / "tyrian.shp").read_bytes()
+    output = bytearray()
+    encoded_crc32 = 0
+    encoded_bytes = 0
+    component_count = 0
+
+    for shape_table in range(1, SPRITE2_RAW_TABLE_COUNT + 1):
+        bank = sprite2_logical_bank(data_root, tyrian_shp, shape_table)
+        first_offset = struct.unpack_from("<H", bank, 0)[0]
+        sprite_count = first_offset // 2
+        if sprite_count != SPRITE2_RAW_COMPONENTS_PER_TABLE:
+            raise ValueError(
+                f"Sprite2 table {shape_table} count changed: "
+                f"{sprite_count} != {SPRITE2_RAW_COMPONENTS_PER_TABLE}"
+            )
+        for sprite_number in range(1, sprite_count + 1):
+            encoded = sprite2_component_stream(bank, sprite_number)
+            raw = decode_sprite2_raw_component(encoded)
+            if len(raw) != SPRITE2_RAW_COMPONENT_BYTES:
+                raise AssertionError("Sprite2 raw component stride changed")
+            output.extend(raw)
+            encoded_crc32 = zlib.crc32(encoded, encoded_crc32)
+            encoded_bytes += len(encoded)
+            component_count += 1
+
+    expected_components = (
+        SPRITE2_RAW_TABLE_COUNT *
+        SPRITE2_RAW_COMPONENTS_PER_TABLE
+    )
+    expected_bytes = expected_components * SPRITE2_RAW_COMPONENT_BYTES
+    if component_count != expected_components or len(output) != expected_bytes:
+        raise AssertionError(
+            f"Sprite2 raw catalog changed: {component_count=}, "
+            f"bytes={len(output)}, expected={expected_bytes}"
+        )
+    report: dict[str, int | str] = {
+        "version": SPRITE2_RAW_VERSION,
+        "table_count": SPRITE2_RAW_TABLE_COUNT,
+        "components_per_table": SPRITE2_RAW_COMPONENTS_PER_TABLE,
+        "component_count": component_count,
+        "component_width": SPRITE2_RAW_COMPONENT_WIDTH,
+        "component_height": SPRITE2_RAW_COMPONENT_HEIGHT,
+        "component_bytes": SPRITE2_RAW_COMPONENT_BYTES,
+        "raw_bytes": len(output),
+        "raw_crc32": f"{zlib.crc32(output) & 0xffffffff:08x}",
+        "raw_sha256": hashlib.sha256(output).hexdigest(),
+        "source_stream_bytes": encoded_bytes,
+        "source_stream_crc32": f"{encoded_crc32 & 0xffffffff:08x}",
+        "roundtrip_components": component_count,
+    }
+    return bytes(output), report
+
+
+def write_sprite2_raw_header(
+    output: Path,
+    report: dict[str, int | str],
+) -> None:
+    lines = [
+        "#ifndef TYRIAN_GBA_SPRITE2_RAW_META_H",
+        "#define TYRIAN_GBA_SPRITE2_RAW_META_H",
+        "",
+        f"#define SPRITE2_RAW_VERSION {report['version']}u",
+        f"#define SPRITE2_RAW_TABLE_COUNT {report['table_count']}u",
+        (
+            "#define SPRITE2_RAW_COMPONENTS_PER_TABLE "
+            f"{report['components_per_table']}u"
+        ),
+        f"#define SPRITE2_RAW_COMPONENT_COUNT {report['component_count']}u",
+        f"#define SPRITE2_RAW_COMPONENT_WIDTH {report['component_width']}u",
+        f"#define SPRITE2_RAW_COMPONENT_HEIGHT {report['component_height']}u",
+        f"#define SPRITE2_RAW_COMPONENT_BYTES {report['component_bytes']}u",
+        f"#define SPRITE2_RAW_DATA_BYTES {report['raw_bytes']}u",
+        f"#define SPRITE2_RAW_DATA_CRC32 0x{report['raw_crc32']}u",
+        (
+            "#define SPRITE2_RAW_SOURCE_STREAM_CRC32 "
+            f"0x{report['source_stream_crc32']}u"
+        ),
+        (
+            "#define SPRITE2_RAW_ROUNDTRIP_COMPONENTS "
+            f"{report['roundtrip_components']}u"
+        ),
+        "",
+        "#endif",
+        "",
+    ]
+    (output / "sprite2_raw_meta.h").write_text(
+        "\n".join(lines),
+        encoding="ascii",
+    )
 
 
 def encode_gba_4bpp(values: np.ndarray) -> bytes:
@@ -3740,6 +4003,19 @@ def main() -> None:
     title = build_title(nes, image_root)
     title.save(preview / "title_gba.png")
 
+    sprite2_raw, sprite2_raw_report = build_sprite2_raw_components(
+        data_root
+    )
+    (output / "sprite2_raw_components.bin").write_bytes(sprite2_raw)
+    write_sprite2_raw_header(output, sprite2_raw_report)
+    (output / "sprite2_raw_audit.txt").write_text(
+        "\n".join(
+            f"{key}={value}"
+            for key, value in sprite2_raw_report.items()
+        ) + "\n",
+        encoding="utf-8",
+    )
+
     # Level-specific LVL/HDT/SHP preprocessing intentionally stops here.
     # Every selected level is parsed from the stock files in cartridge
     # ROMFS by src/opentyrian_data.c and src/opentyrian_level_port.c.
@@ -3996,7 +4272,22 @@ def main() -> None:
         "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
         "obj_enemy_preconverted_frames=0",
         "obj_enemy_runtime_source=ROMFS newsh*.shp/tyrian.shp",
-        "obj_enemy_runtime_decoder=src/opentyrian_sprite2.c",
+        "obj_enemy_runtime_decoder=build-time lossless raw + RLE fallback",
+        "obj_enemy_raw_scope=all logical banks and all components",
+        (
+            "obj_enemy_raw_components="
+            f"{sprite2_raw_report['component_count']}"
+        ),
+        f"obj_enemy_raw_bytes={sprite2_raw_report['raw_bytes']}",
+        f"obj_enemy_raw_crc32={sprite2_raw_report['raw_crc32']}",
+        (
+            "obj_enemy_raw_source_stream_crc32="
+            f"{sprite2_raw_report['source_stream_crc32']}"
+        ),
+        (
+            "obj_enemy_raw_roundtrip_components="
+            f"{sprite2_raw_report['roundtrip_components']}"
+        ),
         "obj_enemy_runtime_format=8bpp 32x32 split VRAM cache",
         "obj_enemy_frame_key=shape_table/egr[enemycycle-1]/size/filter",
         "obj_enemy_large_composition=graphic+0,+1,+19,+20",

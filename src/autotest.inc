@@ -49,7 +49,7 @@ static void sram_write_u32(u32 offset, u32 value)
 
 #ifdef AUTOTEST_ROMFS_LEVEL_MATRIX
 enum {
-    ROMFS_MATRIX_SCHEMA = 1,
+    ROMFS_MATRIX_SCHEMA = 2,
     ROMFS_MATRIX_RECORD_OFFSET = 128,
     ROMFS_MATRIX_RECORD_BYTES = 32,
     ROMFS_MATRIX_ROUTE_LIMIT = 128,
@@ -75,6 +75,8 @@ enum {
     ROMFS_MATRIX_FAIL_ROUTE_LEVEL = 20,
     ROMFS_MATRIX_FAIL_ROUTE_MUSIC = 21,
     ROMFS_MATRIX_FAIL_ROUTE_LIMIT = 22,
+    ROMFS_MATRIX_FAIL_SPRITE2_PALETTE = 23,
+    ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY = 24,
 };
 
 typedef struct {
@@ -98,6 +100,9 @@ typedef struct {
     u32 level_section_bytes;
     u32 route_checksum;
     u32 matrix_checksum;
+    u32 sprite2_l2_frames;
+    u32 sprite2_l2_pixels;
+    u32 sprite2_l2_filter_frames;
 } RomfsMatrixTelemetry;
 
 static u8 romfs_matrix_enemy_queued[OT_HDT_ENEMY_COUNT] EWRAM_BSS;
@@ -107,6 +112,9 @@ static u8 romfs_matrix_shape_validated[
 ]
     EWRAM_BSS;
 static u16 romfs_matrix_enemy_queue[OT_HDT_ENEMY_COUNT] EWRAM_BSS;
+static u16 romfs_matrix_sprite2_pixels[
+    OT_SPRITE2_FRAME_PIXELS
+] EWRAM_BSS __attribute__((aligned(4)));
 static u16 romfs_matrix_enemy_queue_count;
 
 static u32 romfs_matrix_hash(u32 hash, u32 value)
@@ -206,6 +214,77 @@ static u8 romfs_matrix_validate_shape_bank(
     return 1;
 }
 
+static u8 romfs_matrix_validate_sprite2_l2(
+    RomfsMatrixTelemetry *telemetry,
+    u8 shape_table,
+    u16 graphic,
+    u8 size,
+    u8 filter
+)
+{
+    const u8 projectile =
+        shape_table == OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY ||
+        shape_table == OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY;
+    const u8 width = projectile ? 16 : OT_SPRITE2_FRAME_WIDTH;
+    const u8 height = projectile ? 16 : OT_SPRITE2_FRAME_HEIGHT;
+    const u8 tile_columns = projectile ? 2 : 4;
+    const u8 *actual = source_sprite2_l2_tiles[0];
+    u8 y;
+
+    if (
+        !source_enemy_palette_valid ||
+        !ot_sprite2_frame_decode(
+            shape_table,
+            graphic,
+            size,
+            filter,
+            romfs_matrix_sprite2_pixels,
+            OT_SPRITE2_FRAME_PIXELS
+        ) ||
+        !source_sprite2_l2_build(
+            0,
+            shape_table,
+            graphic,
+            size,
+            filter
+        )
+    ) {
+        return 0;
+    }
+
+    for (y = 0; y < height; y++) {
+        u8 x;
+
+        for (x = 0; x < width; x++) {
+            u16 decoded = projectile ?
+                romfs_matrix_sprite2_pixels[
+                    (u32)(y + 9u) * OT_SPRITE2_FRAME_WIDTH +
+                    x + 10u
+                ] :
+                romfs_matrix_sprite2_pixels[
+                    (u32)y * OT_SPRITE2_FRAME_WIDTH + x
+                ];
+            u8 expected = decoded == 0 ?
+                0 :
+                source_enemy_palette_map[(u8)(decoded - 1u)];
+
+            if (
+                actual[source_sprite2_tile_offset(
+                    x,
+                    y,
+                    tile_columns
+                )] != expected
+            ) {
+                return 0;
+            }
+        }
+    }
+    telemetry->sprite2_l2_frames++;
+    telemetry->sprite2_l2_pixels += (u32)width * height;
+    if (filter != 0) telemetry->sprite2_l2_filter_frames++;
+    return 1;
+}
+
 static u8 romfs_matrix_validate_graphic(
     RomfsMatrixTelemetry *telemetry,
     u8 episode,
@@ -233,6 +312,13 @@ static u8 romfs_matrix_validate_graphic(
             graphic,
             &sprite
         ) ||
+        ot_sprite2_raw_component(shape_table, graphic) == 0 ||
+        !ot_sprite2_raw_component_matches_rle(
+            shape_table,
+            graphic,
+            romfs_matrix_sprite2_pixels,
+            OT_SPRITE2_FRAME_PIXELS
+        ) ||
         (
             size == 1 &&
             (
@@ -250,6 +336,36 @@ static u8 romfs_matrix_validate_graphic(
                     shape_table,
                     (u16)(graphic + 20u),
                     &sprite
+                ) ||
+                ot_sprite2_raw_component(
+                    shape_table,
+                    (u16)(graphic + 1u)
+                ) == 0 ||
+                ot_sprite2_raw_component(
+                    shape_table,
+                    (u16)(graphic + 19u)
+                ) == 0 ||
+                ot_sprite2_raw_component(
+                    shape_table,
+                    (u16)(graphic + 20u)
+                ) == 0 ||
+                !ot_sprite2_raw_component_matches_rle(
+                    shape_table,
+                    (u16)(graphic + 1u),
+                    romfs_matrix_sprite2_pixels,
+                    OT_SPRITE2_FRAME_PIXELS
+                ) ||
+                !ot_sprite2_raw_component_matches_rle(
+                    shape_table,
+                    (u16)(graphic + 19u),
+                    romfs_matrix_sprite2_pixels,
+                    OT_SPRITE2_FRAME_PIXELS
+                ) ||
+                !ot_sprite2_raw_component_matches_rle(
+                    shape_table,
+                    (u16)(graphic + 20u),
+                    romfs_matrix_sprite2_pixels,
+                    OT_SPRITE2_FRAME_PIXELS
                 )
             )
         )
@@ -257,6 +373,25 @@ static u8 romfs_matrix_validate_graphic(
         romfs_matrix_fail(
             telemetry,
             failure_code,
+            episode,
+            level,
+            ((u32)shape_table << 16) | graphic,
+            level_failure
+        );
+        return 0;
+    }
+    if (
+        !romfs_matrix_validate_sprite2_l2(
+            telemetry,
+            shape_table,
+            graphic,
+            size,
+            0
+        )
+    ) {
+        romfs_matrix_fail(
+            telemetry,
+            ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY,
             episode,
             level,
             ((u32)shape_table << 16) | graphic,
@@ -847,6 +982,16 @@ static void autotest_romfs_level_matrix(void)
         sizeof(romfs_matrix_shape_validated)
     );
     romfs_matrix_enemy_queue_count = 0;
+    if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
+        romfs_matrix_fail(
+            &telemetry,
+            ROMFS_MATRIX_FAIL_SPRITE2_PALETTE,
+            0,
+            0,
+            SOURCE_LEVEL_PALETTE_INDEX,
+            0
+        );
+    }
 
     for (episode = 1; episode <= OT_EPISODE_COUNT; episode++) {
         u16 level_count;
@@ -1072,6 +1217,24 @@ static void autotest_romfs_level_matrix(void)
     }
 
     romfs_matrix_validate_enqueued_enemies(&telemetry);
+    if (
+        !romfs_matrix_validate_sprite2_l2(
+            &telemetry,
+            1,
+            1,
+            0,
+            0x09
+        )
+    ) {
+        romfs_matrix_fail(
+            &telemetry,
+            ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY,
+            0,
+            0,
+            0x00010001u,
+            0
+        );
+    }
     romfs_matrix_validate_routes(
         &telemetry,
         episode_level_count
@@ -1125,6 +1288,12 @@ static void autotest_romfs_level_matrix(void)
     );
     sram_write_u32(120, romfs_matrix_enemy_queue_count);
     sram[124] = *(volatile const u8 *)save_type_marker;
+    sram_write_u32(6000, telemetry.sprite2_l2_frames);
+    sram_write_u32(6004, telemetry.sprite2_l2_pixels);
+    sram_write_u32(6008, telemetry.sprite2_l2_filter_frames);
+    sram_write_u32(6012, ot_sprite2_raw_catalog_valid() ? 1 : 0);
+    sram_write_u32(6016, SPRITE2_RAW_DATA_BYTES);
+    sram_write_u32(6020, SPRITE2_RAW_DATA_CRC32);
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
@@ -1618,7 +1787,7 @@ static void autotest_finish(void)
 #else
     sram[2] = 'B';
     sram[3] = 'A';
-    sram[4] = 24;
+    sram[4] = 25;
 #endif
     sram[5] = pass;
     sram[6] = game_state;
@@ -1851,6 +2020,34 @@ static void autotest_finish(void)
         telemetry_projectile_cache_max_visible_unique
     );
     sram_write_u32(6084, telemetry_sprite2_compact_uploads);
+    sram_write_u32(6200, telemetry_boss_perf_started);
+    sram_write_u32(6204, telemetry_boss_perf_completed);
+    sram_write_u32(6208, telemetry_boss_perf_start_position);
+    sram_write_u32(6212, telemetry_boss_perf_end_position);
+    sram_write_u32(6216, telemetry_boss_perf_display_frames);
+    sram_write_u32(6220, telemetry_boss_perf_missed_vblanks);
+    sram_write_u32(6224, telemetry_boss_perf_sprite2_misses);
+    sram_write_u32(6228, telemetry_boss_perf_sprite2_evictions);
+    sram_write_u32(6232, telemetry_boss_perf_sprite2_upload_bytes);
+    sram_write_u32(6236, telemetry_boss_perf_projectile_misses);
+    sram_write_u32(6240, telemetry_waitcnt);
+    sram_write_u32(6244, telemetry_sprite2_l2_hits);
+    sram_write_u32(6248, telemetry_sprite2_l2_misses);
+    sram_write_u32(6252, telemetry_sprite2_l2_evictions);
+    sram_write_u32(6256, telemetry_sprite2_l2_drops);
+    sram_write_u32(6260, telemetry_sprite2_l2_flushes);
+    sram_write_u32(6264, telemetry_sprite2_l2_raw_builds);
+    sram_write_u32(6268, telemetry_sprite2_l2_rle_fallbacks);
+    sram_write_u32(6272, telemetry_sprite2_l2_max_visible_unique);
+    sram_write_u32(6276, telemetry_boss_perf_l2_hits);
+    sram_write_u32(6280, telemetry_boss_perf_l2_misses);
+    sram_write_u32(6284, telemetry_boss_perf_l2_evictions);
+    sram_write_u32(6288, telemetry_boss_perf_l2_raw_builds);
+    sram_write_u32(6292, telemetry_boss_perf_l2_fallbacks);
+    sram_write_u32(6296, ot_sprite2_raw_catalog_valid() ? 1 : 0);
+    sram_write_u32(6300, SPRITE2_RAW_DATA_BYTES);
+    sram_write_u32(6304, SPRITE2_RAW_DATA_CRC32);
+    sram_write_u32(6308, SOURCE_SPRITE2_L2_SLOT_COUNT);
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);

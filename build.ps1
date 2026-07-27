@@ -18,12 +18,12 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v28_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v28_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v28_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v28_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v28_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v28_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v29_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v29_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v29_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v29_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v29_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v29_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -51,6 +51,8 @@ $verificationPath = Join-Path $buildDir "verification.txt"
 $backupDir = Join-Path $projectRoot "Backup"
 $romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
 $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
+$sprite2RawPath = Join-Path $projectRoot "res\sprite2_raw_components.bin"
+$sprite2RawAuditPath = Join-Path $projectRoot "res\sprite2_raw_audit.txt"
 $python = (Get-Command python -ErrorAction Stop).Source
 
 foreach ($required in @(
@@ -117,6 +119,46 @@ if (
     throw "ROMFS audit metadata does not match its packed image"
 }
 
+foreach ($rawOutput in @($sprite2RawPath, $sprite2RawAuditPath)) {
+    if (-not (Test-Path -LiteralPath $rawOutput)) {
+        throw "Sprite2 raw build output is missing: $rawOutput"
+    }
+}
+$sprite2RawAudit = [ordered]@{}
+foreach (
+    $line in Get-Content -LiteralPath $sprite2RawAuditPath
+) {
+    $pair = $line.Split("=", 2)
+    if ($pair.Count -eq 2) {
+        $sprite2RawAudit[$pair[0]] = $pair[1]
+    }
+}
+$sprite2RawBytes = (Get-Item -LiteralPath $sprite2RawPath).Length
+$sprite2RawSha256 = (
+    Get-FileHash -LiteralPath $sprite2RawPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+$sprite2RawCrc32 = [Convert]::ToUInt32("aca11e49", 16)
+if (
+    $sprite2RawAudit.version -ne "1" -or
+    $sprite2RawAudit.table_count -ne "37" -or
+    $sprite2RawAudit.components_per_table -ne "304" -or
+    $sprite2RawAudit.component_count -ne "11248" -or
+    $sprite2RawAudit.component_width -ne "12" -or
+    $sprite2RawAudit.component_height -ne "14" -or
+    $sprite2RawAudit.component_bytes -ne "168" -or
+    $sprite2RawBytes -ne 1889664 -or
+    [int64]$sprite2RawAudit.raw_bytes -ne $sprite2RawBytes -or
+    $sprite2RawAudit.raw_crc32 -ne "aca11e49" -or
+    $sprite2RawAudit.raw_sha256 -ne $sprite2RawSha256 -or
+    $sprite2RawSha256 -ne
+        "a6c475d5c02264e8c761eb9ceb208ccbd2f01ef19b29e4e1ca547334b9993819" -or
+    $sprite2RawAudit.source_stream_bytes -ne "1119622" -or
+    $sprite2RawAudit.source_stream_crc32 -ne "5b6084ce" -or
+    $sprite2RawAudit.roundtrip_components -ne "11248"
+) {
+    throw "Sprite2 raw audit does not match the stock logical bank catalog"
+}
+
 function Test-GbaRom {
     param(
         [Parameter(Mandatory)]
@@ -162,6 +204,56 @@ function Test-GbaRom {
         header_complement = "0x$($bytes[0xBD].ToString('X2'))"
         sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).
             Hash.ToLowerInvariant()
+    }
+}
+
+function Test-GbaMemoryBudget {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+        [Parameter(Mandatory)]
+        [string]$MapPath
+    )
+
+    $mapText = Get-Content -LiteralPath $MapPath -Raw
+    $ewramMatch = [regex]::Match(
+        $mapText,
+        "(?m)^\s*0x(?<address>02[0-9a-fA-F]{6})\s+__eheap_start\b"
+    )
+    $iwramMatch = [regex]::Match(
+        $mapText,
+        "(?m)^\s*0x(?<address>03[0-9a-fA-F]{6})\s+__iheap_start\b"
+    )
+    if (-not $ewramMatch.Success -or -not $iwramMatch.Success) {
+        throw "Unable to read GBA memory limits from linker map: $MapPath"
+    }
+
+    $ewramStart = [Convert]::ToUInt32(
+        $ewramMatch.Groups["address"].Value,
+        16
+    )
+    $iwramStart = [Convert]::ToUInt32(
+        $iwramMatch.Groups["address"].Value,
+        16
+    )
+    $ewramFree = 0x02040000L - $ewramStart
+    $iwramFree = 0x03008000L - $iwramStart
+    if (
+        $ewramFree -lt 48KB -or
+        $iwramFree -lt 6KB
+    ) {
+        throw (
+            "GBA memory safety margin regressed for ${Name}: " +
+            "EWRAM free=$ewramFree, IWRAM free=$iwramFree"
+        )
+    }
+
+    [ordered]@{
+        name = $Name
+        ewram_heap_start = "0x$($ewramStart.ToString('X8'))"
+        ewram_free_bytes = $ewramFree
+        iwram_heap_start = "0x$($iwramStart.ToString('X8'))"
+        iwram_free_bytes = $iwramFree
     }
 }
 
@@ -351,6 +443,26 @@ $campaignTestInfo = Test-GbaRom `
     -Name "campaign_autotest" `
     -Path $campaignTestRom `
     -ExpectedGameCode "TYGC"
+$memoryInfos = @(
+    Test-GbaMemoryBudget `
+        -Name "release" `
+        -MapPath ([IO.Path]::ChangeExtension($releaseRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($testRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "death_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($deathTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "jukebox_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($jukeboxTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "matrix_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($matrixTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "campaign_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($campaignTestRom, ".map"))
+)
 
 $env:PATH = "$ucrtBin;$env:PATH"
 if (Test-Path -LiteralPath $testSave) {
@@ -380,7 +492,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 648) {
+if ($saveBytes.Length -lt 6312) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -558,7 +670,53 @@ $telemetry = [ordered]@{
     final_stats_cube_visible_count = Read-TelemetryU32 636
     final_player_end_warp = Read-TelemetryU32 640
     initial_player_end_warp = Read-TelemetryU32 644
+    background_cache_approximations = Read-TelemetryU32 648
+    background_cache_evictions = Read-TelemetryU32 652
+    background_cache_uploads = Read-TelemetryU32 656
+    background_cache_layer0_valid = Read-TelemetryU32 660
+    background_cache_layer1_valid = Read-TelemetryU32 664
+    background_cache_layer2_valid = Read-TelemetryU32 668
+    background_rows_prefetched = Read-TelemetryU32 672
+    background_rows_synchronous = Read-TelemetryU32 676
+    background_rows_existing = Read-TelemetryU32 680
+    background_prefetch_late_columns = Read-TelemetryU32 684
+    background_tile_render_count = Read-TelemetryU32 688
+    projectile_cache_hits = Read-TelemetryU32 692
+    projectile_cache_misses = Read-TelemetryU32 696
+    projectile_cache_evictions = Read-TelemetryU32 700
+    projectile_cache_drops = Read-TelemetryU32 704
+    projectile_cache_uploads = Read-TelemetryU32 708
+    projectile_cache_max_uploads = Read-TelemetryU32 712
+    projectile_cache_max_visible_unique = Read-TelemetryU32 716
     sprite2_compact_uploads = Read-TelemetryU32 6084
+    boss_perf_started = Read-TelemetryU32 6200
+    boss_perf_completed = Read-TelemetryU32 6204
+    boss_perf_start_position = Read-TelemetryU32 6208
+    boss_perf_end_position = Read-TelemetryU32 6212
+    boss_perf_display_frames = Read-TelemetryU32 6216
+    boss_perf_missed_vblanks = Read-TelemetryU32 6220
+    boss_perf_sprite2_misses = Read-TelemetryU32 6224
+    boss_perf_sprite2_evictions = Read-TelemetryU32 6228
+    boss_perf_sprite2_upload_bytes = Read-TelemetryU32 6232
+    boss_perf_projectile_misses = Read-TelemetryU32 6236
+    waitcnt = Read-TelemetryU32 6240
+    sprite2_l2_hits = Read-TelemetryU32 6244
+    sprite2_l2_misses = Read-TelemetryU32 6248
+    sprite2_l2_evictions = Read-TelemetryU32 6252
+    sprite2_l2_drops = Read-TelemetryU32 6256
+    sprite2_l2_flushes = Read-TelemetryU32 6260
+    sprite2_l2_raw_builds = Read-TelemetryU32 6264
+    sprite2_l2_rle_fallbacks = Read-TelemetryU32 6268
+    sprite2_l2_max_visible_unique = Read-TelemetryU32 6272
+    boss_perf_l2_hits = Read-TelemetryU32 6276
+    boss_perf_l2_misses = Read-TelemetryU32 6280
+    boss_perf_l2_evictions = Read-TelemetryU32 6284
+    boss_perf_l2_raw_builds = Read-TelemetryU32 6288
+    boss_perf_l2_fallbacks = Read-TelemetryU32 6292
+    sprite2_raw_catalog_valid = Read-TelemetryU32 6296
+    sprite2_raw_bytes = Read-TelemetryU32 6300
+    sprite2_raw_crc32 = Read-TelemetryU32 6304
+    sprite2_l2_slots = Read-TelemetryU32 6308
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -832,8 +990,9 @@ $legacyStage4TelemetryChecks = [ordered]@{
 $expectedDetailLevel = if ($DetailLevel -eq "low") { 0 } else { 1 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { 16872 } else { 13509 }
+$expectedBossDisplayFrames = if ($GameSpeed -eq "low") { 2226 } else { 1781 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 24
+    schema_version = $telemetry.version -eq 25
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
@@ -845,10 +1004,7 @@ $telemetryChecks = [ordered]@{
     authored_event_cursor = $telemetry.final_source_event_index -eq 935
     full_level_tick = $telemetry.final_level_tick -eq 7832
     frontend_and_level_transitions = $telemetry.state_transitions -eq 11
-    vblank_budget = (
-        $telemetry.missed_vblanks * 20 -le
-            $telemetry.display_frames
-    )
+    vblank_budget = $telemetry.missed_vblanks -le 20
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
     no_map_stream_drops = $telemetry.stream_drops -eq 0
     no_reward_drops = $telemetry.reward_drops -eq 0
@@ -925,6 +1081,69 @@ $telemetryChecks = [ordered]@{
             ) * 1024 +
                 $telemetry.sprite2_compact_uploads * 256 -and
         $telemetry.sprite2_cache_slots -eq 24
+    )
+    sprite2_workload_unchanged = (
+        $telemetry.sprite2_cache_misses -eq 582 -and
+        $telemetry.sprite2_cache_evictions -eq 558 -and
+        $telemetry.sprite2_uploads -eq 582 -and
+        $telemetry.sprite2_upload_bytes -eq 563712 -and
+        $telemetry.sprite2_max_uploads_per_frame -eq 16 -and
+        $telemetry.projectile_cache_misses -eq 150
+    )
+    projectile_cache_accounting = (
+        $telemetry.projectile_cache_drops -eq 0 -and
+        $telemetry.projectile_cache_uploads -eq
+            $telemetry.projectile_cache_misses -and
+        $telemetry.projectile_cache_max_visible_unique -le 8
+    )
+    sprite2_raw_catalog = (
+        $telemetry.sprite2_raw_catalog_valid -eq 1 -and
+        $telemetry.sprite2_raw_bytes -eq $sprite2RawBytes -and
+        $telemetry.sprite2_raw_crc32 -eq $sprite2RawCrc32
+    )
+    sprite2_l2_accounting = (
+        $telemetry.sprite2_l2_slots -eq 64 -and
+        $telemetry.sprite2_l2_drops -eq 0 -and
+        $telemetry.sprite2_l2_flushes -eq 1 -and
+        $telemetry.sprite2_l2_rle_fallbacks -eq 0 -and
+        $telemetry.sprite2_l2_raw_builds -eq
+            $telemetry.sprite2_l2_misses -and
+        $telemetry.sprite2_l2_hits +
+            $telemetry.sprite2_l2_misses -eq
+            $telemetry.sprite2_cache_misses +
+                $telemetry.projectile_cache_misses -and
+        $telemetry.sprite2_l2_max_visible_unique -le
+            $telemetry.sprite2_l2_slots
+    )
+    sprite2_l2_golden = (
+        $telemetry.sprite2_l2_hits -eq 568 -and
+        $telemetry.sprite2_l2_misses -eq 164 -and
+        $telemetry.sprite2_l2_evictions -eq 100 -and
+        $telemetry.sprite2_l2_raw_builds -eq 164 -and
+        $telemetry.sprite2_l2_max_visible_unique -eq 16
+    )
+    gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
+    authored_boss_perf_window = (
+        $telemetry.boss_perf_started -eq 1 -and
+        $telemetry.boss_perf_completed -eq 1 -and
+        $telemetry.boss_perf_start_position -eq 5401 -and
+        $telemetry.boss_perf_end_position -eq 6438 -and
+        $telemetry.boss_perf_display_frames -eq
+            $expectedBossDisplayFrames -and
+        $telemetry.boss_perf_sprite2_misses -eq 432 -and
+        $telemetry.boss_perf_sprite2_evictions -eq 432 -and
+        $telemetry.boss_perf_sprite2_upload_bytes -eq 411648 -and
+        $telemetry.boss_perf_projectile_misses -eq 146
+    )
+    authored_boss_perf_budget = (
+        $telemetry.boss_perf_missed_vblanks -le 8
+    )
+    authored_boss_l2_golden = (
+        $telemetry.boss_perf_l2_hits -eq 548 -and
+        $telemetry.boss_perf_l2_misses -eq 30 -and
+        $telemetry.boss_perf_l2_evictions -eq 30 -and
+        $telemetry.boss_perf_l2_raw_builds -eq 30 -and
+        $telemetry.boss_perf_l2_fallbacks -eq 0
     )
     effect_cache_accounting = (
         $telemetry.effect_cache_drops -eq 0 -and
@@ -1222,7 +1441,7 @@ if (-not (Test-Path -LiteralPath $matrixTestSave)) {
 }
 $matrixSaveBytes = [IO.File]::ReadAllBytes($matrixTestSave)
 if (
-    $matrixSaveBytes.Length -lt 124 -or
+    $matrixSaveBytes.Length -lt 6024 -or
     [Text.Encoding]::ASCII.GetString($matrixSaveBytes, 0, 4) -ne "TGLM"
 ) {
     throw "ROMFS matrix SRAM telemetry is invalid"
@@ -1251,9 +1470,15 @@ $matrixTelemetry = [ordered]@{
     weapons = Read-MatrixTelemetryU32 80
     detail_level = Read-MatrixTelemetryU32 96
     game_speed = Read-MatrixTelemetryU32 100
+    sprite2_l2_frames = Read-MatrixTelemetryU32 6000
+    sprite2_l2_pixels = Read-MatrixTelemetryU32 6004
+    sprite2_l2_filter_frames = Read-MatrixTelemetryU32 6008
+    sprite2_raw_catalog_valid = Read-MatrixTelemetryU32 6012
+    sprite2_raw_bytes = Read-MatrixTelemetryU32 6016
+    sprite2_raw_crc32 = Read-MatrixTelemetryU32 6020
 }
 $matrixChecks = [ordered]@{
-    schema = $matrixTelemetry.schema -eq 1
+    schema = $matrixTelemetry.schema -eq 2
     rom_reported_pass = $matrixTelemetry.pass -eq 1
     every_lvl_section = (
         $matrixTelemetry.total_sections -eq 62 -and
@@ -1279,6 +1504,17 @@ $matrixChecks = [ordered]@{
         $matrixTelemetry.sprites -eq 6097 -and
         $matrixTelemetry.enemies -eq 818 -and
         $matrixTelemetry.weapons -eq 52
+    )
+    sprite2_runtime_pixel_parity = (
+        $matrixTelemetry.sprite2_l2_frames -eq
+            $matrixTelemetry.sprites + 1 -and
+        $matrixTelemetry.sprite2_l2_pixels -eq 6146816 -and
+        $matrixTelemetry.sprite2_l2_filter_frames -eq 1
+    )
+    sprite2_raw_catalog = (
+        $matrixTelemetry.sprite2_raw_catalog_valid -eq 1 -and
+        $matrixTelemetry.sprite2_raw_bytes -eq $sprite2RawBytes -and
+        $matrixTelemetry.sprite2_raw_crc32 -eq $sprite2RawCrc32
     )
     requested_configuration = (
         $matrixTelemetry.detail_level -eq $expectedDetailLevel -and
@@ -1432,7 +1668,19 @@ foreach (
         $verification.Add("$($info.name)_$($entry.Key)=$($entry.Value)")
     }
 }
+foreach ($memory in $memoryInfos) {
+    foreach ($entry in $memory.GetEnumerator()) {
+        $verification.Add(
+            "memory_$($memory.name)_$($entry.Key)=$($entry.Value)"
+        )
+    }
+}
 $verification.Add("soundbank_bytes=$soundbankBytes")
+$verification.Add("sprite2_raw_bytes=$sprite2RawBytes")
+$verification.Add("sprite2_raw_sha256=$sprite2RawSha256")
+foreach ($entry in $sprite2RawAudit.GetEnumerator()) {
+    $verification.Add("sprite2_raw_audit_$($entry.Key)=$($entry.Value)")
+}
 $verification.Add("romfs_files=$($romfsAudit.entry_count)")
 $verification.Add("romfs_probes=$($romfsAudit.probe_count)")
 $verification.Add("romfs_payload_bytes=$($romfsAudit.payload_bytes)")

@@ -283,6 +283,7 @@ static void render_source_play_scene(void)
 {
     u8 visible_source_enemies = 0;
 
+    source_sprite2_l2_begin_frame();
     source_enemy_cache_begin_frame();
     source_projectile_cache_begin_frame();
     render_source_boss_bars();
@@ -351,6 +352,7 @@ static void render_source_play_scene(void)
     );
     source_enemy_cache_end_frame();
     source_projectile_cache_end_frame();
+    source_sprite2_l2_end_frame();
 
     telemetry_source_visible_enemies = visible_source_enemies;
     if (
