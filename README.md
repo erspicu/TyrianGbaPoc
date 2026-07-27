@@ -25,20 +25,20 @@ The current scope is deliberately narrow:
 - Mode-4 double-buffered menu transitions and selection-row-only updates;
   invalid keys perform no redraw
 - three independently scrolling Mode-0 background layers (MAP1, MAP2 and MAP3)
-- all source records remain directly addressable; the deterministic
-  first-level route consumes 935 records through the authored boss exit
-  (931 applied and four conditionally skipped)
+- all source records remain directly addressable; with the max-power stock
+  Pulse-Cannon, the deterministic first-level route consumes 892 records
+  through the earlier authored boss exit (888 applied and four skipped)
 - PC `curLoc` timing and source enemy identity, pool, position, movement,
   armor, animation, link, turret and death fields
-- the original four 25-slot enemy groups: 473/473 event spawns, three successful
+- the original four 25-slot enemy groups: 473/473 event spawns, 21 successful
   death spawns, a peak of 39 active objects and no pool-full loss
-- a concrete 60-entry OpenTyrian projectile pool: 428 source shots, peak 32,
-  17,504 movement updates and zero projectile drops
+- a concrete 60-entry OpenTyrian projectile pool: 86 source shots, peak 8,
+  5,198 movement updates and zero projectile drops on the max-weapon route
 - source player-shot ordering and collision formulas, armor damage,
   `dlevel=-1` fixed remnants, linked destruction, direct `evalue` credit and
   `eenemydie` children
-- three physical pickups spawned, two collected and the data-cube branch
-  crossed by the deterministic route
+- 22 physical pickups spawned, nine collected and two Data Cubes acquired by
+  the deterministic max-weapon route
 - a complete, lossless build-time expansion of all 37 stock Sprite2 banks;
   runtime still selects `(shape_table, egr[enemycycle - 1], size, filter)`
   from LVL/HDT and applies the active PC palette
@@ -56,16 +56,16 @@ The current scope is deliberately narrow:
 - exact PC player inertia, background parallax and enemy map offsets; the GBA
   crops `game_screen x=36..275, y=12..171` and restricts the player to source
   `y=17..152`, keeping the complete 24x28 ship inside that visible crop
-- original Pulse-Cannon graphic 59 from HDT weapon 155, stable USP Talon bank
-  poses, original explosion and reward animation assets, TINY_FONT cash and
-  FONT_SHAPES `PAUSED`
+- stock Port 1 Pulse-Cannon at power 11 from HDT weapon 165, including its
+  five-shot 62/59 graphics, stable USP Talon bank poses, source explosion and
+  reward assets, TINY_FONT cash and FONT_SHAPES status labels
 - shield-to-armor player damage, explosion and Game Over flow; the current
   validation ROM keeps `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1`, while setting it
   to `0` restores that translated damage path
 - the linked source boss group, PC-style boss health bar, end-level flight,
   level statistics and return to Game Menu
-- complete first-level tracker music, seven converted Tyrian sound effects and
-  the original Normal-speed target of about 34.78 logic updates/second
+- complete tracker music plus all 29 Tyrian SFX and nine voices, with the
+  original Normal-speed target of about 34.78 logic updates/second
 
 The validation build keeps the player invincible without suppressing
 collision telemetry. A dedicated forced-death regression compiles the flag
@@ -100,6 +100,14 @@ character caches with one source-wide 576/480/480 partition. It fits the
 known 533/434/454 per-layer maxima without per-level tables, load-time map
 scans or generated GBA-only backgrounds.
 
+The v37 release returns from the six-system stress fixture to the stock
+Port 1 Pulse-Cannon at power 11 and defaults to High Detail. It packs the
+complete 38-entry source sound catalog, restores gameplay voices and
+explosions, translates the Secret Level portal response, moves the cash
+readout down 12 pixels, and resets all four enemy shape slots at every level
+boundary exactly like OpenTyrian. Episode 4 section 1 completes with zero
+unknown visuals, decode failures, cache drops or RLE fallbacks.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -120,7 +128,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v32_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v37_detail_high_speed_normal.gba
 ```
 
 `build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
@@ -138,6 +146,8 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v37 source audio, max single weapon and Episode 4 Sprite parity](MD/Tyrian-GBA-Source-Audio-Gameplay-Parity-v37.md)
+- [v37 updated plan](MD/Tyrian-GBA-Updated-Plan-v37.md)
 - [v36 hotpath and IWRAM evaluation](MD/Tyrian-GBA-Hotpath-Evaluation-v36.md)
 - [v36 updated plan](MD/Tyrian-GBA-Updated-Plan-v36.md)
 - [v35 fixed-timestep drop-frame and ARM7 evaluation](MD/Tyrian-GBA-Drop-Frame-ARM7-v35.md)

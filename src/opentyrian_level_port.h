@@ -386,6 +386,8 @@ typedef struct {
     bool bonus_level;
     uint16_t next_level;
     uint16_t display_time;
+    uint8_t display_flash;
+    int8_t display_flash_change;
 
     uint32_t applied_event_count;
     uint32_t deferred_event_count;

@@ -1073,11 +1073,17 @@ static void frontend_update(void)
             } else {
                 if (
                     frontend_level_completed &&
+                    source_parity_level.bonus_level &&
+                    source_parity_level.next_level != 0
+                ) {
+                    frontend_main_section =
+                        source_parity_level.next_level;
+                } else if (
+                    frontend_level_completed &&
                     frontend_level_ready &&
                     frontend_level.next_section != 0
                 ) {
-                    frontend_main_section =
-                        frontend_level.next_section;
+                    frontend_main_section = frontend_level.next_section;
                 }
                 frontend_prepare_map();
                 frontend_enter_state(STATE_GAME_MENU, 4);
@@ -1422,7 +1428,7 @@ static void frontend_enter_level_stats(u8 completed)
     frontend_stats_cube_visible_count = 0;
     frontend_stats_timer = FRONTEND_STATS_STAGE_TICKS;
     frontend_enter_state(STATE_LEVEL_STATS, 0);
-    audio_effect(SFX_LEVEL_COMPLETE);
+    source_sound_effect(34);
     telemetry_level_complete_voice_starts++;
 }
 

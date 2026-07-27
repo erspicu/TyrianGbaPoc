@@ -27,7 +27,8 @@ pool、玩家彈碰撞、armor／damaged transition、linked death、`eenemydie`
 GBA 端只保留輸入、PC 264×184 gameplay viewport 的 240×160 中央裁切、
 BG/OAM、音訊及效果呈現。敵人、玩家、彈幕、碰撞與三層背景都留在 PC
 座標；不再用 GBA 尺寸反推或縮放 gameplay state。
-`curLoc=5400` 後仍切到既有簡化 Boss，尚不能宣稱 Boss source parity。
+目前已由 source linked boss group、Boss bar、離場飛行、統計畫面及返回
+Game Menu 接管；不再於 `curLoc=5400` 切換到舊的簡化 Boss。
 
 ## 已鎖定的顯示與操作規格
 
@@ -859,13 +860,34 @@ matrix、四關 campaign、death、Jukebox 與 Episode 2 route 均通過。
 - `Tyrian-GBA-Hotpath-Evaluation-v36.md`
 - `Tyrian-GBA-Updated-Plan-v36.md`
 
+## v37 完整音效、最強單武器與 Sprite bank 生命週期
+
+一般 release 已從六套極限武器切回 stock Port 1 Pulse-Cannon Power 11，
+直接讀取 HDT record 165 並依 `player_shot_create()` 建立五發子彈。
+預設配置改為 Detail High／Game Speed Normal。
+
+`tyrian.snd` 的 29 個 SFX 與 `voices.snd` 的九個人聲已全數打包；八格
+source `soundQueue[]` 不再只處理十個局部樣本。第一關回歸實際覆蓋
+Boss、Good Luck、Data Cube、Level Complete 及其他事件人聲。
+
+每次 `start_level` 都重新清空四個 enemy shape slots，修正舊版把前一關
+bank 帶進 Episode 4 所造成的錯圖／消失。Secret Level 的 portal、
+song 30、`nextLevel`、150-tick `Secret Level!` 閃字及後續 route override
+亦已逐行接上。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Source-Audio-Gameplay-Parity-v37.md`
+- `Tyrian-GBA-Updated-Plan-v37.md`
+
 ## 下一個移植階段
 
-1. 恢復 stock ammo、charge、cooldown 與裝備互斥。
-2. 建立合法 front／rear／sidekick／special 組合效能矩陣。
-3. 將四關 campaign 擴大成 Episode 1 完整 Full Game 與 Episode 2
+1. 把固定 Power-11 驗證裝備接回 campaign equipment state。
+2. 恢復 stock ammo、charge、cooldown 與裝備互斥。
+3. 建立合法 front／rear／sidekick／special 組合效能矩陣。
+4. 將四關 campaign 擴大成 Episode 1 完整 Full Game 與 Episode 2
    轉場，保存關卡間 player、cash、cube、weapon 與 global flags。
-4. 完成 turret 251..255、magnet、special effects 與 misc-shot 104。
+5. 完成 turret 251..255、magnet、special effects 與 misc-shot 104。
 
 ## 建置
 
@@ -873,10 +895,10 @@ matrix、四關 campaign、death、Jukebox 與 Episode 2 route 均通過。
 .\build.ps1
 ```
 
-目前 ROMFS v32 預設 ROM：
+目前 ROMFS v37 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v32_detail_low_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v37_detail_high_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

@@ -4,36 +4,38 @@
 enum {
     /*
      * Deterministic first-level run through the authored boss group and
-     * OpenTyrian end-level flight.  These replace the old position-5400
-     * POC handoff values.
+     * OpenTyrian end-level flight with the stock Port 1 Pulse-Cannon at
+     * power 11.  The stronger source weapon legitimately clears the boss
+     * earlier and destroys more authored enemies than the old power-1
+     * regression loadout.
     */
-    SOURCE_STAGE4_EXPECTED_EVENTS = 935,
-    SOURCE_STAGE4_EXPECTED_APPLIED = 931,
+    SOURCE_STAGE4_EXPECTED_EVENTS = 892,
+    SOURCE_STAGE4_EXPECTED_APPLIED = 888,
     SOURCE_STAGE4_EXPECTED_DEFERRED = 0,
     SOURCE_STAGE4_EXPECTED_SKIPPED = 4,
     SOURCE_STAGE4_EXPECTED_SPAWN_ATTEMPTS = 473,
     SOURCE_STAGE4_EXPECTED_SPAWN_SUCCESSES = 473,
     SOURCE_STAGE4_EXPECTED_POOL_FULL = 0,
-    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 7199,
-    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 2471,
-    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 78100,
-    SOURCE_STAGE4_EXPECTED_RELEASES = 483,
-    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 428,
-    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 428,
-    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 32,
-    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 17504,
-    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 426,
-    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 33,
-    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 585,
-    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 255,
-    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 100,
-    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 1406,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 3,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 2,
-    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 3,
-    SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 3,
+    SOURCE_STAGE4_EXPECTED_CONTROL_WRITES = 3413,
+    SOURCE_STAGE4_EXPECTED_RNG_CALLS = 1168,
+    SOURCE_STAGE4_EXPECTED_MOTION_UPDATES = 39885,
+    SOURCE_STAGE4_EXPECTED_RELEASES = 497,
+    SOURCE_STAGE4_EXPECTED_SHOT_TRIGGERS = 86,
+    SOURCE_STAGE4_EXPECTED_SHOT_SPAWNS = 86,
+    SOURCE_STAGE4_EXPECTED_SHOT_MAX_ACTIVE = 8,
+    SOURCE_STAGE4_EXPECTED_SHOT_UPDATES = 5198,
+    SOURCE_STAGE4_EXPECTED_SHOT_RELEASES = 84,
+    SOURCE_STAGE4_EXPECTED_SHOT_PLAYER_HITS = 12,
+    SOURCE_STAGE4_EXPECTED_PLAYER_SHOT_HITS = 1073,
+    SOURCE_STAGE4_EXPECTED_PLAYER_CONTACTS = 62,
+    SOURCE_STAGE4_EXPECTED_ENEMY_KILLS = 298,
+    SOURCE_STAGE4_EXPECTED_DIRECT_CASH = 4123,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_SPAWNS = 22,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS = 9,
+    SOURCE_STAGE4_EXPECTED_SCORE_ITEM_MAX_ACTIVE = 4,
+    SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 21,
     SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
-    SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 60,
+    SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 57,
     SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 30,
     SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 0,
 };
@@ -1932,7 +1934,7 @@ static void autotest_finish(void)
         source_parity_level.death_spawn_pool_full_count == 0 &&
         source_parity_level.death_spawn_missing_definition_count == 0 &&
         source_parity_level.score_item_unsupported_pickup_count == 0 &&
-        source_parity_level.data_cube_pickup_count == 1 &&
+        source_parity_level.data_cube_pickup_count == 2 &&
         source_parity_level.front_weapon_powerup_count == 0 &&
         source_parity_level.rear_weapon_powerup_count == 0 &&
         telemetry_source_death_control_events ==
@@ -1981,12 +1983,12 @@ static void autotest_finish(void)
         player_end_warp == 27 &&
         telemetry_level_complete_voice_starts == 1 &&
         telemetry_stats_stage_advances == 4 &&
-        telemetry_stats_cube_reveals == 1 &&
+        telemetry_stats_cube_reveals == 2 &&
         frontend_stats_stage == FRONTEND_STATS_STAGE_FINAL &&
-        frontend_stats_cube_visible_count == 1 &&
+        frontend_stats_cube_visible_count == 2 &&
         source_parity_level.enemy_shot_active_count == 2 &&
         source_parity_level.active_enemy_count == 0 &&
-        player_cash == 1456 &&
+        player_cash == 4573 &&
         /*
          * Runtime ROMFS background decoding adds a small, bounded amount of
          * work compared with the former first-level-only generated maps.
@@ -1995,8 +1997,8 @@ static void autotest_finish(void)
          */
         telemetry_missed_vblanks * 20u <=
             telemetry_display_frames &&
-        telemetry_source_launch_attempts == 7 &&
-        telemetry_source_launch_successes == 7 &&
+        telemetry_source_launch_attempts == 3 &&
+        telemetry_source_launch_successes == 3 &&
         telemetry_source_random_attempts == 0 &&
         telemetry_source_random_successes == 0 &&
         source_world_to_screen_x(SOURCE_PRESENTATION_X_ORIGIN) == 0 &&
@@ -2265,6 +2267,9 @@ static void autotest_finish(void)
         telemetry_projectile_cache_max_visible_unique
     );
     sram_write_u32(6084, telemetry_sprite2_compact_uploads);
+    sram_write_u32(6088, telemetry_source_sound_mask_low);
+    sram_write_u32(6092, telemetry_source_sound_mask_high);
+    sram_write_u32(6112, telemetry_secret_level_collision_pass);
     sram_write_u32(6200, telemetry_boss_perf_started);
     sram_write_u32(6204, telemetry_boss_perf_completed);
     sram_write_u32(6208, telemetry_boss_perf_start_position);

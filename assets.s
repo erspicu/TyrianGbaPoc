@@ -11,6 +11,11 @@ obj_palette:
 	.incbin "res/obj_palette.bin"
 
 	.balign 4
+	.global secret_level_palettes
+secret_level_palettes:
+	.incbin "res/secret_level_palettes.bin"
+
+	.balign 4
 	.global frontend_frames
 frontend_frames:
 	.incbin "res/frontend_frames.bin"

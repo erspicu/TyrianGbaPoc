@@ -178,7 +178,6 @@ static void render_player_shots(u8 priority)
     /* PC blits ascending slots; later slots must win the GBA OBJ tie. */
     for (index = MAX_PLAYER_SHOTS - 1; index >= 0; index--) {
         if (!player_shots[index].active) continue;
-#if TYRIAN_GBA_STRESS_LOADOUT
         {
             u16 frame = player_shots[index].render_graphic;
             u8 shape_table;
@@ -187,6 +186,7 @@ static void render_player_shots(u8 priority)
             s16 screen_x;
             s16 screen_y;
 
+#if TYRIAN_GBA_STRESS_LOADOUT
             if (frame > 60000) {
                 if (
                     frame !=
@@ -212,6 +212,7 @@ static void render_player_shots(u8 priority)
                 telemetry_stress_option_blend_draws++;
                 continue;
             }
+#endif
             if (frame > 1000) frame %= 1000;
             shape_table =
                 frame > 500 ?
@@ -220,7 +221,9 @@ static void render_player_shots(u8 priority)
             graphic = frame > 500 ? (u16)(frame - 500) : frame;
 #if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
             if (oam_count >= SPRITE_LIMIT) {
+#if TYRIAN_GBA_STRESS_LOADOUT
                 telemetry_projectile_culled_oam_full_before_cache++;
+#endif
                 continue;
             }
             screen_x = source_player_shot_screen_x(
@@ -233,7 +236,9 @@ static void render_player_shots(u8 priority)
                 screen_x <= -16 || screen_x >= SCREEN_WIDTH ||
                 screen_y <= -16 || screen_y >= SCREEN_HEIGHT
             ) {
+#if TYRIAN_GBA_STRESS_LOADOUT
                 telemetry_projectile_culled_offscreen_before_cache++;
+#endif
                 continue;
             }
             tile = source_projectile_cache_acquire(
@@ -262,14 +267,6 @@ static void render_player_shots(u8 priority)
                 priority
             );
         }
-#else
-        put_sprite(
-            source_player_shot_screen_x(&player_shots[index]),
-            source_player_shot_screen_y(&player_shots[index]),
-            OBJ_TILE_PLAYER_SHOT, OBJ_PAL_PLAYER_SHOT,
-            ATTR1_SIZE_16, priority
-        );
-#endif
     }
 }
 #endif
@@ -588,6 +585,12 @@ static void render_game(void)
          * entries before emitting the translated world in reverse order.
          */
         render_game_over_text();
+    }
+    if (
+        game_state == STATE_PLAY &&
+        source_parity_level.display_time > 0
+    ) {
+        render_secret_level_text();
     }
     if (
         game_paused

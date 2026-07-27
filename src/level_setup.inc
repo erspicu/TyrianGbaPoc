@@ -21,6 +21,34 @@ static void clear_entities(void)
     active_pickup_explosion_count = 0;
 }
 
+#ifdef AUTOTEST
+static u8 autotest_secret_level_collision(void)
+{
+    OtPlayerCollisionResult result;
+    OtEnemy *portal = &source_parity_level.enemy[0];
+
+    source_parity_level.player_x = 80;
+    source_parity_level.player_y = 96;
+    source_parity_level.enemy_avail[0] = 2;
+    memset(portal, 0, sizeof(*portal));
+    portal->ex = 80;
+    portal->ey = 96;
+    portal->evalue = 10042;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    return
+        result.bonus_level_triggered &&
+        result.next_level == 42 &&
+        source_parity_level.bonus_level &&
+        source_parity_level.next_level == 42 &&
+        source_parity_level.display_time == 150 &&
+        source_parity_level.enemy_avail[0] == 1;
+}
+#endif
+
 static u16 title_palette_colour(const OtDataView *palette, u8 index)
 {
     const u8 *rgb = palette->data + (u32)index * 3;
@@ -73,6 +101,8 @@ static u8 enter_level(u16 selected_section)
         TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW;
     source_background2_upload_pending = 0;
     game_over_tile_upload_pending = 0;
+    secret_level_tile_upload_pending = 0;
+    secret_level_palette_dirty = 0;
     clear_entities();
     hide_all_sprites();
 
@@ -177,12 +207,28 @@ static u8 enter_level(u16 selected_section)
         &source_parity_level,
         frontend_difficulty,
         frontend_play_mode == FRONTEND_PLAY_ARCADE,
-        source_enemy_shape_history_valid != 0
+        false
     );
+#ifdef AUTOTEST
+    /*
+     * Focused translation regression for mainint.c's evalue>10000 portal.
+     * Reinitialize immediately so the probe cannot affect authored state,
+     * event order or RNG.
+     */
+    telemetry_secret_level_collision_pass =
+        autotest_secret_level_collision();
+    ot_level_port_init(
+        &source_parity_level,
+        frontend_difficulty,
+        frontend_play_mode == FRONTEND_PLAY_ARCADE,
+        false
+    );
+#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
     stress_loadout_init();
+#else
+    source_front_weapon_init();
 #endif
-    source_enemy_shape_history_valid = 1;
     source_runtime_reset();
 
     telemetry_display_frames = 0;
@@ -321,6 +367,10 @@ static u8 enter_level(u16 selected_section)
     telemetry_end_level_initial_warp = 0;
     telemetry_end_level_trail_max = 0;
     telemetry_level_complete_voice_starts = 0;
+#ifdef AUTOTEST
+    telemetry_source_sound_mask_low = 0;
+    telemetry_source_sound_mask_high = 0;
+#endif
     telemetry_stats_stage_advances = 0;
     telemetry_stats_cube_reveals = 0;
     telemetry_player_death_large_explosions = 0;
@@ -356,6 +406,8 @@ static u8 enter_level(u16 selected_section)
     REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
         (source_background2_present() ? BG1_ON : 0);
     audio_load_source_song(frontend_level.source_song);
+    /* tyrian2.c start_level_first: soundQueue[3] = V_GOOD_LUCK. */
+    source_sound_effect(33);
     game_state = STATE_PLAY;
     telemetry_state_transitions++;
     return 1;

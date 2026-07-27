@@ -1,7 +1,6 @@
 /* Legacy player/enemy combat runtime retained until source-parity replacement. */
 
-#if TYRIAN_GBA_STRESS_LOADOUT
-static u8 stress_weapon_is_valid(const OtWeaponDefinition *weapon)
+static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
 {
     return
         weapon->multi > 0 &&
@@ -10,6 +9,53 @@ static u8 stress_weapon_is_valid(const OtWeaponDefinition *weapon)
         weapon->max <= 8;
 }
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void source_front_weapon_init(void)
+{
+    OtWeaponPortDefinition front_port;
+    u16 weapon_id = 0;
+
+    memset(&source_front_weapon, 0, sizeof(source_front_weapon));
+    source_front_weapon_valid =
+        ot_data_hdt_weapon_port_read(1, &front_port);
+    if (!source_front_weapon_valid) return;
+    weapon_id = front_port.op[0][10];
+    source_front_weapon_valid =
+        weapon_id == 165 &&
+        ot_data_hdt_weapon_read(weapon_id, &source_front_weapon) &&
+        source_weapon_is_valid(&source_front_weapon);
+    if (!source_front_weapon_valid) return;
+
+    /*
+     * Stock tyrian.hdt Pulse-Cannon power 11.  These assertions prevent a
+     * mounted data variant from silently becoming a GBA-authored loadout.
+     */
+    if (
+        source_front_weapon.shotrepeat != 5 ||
+        source_front_weapon.multi != 5 ||
+        source_front_weapon.max != 5 ||
+        source_front_weapon.sound != 25 ||
+        source_front_weapon.sg[0] != 62 ||
+        source_front_weapon.sg[1] != 59 ||
+        source_front_weapon.attack[0] != 5 ||
+        source_front_weapon.attack[1] != 2 ||
+        source_front_weapon.attack[2] != 2 ||
+        source_front_weapon.attack[3] != 2 ||
+        source_front_weapon.attack[4] != 2
+    ) {
+        source_front_weapon_valid = 0;
+        return;
+    }
+    source_front_shot_multi_pos = 0;
+    source_player_delta_x = 0;
+    source_player_delta_y = 0;
+    source_parity_level.player_front_weapon_id = 1;
+    source_parity_level.player_front_weapon_power = 11;
+    source_parity_level.player_rear_weapon_id = 0;
+}
+#endif
+
+#if TYRIAN_GBA_STRESS_LOADOUT
 static void stress_loadout_init(void)
 {
     OtWeaponPortDefinition front_port;
@@ -61,7 +107,7 @@ static void stress_loadout_init(void)
                 weapon_id[bay],
                 &stress_weapon[bay]
             ) ||
-            !stress_weapon_is_valid(&stress_weapon[bay])
+            !source_weapon_is_valid(&stress_weapon[bay])
         ) {
             stress_loadout_valid = 0;
             return;
@@ -110,7 +156,7 @@ static void stress_spawn_weapon(
         !stress_loadout_valid ||
         weapon == 0 ||
         bay >= STRESS_BAY_COUNT ||
-        !stress_weapon_is_valid(weapon)
+        !source_weapon_is_valid(weapon)
     ) {
         telemetry_stress_loadout_failures++;
         return;
@@ -213,18 +259,91 @@ static void stress_spawn_weapon(
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static void spawn_player_shot(void)
 {
-    u8 index;
-    if (!player_alive || source_parity_level.end_level) return;
-    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
-        if (!player_shots[index].active) {
-            player_shots[index].active = 1;
-            player_shots[index].x = player_source_x;
-            player_shots[index].y = player_source_y;
-            /* Pulse-Cannon power 1, HDT weapon 155 attack[0]. */
-            player_shots[index].damage = 2;
-            audio_effect(SFX_WEAPON_1);
+    u8 multi;
+
+    if (
+        !player_alive ||
+        source_parity_level.end_level ||
+        !source_front_weapon_valid
+    ) {
+        return;
+    }
+    if (source_front_weapon.sound > 0) {
+        /* shots.c soundChannel[SHOT_FRONT] is source queue slot zero. */
+        source_parity_level.frame_sound_queue[0] =
+            source_front_weapon.sound;
+    }
+    for (multi = 0; multi < source_front_weapon.multi; multi++) {
+        PlayerShot *shot = 0;
+        u8 index;
+        u8 position;
+        u8 delay;
+        u8 attack;
+
+        for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+            if (!player_shots[index].active) {
+                shot = &player_shots[index];
+                break;
+            }
+        }
+        if (shot == 0) {
+            telemetry_player_shot_drops++;
             return;
         }
+        if (
+            source_front_shot_multi_pos == source_front_weapon.max ||
+            source_front_shot_multi_pos > 8
+        ) {
+            source_front_shot_multi_pos = 1;
+        } else {
+            source_front_shot_multi_pos++;
+        }
+        position = (u8)(source_front_shot_multi_pos - 1u);
+        delay = source_front_weapon.delay[position];
+        if (delay == 121) delay = 255;
+
+        memset(shot, 0, sizeof(*shot));
+        shot->x = (s16)(
+            player_source_x + source_front_weapon.bx[position]
+        );
+        shot->y = (s16)(
+            player_source_y + source_front_weapon.by[position]
+        );
+        shot->xc = source_front_weapon.accelerationx;
+        shot->yc = (s16)-source_front_weapon.acceleration;
+        shot->xm = source_front_weapon.sx[position];
+        shot->ym = (s16)-source_front_weapon.sy[position];
+        if (source_front_weapon.sy[position] == 98) {
+            shot->ym = 0;
+            shot->yc = -1;
+        } else if (source_front_weapon.sy[position] > 100) {
+            shot->ym = source_front_weapon.sy[position];
+            shot->y = (s16)(shot->y - source_player_delta_y);
+        }
+        if (source_front_weapon.sx[position] > 100) {
+            shot->xm = source_front_weapon.sx[position];
+            shot->x = (s16)(shot->x - source_player_delta_x);
+            if (shot->xm == 101) {
+                shot->y = (s16)(shot->y - source_player_delta_y);
+            }
+        }
+        shot->graphic = source_front_weapon.sg[position];
+        shot->render_graphic = shot->graphic;
+        shot->animation_max =
+            delay > 100 && delay < 120 ?
+                (u8)(delay - 99u) :
+                (u8)(source_front_weapon.weapani + 1u);
+        if (shot->animation_max == 0) shot->animation_max = 1;
+        shot->trail =
+            source_front_weapon.delay[position] == 121 ?
+                0 :
+                source_front_weapon.trail;
+        attack = source_front_weapon.attack[position];
+        shot->damage = attack;
+        if (shot->damage == 0) shot->damage = 1;
+        shot->ttl = delay;
+        shot->active = shot->graphic != 0 && delay != 0;
+        if (shot->active) telemetry_player_shot_spawns++;
     }
 }
 #endif
@@ -240,6 +359,7 @@ static void player_damage(u16 damage)
 
     if (!player_alive || player_invulnerable || remaining == 0) return;
     telemetry_collision_count++;
+    source_parity_level.frame_sound_queue[7] = 27;
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
     /*
      * Development validation still records the collision, but deliberately
@@ -271,16 +391,15 @@ static void player_damage(u16 damage)
                  * lethal transition before JE_playerMovement begins the
                  * repeating 9/11 cadence later in this same source tick.
                  */
-                audio_effect(SFX_EXPLOSION_22);
+                source_parity_level.frame_sound_queue[1] = 22;
                 telemetry_player_death_sfx_22++;
             } else {
                 player_armor = (u8)(player_armor - remaining);
-                audio_effect(SFX_ENEMY_HIT);
+                source_parity_level.frame_sound_queue[7] = 19;
             }
         }
     } else {
         player_shield = (u8)(player_shield - remaining);
-        audio_effect(SFX_ENEMY_HIT);
     }
     source_parity_level.player_armor = player_armor;
 }
@@ -575,15 +694,28 @@ static void update_player(void)
         }
     }
 #else
+    source_player_delta_x = (s16)(player_source_x - old_x);
+    source_player_delta_y = (s16)(player_source_y - old_y);
     if (fire_cooldown) fire_cooldown--;
     if ((pad_now & (KEY_A | KEY_B)) && !fire_cooldown) {
         spawn_player_shot();
-        fire_cooldown = PLAYER_SHOT_COOLDOWN;
+        fire_cooldown =
+            source_front_weapon_valid ?
+                source_front_weapon.shotrepeat :
+                PLAYER_SHOT_COOLDOWN;
     }
 #endif
     if (player_invulnerable) player_invulnerable--;
     ot_level_port_update_parallax(&source_parity_level, player_source_x);
 }
+
+#if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_PLAYER_SHOT_DELTA_X stress_player_delta_x
+#define SOURCE_PLAYER_SHOT_DELTA_Y stress_player_delta_y
+#else
+#define SOURCE_PLAYER_SHOT_DELTA_X source_player_delta_x
+#define SOURCE_PLAYER_SHOT_DELTA_Y source_player_delta_y
+#endif
 
 static void update_shots(void)
 {
@@ -593,7 +725,6 @@ static void update_shots(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         player_shot = &player_shots[index];
         if (!player_shot->active) continue;
-#if TYRIAN_GBA_STRESS_LOADOUT
         if (player_shot->ttl == 0) {
             player_shot->active = 0;
             continue;
@@ -609,15 +740,15 @@ static void update_shots(void)
             if (player_shot->xm == 101) {
                 player_shot->x = (s16)(
                     player_shot->x - 101 +
-                    stress_player_delta_x
+                    SOURCE_PLAYER_SHOT_DELTA_X
                 );
                 player_shot->y = (s16)(
-                    player_shot->y + stress_player_delta_y
+                    player_shot->y + SOURCE_PLAYER_SHOT_DELTA_Y
                 );
             } else {
                 player_shot->x = (s16)(
                     player_shot->x - 120 +
-                    stress_player_delta_x
+                    SOURCE_PLAYER_SHOT_DELTA_X
                 );
             }
         }
@@ -630,7 +761,7 @@ static void update_shots(void)
         if (player_shot->ym > 100) {
             player_shot->y = (s16)(
                 player_shot->y - 120 +
-                stress_player_delta_y
+                SOURCE_PLAYER_SHOT_DELTA_Y
             );
         }
         if (
@@ -665,15 +796,14 @@ static void update_shots(void)
         ) {
             player_shot->animation = 0;
         }
-#else
-        player_shot->y -= PLAYER_SHOT_SPEED;
-        if (player_shot->y < 0) player_shot->active = 0;
-#endif
     }
 #if TYRIAN_GBA_STRESS_LOADOUT
     stress_update_shot_peak();
 #endif
 }
+
+#undef SOURCE_PLAYER_SHOT_DELTA_X
+#undef SOURCE_PLAYER_SHOT_DELTA_Y
 
 static void update_rewards(void)
 {

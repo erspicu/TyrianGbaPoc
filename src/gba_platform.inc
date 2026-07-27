@@ -443,6 +443,25 @@ static void commit_vblank_work(void)
             boss_obj_palette_restore_pending = 0;
         }
     }
+    if (secret_level_tile_upload_pending) {
+        dmaCopy(
+            obj_tiles + OBJ_TILE_SECRET_LEVEL_SOURCE * 32,
+            (u8 *)OBJ_BASE_ADR + OBJ_TILE_SECRET_LEVEL_RUNTIME * 32,
+            OBJ_SECRET_LEVEL_TILE_COUNT * 32
+        );
+        secret_level_tile_upload_pending = 0;
+    }
+    if (secret_level_palette_dirty) {
+        u8 flash = source_parity_level.display_flash;
+
+        if (flash > 5) flash = 5;
+        dmaCopy(
+            secret_level_palettes + flash * 32,
+            SPRITE_PALETTE + OBJ_PAL_SECRET_LEVEL * 16,
+            32
+        );
+        secret_level_palette_dirty = 0;
+    }
     if (game_over_tile_upload_pending) {
         /*
          * The generated GAME OVER glyphs live in cartridge backing at the
@@ -555,6 +574,51 @@ static void audio_effect(u16 effect)
 #else
     mmEffect(effect);
 #endif
+}
+
+static void source_sound_effect(u8 source_sound)
+{
+    static const u16 source_sound_to_maxmod[39] = {
+        0,
+        SFX_SOURCE_SOUND_01, SFX_SOURCE_SOUND_02,
+        SFX_SOURCE_SOUND_03, SFX_SOURCE_SOUND_04,
+        SFX_SOURCE_SOUND_05, SFX_SOURCE_SOUND_06,
+        SFX_SOURCE_SOUND_07, SFX_SOURCE_SOUND_08,
+        SFX_SOURCE_SOUND_09, SFX_SOURCE_SOUND_10,
+        SFX_SOURCE_SOUND_11, SFX_SOURCE_SOUND_12,
+        SFX_SOURCE_SOUND_13, SFX_SOURCE_SOUND_14,
+        SFX_SOURCE_SOUND_15, SFX_SOURCE_SOUND_16,
+        SFX_SOURCE_SOUND_17, SFX_SOURCE_SOUND_18,
+        SFX_SOURCE_SOUND_19, SFX_SOURCE_SOUND_20,
+        SFX_SOURCE_SOUND_21, SFX_SOURCE_SOUND_22,
+        SFX_SOURCE_SOUND_23, SFX_SOURCE_SOUND_24,
+        SFX_SOURCE_SOUND_25, SFX_SOURCE_SOUND_26,
+        SFX_SOURCE_SOUND_27, SFX_SOURCE_SOUND_28,
+        SFX_SOURCE_SOUND_29, SFX_SOURCE_SOUND_30,
+        SFX_SOURCE_SOUND_31, SFX_SOURCE_SOUND_32,
+        SFX_SOURCE_SOUND_33, SFX_SOURCE_SOUND_34,
+        SFX_SOURCE_SOUND_35, SFX_SOURCE_SOUND_36,
+        SFX_SOURCE_SOUND_37, SFX_SOURCE_SOUND_38,
+    };
+
+    if (
+        source_sound == 0 ||
+        source_sound >=
+            sizeof(source_sound_to_maxmod) /
+                sizeof(source_sound_to_maxmod[0])
+    ) {
+        return;
+    }
+#ifdef AUTOTEST
+    if (source_sound <= 32) {
+        telemetry_source_sound_mask_low |=
+            1u << (source_sound - 1u);
+    } else {
+        telemetry_source_sound_mask_high |=
+            1u << (source_sound - 33u);
+    }
+#endif
+    audio_effect(source_sound_to_maxmod[source_sound]);
 }
 
 static void toggle_pause(void)

@@ -1423,20 +1423,12 @@ static s16 source_score_item_screen_y(const OtEnemy *enemy)
 #if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static s16 source_player_shot_screen_x(const PlayerShot *shot)
 {
-#if TYRIAN_GBA_STRESS_LOADOUT
     return source_world_to_screen_x((s16)(shot->x + 1));
-#else
-    return (s16)(source_world_to_screen_x(shot->x) - 2);
-#endif
 }
 
 static s16 source_player_shot_screen_y(const PlayerShot *shot)
 {
-#if TYRIAN_GBA_STRESS_LOADOUT
     return source_world_to_screen_y(shot->y);
-#else
-    return (s16)(source_world_to_screen_y(shot->y) - 4);
-#endif
 }
 #endif
 
@@ -1590,59 +1582,17 @@ static void source_emit_effect(const OtHitEffect *effect)
 
 static void source_play_frame_weapon_sounds(void)
 {
-    u16 sounds = source_parity_level.frame_sound_mask;
     u8 queue_index;
 
-    if (sounds & (1u << 13)) {
-        audio_effect(SFX_ENEMY_SHOT_13);
-    } else if (sounds & (1u << 6)) {
-        audio_effect(SFX_ENEMY_SHOT_6);
-    } else if (sounds & (1u << 4)) {
-        audio_effect(SFX_ENEMY_SHOT_4);
-    } else if (sounds & (1u << 1)) {
-        audio_effect(SFX_WEAPON_1);
-    }
     /*
-     * JE_eventSystem event 16/62 and the level timer write source sound
-     * numbers into an eight-slot queue.  The current global soundbank has
-     * the gameplay subset below; unlisted source voices remain represented
-     * in state and become audible when the all-SND global bank is enabled.
+     * Direct tyrian2.c queue drain: every authored SFX and voice uses its
+     * original one-based sndmast.h number.  Multiple occupied channels in
+     * the same logic tick remain distinct Maxmod effects.
      */
     for (queue_index = 0; queue_index < 8; queue_index++) {
-        switch (source_parity_level.frame_sound_queue[queue_index]) {
-        case 1:
-            audio_effect(SFX_WEAPON_1);
-            break;
-        case 3:
-            audio_effect(SFX_ENEMY_HIT);
-            break;
-        case 4:
-            audio_effect(SFX_ENEMY_SHOT_4);
-            break;
-        case 6:
-            audio_effect(SFX_ENEMY_SHOT_6);
-            break;
-        case 9:
-            audio_effect(SFX_EXPLOSION_9);
-            break;
-        case 11:
-            audio_effect(SFX_EXPLOSION_11);
-            break;
-        case 13:
-            audio_effect(SFX_ENEMY_SHOT_13);
-            break;
-        case 18:
-            audio_effect(SFX_ITEM);
-            break;
-        case 22:
-            audio_effect(SFX_EXPLOSION_22);
-            break;
-        case 34:
-            audio_effect(SFX_LEVEL_COMPLETE);
-            break;
-        default:
-            break;
-        }
+        source_sound_effect(
+            source_parity_level.frame_sound_queue[queue_index]
+        );
     }
 }
 
@@ -1812,11 +1762,6 @@ static __attribute__((unused)) void source_apply_player_shot_result(
     ) {
         source_emit_effect(&result->effects[effect_index]);
     }
-    if (result->kill_count) {
-        audio_effect(SFX_EXPLOSION_9);
-    } else {
-        audio_effect(SFX_ENEMY_HIT);
-    }
 }
 
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
@@ -1960,7 +1905,7 @@ source_process_player_collisions(void)
                         shot->chain_weapon,
                         &chain
                     ) &&
-                    stress_weapon_is_valid(&chain)
+                    source_weapon_is_valid(&chain)
                 ) {
                     stress_spawn_weapon(
                         &chain,
@@ -2079,7 +2024,15 @@ source_process_player_collisions(void)
             &player_result.pickup_effects[effect_index]
         );
     }
-    if (player_result.pickup_count) audio_effect(SFX_ITEM);
+    if (player_result.bonus_level_triggered) {
+        /*
+         * mainint.c plays source song 30 ("Zanac"), then displays
+         * miscText[59] ("Secret Level!") for 150 ticks.
+         */
+        audio_load_source_song_preserve_effects(30);
+        secret_level_tile_upload_pending = 1;
+        secret_level_palette_dirty = 1;
+    }
     if (player_result.damage) player_damage(player_result.damage);
 }
 

@@ -241,6 +241,27 @@ static void source_update_boss_bar_colour(void)
     }
 }
 
+static void source_update_secret_level_display(void)
+{
+    int16_t flash;
+
+    if (source_parity_level.display_time == 0) return;
+    source_parity_level.display_time--;
+    flash = (int16_t)(
+        source_parity_level.display_flash +
+        source_parity_level.display_flash_change
+    );
+    source_parity_level.display_flash = (u8)flash;
+    if (
+        source_parity_level.display_flash > 4 ||
+        source_parity_level.display_flash == 0
+    ) {
+        source_parity_level.display_flash_change =
+            (s8)-source_parity_level.display_flash_change;
+    }
+    secret_level_palette_dirty = 1;
+}
+
 static void update_logic(void)
 {
     u8 end_level_before = source_parity_level.end_level;
@@ -269,7 +290,7 @@ static void update_logic(void)
     if (!end_level_before && source_parity_level.end_level) {
         source_begin_end_level_audio();
     }
-    source_play_frame_weapon_sounds();
+    source_update_secret_level_display();
     source_sync_runtime_telemetry();
     advance_backgrounds();
 
@@ -303,10 +324,14 @@ static void update_logic(void)
     }
     source_resume_group_stopped_backgrounds();
     update_player();
-    if (game_state != STATE_PLAY) return;
+    if (game_state != STATE_PLAY) {
+        source_play_frame_weapon_sounds();
+        return;
+    }
     if (player_alive) {
         source_update_enemy_projectiles();
     }
     source_update_end_level_condition();
     source_update_boss_bar_colour();
+    source_play_frame_weapon_sounds();
 }

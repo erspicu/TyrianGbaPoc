@@ -12,6 +12,22 @@
 #include "src/opentyrian_rom_io.h"
 #include "src/opentyrian_sprite2.h"
 
+/*
+ * Gameplay code predating the complete source sound catalog keeps these
+ * descriptive aliases.  Every alias now resolves to the authoritative
+ * one-based sndmast.h slot packed as source_sound_01..38.
+ */
+#define SFX_WEAPON_1 SFX_SOURCE_SOUND_01
+#define SFX_EXPLOSION_9 SFX_SOURCE_SOUND_09
+#define SFX_EXPLOSION_11 SFX_SOURCE_SOUND_11
+#define SFX_ITEM SFX_SOURCE_SOUND_18
+
+_Static_assert(
+    SFX_SOURCE_SOUND_38 == SFX_SOURCE_SOUND_01 + 37 &&
+        MSL_NSAMPS == SFX_SOURCE_SOUND_38 + 1,
+    "Maxmod bank must contain all 29 Tyrian SFX and nine voices"
+);
+
 #if defined(AUTOTEST_FULL_LOADOUT_STRESS) || \
     TYRIAN_GBA_DYNAMIC_FRAME_DROP
 #define TYRIAN_GBA_PERF_TIMER 1
@@ -141,18 +157,24 @@ enum {
 /* OpenTyrian shots.h MAX_PWEAPON. */
 #define MAX_PLAYER_SHOTS 81
 #else
-#define MAX_PLAYER_SHOTS 12
+/* Four overlapping five-shot power-11 Pulse-Cannon volleys. */
+#define MAX_PLAYER_SHOTS 20
 #endif
 #define MAX_ENEMY_SHOTS 60
 /* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
 #define MAX_EFFECTS 200
 #define MAX_VISIBLE_EFFECTS 48
-#define MAX_REWARDS 32
+/*
+ * Source rewards live in the 100-entry enemy pool.  This legacy animation
+ * pool remains only for the isolated visual regression fixture.
+ */
+#define MAX_REWARDS 16
 #if TYRIAN_GBA_STRESS_LOADOUT
 /* OpenTyrian varz.h MAX_EXPLOSIONS. */
 #define MAX_PICKUP_EXPLOSIONS 200
 #else
-#define MAX_PICKUP_EXPLOSIONS 32
+/* Fixed pickup labels; ordinary combat explosions use MAX_EFFECTS. */
+#define MAX_PICKUP_EXPLOSIONS 16
 #endif
 #define HARDWARE_OAM_ENTRIES 128
 #define SPRITE_LIMIT HARDWARE_OAM_ENTRIES
@@ -214,7 +236,6 @@ enum {
     (SOURCE_PRESENTATION_Y_ORIGIN + SCREEN_HEIGHT - \
         SOURCE_PLAYER_DRAW_Y_OFFSET - \
         SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE)
-#define PLAYER_SHOT_SPEED 10
 #define PLAYER_SHOT_COOLDOWN 4
 #define PLAYER_SHOT_X_OFFSET 8
 #define PLAYER_SHOT_Y_OFFSET 6
@@ -237,7 +258,7 @@ enum {
 #define REWARD_TILES_PER_FRAME 4
 #define REWARD_SEQUENCE_COUNT 5
 #define CASH_COUNTER_X 22
-#define CASH_COUNTER_Y 140
+#define CASH_COUNTER_Y 152
 /*
  * Runtime Sprite2 presentation.  The original PC 256-colour indices are
  * decoded from ROMFS and presented through eight time-shared OBJ banks.
@@ -375,6 +396,12 @@ _Static_assert(
     "GAME OVER label must contain eight 8x16 glyphs"
 );
 _Static_assert(
+    OBJ_SECRET_LEVEL_UNIQUE_GLYPH_COUNT == 8 &&
+        OBJ_SECRET_LEVEL_TILE_COUNT ==
+            OBJ_SECRET_LEVEL_UNIQUE_GLYPH_COUNT * 2,
+    "SECRET LEVEL label must contain eight unique 8x16 glyphs"
+);
+_Static_assert(
     OBJ_TILE_GAME_OVER_RUNTIME ==
         SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
             SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
@@ -382,6 +409,11 @@ _Static_assert(
         OBJ_TILE_GAME_OVER_RUNTIME + OBJ_GAME_OVER_TILE_COUNT <=
             OBJ_TILE_REWARD,
     "GAME OVER runtime bank must occupy the lower-cache/reward gap"
+);
+_Static_assert(
+    OBJ_TILE_SECRET_LEVEL_RUNTIME == OBJ_TILE_GAME_OVER_RUNTIME &&
+        OBJ_SECRET_LEVEL_TILE_COUNT <= OBJ_GAME_OVER_TILE_COUNT,
+    "SECRET LEVEL must share the transient gameplay status bank"
 );
 _Static_assert(
     OBJ_TILE_GAME_OVER_SOURCE ==
@@ -581,6 +613,7 @@ enum {
 
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
+extern const u8 secret_level_palettes[];
 extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
@@ -598,34 +631,28 @@ extern const u8 soundbank[];
 
 typedef struct {
     u8 active;
-#if TYRIAN_GBA_STRESS_LOADOUT
     u8 ttl;
     u8 damage;
+#if TYRIAN_GBA_STRESS_LOADOUT
     u8 infinite;
+#endif
     u8 animation;
     u8 animation_max;
     u8 trail;
+#if TYRIAN_GBA_STRESS_LOADOUT
     u8 reserved;
+#endif
     u16 graphic;
     u16 render_graphic;
+#if TYRIAN_GBA_STRESS_LOADOUT
     u16 chain_weapon;
+#endif
     s16 x;
     s16 y;
     s16 xm;
     s16 ym;
-    s16 xc;
-    s16 yc;
-#else
-    /*
-     * Keep the ordinary source-parity adapter at its original eight-byte
-     * footprint.  The extended motion/animation/chain fields only describe
-     * the dedicated six-system stress loadout and must not consume campaign
-     * EWRAM.
-     */
-    s16 x;
-    s16 y;
-    u8 damage;
-#endif
+    s8 xc;
+    s8 yc;
 } PlayerShot;
 
 typedef struct {
@@ -716,6 +743,31 @@ static const u8 game_over_glyph_advances[
     OBJ_GAME_OVER_ADVANCE_7,
 };
 
+enum {
+    SECRET_LEVEL_TEXT_GLYPH_COUNT = 12,
+};
+
+/* Unique source bank order: S, E, C, R, T, L, V, !. */
+static const u8 secret_level_glyph_map[
+    SECRET_LEVEL_TEXT_GLYPH_COUNT
+] = {
+    0, 1, 2, 3, 1, 4,
+    5, 1, 6, 1, 5, 7,
+};
+
+static const u8 secret_level_glyph_advances[
+    OBJ_SECRET_LEVEL_UNIQUE_GLYPH_COUNT
+] = {
+    OBJ_SECRET_LEVEL_ADVANCE_0,
+    OBJ_SECRET_LEVEL_ADVANCE_1,
+    OBJ_SECRET_LEVEL_ADVANCE_2,
+    OBJ_SECRET_LEVEL_ADVANCE_3,
+    OBJ_SECRET_LEVEL_ADVANCE_4,
+    OBJ_SECRET_LEVEL_ADVANCE_5,
+    OBJ_SECRET_LEVEL_ADVANCE_6,
+    OBJ_SECRET_LEVEL_ADVANCE_7,
+};
+
 static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
@@ -792,6 +844,14 @@ static u8 fire_cooldown;
 static s8 player_bank;
 static u32 player_cash;
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static OtWeaponDefinition source_front_weapon EWRAM_BSS;
+static u8 source_front_weapon_valid;
+static u8 source_front_shot_multi_pos;
+static s16 source_player_delta_x;
+static s16 source_player_delta_y;
+#endif
+
 #if TYRIAN_GBA_STRESS_LOADOUT
 enum {
     STRESS_BAY_FRONT = 0,
@@ -830,7 +890,6 @@ static u16 level_position;
 static u32 logic_accumulator;
 static u8 level_exit_music_started;
 static OtLevelPortState source_parity_level EWRAM_BSS;
-static u8 source_enemy_shape_history_valid;
 
 static u16 bg1_scroll_pixel;
 static u16 bg2_scroll_pixel;
@@ -886,6 +945,8 @@ static u8 oam_count;
 static u8 previous_oam_count;
 static u8 oam_dirty;
 static u8 game_over_tile_upload_pending;
+static u8 secret_level_tile_upload_pending;
+static u8 secret_level_palette_dirty;
 static u32 last_vblank_seen;
 
 volatile u32 telemetry_vblank_irqs;
@@ -1013,6 +1074,11 @@ volatile u32 telemetry_end_level_music_starts;
 volatile u32 telemetry_end_level_initial_warp;
 volatile u32 telemetry_end_level_trail_max;
 volatile u32 telemetry_level_complete_voice_starts;
+#ifdef AUTOTEST
+volatile u32 telemetry_source_sound_mask_low;
+volatile u32 telemetry_source_sound_mask_high;
+volatile u32 telemetry_secret_level_collision_pass;
+#endif
 volatile u32 telemetry_stats_stage_advances;
 volatile u32 telemetry_stats_cube_reveals;
 volatile u32 telemetry_player_death_large_explosions;
@@ -1199,6 +1265,9 @@ static void source_spawn_explosion(
     u8 type,
     u8 fixed_position
 );
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void source_front_weapon_init(void);
+#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
 static void stress_loadout_init(void);
 static void stress_spawn_weapon(

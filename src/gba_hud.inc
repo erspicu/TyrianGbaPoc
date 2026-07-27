@@ -11,10 +11,10 @@ static void render_cash_counter(void)
     /*
      * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
      * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  That point falls
-     * below the 1:1 gameplay crop, so the deliberately retained minimal GBA
-     * HUD relocates it to (22,140).  Gameplay/world coordinates never use
-     * this exception.  There is no pickup icon and no five-digit cap in the
-     * original display.
+     * below the 1:1 gameplay crop.  With the old bottom banner removed, the
+     * retained minimal GBA HUD places it at (22,152), twelve pixels below
+     * the prior adapter position. Gameplay/world coordinates never use this
+     * exception. There is no pickup icon or five-digit cap in the source.
      */
     do {
         digits[count++] = value % 10;
@@ -79,6 +79,32 @@ static void render_game_over_text(void)
         x += game_over_glyph_advances[index];
     }
     telemetry_game_over_overlay_frames++;
+}
+
+static void render_secret_level_text(void)
+{
+    u8 index;
+    s16 x = source_world_to_screen_x(90);
+    s16 y = source_world_to_screen_y(10);
+
+    /*
+     * Direct tyrian2.c placement of miscText[59], with the same gameplay
+     * crop used by every source-space object.  Repeated letters reference
+     * one eight-glyph transient bank instead of consuming extra OBJ VRAM.
+     */
+    for (index = 0; index < SECRET_LEVEL_TEXT_GLYPH_COUNT; index++) {
+        u8 glyph = secret_level_glyph_map[index];
+
+        if (index == 6) x += OBJ_SECRET_LEVEL_WORD_GAP;
+        put_sprite_shaped(
+            x, y,
+            OBJ_TILE_SECRET_LEVEL_RUNTIME + glyph * 2,
+            OBJ_PAL_SECRET_LEVEL,
+            ATTR0_TALL, ATTR1_SIZE_8,
+            8, 16, 0
+        );
+        x += secret_level_glyph_advances[glyph];
+    }
 }
 
 static u8 source_boss_bar_armor(u8 bar)

@@ -1,6 +1,6 @@
 .SUFFIXES:
 
-DETAIL_LEVEL ?= low
+DETAIL_LEVEL ?= high
 GAME_SPEED ?= normal
 ROUTE_EPISODE ?= 1
 ROUTE_SECTION ?= 5
@@ -189,13 +189,13 @@ $(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cu
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v32_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v32_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v32_$(CONFIG_SUFFIX)
-JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v32_$(CONFIG_SUFFIX)
-ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v32_$(CONFIG_SUFFIX)
-ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v32_$(CONFIG_SUFFIX)
-CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v32_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v37_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v37_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v37_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v37_$(CONFIG_SUFFIX)
+ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v37_$(CONFIG_SUFFIX)
+ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v37_$(CONFIG_SUFFIX)
+CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v37_$(CONFIG_SUFFIX)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 BUILD := build
@@ -262,6 +262,7 @@ ASSET_INPUTS := \
 ASSET_BINARIES := \
 	$(RES)/obj_tiles.bin \
 	$(RES)/obj_palette.bin \
+	$(RES)/secret_level_palettes.bin \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
@@ -285,18 +286,17 @@ TYRIAN_MUSIC_TRACKS := \
 TYRIAN_MUSIC_INPUTS := $(foreach track,$(TYRIAN_MUSIC_TRACKS),\
 	$(RES)/tyrian_music_$(track).it)
 
+TYRIAN_SOUND_IDS := \
+	01 02 03 04 05 06 07 08 09 10 \
+	11 12 13 14 15 16 17 18 19 20 \
+	21 22 23 24 25 26 27 28 29 30 \
+	31 32 33 34 35 36 37 38
+TYRIAN_SOUND_INPUTS := $(foreach sound,$(TYRIAN_SOUND_IDS),\
+	$(RES)/source_sound_$(sound).wav)
+
 AUDIO_INPUTS := \
 	$(TYRIAN_MUSIC_INPUTS) \
-	$(RES)/weapon_1.wav \
-	$(RES)/enemy_hit.wav \
-	$(RES)/explosion_9.wav \
-	$(RES)/explosion_11.wav \
-	$(RES)/explosion_22.wav \
-	$(RES)/item.wav \
-	$(RES)/enemy_shot_4.wav \
-	$(RES)/enemy_shot_6.wav \
-	$(RES)/enemy_shot_13.wav \
-	$(RES)/level_complete.wav
+	$(TYRIAN_SOUND_INPUTS)
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \

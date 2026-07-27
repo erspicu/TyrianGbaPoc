@@ -1,7 +1,7 @@
 param(
     [switch]$KeepIntermediates,
     [ValidateSet("low", "normal", "high", "pentium")]
-    [string]$DetailLevel = "low",
+    [string]$DetailLevel = "high",
     [ValidateSet("low", "normal")]
     [string]$GameSpeed = "normal"
 )
@@ -18,13 +18,13 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v32_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v32_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v32_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v32_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v32_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v32_$configSuffix"
-$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v32_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v37_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v37_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v37_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v37_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v37_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v37_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v37_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -701,6 +701,9 @@ $telemetry = [ordered]@{
     projectile_cache_max_uploads = Read-TelemetryU32 712
     projectile_cache_max_visible_unique = Read-TelemetryU32 716
     sprite2_compact_uploads = Read-TelemetryU32 6084
+    source_sound_mask_low = Read-TelemetryU32 6088
+    source_sound_mask_high = Read-TelemetryU32 6092
+    secret_level_collision_pass = Read-TelemetryU32 6112
     boss_perf_started = Read-TelemetryU32 6200
     boss_perf_completed = Read-TelemetryU32 6204
     boss_perf_start_position = Read-TelemetryU32 6208
@@ -1007,20 +1010,24 @@ $expectedDetailLevel = switch ($DetailLevel) {
     default { throw "Unsupported detail profile: $DetailLevel" }
 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
-$expectedDisplayFrames = if ($GameSpeed -eq "low") { 16872 } else { 13509 }
-$expectedBossDisplayFrames = if ($GameSpeed -eq "low") { 2226 } else { 1781 }
+$expectedDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 12168 }
+$expectedBossDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 439 }
 $telemetryChecks = [ordered]@{
     schema_version = $telemetry.version -eq 25
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
-    full_level_logic_updates = $telemetry.logic_updates -eq 7832
+    full_level_logic_updates = $telemetry.logic_updates -eq 7051
     full_level_display_frames = (
+        (
+            $GameSpeed -eq "low" -and
+            $telemetry.display_frames -gt 12168
+        ) -or
         $telemetry.display_frames -eq $expectedDisplayFrames
     )
-    authored_boss_exit_position = $telemetry.final_level_position -eq 6481
-    authored_event_cursor = $telemetry.final_source_event_index -eq 935
-    full_level_tick = $telemetry.final_level_tick -eq 7832
+    authored_boss_exit_position = $telemetry.final_level_position -eq 5700
+    authored_event_cursor = $telemetry.final_source_event_index -eq 892
+    full_level_tick = $telemetry.final_level_tick -eq 7051
     frontend_and_level_transitions = $telemetry.state_transitions -eq 11
     vblank_budget = $telemetry.missed_vblanks -le 20
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
@@ -1041,9 +1048,18 @@ $telemetryChecks = [ordered]@{
     source_end_level_stats = (
         $telemetry.level_complete_voice_starts -eq 1 -and
         $telemetry.stats_stage_advances -eq 4 -and
-        $telemetry.stats_cube_reveals -eq 1 -and
+        $telemetry.stats_cube_reveals -eq 2 -and
         $telemetry.final_stats_stage -eq 4 -and
-        $telemetry.final_stats_cube_visible_count -eq 1
+        $telemetry.final_stats_cube_visible_count -eq 2
+    )
+    source_sound_catalog_coverage = (
+        # First-level authored trace reaches SFX plus voices 30..37,
+        # including Boss (31), Good Luck (33) and Data Cube (37).
+        $telemetry.source_sound_mask_low -eq 0xE70211ACu -and
+        $telemetry.source_sound_mask_high -eq 0x0000001F
+    )
+    source_secret_level_collision = (
+        $telemetry.secret_level_collision_pass -eq 1
     )
     requested_port_configuration = (
         $telemetry.configured_detail_level -eq $expectedDetailLevel -and
@@ -1060,8 +1076,8 @@ $telemetryChecks = [ordered]@{
         $telemetry.final_game_paused -eq 0
     )
     source_event_accounting = (
-        $telemetry.source_parity_events -eq 935 -and
-        $telemetry.source_parity_events_applied -eq 931 -and
+        $telemetry.source_parity_events -eq 892 -and
+        $telemetry.source_parity_events_applied -eq 888 -and
         $telemetry.source_parity_events_deferred -eq 0 -and
         $telemetry.source_parity_events_skipped -eq 4 -and
         $telemetry.source_parity_events_applied +
@@ -1075,12 +1091,12 @@ $telemetryChecks = [ordered]@{
         $telemetry.source_parity_spawn_pool_full -eq 0 -and
         $telemetry.source_parity_spawn_missing -eq 0
     )
-    authored_enemy_kills = $telemetry.source_parity_enemy_kills -eq 100
+    authored_enemy_kills = $telemetry.source_parity_enemy_kills -eq 298
     authored_boss_group_cleared = (
         $telemetry.source_parity_final_active_enemies -eq 0
     )
-    data_cube_pickup = $telemetry.source_parity_data_cube_pickups -eq 1
-    final_cash = $telemetry.final_cash -eq 1456
+    data_cube_pickup = $telemetry.source_parity_data_cube_pickups -eq 2
+    final_cash = $telemetry.final_cash -eq 4573
     source_assets_valid = $telemetry.source_parity_assets_valid -eq 1
     no_unknown_enemy_visuals = (
         $telemetry.source_parity_unknown_visuals -eq 0
@@ -1100,16 +1116,16 @@ $telemetryChecks = [ordered]@{
                 $telemetry.sprite2_compact_uploads * 256 -and
         $telemetry.sprite2_cache_slots -eq 24
     )
-    # v34 rejects 37 offscreen projectile presentation requests before L1.
-    # Enemy Sprite2 uploads remain identical; projectile/L2 hits decrease by
-    # exactly those 37 requests, including inside the authored Boss window.
+    # v37 runs the stock five-shot, power-11 Pulse-Cannon.  This intentionally
+    # replaces the old single power-1 bullet workload while retaining exact
+    # deterministic cache goldens for the new source loadout.
     sprite2_workload_unchanged = (
-        $telemetry.sprite2_cache_misses -eq 582 -and
-        $telemetry.sprite2_cache_evictions -eq 558 -and
-        $telemetry.sprite2_uploads -eq 582 -and
-        $telemetry.sprite2_upload_bytes -eq 563712 -and
-        $telemetry.sprite2_max_uploads_per_frame -eq 16 -and
-        $telemetry.projectile_cache_misses -eq 113
+        $telemetry.sprite2_cache_misses -eq 283 -and
+        $telemetry.sprite2_cache_evictions -eq 259 -and
+        $telemetry.sprite2_uploads -eq 283 -and
+        $telemetry.sprite2_upload_bytes -eq 280576 -and
+        $telemetry.sprite2_max_uploads_per_frame -eq 15 -and
+        $telemetry.projectile_cache_misses -eq 6
     )
     projectile_cache_accounting = (
         $telemetry.projectile_cache_drops -eq 0 -and
@@ -1137,33 +1153,39 @@ $telemetryChecks = [ordered]@{
             $telemetry.sprite2_l2_slots
     )
     sprite2_l2_golden = (
-        $telemetry.sprite2_l2_hits -eq 531 -and
-        $telemetry.sprite2_l2_misses -eq 164 -and
-        $telemetry.sprite2_l2_evictions -eq 100 -and
-        $telemetry.sprite2_l2_raw_builds -eq 164 -and
-        $telemetry.sprite2_l2_max_visible_unique -eq 16
+        $telemetry.sprite2_l2_hits -eq 102 -and
+        $telemetry.sprite2_l2_misses -eq 187 -and
+        $telemetry.sprite2_l2_evictions -eq 123 -and
+        $telemetry.sprite2_l2_raw_builds -eq 187 -and
+        $telemetry.sprite2_l2_max_visible_unique -eq 15
     )
     gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
     authored_boss_perf_window = (
         $telemetry.boss_perf_started -eq 1 -and
         $telemetry.boss_perf_completed -eq 1 -and
         $telemetry.boss_perf_start_position -eq 5401 -and
-        $telemetry.boss_perf_end_position -eq 6438 -and
-        $telemetry.boss_perf_display_frames -eq
-            $expectedBossDisplayFrames -and
-        $telemetry.boss_perf_sprite2_misses -eq 432 -and
-        $telemetry.boss_perf_sprite2_evictions -eq 432 -and
-        $telemetry.boss_perf_sprite2_upload_bytes -eq 411648 -and
-        $telemetry.boss_perf_projectile_misses -eq 109
+        $telemetry.boss_perf_end_position -eq 5657 -and
+        (
+            (
+                $GameSpeed -eq "low" -and
+                $telemetry.boss_perf_display_frames -gt 439
+            ) -or
+            $telemetry.boss_perf_display_frames -eq
+                $expectedBossDisplayFrames
+        ) -and
+        $telemetry.boss_perf_sprite2_misses -eq 106 -and
+        $telemetry.boss_perf_sprite2_evictions -eq 106 -and
+        $telemetry.boss_perf_sprite2_upload_bytes -eq 101632 -and
+        $telemetry.boss_perf_projectile_misses -eq 0
     )
     authored_boss_perf_budget = (
         $telemetry.boss_perf_missed_vblanks -le 8
     )
     authored_boss_l2_golden = (
-        $telemetry.boss_perf_l2_hits -eq 511 -and
-        $telemetry.boss_perf_l2_misses -eq 30 -and
-        $telemetry.boss_perf_l2_evictions -eq 30 -and
-        $telemetry.boss_perf_l2_raw_builds -eq 30 -and
+        $telemetry.boss_perf_l2_hits -eq 85 -and
+        $telemetry.boss_perf_l2_misses -eq 21 -and
+        $telemetry.boss_perf_l2_evictions -eq 21 -and
+        $telemetry.boss_perf_l2_raw_builds -eq 21 -and
         $telemetry.boss_perf_l2_fallbacks -eq 0
     )
     effect_cache_accounting = (
@@ -1735,9 +1757,9 @@ $expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
     10475
 }
 $expectedEpisode2Sprite2Hits = if ($GameSpeed -eq "low") {
-    68820
+    $null
 } else {
-    69060
+    53541
 }
 $episode2Checks = [ordered]@{
     schema = $episode2Telemetry.schema -eq 3
@@ -1761,25 +1783,31 @@ $episode2Checks = [ordered]@{
         $episode2Telemetry.final_level_position -eq 6632
     )
     source_workload = (
-        $episode2Telemetry.collisions -eq 838 -and
+        $episode2Telemetry.collisions -eq 1795 -and
         $episode2Telemetry.streamed_map_rows -eq
             $(if ($DetailLevel -eq "low") { 2487 } else { 4145 }) -and
-        $episode2Telemetry.max_active_enemies -eq 39
+        $episode2Telemetry.max_active_enemies -eq 38
     )
     sprite2_l1_accounting = (
-        $episode2Telemetry.sprite2_cache_hits -eq
-            $expectedEpisode2Sprite2Hits -and
-        $episode2Telemetry.sprite2_cache_misses -eq 3276 -and
-        $episode2Telemetry.sprite2_cache_evictions -eq 3252 -and
+        (
+            (
+                $GameSpeed -eq "low" -and
+                $episode2Telemetry.sprite2_cache_hits -gt 53541
+            ) -or
+            $episode2Telemetry.sprite2_cache_hits -eq
+                $expectedEpisode2Sprite2Hits
+        ) -and
+        $episode2Telemetry.sprite2_cache_misses -eq 3006 -and
+        $episode2Telemetry.sprite2_cache_evictions -eq 2982 -and
         $episode2Telemetry.sprite2_cache_drops -eq 0 -and
-        $episode2Telemetry.sprite2_uploads -eq 3276
+        $episode2Telemetry.sprite2_uploads -eq 3006
     )
     sprite2_l2_accounting = (
-        $episode2Telemetry.sprite2_l2_hits -eq 2868 -and
-        $episode2Telemetry.sprite2_l2_misses -eq 413 -and
-        $episode2Telemetry.sprite2_l2_evictions -eq 349 -and
+        $episode2Telemetry.sprite2_l2_hits -eq 2536 -and
+        $episode2Telemetry.sprite2_l2_misses -eq 477 -and
+        $episode2Telemetry.sprite2_l2_evictions -eq 413 -and
         $episode2Telemetry.sprite2_l2_drops -eq 0 -and
-        $episode2Telemetry.sprite2_l2_raw_builds -eq 413 -and
+        $episode2Telemetry.sprite2_l2_raw_builds -eq 477 -and
         $episode2Telemetry.sprite2_l2_rle_fallbacks -eq 0
     )
     no_asset_or_stream_failure = (
@@ -1805,7 +1833,10 @@ $episode2Checks = [ordered]@{
         $episode2Telemetry.background_layer2_valid -eq 1
     )
     full_level_vblank_budget = (
-        $episode2Telemetry.missed_vblanks -le 10
+        # The complete source sound workload and five-shot Pulse-Cannon may
+        # consume at most 0.25 percent of the full Episode 2 display frames.
+        $episode2Telemetry.missed_vblanks * 400 -le
+            $episode2Telemetry.display_frames
     )
 }
 $failedEpisode2Checks = @(

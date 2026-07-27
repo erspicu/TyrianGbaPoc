@@ -97,6 +97,12 @@ GAME_OVER_TEXT_SOURCE_IDS = (6, 0, 12, 4, 14, 21, 4, 17)
 GAME_OVER_WORD_GAP = (6 * 3 + 2) // 4
 GAME_OVER_SOURCE_TILE = 640
 GAME_OVER_RUNTIME_TILE = 512
+SECRET_LEVEL_TEXT = "SECRET LEVEL!"
+SECRET_LEVEL_UNIQUE_TEXT = "SECRTLV!"
+SECRET_LEVEL_SOURCE_IDS = (18, 4, 2, 17, 19, 11, 21, 26)
+SECRET_LEVEL_WORD_GAP = (6 * 3 + 2) // 4
+SECRET_LEVEL_SOURCE_TILE = 672
+SECRET_LEVEL_RUNTIME_TILE = GAME_OVER_RUNTIME_TILE
 ENEMY_PROJECTILE_SOURCE_IDS = (58, 112, 113, 145, 146, 147, 201, 202)
 ENEMY_PROJECTILE_WEAPON_IDS = (2, 3, 4, 59, 62, 78, 115, 116, 125, 126)
 BOSS_PROJECTILE_WEAPON_IDS = (59, 127)
@@ -2063,6 +2069,7 @@ def build_gameplay_status_text(
     palette_file: Path,
     text: str,
     source_ids: tuple[int, ...],
+    brightness: int = -3,
 ) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
     """Recreate a JE_dString FONT_SHAPES label at GBA display scale."""
     source_dir = image_root / "sprites" / "00_font"
@@ -2080,7 +2087,12 @@ def build_gameplay_status_text(
         strict=True,
     ):
         source = Image.open(source_dir / f"{source_id:03d}.png").convert("RGBA")
-        if source.height != 15 or not 11 <= source.width <= 17:
+        if (
+            source.width < 1 or
+            source.width > 17 or
+            source.height < 1 or
+            source.height > 15
+        ):
             raise ValueError(
                 "unexpected Tyrian FONT_SHAPES status glyph canvas: "
                 f"{character}/{source_id} is {source.size}"
@@ -2096,14 +2108,20 @@ def build_gameplay_status_text(
                     f"{character}/{source_id} contains {colour}"
                 )
             source_index = font_colour_indices[colour]
-            output_index = 0xF0 + ((source_index & 0x0F) - 3)
+            output_index = (
+                0xF0 |
+                (((source_index & 0x0F) + brightness) & 0x0F)
+            )
             transformed[y, x, :3] = tyrian_palette[output_index]
             transformed[y, x, 3] = 255
 
         # PC 320x200 -> GBA 240x160.  The 11/12x15 FONT_SHAPES glyphs
         # therefore become 8x12 and fit one 8x16 tall OBJ each.
         foreground = Image.fromarray(transformed, "RGBA").resize(
-            (8, 12),
+            (
+                min(8, max(1, (source.width * 3 + 2) // 4)),
+                max(1, (source.height * 4 + 2) // 5),
+            ),
             Image.Resampling.NEAREST,
         )
         shadow = Image.new("RGBA", (8, 16), (0, 0, 0, 0))
@@ -2127,6 +2145,150 @@ def build_gameplay_status_text(
     return (
         tile_data,
         palette,
+        preview,
+        tuple(advances),
+    )
+
+
+def build_secret_level_status(
+    snes: ModuleType,
+    image_root: Path,
+    palette_file: Path,
+) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
+    """Build stable tiles plus the six source flash palettes (-8..-3)."""
+    source_dir = image_root / "sprites" / "00_font"
+    tyrian_palette = load_tyrian_palette(palette_file)
+    font_colour_indices = {
+        tyrian_palette[index]: index
+        for index in range(0x10, 0x20)
+    }
+    glyph_sources: list[
+        tuple[np.ndarray, np.ndarray, int, int]
+    ] = []
+    used_nibbles: set[int] = set()
+    advances: list[int] = []
+
+    for character, source_id in zip(
+        SECRET_LEVEL_UNIQUE_TEXT,
+        SECRET_LEVEL_SOURCE_IDS,
+        strict=True,
+    ):
+        source = Image.open(source_dir / f"{source_id:03d}.png").convert(
+            "RGBA"
+        )
+        if (
+            source.width < 1 or
+            source.width > 17 or
+            source.height < 1 or
+            source.height > 15
+        ):
+            raise ValueError(
+                "unexpected Tyrian SECRET LEVEL glyph canvas: "
+                f"{character}/{source_id} is {source.size}"
+            )
+        advances.append(((source.width + 1) * 3 + 2) // 4)
+        rgba = np.asarray(source, dtype=np.uint8)
+        opaque = rgba[:, :, 3] >= 80
+        nibbles = np.zeros((source.height, source.width), dtype=np.uint8)
+        for y, x in np.argwhere(opaque):
+            colour = tuple(int(component) for component in rgba[y, x, :3])
+            if colour not in font_colour_indices:
+                raise ValueError(
+                    "unexpected Tyrian SECRET LEVEL glyph colour: "
+                    f"{character}/{source_id} contains {colour}"
+                )
+            nibble = font_colour_indices[colour] & 0x0F
+            nibbles[y, x] = nibble
+            used_nibbles.add(nibble)
+        target_width = min(
+            8,
+            max(1, (source.width * 3 + 2) // 4),
+        )
+        target_height = max(1, (source.height * 4 + 2) // 5)
+        scaled_nibbles = np.asarray(
+            Image.fromarray(nibbles, "L").resize(
+                (target_width, target_height),
+                Image.Resampling.NEAREST,
+            ),
+            dtype=np.uint8,
+        )
+        scaled_opaque = np.asarray(
+            Image.fromarray(
+                opaque.astype(np.uint8) * 255,
+                "L",
+            ).resize(
+                (target_width, target_height),
+                Image.Resampling.NEAREST,
+            ),
+            dtype=np.uint8,
+        ) >= 80
+        glyph_sources.append(
+            (
+                scaled_nibbles,
+                scaled_opaque,
+                target_width,
+                target_height,
+            )
+        )
+
+    ordered_nibbles = sorted(used_nibbles)
+    if len(ordered_nibbles) > 14:
+        raise ValueError("SECRET LEVEL glyphs exceed one 4bpp palette")
+    nibble_slots = {
+        nibble: index + 2
+        for index, nibble in enumerate(ordered_nibbles)
+    }
+    tile_data = bytearray()
+    indexed_frames: list[np.ndarray] = []
+    for nibbles, opaque, width, height in glyph_sources:
+        values = np.zeros((16, 8), dtype=np.uint8)
+        for y, x in np.argwhere(opaque):
+            shadow_x = x + 1
+            shadow_y = y + 2
+            if shadow_x < 8 and shadow_y < 16:
+                values[shadow_y, shadow_x] = 1
+        for y, x in np.argwhere(opaque):
+            values[y, x] = nibble_slots[int(nibbles[y, x])]
+        tile_data.extend(encode_gba_4bpp(values[0:8, :]))
+        tile_data.extend(encode_gba_4bpp(values[8:16, :]))
+        indexed_frames.append(values)
+
+    palette_data = bytearray()
+    preview_palette: list[tuple[int, int, int]] = []
+    for brightness in range(-8, -2):
+        palette = [(0, 0, 0), (8, 8, 8)]
+        palette.extend(
+            tyrian_palette[
+                0xF0 | ((nibble + brightness) & 0x0F)
+            ]
+            for nibble in ordered_nibbles
+        )
+        palette_data.extend(snes.snes_palette_bytes([palette]))
+        if brightness == -3:
+            preview_palette = palette
+
+    preview = Image.new(
+        "RGBA",
+        (sum(advances), 16),
+        (0, 0, 0, 0),
+    )
+    preview_x = 0
+    for values, advance in zip(indexed_frames, advances, strict=True):
+        rgba = np.zeros((16, 8, 4), dtype=np.uint8)
+        for palette_index, colour in enumerate(preview_palette):
+            if palette_index == 0:
+                continue
+            mask = values == palette_index
+            rgba[mask, :3] = colour
+            rgba[mask, 3] = 255
+        preview.alpha_composite(
+            Image.fromarray(rgba, "RGBA"),
+            (preview_x, 0),
+        )
+        preview_x += advance
+    return (
+        bytes(tile_data),
+        bytes(palette_data),
         preview,
         tuple(advances),
     )
@@ -2274,6 +2436,8 @@ def repack_obj_tiles(
     pause_advances: tuple[int, ...],
     game_over_tiles: bytes,
     game_over_advances: tuple[int, ...],
+    secret_level_tiles: bytes,
+    secret_level_advances: tuple[int, ...],
     boss_bar_tiles: bytes,
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
@@ -2442,6 +2606,32 @@ def repack_obj_tiles(
     metadata["OBJ_GAME_OVER_WORD_GAP"] = GAME_OVER_WORD_GAP
     for index, advance in enumerate(game_over_advances):
         metadata[f"OBJ_GAME_OVER_ADVANCE_{index}"] = advance
+    expected_secret_level_bytes = (
+        len(SECRET_LEVEL_UNIQUE_TEXT) * 2 * 32
+    )
+    if len(secret_level_tiles) != expected_secret_level_bytes:
+        raise ValueError(
+            "GBA SECRET LEVEL text must contain eight unique 8x16 glyphs"
+        )
+    if len(secret_level_advances) != len(SECRET_LEVEL_UNIQUE_TEXT):
+        raise ValueError("GBA SECRET LEVEL advance count changed")
+    secret_level_start = SECRET_LEVEL_SOURCE_TILE * 32
+    secret_level_end = secret_level_start + len(secret_level_tiles)
+    if secret_level_end > len(output):
+        raise ValueError("GBA SECRET LEVEL source bank exceeds OBJ backing")
+    output[secret_level_start:secret_level_end] = secret_level_tiles
+    metadata["OBJ_TILE_SECRET_LEVEL_SOURCE"] = SECRET_LEVEL_SOURCE_TILE
+    metadata["OBJ_TILE_SECRET_LEVEL_RUNTIME"] = SECRET_LEVEL_RUNTIME_TILE
+    metadata["OBJ_PAL_SECRET_LEVEL"] = 15
+    metadata["OBJ_SECRET_LEVEL_UNIQUE_GLYPH_COUNT"] = len(
+        SECRET_LEVEL_UNIQUE_TEXT
+    )
+    metadata["OBJ_SECRET_LEVEL_TILE_COUNT"] = (
+        len(secret_level_tiles) // 32
+    )
+    metadata["OBJ_SECRET_LEVEL_WORD_GAP"] = SECRET_LEVEL_WORD_GAP
+    for index, advance in enumerate(secret_level_advances):
+        metadata[f"OBJ_SECRET_LEVEL_ADVANCE_{index}"] = advance
     tile_count = len(output) // 32
     if tile_count > 1024:
         raise ValueError(f"GBA OBJ atlas exceeds 1024 tiles: {tile_count}")
@@ -2829,7 +3019,7 @@ def load_default_player_shot(
     hdt_path: Path,
     image_root: Path,
 ) -> tuple[Image.Image, dict[str, int | str]]:
-    """Resolve new-game Pulse Cannon power 1 through tyrian.hdt."""
+    """Resolve the requested max-power Pulse Cannon through tyrian.hdt."""
     data = hdt_path.read_bytes()
     weapon_size = 80
     weapon_count = 781
@@ -2837,7 +3027,7 @@ def load_default_player_shot(
     item_base = struct.unpack_from("<i", data, 0)[0] + 14
     port_table = item_base + weapon_count * weapon_size
 
-    # OpenTyrian starts player 1 with front port ID 1 at power level 1.
+    # GBA validation keeps stock front port ID 1 but selects power level 11.
     port_offset = port_table + port_size
     name_length = data[port_offset]
     port_name = (
@@ -2845,7 +3035,11 @@ def load_default_player_shot(
         .decode("latin1")
         .rstrip()
     )
-    weapon_record = struct.unpack_from("<H", data, port_offset + 32)[0]
+    weapon_record = struct.unpack_from(
+        "<H",
+        data,
+        port_offset + 32 + 10 * 2,
+    )[0]
     weapon_offset = item_base + weapon_record * weapon_size
     shot_repeat = data[weapon_offset + 2]
     multi = data[weapon_offset + 3]
@@ -2868,13 +3062,13 @@ def load_default_player_shot(
         )
     if (
         port_name != "Pulse-Cannon"
-        or weapon_record != 155
-        or graphic != 59
-        or multi != 1
-        or sequence_max != 1
+        or weapon_record != 165
+        or graphic != 62
+        or multi != 5
+        or sequence_max != 5
     ):
         raise ValueError(
-            "unexpected Tyrian new-game Pulse Cannon layout: "
+            "unexpected Tyrian max-power Pulse Cannon layout: "
             f"{port_name=}, {weapon_record=}, {graphic=}, "
             f"{multi=}, {sequence_max=}"
         )
@@ -4025,7 +4219,7 @@ def main() -> None:
         data_root / "tyrian.hdt",
         image_root,
     )
-    player_shot_source.save(preview / "player_shot_059_source.png")
+    player_shot_source.save(preview / "player_shot_062_source.png")
     player_dir = image_root / "sheets" / "09_player_ships"
     player_anchor_boxes = {
         233: (3, 2, 21, 27),
@@ -4086,6 +4280,16 @@ def main() -> None:
     if game_over_palette != pause_palette:
         raise ValueError("PAUSED and GAME OVER must share one OBJ palette")
     (
+        secret_level_tiles,
+        secret_level_palettes,
+        secret_level_preview,
+        secret_level_advances,
+    ) = build_secret_level_status(
+        snes,
+        image_root,
+        data_root / "palette.dat",
+    )
+    (
         boss_bar_tiles,
         boss_bar_palette,
         boss_bar_preview,
@@ -4108,6 +4312,8 @@ def main() -> None:
         pause_advances,
         game_over_tiles,
         game_over_advances,
+        secret_level_tiles,
+        secret_level_advances,
         boss_bar_tiles,
     )
     obj_metadata.update(frontend_metadata)
@@ -4131,6 +4337,9 @@ def main() -> None:
         obsolete.unlink(missing_ok=True)
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
+    (output / "secret_level_palettes.bin").write_bytes(
+        secret_level_palettes
+    )
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
         preview / "obj_gba_source_atlas.png"
     )
@@ -4160,6 +4369,13 @@ def main() -> None:
         (game_over_preview.width * 8, game_over_preview.height * 8),
         Image.Resampling.NEAREST,
     ).save(preview / "game_over_font_shapes.png")
+    secret_level_preview.resize(
+        (
+            secret_level_preview.width * 8,
+            secret_level_preview.height * 8,
+        ),
+        Image.Resampling.NEAREST,
+    ).save(preview / "secret_level_font_shapes.png")
     (preview / "enemy_projectiles_pc_source.png").unlink(missing_ok=True)
     boss_bar_preview.resize(
         (boss_bar_preview.width * 6, boss_bar_preview.height * 6),
@@ -4214,44 +4430,57 @@ def main() -> None:
     game_over_report = music_reports[10]
     sound_file = data_root / "tyrian.snd"
     voice_file = data_root / "voices.snd"
-    sfx = snes.extract_tyrian_sfx(sound_file)
-    for sound_id in (11, 22):
-        sfx.append((
-            f"explosion_{sound_id}",
+    ordinary_sound_count = struct.unpack_from(
+        "<H",
+        sound_file.read_bytes(),
+        0,
+    )[0]
+    voice_sound_count = struct.unpack_from(
+        "<H",
+        voice_file.read_bytes(),
+        0,
+    )[0]
+    if ordinary_sound_count != 29 or voice_sound_count != 9:
+        raise ValueError(
+            "Tyrian source sound catalog changed: "
+            f"{ordinary_sound_count} ordinary + "
+            f"{voice_sound_count} voices"
+        )
+    for sound_id in range(1, ordinary_sound_count + 1):
+        write_signed_pcm_wav(
+            output / f"source_sound_{sound_id:02d}.wav",
             extract_tyrian_sfx_entry(sound_file, sound_id - 1),
             11_025,
-            False,
-        ))
-    # S_ITEM is one-based sample 18 in OpenTyrian, hence archive index 17.
-    sfx.append((
-        "item",
-        extract_tyrian_sfx_entry(sound_file, 17),
-        11_025,
-        False,
-    ))
-    # WeaponType.sound is one-based. These are the three additional effects
-    # used by the exact level-1 enemy/boss weapon records (sound 1 already
-    # exists as weapon_1.wav).
-    for sound_id in (4, 6, 13):
-        sfx.append((
-            f"enemy_shot_{sound_id}",
-            extract_tyrian_sfx_entry(sound_file, sound_id - 1),
+        )
+    for voice_index in range(voice_sound_count):
+        pcm = extract_tyrian_sfx_entry(voice_file, voice_index)
+        # nortsong.c JE_loadSndFile() removes the corrupt 100-byte tail from
+        # every voices.snd entry, not only V_LEVEL_END.
+        if len(pcm) < 100:
+            raise ValueError(
+                f"Tyrian voice {voice_index + 1} is shorter than its trim"
+            )
+        write_signed_pcm_wav(
+            output / (
+                f"source_sound_"
+                f"{ordinary_sound_count + voice_index + 1:02d}.wav"
+            ),
+            pcm[:-100],
             11_025,
-            False,
-        ))
-    # V_LEVEL_END is soundSamples[33], therefore voices.snd entry 4 after
-    # the 29 ordinary SFX. OpenTyrian discards 100 bytes of bad voice tail.
-    level_complete = extract_tyrian_sfx_entry(voice_file, 4)
-    if len(level_complete) < 100:
-        raise ValueError("V_LEVEL_END voice is shorter than its trim")
-    sfx.append((
-        "level_complete",
-        level_complete[:-100],
-        11_025,
-        False,
-    ))
-    for name, pcm, rate, _ in sfx:
-        write_signed_pcm_wav(output / f"{name}.wav", pcm, rate)
+        )
+    for obsolete_sound in (
+        "weapon_1.wav",
+        "enemy_hit.wav",
+        "explosion_9.wav",
+        "explosion_11.wav",
+        "explosion_22.wav",
+        "item.wav",
+        "enemy_shot_4.wav",
+        "enemy_shot_6.wav",
+        "enemy_shot_13.wav",
+        "level_complete.wav",
+    ):
+        (output / obsolete_sound).unlink(missing_ok=True)
 
     write_meta_header(output, obj_metadata)
     report_lines = [
@@ -4356,8 +4585,14 @@ def main() -> None:
             "game_over_music_seconds="
             f"{game_over_report['tracker_duration_seconds']:.6f}"
         ),
-        f"level_complete_voice_pcm_bytes={len(level_complete) - 100}",
-        f"audio_sfx_samples={len(sfx)}",
+        (
+            "level_complete_voice_pcm_bytes="
+            f"{len(extract_tyrian_sfx_entry(voice_file, 4)) - 100}"
+        ),
+        (
+            "audio_sfx_samples="
+            f"{ordinary_sound_count + voice_sound_count}"
+        ),
     ]
     (output / "asset_report.txt").write_text(
         "\n".join(report_lines) + "\n",

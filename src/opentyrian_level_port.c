@@ -793,6 +793,8 @@ void ot_level_port_init(
     state->player_armor = 10;
     state->player_weapon_mode = 1;
     state->player_purple_balls_needed = 1;
+    state->display_flash = 0;
+    state->display_flash_change = 1;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
         state->enemy_avail[index] = 1;
         state->enemy[index].shape_slot =
@@ -2085,10 +2087,7 @@ static bool ot_enemy_fire_slots(
                     do {
                         sound_slot = ot_mt_rand(state) % 8u;
                     } while (sound_slot == 3);
-                    if (weapon.sound < 16) {
-                        state->frame_sound_mask |=
-                            (uint16_t)(1u << weapon.sound);
-                    }
+                    state->frame_sound_queue[sound_slot] = weapon.sound;
                 }
                 if (enemy->aniactive == 2) enemy->aniactive = 1;
                 enemy->eshotmultipos[(uint8_t)slot]++;
@@ -2260,7 +2259,15 @@ static void ot_enemy_launch(
     do {
         sound_slot = ot_mt_rand(state) % 8u;
     } while (sound_slot == 3);
-    (void)(ot_mt_rand(state) % 3u);
+    {
+        static const uint8_t random_enemy_launch_sounds[3] = {
+            13, 6, 26,
+        };
+        uint32_t sound_index = ot_mt_rand(state) % 3u;
+
+        state->frame_sound_queue[sound_slot] =
+            random_enemy_launch_sounds[sound_index];
+    }
     if (parent->launchspecial == 1 && parent->linknum < 100) {
         child->linknum = parent->linknum;
     }
@@ -2673,6 +2680,8 @@ ot_kill_enemy_group(
             enemy->size == 1,
             enemy->enemyground
         );
+        state->frame_sound_queue[6] =
+            enemy->size == 1 ? 9 : 8;
         /*
          * OpenTyrian keeps dlevel=-1 components in availability state 2 and
          * swaps them to their authored damaged graphic.  This is how a
@@ -3119,6 +3128,7 @@ ot_level_port_collide_player_shot_packed(
         if (armor > result->remaining_damage) {
             uint8_t damage_before = result->remaining_damage;
 
+            state->frame_sound_queue[5] = 3;
             if (enemy->armorleft != 255) {
                 enemy->armorleft =
                     (uint8_t)(enemy->armorleft - damage_before);
@@ -3322,11 +3332,13 @@ void ot_level_port_collide_player(
                 result->cash_awarded += 100;
                 ot_handle_purple_ball(state, result);
                 state->high_value_pickup_count++;
+                state->frame_sound_queue[7] = 29;
                 consumed = true;
             } else if (value > 32100) {
                 result->cash_awarded += 250;
                 state->player_special = (uint8_t)(value - 32100);
                 state->high_value_pickup_count++;
+                state->frame_sound_queue[7] = 29;
                 consumed = true;
             } else if (value > 32000) {
                 /*
@@ -3354,6 +3366,7 @@ void ot_level_port_collide_player(
 
             state->player_armor = armor > 28 ? 28 : (uint8_t)armor;
             state->armor_pickup_count++;
+            state->frame_sound_queue[7] = 29;
             consumed = true;
         } else if (value > 10000 && availability == 2) {
             suppress_contact = true;
@@ -3370,17 +3383,21 @@ void ot_level_port_collide_player(
             suppress_contact = true;
             consumed = true;
             show_fixed_pickup_effect = true;
+            state->frame_sound_queue[7] = 18;
             if (value == 1) {
                 state->data_cube_pickup_count++;
                 result->data_cubes_awarded++;
+                state->frame_sound_queue[3] = 37;
             } else if (value == -1) {
                 state->front_weapon_powerup_count++;
                 result->front_powerups++;
                 (void)ot_power_up_weapon(state, true, result);
+                state->frame_sound_queue[7] = 29;
             } else if (value == -2) {
                 state->rear_weapon_powerup_count++;
                 result->rear_powerups++;
                 (void)ot_power_up_weapon(state, false, result);
+                state->frame_sound_queue[7] = 29;
             } else if (value == -3) {
                 /*
                  * The source creates special player shot 104.  The current
