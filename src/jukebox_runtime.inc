@@ -31,7 +31,7 @@ typedef struct {
 } JukeboxStar;
 
 static const char jukebox_font_characters[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
 static const u8 jukebox_setup_choices[] = {0, 2, 3, 6, 8};
 
 static JukeboxStar jukebox_stars[JUKEBOX_STAR_COUNT] EWRAM_DATA;

@@ -443,6 +443,39 @@ static void commit_vblank_work(void)
             boss_obj_palette_restore_pending = 0;
         }
     }
+    if (
+        game_state == STATE_LEVEL_STATS &&
+        frontend_stats_overlay_active
+    ) {
+        if (frontend_stats_tiles_pending) {
+            dmaCopy(
+                frontend_frame_scratch,
+                (u8 *)CHAR_BASE_BLOCK(2) +
+                    FRONTEND_STATS_TILE_BASE * 32u,
+                FRONTEND_STATS_TILE_BYTES
+            );
+            frontend_stats_tiles_pending = 0;
+        }
+        if (frontend_stats_map_dirty) {
+            dmaCopy(
+                frontend_frame_scratch + FRONTEND_STATS_MAP_OFFSET,
+                SCREEN_BASE_BLOCK(FRONTEND_STATS_SCREEN_BLOCK),
+                32u * 32u * sizeof(u16)
+            );
+            frontend_stats_map_dirty = 0;
+        }
+        REG_BG3HOFS = 0;
+        REG_BG3VOFS = 0;
+        REG_BG3CNT =
+            BG_PRIORITY(0) |
+            CHAR_BASE(2) |
+            SCREEN_BASE(FRONTEND_STATS_SCREEN_BLOCK) |
+            BG_16_COLOR | BG_SIZE_0;
+        REG_DISPCNT =
+            MODE_0 | BG0_ON | BG2_ON | BG3_ON |
+            OBJ_ON | OBJ_1D_MAP |
+            (source_background2_present() ? BG1_ON : 0);
+    }
     if (secret_level_tile_upload_pending) {
         dmaCopy(
             obj_tiles + OBJ_TILE_SECRET_LEVEL_SOURCE * 32,
@@ -483,9 +516,14 @@ static void commit_vblank_work(void)
      * the freshly uploaded frame, exactly one presentation frame after the
      * translated JE_drawEnemy selected it.
      */
-    source_enemy_cache_commit();
-    source_projectile_cache_commit();
-    source_effect_cache_commit();
+    if (
+        game_state == STATE_PLAY ||
+        game_state == STATE_GAME_OVER
+    ) {
+        source_enemy_cache_commit();
+        source_projectile_cache_commit();
+        source_effect_cache_commit();
+    }
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;

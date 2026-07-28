@@ -58,34 +58,18 @@ _Static_assert(
         FRONTEND_CUBE_WIDTH * FRONTEND_CUBE_HEIGHT,
     "generated OPTION_SHAPES cube stamp changed"
 );
-static const u8 frontend_glyph_advances[FRONTEND_GLYPH_COUNT] = {
-    FRONTEND_GLYPH_0_ADVANCE,
-    FRONTEND_GLYPH_1_ADVANCE,
-    FRONTEND_GLYPH_2_ADVANCE,
-    FRONTEND_GLYPH_3_ADVANCE,
-    FRONTEND_GLYPH_4_ADVANCE,
-    FRONTEND_GLYPH_5_ADVANCE,
-    FRONTEND_GLYPH_6_ADVANCE,
-    FRONTEND_GLYPH_7_ADVANCE,
-    FRONTEND_GLYPH_8_ADVANCE,
-    FRONTEND_GLYPH_9_ADVANCE,
-    FRONTEND_GLYPH_10_ADVANCE,
-};
-
-static const u8 frontend_stats_cube_x[FRONTEND_STATS_MAX_CUBES] = {
-    FRONTEND_STATS_CUBE_X_0,
-    FRONTEND_STATS_CUBE_X_1,
-    FRONTEND_STATS_CUBE_X_2,
-    FRONTEND_STATS_CUBE_X_3,
-};
-
 static const char frontend_runtime_font_characters[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-";
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
 
 _Static_assert(
     sizeof(frontend_runtime_font_characters) - 1u ==
         JUKEBOX_FONT_TILE_COUNT - 1u,
     "shared runtime font order changed"
+);
+_Static_assert(
+    JUKEBOX_FONT_TILE_COUNT + FRONTEND_STATS_CUBE_TILE_COUNT <=
+        FRONTEND_STATS_RESERVED_TILES,
+    "stats font and cube must fit the reserved charblock-2 tail"
 );
 
 static u8 frontend_prepare_map(void)
@@ -422,40 +406,6 @@ static void frontend_commit_vblank(void)
         (frontend_display_page ? BACKBUFFER : 0);
 }
 
-static void frontend_blit_glyph(
-    u8 *frame,
-    u8 glyph,
-    s16 x,
-    s16 y
-)
-{
-    const u8 *source;
-    u8 row;
-
-    if (glyph >= FRONTEND_GLYPH_COUNT) return;
-    source = frontend_glyphs + (u32)glyph * FRONTEND_GLYPH_BYTES;
-    for (row = 0; row < 8; row++) {
-        u8 column;
-        s16 target_y = (s16)(y + row);
-
-        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
-        for (column = 0; column < 8; column++) {
-            u8 pixel = source[(u16)row * 8u + column];
-            s16 target_x = (s16)(x + column);
-
-            if (
-                pixel != 0xff &&
-                target_x >= 0 &&
-                target_x < SCREEN_WIDTH
-            ) {
-                frame[
-                    (u16)target_y * SCREEN_WIDTH + (u16)target_x
-                ] = pixel;
-            }
-        }
-    }
-}
-
 static u8 frontend_runtime_font_tile(char character)
 {
     u8 index;
@@ -701,53 +651,6 @@ static void frontend_render_next_level_selection(u8 old_selection)
     frontend_frame_pending = 1;
 }
 
-static s16 frontend_draw_u32(
-    u8 *frame,
-    u32 value,
-    s16 x,
-    s16 y
-)
-{
-    u8 digit[10];
-    u8 count = 0;
-
-    do {
-        digit[count++] = (u8)(value % 10u);
-        value /= 10u;
-    } while (value != 0 && count < sizeof(digit));
-    while (count != 0) {
-        u8 current = digit[--count];
-
-        frontend_blit_glyph(frame, current, x, y);
-        x = (s16)(x + frontend_glyph_advances[current]);
-    }
-    return x;
-}
-
-static u8 frontend_stats_frame(void)
-{
-    if (frontend_stats_stage == FRONTEND_STATS_STAGE_COMPLETED) {
-        return FRONTEND_FRAME_STATS_COMPLETED;
-    }
-    if (frontend_stats_stage == FRONTEND_STATS_STAGE_CASH) {
-        return FRONTEND_FRAME_STATS_CASH;
-    }
-    if (frontend_stats_stage == FRONTEND_STATS_STAGE_ENEMIES) {
-        return FRONTEND_FRAME_STATS_ENEMIES;
-    }
-    if (frontend_stats_stage == FRONTEND_STATS_STAGE_CUBES) {
-        return source_parity_level.data_cube_pickup_count != 0 ?
-            FRONTEND_FRAME_STATS_FULL_CUBES :
-            FRONTEND_FRAME_STATS_FULL_NONE;
-    }
-    if (frontend_play_mode == FRONTEND_PLAY_ARCADE) {
-        return FRONTEND_FRAME_STATS_ARCADE_FINAL;
-    }
-    return source_parity_level.data_cube_pickup_count != 0 ?
-        FRONTEND_FRAME_STATS_FULL_FINAL_CUBES :
-        FRONTEND_FRAME_STATS_FULL_FINAL_NONE;
-}
-
 static u8 frontend_stats_cube_total(void)
 {
     u32 total = source_parity_level.data_cube_pickup_count;
@@ -757,41 +660,146 @@ static u8 frontend_stats_cube_total(void)
         (u8)total;
 }
 
-static void frontend_blit_cube(
-    u8 *frame,
-    s16 x,
-    s16 y
+static u8 *frontend_stats_tile_scratch(void)
+{
+    return frontend_frame_scratch;
+}
+
+static u16 *frontend_stats_map_scratch(void)
+{
+    return (u16 *)(
+        frontend_frame_scratch + FRONTEND_STATS_MAP_OFFSET
+    );
+}
+
+static const char *frontend_stats_text(u8 index, const char *fallback)
+{
+    if (
+        frontend_text_ready &&
+        index < 68 &&
+        frontend_text.misc_text[index][0] != '\0'
+    ) {
+        return frontend_text.misc_text[index];
+    }
+    return fallback;
+}
+
+static u8 frontend_stats_map_text(
+    u8 column,
+    u8 row,
+    const char *text
 )
 {
-    u8 row;
+    u16 *map = frontend_stats_map_scratch();
 
-    for (row = 0; row < FRONTEND_CUBE_HEIGHT; row++) {
-        u8 column;
-        s16 target_y = (s16)(y + row);
+    while (*text != '\0' && column < 30) {
+        u8 tile = frontend_runtime_font_tile(*text++);
 
-        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
-        for (column = 0; column < FRONTEND_CUBE_WIDTH; column++) {
-            u8 pixel = frontend_cube[
-                (u16)row * FRONTEND_CUBE_WIDTH + column
-            ];
-            s16 target_x = (s16)(x + column);
+        map[(u16)row * 32u + column] = (u16)(
+            FRONTEND_STATS_TILE_BASE + tile + (15u << 12)
+        );
+        column++;
+    }
+    return column;
+}
 
-            if (
-                pixel != 0xff &&
-                target_x >= 0 &&
-                target_x < SCREEN_WIDTH
-            ) {
-                frame[
-                    (u16)target_y * SCREEN_WIDTH + (u16)target_x
-                ] = pixel;
+static u8 frontend_stats_map_u32(u8 column, u8 row, u32 value)
+{
+    char digit[10];
+    u8 count = 0;
+
+    do {
+        digit[count++] = (char)('0' + value % 10u);
+        value /= 10u;
+    } while (value != 0 && count < sizeof(digit));
+    while (count != 0 && column < 30) {
+        char text[2] = {digit[--count], '\0'};
+
+        column = frontend_stats_map_text(column, row, text);
+    }
+    return column;
+}
+
+static void frontend_stats_prepare_tiles(void)
+{
+    u8 *tiles = frontend_stats_tile_scratch();
+    u8 tile_y;
+
+    memset(tiles, 0, FRONTEND_STATS_TILE_BYTES);
+    memcpy(
+        tiles,
+        jukebox_font_tiles,
+        JUKEBOX_FONT_TILE_COUNT * 32u
+    );
+    for (tile_y = 0; tile_y < 3; tile_y++) {
+        u8 tile_x;
+
+        for (tile_x = 0; tile_x < 3; tile_x++) {
+            u8 *target = tiles +
+                (
+                    JUKEBOX_FONT_TILE_COUNT +
+                    (u16)tile_y * 3u +
+                    tile_x
+                ) * 32u;
+            u8 row;
+
+            for (row = 0; row < 8; row++) {
+                u8 column;
+                u8 source_y = (u8)(tile_y * 8u + row);
+
+                for (column = 0; column < 8; column++) {
+                    u8 source_x = (u8)(tile_x * 8u + column);
+                    u8 pixel = 0xff;
+                    u8 colour = 0;
+
+                    if (
+                        source_x < FRONTEND_CUBE_WIDTH &&
+                        source_y < FRONTEND_CUBE_HEIGHT
+                    ) {
+                        pixel = frontend_cube[
+                            (u16)source_y * FRONTEND_CUBE_WIDTH +
+                            source_x
+                        ];
+                    }
+                    if (pixel != 0xff) {
+                        colour = pixel & 0x0fu;
+                        if (colour == 0) colour = 1;
+                    }
+                    target[(u16)row * 4u + (column >> 1)] |=
+                        (u8)(
+                            colour <<
+                            ((column & 1u) != 0 ? 4 : 0)
+                        );
+                }
             }
+        }
+    }
+    frontend_stats_tiles_pending = 1;
+}
+
+static void frontend_stats_map_cube(u8 column, u8 row)
+{
+    u16 *map = frontend_stats_map_scratch();
+    u8 tile_y;
+
+    for (tile_y = 0; tile_y < 3; tile_y++) {
+        u8 tile_x;
+
+        for (tile_x = 0; tile_x < 3; tile_x++) {
+            map[(u16)(row + tile_y) * 32u + column + tile_x] =
+                (u16)(
+                    FRONTEND_STATS_CUBE_TILE_BASE +
+                    (u16)tile_y * 3u +
+                    tile_x +
+                    (9u << 12)
+                );
         }
     }
 }
 
 static void frontend_render_stats(void)
 {
-    u8 frame = frontend_stats_frame();
+    u16 *map = frontend_stats_map_scratch();
     u32 killed_percent =
         source_parity_level.total_enemy == 0 ?
             0 :
@@ -800,34 +808,40 @@ static void frontend_render_stats(void)
                 source_parity_level.total_enemy / 2u
             ) /
             source_parity_level.total_enemy;
-    s16 x;
+    u8 column;
+    u16 blank = (u16)(FRONTEND_STATS_TILE_BASE + (15u << 12));
+    u16 index;
 
-    memcpy(
-        frontend_frame_scratch,
-        frontend_frame_address(frame),
-        FRONTEND_FRAME_BYTES
-    );
-    if (frontend_stats_stage >= FRONTEND_STATS_STAGE_CASH) {
-        frontend_draw_u32(
-            frontend_frame_scratch,
-            player_cash,
-            FRONTEND_STATS_CASH_X,
-            FRONTEND_STATS_CASH_Y
+    for (index = 0; index < 32u * 32u; index++) map[index] = blank;
+    if (source_parity_level.bonus_level) {
+        frontend_stats_map_text(
+            1, 2, frontend_stats_text(16, "BONUS LEVEL")
         );
+    } else {
+        frontend_stats_map_text(
+            1,
+            2,
+            frontend_stats_text(
+                frontend_level_completed ? 26 : 61,
+                frontend_level_completed ? "COMPLETED" : "EXITING"
+            )
+        );
+        frontend_stats_map_text(12, 2, frontend_level.level_name);
+    }
+    if (frontend_stats_stage >= FRONTEND_STATS_STAGE_CASH) {
+        column = frontend_stats_map_text(
+            3, 6, frontend_stats_text(27, "CASH")
+        );
+        frontend_stats_map_u32((u8)(column + 1u), 6, player_cash);
     }
     if (frontend_stats_stage >= FRONTEND_STATS_STAGE_ENEMIES) {
-        x = frontend_draw_u32(
-            frontend_frame_scratch,
-            killed_percent,
-            FRONTEND_STATS_KILLED_X,
-            FRONTEND_STATS_KILLED_Y
+        column = frontend_stats_map_text(
+            4, 11, frontend_stats_text(62, "ENEMIES DESTROYED")
         );
-        frontend_blit_glyph(
-            frontend_frame_scratch,
-            FRONTEND_DYNAMIC_PERCENT_GLYPH,
-            x,
-            FRONTEND_STATS_KILLED_Y
+        column = frontend_stats_map_u32(
+            (u8)(column + 1u), 11, killed_percent
         );
+        frontend_stats_map_text(column, 11, "%");
     }
     if (
         frontend_play_mode != FRONTEND_PLAY_ARCADE &&
@@ -837,19 +851,31 @@ static void frontend_render_stats(void)
         u8 cube_count = frontend_stats_cube_visible_count;
         u8 cube_index;
 
+        frontend_stats_map_text(
+            3, 14, frontend_stats_text(3, "CUBES")
+        );
         if (cube_count > cube_total) cube_count = cube_total;
         for (cube_index = 0; cube_index < cube_count; cube_index++) {
-            frontend_blit_cube(
-                frontend_frame_scratch,
-                frontend_stats_cube_x[cube_index],
-                FRONTEND_STATS_CUBE_Y
+            frontend_stats_map_cube(
+                (u8)(6u + cube_index * 4u),
+                16
+            );
+        }
+        if (
+            cube_total == 0 &&
+            frontend_stats_stage >= FRONTEND_STATS_STAGE_FINAL
+        ) {
+            frontend_stats_map_text(
+                6, 16, frontend_stats_text(14, "NONE")
             );
         }
     }
-    frontend_present(
-        frontend_frame_scratch,
-        frontend_palette_address(frame)
-    );
+    if (frontend_stats_stage >= FRONTEND_STATS_STAGE_FINAL) {
+        frontend_stats_map_text(
+            10, 19, frontend_stats_text(4, "PRESS A KEY")
+        );
+    }
+    frontend_stats_map_dirty = 1;
 }
 
 static u8 frontend_static_frame_for_state(
@@ -929,6 +955,11 @@ static void frontend_redraw_selection(u8 old_selection)
 
 static void frontend_enter_state(u8 state, u8 selection)
 {
+    if (state != STATE_LEVEL_STATS) {
+        frontend_stats_overlay_active = 0;
+        frontend_stats_tiles_pending = 0;
+        frontend_stats_map_dirty = 0;
+    }
     game_state = state;
     frontend_selection = selection;
     frontend_redraw();
@@ -983,6 +1014,9 @@ static void frontend_begin(void)
     frontend_stats_stage = FRONTEND_STATS_STAGE_COMPLETED;
     frontend_stats_cube_visible_count = 0;
     frontend_stats_timer = 0;
+    frontend_stats_overlay_active = 0;
+    frontend_stats_tiles_pending = 0;
+    frontend_stats_map_dirty = 0;
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
@@ -1427,7 +1461,30 @@ static void frontend_enter_level_stats(u8 completed)
     frontend_stats_stage = FRONTEND_STATS_STAGE_COMPLETED;
     frontend_stats_cube_visible_count = 0;
     frontend_stats_timer = FRONTEND_STATS_STAGE_TICKS;
-    frontend_enter_state(STATE_LEVEL_STATS, 0);
+    /*
+     * JE_endLevelAni() writes onto VGAScreenSeg without clearing it.  Keep
+     * the final Mode-0 gameplay frame and add only a transparent BG3 text
+     * layer; switching to the generated Mode-4 stats atlas caused the
+     * incorrect black background.
+     */
+    game_state = STATE_LEVEL_STATS;
+    frontend_selection = 0;
+    frontend_mode4_active = 0;
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_stats_overlay_active = 1;
+    frontend_stats_prepare_tiles();
+    frontend_render_stats();
+    {
+        u16 index;
+
+        for (index = 0; index < previous_oam_count; index++) {
+            oam_shadow[index].attr2 =
+                (u16)((oam_shadow[index].attr2 & ~0x0c00u) | 0x0c00u);
+        }
+        oam_dirty = 1;
+    }
+    telemetry_state_transitions++;
     source_sound_effect(34);
     telemetry_level_complete_voice_starts++;
 }

@@ -2022,6 +2022,10 @@ source_process_player_collisions(void)
             &player_result.pickup_effects[effect_index]
         );
     }
+    while (player_result.orbiting_asteroids_awarded != 0) {
+        (void)spawn_orbiting_asteroid_shot();
+        player_result.orbiting_asteroids_awarded--;
+    }
     if (player_result.bonus_level_triggered) {
         /*
          * mainint.c plays source song 30 ("Zanac"), then displays

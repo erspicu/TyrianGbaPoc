@@ -11,9 +11,14 @@
 
 enum {
     BACKGROUND_LAYER_COUNT = 3,
+    /*
+     * Measured campaign maxima are 533 / 434 / 454 resident patterns.
+     * Keep a small margin on the first two layers and leave the final 58
+     * characters of charblock 2 for the source-parity end-level overlay.
+     */
     BACKGROUND_LAYER0_CACHE_SLOTS = 576,
-    BACKGROUND_LAYER1_CACHE_SLOTS = 480,
-    BACKGROUND_LAYER2_CACHE_SLOTS = 480,
+    BACKGROUND_LAYER1_CACHE_SLOTS = 448,
+    BACKGROUND_LAYER2_CACHE_SLOTS = 454,
     BACKGROUND_TOTAL_CACHE_SLOTS =
         BACKGROUND_LAYER0_CACHE_SLOTS +
         BACKGROUND_LAYER1_CACHE_SLOTS +
@@ -203,8 +208,8 @@ static const u8 background_cache_char_base[BACKGROUND_LAYER_COUNT] = {
 };
 
 _Static_assert(
-    BACKGROUND_TOTAL_CACHE_SLOTS == 1536,
-    "BG character pool must occupy exactly charblocks 0..2"
+    BACKGROUND_TOTAL_CACHE_SLOTS == 1478,
+    "BG character pool must reserve 58 charblock-2 tiles for stats"
 );
 _Static_assert(
     BACKGROUND_LAYER0_CACHE_SLOTS <= 1024 &&
@@ -216,9 +221,9 @@ _Static_assert(
     "each BG partition must fit its 10-bit character-index window"
 );
 _Static_assert(
-    BACKGROUND_TOTAL_CACHE_SLOTS * BACKGROUND_TILE_BYTES ==
+    BACKGROUND_TOTAL_CACHE_SLOTS * BACKGROUND_TILE_BYTES <
         BG0_SCREEN_BLOCK * 2048,
-    "BG character pool must stop at the first gameplay screen block"
+    "BG character pool must stop before the first gameplay screen block"
 );
 
 static const u16 background_map_first_row[BACKGROUND_LAYER_COUNT] = {

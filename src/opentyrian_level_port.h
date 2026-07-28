@@ -231,6 +231,7 @@ typedef struct {
     uint8_t data_cubes_awarded;
     uint8_t front_powerups;
     uint8_t rear_powerups;
+    uint8_t orbiting_asteroids_awarded;
     uint8_t superbombs_awarded;
     bool bonus_level_triggered;
     uint16_t next_level;

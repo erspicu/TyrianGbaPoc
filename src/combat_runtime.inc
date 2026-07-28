@@ -349,6 +349,101 @@ static void spawn_player_shot(void)
 #endif
 
 /*
+ * Literal player_shot_create(..., SHOT_MISC, ..., 104, ...) path used by
+ * JE_playerCollide() for evalue == -3.  It deliberately reads the stock HDT
+ * definition at runtime; no GBA-authored pickup weapon table is involved.
+ */
+static u8 spawn_orbiting_asteroid_shot(void)
+{
+    OtWeaponDefinition weapon;
+    PlayerShot *shot = 0;
+    u8 index;
+    u8 delay;
+    u8 circle;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    s16 delta_x = stress_player_delta_x;
+    s16 delta_y = stress_player_delta_y;
+#else
+    s16 delta_x = source_player_delta_x;
+    s16 delta_y = source_player_delta_y;
+#endif
+
+    if (!ot_data_hdt_weapon_read(104, &weapon) ||
+        !source_weapon_is_valid(&weapon)) {
+        return 0;
+    }
+    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+        if (!player_shots[index].active) {
+            shot = &player_shots[index];
+            break;
+        }
+    }
+    if (shot == 0) {
+        telemetry_player_shot_drops++;
+        return 0;
+    }
+
+    /* shotMultiPos[SHOT_MISC] is reset to zero immediately before create. */
+    delay = weapon.delay[0];
+    if (delay == 121) delay = 255;
+    memset(shot, 0, sizeof(*shot));
+    shot->x = (s16)(player_source_x + weapon.bx[0]);
+    shot->y = (s16)(player_source_y + weapon.by[0]);
+    shot->xc = weapon.accelerationx;
+    shot->yc = (s8)-weapon.acceleration;
+    shot->xm = weapon.sx[0];
+    shot->ym = (s16)-weapon.sy[0];
+    if (weapon.sy[0] == 98) {
+        shot->ym = 0;
+        shot->yc = -1;
+    } else if (weapon.sy[0] > 100) {
+        shot->ym = weapon.sy[0];
+        shot->y = (s16)(shot->y - delta_y);
+    }
+    if (weapon.sx[0] > 100) {
+        shot->xm = weapon.sx[0];
+        shot->x = (s16)(shot->x - delta_x);
+        if (shot->xm == 101) {
+            shot->y = (s16)(shot->y - delta_y);
+        }
+    }
+    shot->graphic = weapon.sg[0];
+    shot->render_graphic = shot->graphic;
+    shot->animation_max =
+        delay > 100 && delay < 120 ?
+            (u8)(delay - 99u) :
+            (u8)(weapon.weapani + 1u);
+    if (shot->animation_max == 0) shot->animation_max = 1;
+    shot->trail = weapon.delay[0] == 121 ? 0 : weapon.trail;
+    shot->damage = weapon.attack[0];
+    if (shot->damage == 0) shot->damage = 1;
+    shot->ttl = delay;
+
+    circle = weapon.circlesize;
+    shot->complicated = circle != 0;
+    if (circle != 0) {
+        if (circle > 19) {
+            shot->circle_size_x = (u8)(circle % 20u);
+            shot->circle_size_y = (u8)(circle / 20u);
+        } else {
+            shot->circle_size_x = circle;
+            shot->circle_size_y = circle;
+        }
+        shot->dev_x = (s8)(shot->circle_size_x >> 1);
+        shot->dev_y = (s8)(shot->circle_size_y >> 1);
+        shot->dir_x = 1;
+        shot->dir_y = -1;
+    }
+    shot->active = shot->graphic != 0 && delay != 0;
+    if (weapon.sound > 0) {
+        /* shots.c soundChannel[SHOT_MISC] is source queue slot two. */
+        source_parity_level.frame_sound_queue[2] = weapon.sound;
+    }
+    if (shot->active) telemetry_player_shot_spawns++;
+    return shot->active;
+}
+
+/*
  * Direct single-player JE_playerDamage() translation.  HUD redraw calls are
  * presentation-only in the 320x200 PC build and intentionally absent from
  * the cropped GBA combat viewport.
@@ -763,6 +858,32 @@ static void update_shots(void)
                 player_shot->y - 120 +
                 SOURCE_PLAYER_SHOT_DELTA_Y
             );
+        }
+        if (player_shot->complicated) {
+            player_shot->dev_x =
+                (s8)(player_shot->dev_x + player_shot->dir_x);
+            player_shot->x =
+                (s16)(player_shot->x + player_shot->dev_x);
+            if (
+                (player_shot->dev_x < 0 ?
+                    -player_shot->dev_x :
+                    player_shot->dev_x) ==
+                player_shot->circle_size_x
+            ) {
+                player_shot->dir_x = (s8)-player_shot->dir_x;
+            }
+            player_shot->dev_y =
+                (s8)(player_shot->dev_y + player_shot->dir_y);
+            player_shot->y =
+                (s16)(player_shot->y + player_shot->dev_y);
+            if (
+                (player_shot->dev_y < 0 ?
+                    -player_shot->dev_y :
+                    player_shot->dev_y) ==
+                player_shot->circle_size_y
+            ) {
+                player_shot->dir_y = (s8)-player_shot->dir_y;
+            }
         }
         if (
             player_shot->x < -34 ||

@@ -26,6 +26,7 @@ static u8 autotest_secret_level_collision(void)
 {
     OtPlayerCollisionResult result;
     OtEnemy *portal = &source_parity_level.enemy[0];
+    u8 portal_pass;
 
     source_parity_level.player_x = 80;
     source_parity_level.player_y = 96;
@@ -39,12 +40,33 @@ static u8 autotest_secret_level_collision(void)
         true,
         &result
     );
-    return
+    portal_pass =
         result.bonus_level_triggered &&
         result.next_level == 42 &&
         source_parity_level.bonus_level &&
         source_parity_level.next_level == 42 &&
         source_parity_level.display_time == 150 &&
+        source_parity_level.enemy_avail[0] == 1;
+
+    /*
+     * JE_playerCollide() evalue==-3 must request the HDT weapon-104 misc
+     * shot, not merely remove the score item and increment telemetry.
+     */
+    source_parity_level.enemy_avail[0] = 0;
+    memset(portal, 0, sizeof(*portal));
+    portal->ex = 80;
+    portal->ey = 96;
+    portal->evalue = -3;
+    portal->scoreitem = true;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    return
+        portal_pass &&
+        result.orbiting_asteroids_awarded == 1 &&
+        source_parity_level.orbiting_asteroid_pickup_count == 1 &&
         source_parity_level.enemy_avail[0] == 1;
 }
 #endif

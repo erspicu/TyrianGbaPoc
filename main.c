@@ -128,6 +128,15 @@ _Static_assert(
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
+#define FRONTEND_STATS_SCREEN_BLOCK 30
+#define FRONTEND_STATS_TILE_BASE 454
+#define FRONTEND_STATS_RESERVED_TILES 58
+#define FRONTEND_STATS_CUBE_TILE_BASE \
+    (FRONTEND_STATS_TILE_BASE + JUKEBOX_FONT_TILE_COUNT)
+#define FRONTEND_STATS_CUBE_TILE_COUNT 9
+#define FRONTEND_STATS_TILE_BYTES \
+    (FRONTEND_STATS_RESERVED_TILES * 32)
+#define FRONTEND_STATS_MAP_OFFSET 2048
 #define MAP_RING_ROWS 32
 #define BG_MAP_COLUMNS 64
 #define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
@@ -672,6 +681,13 @@ typedef struct {
     s16 ym;
     s8 xc;
     s8 yc;
+    u8 complicated;
+    u8 circle_size_x;
+    u8 circle_size_y;
+    s8 dev_x;
+    s8 dir_x;
+    s8 dev_y;
+    s8 dir_y;
 } PlayerShot;
 
 typedef struct {
@@ -814,6 +830,9 @@ static u8 frontend_stats_stage EWRAM_BSS;
 static u8 frontend_stats_cube_visible_count EWRAM_BSS;
 static u16 frontend_stats_timer EWRAM_BSS;
 static u8 frontend_level_completed EWRAM_BSS;
+static u8 frontend_stats_overlay_active EWRAM_BSS;
+static u8 frontend_stats_tiles_pending EWRAM_BSS;
+static u8 frontend_stats_map_dirty EWRAM_BSS;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;

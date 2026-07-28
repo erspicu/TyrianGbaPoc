@@ -3286,6 +3286,7 @@ void ot_level_port_collide_player(
     result->data_cubes_awarded = 0;
     result->front_powerups = 0;
     result->rear_powerups = 0;
+    result->orbiting_asteroids_awarded = 0;
     result->superbombs_awarded = 0;
     result->bonus_level_triggered = false;
     result->next_level = 0;
@@ -3399,13 +3400,8 @@ void ot_level_port_collide_player(
                 (void)ot_power_up_weapon(state, false, result);
                 state->frame_sound_queue[7] = 29;
             } else if (value == -3) {
-                /*
-                 * The source creates special player shot 104.  The current
-                 * fixed Pulse-Cannon adapter has no misc-shot pool, so retain
-                 * the exact acquired gameplay state for the forthcoming
-                 * player-weapon translation.
-                 */
                 state->orbiting_asteroid_pickup_count++;
+                result->orbiting_asteroids_awarded++;
             } else if (value == -4) {
                 if (state->player_superbombs < 10) {
                     state->player_superbombs++;
