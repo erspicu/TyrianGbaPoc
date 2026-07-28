@@ -134,6 +134,14 @@ source hue-15 text treatment, and draw Data Cubes with `JE_drawCube` hue 9.
 Arcade mode now consumes and applies front weapon, rear weapon, sidekick,
 special and purple-ball drops through the source value ranges.
 
+The v43 release moves the Next Level planets and route dots from Mode-4
+software composition to true 8bpp OBJ/OAM, retaining stock SHP graphics,
+palette 17, shadows, animation and ornate-frame clipping. A global,
+stock-derived 15x15 navigation phase table removes runtime grid and SHP
+decoding during camera movement. Its 128-byte aligned IWRAM/ARM copy path
+passes 600-frame idle, 120 cursor switches and 40 camera transitions with
+zero missed VBlanks while Maxmod remains active.
+
 Player ship, generator and shield state now come from the selected episode's
 HDT database, including Episode 4's embedded item records. Ordinary ships are
 drawn from the source Sprite2 bank. A dedicated 1 KiB player VRAM cache keeps
@@ -171,6 +179,17 @@ a successful run, historical and test ROMs move to `Backup`, rebuildable
 intermediates are removed, and `build` retains only the latest release ROM.
 Pass `-KeepIntermediates` when debugging requires ELF, map, log, save, preview
 and verification files.
+
+The Next Level presentation has two additional deterministic performance
+targets:
+
+```powershell
+make frontend-nav-stress DETAIL_LEVEL=high GAME_SPEED=normal
+make frontend-nav-camera-stress DETAIL_LEVEL=high GAME_SPEED=normal
+```
+
+They verify idle OBJ animation, Tyrian/Exit selection patches and genuine
+camera easing independently of the gameplay regressions.
 
 The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
 are under `res`, the current release ROM is under `build`, historical ROMs are

@@ -133,6 +133,29 @@ FRONTEND_GLYPH_WIDTH = 8
 FRONTEND_GLYPH_HEIGHT = 8
 FRONTEND_GLYPH_CHARACTERS = "0123456789%"
 FRONTEND_PCX_PALETTES = (0, 7, 5, 8, 10, 5, 18, 19, 19, 20, 21, 22, 5)
+FRONTEND_NAV_OBJ_SCALE_PHASES = 5
+FRONTEND_NAV_OBJ_PHASE_COUNT = (
+    FRONTEND_NAV_OBJ_SCALE_PHASES * FRONTEND_NAV_OBJ_SCALE_PHASES
+)
+FRONTEND_NAV_OBJ_META_BYTES = 12
+FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT = 151
+FRONTEND_NAV_OBJ_DOT_DIM = 8
+FRONTEND_NAV_OBJ_VRAM_BYTES = 0x4000
+FRONTEND_NAV_BITMAP_WIDTH = 126
+FRONTEND_NAV_BITMAP_HEIGHT = 138
+FRONTEND_NAV_BITMAP_STRIDE = 128
+FRONTEND_NAV_GRID_PHASES = 15
+FRONTEND_NAV_BITMAP_PAGE_BYTES = (
+    FRONTEND_NAV_BITMAP_STRIDE * FRONTEND_NAV_BITMAP_HEIGHT
+)
+FRONTEND_NAV_PLANET_GRAPHICS = (
+    4, 1, 2, 3, 20, 36, 52, 68, 84, 100, 116,
+    132, 151, 151, 151, 151, 52, 52, 1, 2, 4,
+)
+FRONTEND_NAV_PLANET_ANIMATED = (
+    1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+)
 
 assert GBA_VIEW_CROP_X == 12
 assert GBA_VIEW_CROP_Y == 12
@@ -979,11 +1002,465 @@ class FrontendSourceRenderer:
                     frame[6 + y, 6 + x] = pixel
 
 
+def build_frontend_nav_obj_assets(
+    source: FrontendSourceRenderer,
+    preview: Path,
+) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+    """Pre-scale the source navigation sprites for bitmap-mode OBJ VRAM.
+
+    Mode 4 leaves 16 KiB at 0x06014000 for OBJ characters.  Planet animation
+    used to decode SHP sprites and redraw the complete 126x138 navigation
+    rectangle every four display frames.  This atlas keeps original palette
+    indices, including the source dark shadow, so runtime only streams the
+    current OBJ characters and updates OAM.
+
+    The 300->240 and 200->160 menu transform is exactly 4/5.  A sprite's
+    rasterization can differ by one output pixel depending on source_x/y
+    modulo five, so all 25 position phases are generated instead of accepting
+    animation shimmer.
+    """
+
+    dot_catalog_base = FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT
+    catalog_count = dot_catalog_base + 2
+    metadata = bytearray(
+        catalog_count *
+        FRONTEND_NAV_OBJ_PHASE_COUNT *
+        FRONTEND_NAV_OBJ_META_BYTES
+    )
+    tiles = bytearray()
+    planet_indices: set[int] = set()
+    for graphic, animated in zip(
+        FRONTEND_NAV_PLANET_GRAPHICS,
+        FRONTEND_NAV_PLANET_ANIMATED,
+        strict=True,
+    ):
+        base = graphic - 1
+        planet_indices.update(
+            range(base, base + (15 if animated else 1))
+        )
+    if max(planet_indices) >= FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT:
+        raise ValueError("navigation planet catalog exceeds generated metadata")
+
+    sources: dict[int, tuple[np.ndarray, bool, str]] = {}
+    for sprite_index in sorted(planet_indices):
+        sprite = source.sprite(3, sprite_index)
+        if sprite is None:
+            raise ValueError(
+                f"navigation planet SHP sprite is empty: {sprite_index}"
+            )
+        sources[sprite_index] = (
+            sprite,
+            True,
+            f"planet_table3_{sprite_index}",
+        )
+    for dot_offset, sprite_index in enumerate((29, 30)):
+        sprite = source.sprite(5, sprite_index)
+        if sprite is None:
+            raise ValueError(
+                f"navigation route-dot SHP sprite is empty: {sprite_index}"
+            )
+        sources[dot_catalog_base + dot_offset] = (
+            sprite,
+            False,
+            f"route_dot_table5_{sprite_index}",
+        )
+
+    def mapped(phase: int, coordinate: int) -> int:
+        return (
+            (phase + coordinate) * 4 // 5 -
+            phase * 4 // 5
+        )
+
+    def axis_chunks(extent: int) -> list[int]:
+        chunks: list[int] = []
+        remaining = extent
+        while remaining > 0:
+            if remaining > 24:
+                size = 32
+            elif remaining > 8:
+                size = 16
+            else:
+                size = 8
+            chunks.append(size)
+            remaining -= size
+        return chunks
+
+    def compose(
+        sprite: np.ndarray,
+        shadow: bool,
+        phase_x: int,
+        phase_y: int,
+    ) -> np.ndarray:
+        source_height, source_width = sprite.shape
+        extra = 3 if shadow else 0
+        width = mapped(phase_x, source_width - 1 + extra) + 1
+        height = mapped(phase_y, source_height - 1 + extra) + 1
+        canvas = np.zeros((height, width), dtype=np.uint8)
+        opaque_y, opaque_x = np.where(sprite != 0xFF)
+
+        if shadow:
+            for y, x in zip(opaque_y, opaque_x, strict=True):
+                pixel = int(sprite[y, x])
+                dark = (pixel & 0xF0) | max(0, (pixel & 0x0F) - 4)
+                canvas[
+                    mapped(phase_y, int(y) + 3),
+                    mapped(phase_x, int(x) + 3),
+                ] = dark + 1
+        for y, x in zip(opaque_y, opaque_x, strict=True):
+            pixel = int(sprite[y, x])
+            canvas[
+                mapped(phase_y, int(y)),
+                mapped(phase_x, int(x)),
+            ] = pixel + 1
+        return canvas
+
+    def pack_chunks(canvas: np.ndarray) -> bytes:
+        chunk_data = bytearray()
+        y = 0
+        for chunk_height in axis_chunks(canvas.shape[0]):
+            x = 0
+            for chunk_width in axis_chunks(canvas.shape[1]):
+                padded = np.zeros(
+                    (chunk_height, chunk_width),
+                    dtype=np.uint8,
+                )
+                height = min(chunk_height, canvas.shape[0] - y)
+                width = min(chunk_width, canvas.shape[1] - x)
+                padded[:height, :width] = canvas[
+                    y : y + height,
+                    x : x + width,
+                ]
+                for tile_y in range(chunk_height // 8):
+                    for tile_x in range(chunk_width // 8):
+                        chunk_data.extend(
+                            padded[
+                                tile_y * 8 : tile_y * 8 + 8,
+                                tile_x * 8 : tile_x * 8 + 8,
+                            ].tobytes()
+                        )
+                x += chunk_width
+            y += chunk_height
+        return bytes(chunk_data)
+
+    preview_dir = preview / "frontend_nav_obj"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    palette_rgb = np.minimum(
+        source.palette_rgb_index(17).astype(np.uint16) * 4,
+        255,
+    ).astype(np.uint8)
+    phase_tile_bytes: dict[tuple[int, int], int] = {}
+    for catalog_index, (sprite, shadow, name) in sources.items():
+        for phase_y in range(FRONTEND_NAV_OBJ_SCALE_PHASES):
+            for phase_x in range(FRONTEND_NAV_OBJ_SCALE_PHASES):
+                phase = (
+                    phase_y * FRONTEND_NAV_OBJ_SCALE_PHASES +
+                    phase_x
+                )
+                canvas = compose(sprite, shadow, phase_x, phase_y)
+                packed = pack_chunks(canvas)
+                if len(packed) % 64 != 0:
+                    raise AssertionError(
+                        "8bpp navigation OBJ stream lost character alignment"
+                    )
+                tile_offset = len(tiles)
+                tiles.extend(packed)
+                record_offset = (
+                    (
+                        catalog_index * FRONTEND_NAV_OBJ_PHASE_COUNT +
+                        phase
+                    ) *
+                    FRONTEND_NAV_OBJ_META_BYTES
+                )
+                struct.pack_into(
+                    "<IHBBBBH",
+                    metadata,
+                    record_offset,
+                    tile_offset,
+                    len(packed),
+                    sprite.shape[1],
+                    sprite.shape[0],
+                    canvas.shape[1],
+                    canvas.shape[0],
+                    0,
+                )
+                phase_tile_bytes[(catalog_index, phase)] = len(packed)
+
+                if phase == 0 and (
+                    catalog_index in {
+                        graphic - 1
+                        for graphic in FRONTEND_NAV_PLANET_GRAPHICS
+                    } or
+                    catalog_index >= dot_catalog_base
+                ):
+                    rgba = np.zeros(
+                        (canvas.shape[0], canvas.shape[1], 4),
+                        dtype=np.uint8,
+                    )
+                    opaque = canvas != 0
+                    rgba[opaque, :3] = palette_rgb[
+                        canvas[opaque].astype(np.uint16) - 1
+                    ]
+                    rgba[opaque, 3] = 255
+                    Image.fromarray(rgba, "RGBA").resize(
+                        (
+                            canvas.shape[1] * 4,
+                            canvas.shape[0] * 4,
+                        ),
+                        Image.Resampling.NEAREST,
+                    ).save(preview_dir / f"{name}.png")
+
+    # OBJ index zero is transparent; shift all 255 usable source colours by
+    # one while preserving their exact palette-17 RGB555 values.
+    source_palette = np.frombuffer(
+        source.palette_gba_index(17),
+        dtype="<u2",
+    )
+    obj_palette = np.zeros(256, dtype="<u2")
+    obj_palette[1:] = source_palette[:255]
+
+    def planet_reserve(planet_index: int) -> int:
+        graphic = FRONTEND_NAV_PLANET_GRAPHICS[planet_index] - 1
+        frames = 15 if FRONTEND_NAV_PLANET_ANIMATED[planet_index] else 1
+        return max(
+            phase_tile_bytes[(graphic + frame, phase)]
+            for frame in range(frames)
+            for phase in range(FRONTEND_NAV_OBJ_PHASE_COUNT)
+        )
+
+    # The stock script has at most two destinations.  Runtime always draws
+    # planets 1..11 plus at most the origin and two distinct >11 entries.
+    fixed_bytes = sum(planet_reserve(index) for index in range(11))
+    extra_reserves = sorted(
+        (planet_reserve(index) for index in range(11, 21)),
+        reverse=True,
+    )
+    worst_planet_bytes = fixed_bytes + sum(extra_reserves[:3])
+    dot_bytes = FRONTEND_NAV_OBJ_DOT_DIM ** 2 * 2
+    if worst_planet_bytes + dot_bytes > FRONTEND_NAV_OBJ_VRAM_BYTES:
+        raise ValueError(
+            "navigation OBJ worst case exceeds bitmap-mode OBJ VRAM: "
+            f"{worst_planet_bytes + dot_bytes} > "
+            f"{FRONTEND_NAV_OBJ_VRAM_BYTES}; "
+            f"{fixed_bytes=}, {extra_reserves[:3]=}"
+        )
+
+    asset_metadata = {
+        "FRONTEND_NAV_OBJ_CATALOG_COUNT": catalog_count,
+        "FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT":
+            FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT,
+        "FRONTEND_NAV_OBJ_DOT_OFF_CATALOG": dot_catalog_base,
+        "FRONTEND_NAV_OBJ_DOT_ON_CATALOG": dot_catalog_base + 1,
+        "FRONTEND_NAV_OBJ_SCALE_PHASES":
+            FRONTEND_NAV_OBJ_SCALE_PHASES,
+        "FRONTEND_NAV_OBJ_PHASE_COUNT": FRONTEND_NAV_OBJ_PHASE_COUNT,
+        "FRONTEND_NAV_OBJ_META_BYTES": FRONTEND_NAV_OBJ_META_BYTES,
+        "FRONTEND_NAV_OBJ_TILE_BYTES": len(tiles),
+        "FRONTEND_NAV_OBJ_PALETTE_BYTES": len(obj_palette.tobytes()),
+        "FRONTEND_NAV_OBJ_DOT_BYTES": dot_bytes,
+        "FRONTEND_NAV_OBJ_WORST_PLANET_BYTES": worst_planet_bytes,
+        "FRONTEND_NAV_OBJ_VRAM_BYTES": FRONTEND_NAV_OBJ_VRAM_BYTES,
+    }
+    report = [
+        "frontend_nav_animation=Mode4 BG2 + hardware OBJ/OAM",
+        "frontend_nav_planet_source=tyrian.shp table3 palette17",
+        "frontend_nav_route_dot_source=tyrian.shp table5 sprites29/30",
+        "frontend_nav_obj_colour=source palette index shifted +1",
+        (
+            "frontend_nav_obj_scale_phases="
+            f"{FRONTEND_NAV_OBJ_PHASE_COUNT}"
+        ),
+        f"frontend_nav_obj_catalog_entries={catalog_count}",
+        f"frontend_nav_obj_populated_sprites={len(sources)}",
+        f"frontend_nav_obj_tile_bytes={len(tiles)}",
+        f"frontend_nav_obj_meta_bytes={len(metadata)}",
+        f"frontend_nav_obj_palette_bytes={len(obj_palette.tobytes())}",
+        f"frontend_nav_obj_worst_planet_bytes={worst_planet_bytes}",
+        f"frontend_nav_obj_route_dot_bytes={dot_bytes}",
+        f"frontend_nav_obj_vram_bytes={FRONTEND_NAV_OBJ_VRAM_BYTES}",
+        (
+            "frontend_nav_idle_bitmap_redraw="
+            "0 (planet/dot animation updates OAM only)"
+        ),
+    ]
+    return (
+        bytes(tiles),
+        bytes(metadata),
+        obj_palette.tobytes(),
+        asset_metadata,
+        report,
+    )
+
+
+def build_frontend_nav_bitmap_pages(
+    source: FrontendSourceRenderer,
+    preview: Path,
+) -> tuple[bytes, dict[str, int], list[str]]:
+    """Bake every repeating grid phase plus the fixed OPTION_SHAPES frame.
+
+    The source grid is spaced every 15 pixels.  Its camera term is
+    ``nav_coordinate >> 1``, therefore the complete bitmap background has
+    only 15x15 distinct rasters regardless of level/episode.  Baking this
+    stock-derived global table removes the runtime SHP decode, 300->240
+    coordinate divisions, grid plotting and chrome restore from the
+    selection/camera hot path without introducing per-level resources.
+    """
+
+    chrome = source.menu_picture_frame(1)
+    overlay = source.sprite(5, 28)
+    if overlay is None:
+        raise ValueError("OPTION_SHAPES navigation frame 28 is empty")
+
+    overlay_frame = np.full(
+        (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+        0xFF,
+        dtype=np.uint8,
+    )
+    opaque_y, opaque_x = np.where(overlay != 0xFF)
+    for source_y, source_x in zip(opaque_y, opaque_x, strict=True):
+        if (
+            source_x < FRONTEND_MENU_SOURCE_CROP_X or
+            source_x >=
+                FRONTEND_MENU_SOURCE_CROP_X + FRONTEND_MENU_SOURCE_WIDTH or
+            source_y >= 200
+        ):
+            continue
+        target_x = (
+            (int(source_x) - FRONTEND_MENU_SOURCE_CROP_X) *
+            FRONTEND_FRAME_WIDTH //
+            FRONTEND_MENU_SOURCE_WIDTH
+        )
+        target_y = int(source_y) * FRONTEND_FRAME_HEIGHT // 200
+        overlay_frame[target_y, target_x] = overlay[source_y, source_x]
+
+    def screen_x(source_x: int) -> int:
+        return (
+            (source_x - FRONTEND_MENU_SOURCE_CROP_X) *
+            FRONTEND_FRAME_WIDTH //
+            FRONTEND_MENU_SOURCE_WIDTH
+        )
+
+    def screen_y(source_y: int) -> int:
+        return source_y * FRONTEND_FRAME_HEIGHT // 200
+
+    inner_x0 = screen_x(19)
+    inner_x1 = screen_x(136)
+    inner_y0 = screen_y(16)
+    inner_y1 = screen_y(170)
+    wide_x1 = screen_x(161)
+    pages = bytearray()
+    representative: np.ndarray | None = None
+
+    for phase_y in range(FRONTEND_NAV_GRID_PHASES):
+        for phase_x in range(FRONTEND_NAV_GRID_PHASES):
+            frame = chrome.copy()
+            frame[inner_y0:inner_y1, inner_x0:inner_x1] = 2
+            for index in range(1, 21):
+                x = index * 15 - phase_x
+                if 18 < x < 135:
+                    target_x = screen_x(x)
+                    frame[inner_y0:inner_y1, target_x + 1] = 1
+                    frame[inner_y0:inner_y1, target_x] = 5
+            for index in range(1, 21):
+                y = index * 15 - phase_y
+                if 15 < y < 169:
+                    target_y = screen_y(y)
+                    frame[target_y + 1, inner_x0:inner_x1] = 1
+                    frame[target_y, 0:wide_x1] = 5
+                    for x_index in range(1, 21):
+                        x = x_index * 15 - phase_x
+                        if 18 < x < 135:
+                            frame[target_y, screen_x(x)] = 7
+            overlay_opaque = overlay_frame != 0xFF
+            frame[overlay_opaque] = overlay_frame[overlay_opaque]
+            page = frame[
+                :FRONTEND_NAV_BITMAP_HEIGHT,
+                :FRONTEND_NAV_BITMAP_WIDTH,
+            ]
+            padded_page = np.zeros(
+                (
+                    FRONTEND_NAV_BITMAP_HEIGHT,
+                    FRONTEND_NAV_BITMAP_STRIDE,
+                ),
+                dtype=np.uint8,
+            )
+            padded_page[:, :FRONTEND_NAV_BITMAP_WIDTH] = page
+            pages.extend(padded_page.tobytes())
+            if phase_x == 5 and phase_y == 5:
+                representative = page.copy()
+
+    page_count = FRONTEND_NAV_GRID_PHASES ** 2
+    expected_bytes = page_count * FRONTEND_NAV_BITMAP_PAGE_BYTES
+    if len(pages) != expected_bytes:
+        raise AssertionError(
+            "navigation bitmap phase table packing changed: "
+            f"{len(pages)} != {expected_bytes}"
+        )
+    if representative is not None:
+        palette = np.minimum(
+            source.palette_rgb_index(17).astype(np.uint16) * 4,
+            255,
+        ).astype(np.uint8)
+        Image.fromarray(palette[representative], "RGB").save(
+            preview / "frontend_nav_bitmap_phase_05_05.png"
+        )
+
+    metadata = {
+        "FRONTEND_NAV_BITMAP_WIDTH": FRONTEND_NAV_BITMAP_WIDTH,
+        "FRONTEND_NAV_BITMAP_HEIGHT": FRONTEND_NAV_BITMAP_HEIGHT,
+        "FRONTEND_NAV_BITMAP_STRIDE": FRONTEND_NAV_BITMAP_STRIDE,
+        "FRONTEND_NAV_GRID_PHASES": FRONTEND_NAV_GRID_PHASES,
+        "FRONTEND_NAV_BITMAP_PAGE_COUNT": page_count,
+        "FRONTEND_NAV_BITMAP_PAGE_BYTES": FRONTEND_NAV_BITMAP_PAGE_BYTES,
+        "FRONTEND_NAV_BITMAP_BYTES": len(pages),
+    }
+    report = [
+        "frontend_nav_bitmap_source=stock PIC1 + SHP table5 sprite28",
+        (
+            "frontend_nav_bitmap_strategy="
+            "build-time 15x15 grid phase pages"
+        ),
+        f"frontend_nav_bitmap_page_count={page_count}",
+        (
+            "frontend_nav_bitmap_page_dimensions="
+            f"{FRONTEND_NAV_BITMAP_WIDTH}x{FRONTEND_NAV_BITMAP_HEIGHT},"
+            f"stride={FRONTEND_NAV_BITMAP_STRIDE}"
+        ),
+        f"frontend_nav_bitmap_page_bytes={FRONTEND_NAV_BITMAP_PAGE_BYTES}",
+        f"frontend_nav_bitmap_bytes={len(pages)}",
+        "frontend_nav_camera_runtime_shp_decode=0",
+        "frontend_nav_camera_runtime_grid_plot=0",
+    ]
+    return bytes(pages), metadata, report
+
+
 def build_frontend_mode4_assets(
     data_root: Path,
     preview: Path,
-) -> tuple[bytes, bytes, bytes, bytes, dict[str, int], list[str]]:
+) -> tuple[
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    dict[str, int],
+    list[str],
+]:
     source = FrontendSourceRenderer(data_root)
+    (
+        nav_obj_tiles,
+        nav_obj_meta,
+        nav_obj_palette,
+        nav_obj_metadata,
+        nav_obj_report,
+    ) = build_frontend_nav_obj_assets(source, preview)
+    (
+        nav_bitmap_pages,
+        nav_bitmap_metadata,
+        nav_bitmap_report,
+    ) = build_frontend_nav_bitmap_pages(source, preview)
     frames: list[np.ndarray] = []
     palettes: list[bytes] = []
     names: list[str] = []
@@ -1481,11 +1958,19 @@ def build_frontend_mode4_assets(
             for index, name in enumerate(names)
         ),
     ]
+    metadata.update(nav_obj_metadata)
+    metadata.update(nav_bitmap_metadata)
+    report.extend(nav_obj_report)
+    report.extend(nav_bitmap_report)
     return (
         frame_bytes,
         palette_bytes,
         bytes(glyphs),
         cube_stamp.tobytes(),
+        nav_obj_tiles,
+        nav_obj_meta,
+        nav_obj_palette,
+        nav_bitmap_pages,
         metadata,
         report,
     )
@@ -4345,6 +4830,10 @@ def main() -> None:
         frontend_palettes,
         frontend_glyphs,
         frontend_cube,
+        frontend_nav_obj_tiles,
+        frontend_nav_obj_meta,
+        frontend_nav_obj_palette,
+        frontend_nav_bitmap_pages,
         frontend_metadata,
         frontend_report,
     ) = build_frontend_mode4_assets(data_root, preview)
@@ -4352,6 +4841,18 @@ def main() -> None:
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
     (output / "frontend_cube.bin").write_bytes(frontend_cube)
+    (output / "frontend_nav_obj_tiles.bin").write_bytes(
+        frontend_nav_obj_tiles
+    )
+    (output / "frontend_nav_obj_meta.bin").write_bytes(
+        frontend_nav_obj_meta
+    )
+    (output / "frontend_nav_obj_palette.bin").write_bytes(
+        frontend_nav_obj_palette
+    )
+    (output / "frontend_nav_bitmap_pages.bin").write_bytes(
+        frontend_nav_bitmap_pages
+    )
     (output / "frontend_mode4_audit.txt").write_text(
         "\n".join(frontend_report) + "\n",
         encoding="utf-8",

@@ -204,6 +204,8 @@ STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOST
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX)
 FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFFIX)
+FRONTEND_NAV_STRESS_TARGET := tyrian_gba_frontend_nav_obj_stress_v43_$(CONFIG_SUFFIX)
+FRONTEND_NAV_CAMERA_STRESS_TARGET := tyrian_gba_frontend_nav_camera_stress_v43_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_FLAG := \
 	-DAUTOTEST_FRONTEND_CAPTURE_SELECTION=$(CAPTURE_SELECTION)
@@ -280,6 +282,10 @@ ASSET_BINARIES := \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
 	$(RES)/frontend_cube.bin \
+	$(RES)/frontend_nav_obj_tiles.bin \
+	$(RES)/frontend_nav_obj_meta.bin \
+	$(RES)/frontend_nav_obj_palette.bin \
+	$(RES)/frontend_nav_bitmap_pages.bin \
 	$(RES)/jukebox_font_tiles.bin \
 	$(RES)/jukebox_backdrop_tiles.bin \
 	$(RES)/jukebox_backdrop_map.bin \
@@ -337,7 +343,7 @@ MAIN_INCLUDES := $(wildcard src/*.inc)
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
-	frontend-menu-stress \
+	frontend-menu-stress frontend-nav-stress frontend-nav-camera-stress \
 	assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
@@ -365,6 +371,10 @@ full-loadout-playable: $(BUILD)/$(PLAYABLE_STRESS_TARGET).gba
 frontend-capture: $(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba
 
 frontend-menu-stress: $(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba
+
+frontend-nav-stress: $(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).gba
+
+frontend-nav-camera-stress: $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -530,6 +540,26 @@ $(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o: \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_NAV_STRESS \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
+$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_NAV_CAMERA_STRESS \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -646,6 +676,20 @@ $(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).elf: \
 		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).map $^ \
+	-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).elf: \
+		$(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).elf: \
+		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
@@ -706,6 +750,16 @@ $(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR UI TEST" -cTYGF -m00
 
+$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).gba: \
+		$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR NAV TEST" -cTYGN -m00
+
+$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba: \
+		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR NAV MOVE" -cTYGK -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -736,6 +790,10 @@ clean:
 		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -783,7 +841,13 @@ clean:
 		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).map \
 		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).elf \
 		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba \
-		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).map
+		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).map \
+		$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).elf \
+		$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).gba \
+		$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).map \
+		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).elf \
+		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba \
+		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -796,6 +860,8 @@ distclean: clean
 -include $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_demo_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d

@@ -41,6 +41,26 @@ frontend_cube:
 	.incbin "res/frontend_cube.bin"
 
 	.balign 4
+	.global frontend_nav_obj_tiles
+frontend_nav_obj_tiles:
+	.incbin "res/frontend_nav_obj_tiles.bin"
+
+	.balign 4
+	.global frontend_nav_obj_meta
+frontend_nav_obj_meta:
+	.incbin "res/frontend_nav_obj_meta.bin"
+
+	.balign 4
+	.global frontend_nav_obj_palette
+frontend_nav_obj_palette:
+	.incbin "res/frontend_nav_obj_palette.bin"
+
+	.balign 4
+	.global frontend_nav_bitmap_pages
+frontend_nav_bitmap_pages:
+	.incbin "res/frontend_nav_bitmap_pages.bin"
+
+	.balign 4
 	.global jukebox_font_tiles
 jukebox_font_tiles:
 	.incbin "res/jukebox_font_tiles.bin"

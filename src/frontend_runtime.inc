@@ -65,11 +65,22 @@ enum {
     FRONTEND_NAV_DIRTY_Y = 0,
     FRONTEND_NAV_DIRTY_WIDTH = 126,
     FRONTEND_NAV_DIRTY_HEIGHT = 138,
+    FRONTEND_NAV_OBJ_SLOT_CAPACITY = 21,
+    FRONTEND_NAV_OBJ_UPLOAD_CAPACITY = 24,
+    FRONTEND_NAV_OBJ_VRAM_TILE_BASE = 512,
+    FRONTEND_NAV_OBJ_DOT_OFF_OFFSET = 0,
+    FRONTEND_NAV_OBJ_DOT_ON_OFFSET = 64,
+    FRONTEND_NAV_OBJ_DOT_DIM = 8,
+    FRONTEND_NAV_WINDOW_X0 = 21,
+    FRONTEND_NAV_WINDOW_X1 = 101,
+    FRONTEND_NAV_WINDOW_Y0 = 26,
+    FRONTEND_NAV_WINDOW_Y1 = 132,
 };
 
 #define FRONTEND_MODE4_PAGE0 ((u8 *)0x06000000)
 #define FRONTEND_MODE4_PAGE1 \
     ((u8 *)(0x06000000 + FRONTEND_MODE4_PAGE_BYTES))
+#define FRONTEND_NAV_OBJ_VRAM ((u8 *)0x06014000)
 
 _Static_assert(
     FRONTEND_FRAME_BYTES == SCREEN_WIDTH * SCREEN_HEIGHT,
@@ -90,12 +101,90 @@ _Static_assert(
         FRONTEND_GLYPH_BYTES == 64,
     "dynamic stats glyph atlas changed"
 );
+_Static_assert(
+    FRONTEND_NAV_OBJ_META_BYTES == 12 &&
+        FRONTEND_NAV_OBJ_SCALE_PHASES == 5 &&
+        FRONTEND_NAV_OBJ_PHASE_COUNT == 25 &&
+        FRONTEND_NAV_OBJ_CATALOG_COUNT == 153,
+    "generated navigation OBJ catalog changed"
+);
+_Static_assert(
+    FRONTEND_NAV_OBJ_DOT_BYTES +
+        FRONTEND_NAV_OBJ_WORST_PLANET_BYTES <=
+        FRONTEND_NAV_OBJ_VRAM_BYTES &&
+        FRONTEND_NAV_OBJ_VRAM_BYTES == 0x4000,
+    "navigation OBJ atlas exceeds Mode-4 OBJ VRAM"
+);
+_Static_assert(
+    FRONTEND_NAV_BITMAP_WIDTH == FRONTEND_NAV_DIRTY_WIDTH &&
+        FRONTEND_NAV_BITMAP_HEIGHT == FRONTEND_NAV_DIRTY_HEIGHT &&
+        FRONTEND_NAV_BITMAP_STRIDE == 128 &&
+        FRONTEND_NAV_GRID_PHASES == 15 &&
+        FRONTEND_NAV_BITMAP_PAGE_COUNT == 225 &&
+        FRONTEND_NAV_BITMAP_PAGE_BYTES ==
+            FRONTEND_NAV_BITMAP_STRIDE * FRONTEND_NAV_DIRTY_HEIGHT,
+    "generated navigation bitmap phase table changed"
+);
+
+typedef struct {
+    u32 tile_offset;
+    u16 tile_bytes;
+    u8 source_width;
+    u8 source_height;
+    u8 screen_width;
+    u8 screen_height;
+    u16 reserved;
+} FrontendNavObjMeta;
+
+typedef struct {
+    const u8 *source;
+    u16 vram_offset;
+    u16 bytes;
+} FrontendNavObjUpload;
+
+typedef struct {
+    u8 planet_index;
+    u8 graphic;
+    u8 phase;
+    u8 animated;
+    u16 vram_offset;
+    u16 reserve_bytes;
+} FrontendNavObjSlot;
+
+_Static_assert(
+    sizeof(FrontendNavObjMeta) == FRONTEND_NAV_OBJ_META_BYTES,
+    "navigation OBJ metadata ABI changed"
+);
+
+static FrontendNavObjUpload frontend_nav_obj_upload[
+    FRONTEND_NAV_OBJ_UPLOAD_CAPACITY
+] EWRAM_BSS;
+static FrontendNavObjSlot frontend_nav_obj_slot[
+    FRONTEND_NAV_OBJ_SLOT_CAPACITY
+] EWRAM_BSS;
+static u16 frontend_nav_obj_reserve_cache[21] EWRAM_BSS;
+static u8 frontend_nav_obj_upload_count EWRAM_BSS;
+static u8 frontend_nav_obj_slot_count EWRAM_BSS;
+static u8 frontend_nav_obj_active EWRAM_BSS;
+static u8 frontend_nav_obj_palette_pending EWRAM_BSS;
+static u8 frontend_nav_obj_dot_tiles_pending EWRAM_BSS;
+static s16 frontend_nav_presented_x EWRAM_BSS;
+static s16 frontend_nav_presented_y EWRAM_BSS;
 
 static void frontend_redraw(void);
 static void frontend_enter_state(u8 state, u8 selection);
 static void frontend_render_upgrade_submenu_update(
     u8 old_selection,
     u8 old_scroll
+);
+static void frontend_nav_obj_commit_vblank(void);
+static void frontend_nav_obj_disable(void);
+static u8 frontend_nav_dot_count(u8 destination);
+static s16 frontend_nav_part_way(
+    s16 start,
+    s16 finish,
+    u8 dots,
+    u8 distance
 );
 
 static const u8 frontend_upgrade_item_group[
@@ -571,6 +660,43 @@ static void frontend_set_affine_identity(void)
     REG_BG2CNT = BG_PRIORITY(0);
 }
 
+static void frontend_commit_mode4_registers(void)
+{
+    u16 display =
+        MODE_4 | BG2_ON |
+        (frontend_display_page ? BACKBUFFER : 0);
+
+    if (
+        game_state == STATE_NEXT_LEVEL_MENU &&
+        frontend_nav_obj_active
+    ) {
+        /*
+         * The source OPTION_SHAPES frame has an irregular transparent map
+         * aperture.  WIN0 uses its largest fully transparent GBA rectangle,
+         * keeping hardware planets behind the ornate bitmap border without
+         * spending OBJ VRAM on a duplicate mask.
+         */
+        REG_WIN0H =
+            (FRONTEND_NAV_WINDOW_X0 << 8) |
+            FRONTEND_NAV_WINDOW_X1;
+        REG_WIN0V =
+            (FRONTEND_NAV_WINDOW_Y0 << 8) |
+            FRONTEND_NAV_WINDOW_Y1;
+        REG_WININ = (1u << 2) | (1u << 4);
+        REG_WINOUT = 1u << 2;
+        REG_BG2CNT = BG_PRIORITY(1);
+        display |=
+            OBJ_ON |
+            OBJ_1D_MAP |
+            (1u << 13);
+    } else {
+        REG_WININ = 0;
+        REG_WINOUT = 0;
+        REG_BG2CNT = BG_PRIORITY(0);
+    }
+    REG_DISPCNT = display;
+}
+
 static void frontend_show_immediate(
     const u8 *frame,
     const u8 *palette
@@ -593,7 +719,7 @@ static void frontend_show_immediate(
     frontend_pending_kind = FRONTEND_PENDING_NONE;
     frontend_dirty_count = 0;
     frontend_mode4_active = 1;
-    REG_DISPCNT = MODE_4 | BG2_ON;
+    frontend_commit_mode4_registers();
     game_paused = 0;
 }
 
@@ -925,35 +1051,35 @@ static void frontend_commit_vblank(void)
     u8 next_page;
     u8 *target;
 
-    if (!frontend_frame_pending) return;
-    if (frontend_pending_kind == FRONTEND_PENDING_SELECTION_PATCH) {
-        frontend_commit_selection_patch();
+    frontend_nav_obj_commit_vblank();
+    if (frontend_frame_pending) {
+        if (
+            frontend_pending_kind ==
+                FRONTEND_PENDING_SELECTION_PATCH
+        ) {
+            frontend_commit_selection_patch();
+        } else if (
+            frontend_pending_kind ==
+                FRONTEND_PENDING_DIRTY_RECTS
+        ) {
+            frontend_commit_dirty_rects();
+        } else {
+            next_page = frontend_display_page ^ 1u;
+            target = next_page ?
+                FRONTEND_MODE4_PAGE1 :
+                FRONTEND_MODE4_PAGE0;
+            dmaCopy(
+                frontend_pending_frame,
+                target,
+                FRONTEND_FRAME_BYTES
+            );
+            dmaCopy(frontend_pending_palette, BG_PALETTE, 512);
+            frontend_display_page = next_page;
+        }
         frontend_frame_pending = 0;
         frontend_pending_kind = FRONTEND_PENDING_NONE;
-        return;
     }
-    if (frontend_pending_kind == FRONTEND_PENDING_DIRTY_RECTS) {
-        frontend_commit_dirty_rects();
-        frontend_frame_pending = 0;
-        frontend_pending_kind = FRONTEND_PENDING_NONE;
-        return;
-    }
-    next_page = frontend_display_page ^ 1u;
-    target = next_page ?
-        FRONTEND_MODE4_PAGE1 :
-        FRONTEND_MODE4_PAGE0;
-    dmaCopy(
-        frontend_pending_frame,
-        target,
-        FRONTEND_FRAME_BYTES
-    );
-    dmaCopy(frontend_pending_palette, BG_PALETTE, 512);
-    frontend_display_page = next_page;
-    frontend_frame_pending = 0;
-    frontend_pending_kind = FRONTEND_PENDING_NONE;
-    REG_DISPCNT =
-        MODE_4 | BG2_ON |
-        (frontend_display_page ? BACKBUFFER : 0);
+    frontend_commit_mode4_registers();
 }
 
 static u8 frontend_runtime_font_tile(char character)
@@ -3569,28 +3695,718 @@ static const u8 frontend_planet_animated[21] = {
     1, 0, 0, 0, 0, 0, 0, 0, 0, 1
 };
 
+static u8 frontend_nav_obj_phase_component(s16 coordinate)
+{
+    s16 phase = (s16)(coordinate % FRONTEND_NAV_OBJ_SCALE_PHASES);
+
+    if (phase < 0) phase += FRONTEND_NAV_OBJ_SCALE_PHASES;
+    return (u8)phase;
+}
+
+static const FrontendNavObjMeta *frontend_nav_obj_metadata(
+    u16 catalog,
+    u8 phase
+)
+{
+    const FrontendNavObjMeta *records =
+        (const FrontendNavObjMeta *)(const void *)frontend_nav_obj_meta;
+
+    if (
+        catalog >= FRONTEND_NAV_OBJ_CATALOG_COUNT ||
+        phase >= FRONTEND_NAV_OBJ_PHASE_COUNT
+    ) {
+        return 0;
+    }
+    return &records[
+        (u32)catalog * FRONTEND_NAV_OBJ_PHASE_COUNT + phase
+    ];
+}
+
+static u16 frontend_nav_obj_graphic(u8 planet_index)
+{
+    u16 graphic;
+
+    if (
+        planet_index >= 21 ||
+        frontend_planet_graphic[planet_index] == 0
+    ) {
+        return UINT16_MAX;
+    }
+    graphic = (u16)(frontend_planet_graphic[planet_index] - 1u);
+    if (
+        frontend_planet_animated[planet_index] &&
+        frontend_nav_planet_animation < 15
+    ) {
+        graphic = (u16)(
+            graphic + frontend_nav_planet_animation
+        );
+    }
+    return graphic;
+}
+
+static u8 frontend_nav_obj_source_position(
+    u8 planet_index,
+    u16 graphic,
+    const FrontendNavObjMeta **metadata,
+    u8 *phase,
+    s16 *source_x,
+    s16 *source_y
+)
+{
+    const FrontendNavObjMeta *base;
+    const FrontendNavObjMeta *resolved;
+    u8 resolved_phase;
+    s16 x;
+    s16 y;
+
+    if (
+        planet_index >= 21 ||
+        graphic >= FRONTEND_NAV_OBJ_PLANET_CATALOG_COUNT
+    ) {
+        return 0;
+    }
+    base = frontend_nav_obj_metadata(graphic, 0);
+    if (
+        base == 0 ||
+        base->source_width == 0 ||
+        base->source_height == 0
+    ) {
+        return 0;
+    }
+    x = (s16)(
+        frontend_planet_x[planet_index] +
+        66 -
+        frontend_nav_presented_x -
+        (s16)(base->source_width / 2u)
+    );
+    y = (s16)(
+        frontend_planet_y[planet_index] +
+        85 -
+        frontend_nav_presented_y -
+        (s16)(base->source_height / 2u)
+    );
+    resolved_phase = (u8)(
+        frontend_nav_obj_phase_component(y) *
+            FRONTEND_NAV_OBJ_SCALE_PHASES +
+        frontend_nav_obj_phase_component(x)
+    );
+    resolved = frontend_nav_obj_metadata(graphic, resolved_phase);
+    if (
+        resolved == 0 ||
+        resolved->tile_bytes == 0 ||
+        resolved->source_width == 0 ||
+        resolved->source_height == 0
+    ) {
+        return 0;
+    }
+    if (metadata != 0) *metadata = resolved;
+    if (phase != 0) *phase = resolved_phase;
+    if (source_x != 0) *source_x = x;
+    if (source_y != 0) *source_y = y;
+    return 1;
+}
+
+static u8 frontend_nav_obj_planet_visible(
+    s16 source_x,
+    s16 source_y,
+    const FrontendNavObjMeta *metadata
+)
+{
+    if (metadata == 0) return 0;
+    /*
+     * Preserve JE_drawNavLines' source-space rejection before the hardware
+     * window performs the final ornate-frame clip.
+     */
+    return !(
+        source_x <= -7 ||
+        source_x + (s16)metadata->source_width >= 170 ||
+        source_y <= 0 ||
+        source_y >= 160
+    );
+}
+
+static u8 frontend_nav_obj_collect_planets(
+    u8 planets[FRONTEND_NAV_OBJ_SLOT_CAPACITY]
+)
+{
+    u32 present = 0;
+    u8 count = 0;
+    u8 planet;
+    u8 choice_count = frontend_next_choice_count();
+
+    for (planet = 0; planet < 11; planet++) {
+        planets[count++] = planet;
+        present |= 1u << planet;
+    }
+    for (planet = 0; planet < choice_count; planet++) {
+        u8 map_planet = frontend_map.map_planet[
+            frontend_next_map_choice(planet)
+        ];
+        u8 index;
+
+        if (map_planet <= 11 || map_planet > 21) continue;
+        index = (u8)(map_planet - 1u);
+        if (present & (1u << index)) continue;
+        planets[count++] = index;
+        present |= 1u << index;
+    }
+    if (
+        frontend_map.map_origin > 11 &&
+        frontend_map.map_origin <= 21
+    ) {
+        u8 index = (u8)(frontend_map.map_origin - 1u);
+
+        if (!(present & (1u << index))) {
+            planets[count++] = index;
+        }
+    }
+    return count;
+}
+
+static u16 frontend_nav_obj_planet_reserve(u8 planet_index)
+{
+    u16 graphic = (u16)(
+        frontend_planet_graphic[planet_index] - 1u
+    );
+    u8 frame_count =
+        frontend_planet_animated[planet_index] ? 15 : 1;
+    u16 reserve;
+    u8 frame;
+
+    if (frontend_nav_obj_reserve_cache[planet_index] != 0) {
+        return frontend_nav_obj_reserve_cache[planet_index];
+    }
+    reserve = 0;
+    for (frame = 0; frame < frame_count; frame++) {
+        u8 phase;
+
+        for (
+            phase = 0;
+            phase < FRONTEND_NAV_OBJ_PHASE_COUNT;
+            phase++
+        ) {
+            const FrontendNavObjMeta *metadata =
+                frontend_nav_obj_metadata(
+                    (u16)(graphic + frame),
+                    phase
+                );
+
+            if (
+                metadata != 0 &&
+                metadata->tile_bytes > reserve
+            ) {
+                reserve = metadata->tile_bytes;
+            }
+        }
+    }
+    frontend_nav_obj_reserve_cache[planet_index] = reserve;
+    return reserve;
+}
+
+static void frontend_nav_obj_schedule_upload(
+    const FrontendNavObjMeta *metadata,
+    u16 vram_offset
+)
+{
+    FrontendNavObjUpload *upload;
+
+    if (
+        metadata == 0 ||
+        metadata->tile_bytes == 0
+    ) {
+        return;
+    }
+    if (
+        frontend_nav_obj_upload_count >=
+            FRONTEND_NAV_OBJ_UPLOAD_CAPACITY
+    ) {
+        telemetry_frontend_nav_obj_overflows++;
+        return;
+    }
+    upload = &frontend_nav_obj_upload[
+        frontend_nav_obj_upload_count++
+    ];
+    upload->source =
+        frontend_nav_obj_tiles + metadata->tile_offset;
+    upload->vram_offset = vram_offset;
+    upload->bytes = metadata->tile_bytes;
+}
+
+static u8 frontend_nav_obj_axis_chunk(u8 remaining)
+{
+    if (remaining > 24) return 32;
+    if (remaining > 8) return 16;
+    return 8;
+}
+
+static void frontend_nav_obj_put(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 width,
+    u8 height
+)
+{
+    OBJATTR *object;
+    u16 shape;
+    u16 size;
+
+    if (
+        oam_count >= HARDWARE_OAM_ENTRIES ||
+        x <= -(s16)width || x >= SCREEN_WIDTH ||
+        y <= -(s16)height || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    if (width == height) {
+        shape = ATTR0_SQUARE;
+        size =
+            width == 32 ? ATTR1_SIZE_32 :
+            (width == 16 ? ATTR1_SIZE_16 : ATTR1_SIZE_8);
+    } else if (width > height) {
+        shape = ATTR0_WIDE;
+        size =
+            width == 32 && height == 16 ? ATTR1_SIZE_32 :
+            (width == 32 ? ATTR1_SIZE_16 : ATTR1_SIZE_8);
+    } else {
+        shape = ATTR0_TALL;
+        size =
+            width == 16 && height == 32 ? ATTR1_SIZE_32 :
+            (height == 32 ? ATTR1_SIZE_16 : ATTR1_SIZE_8);
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 =
+        (y & 0x00ff) |
+        ATTR0_NORMAL |
+        ATTR0_COLOR_256 |
+        shape;
+    object->attr1 = (x & 0x01ff) | size;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(0);
+    object->dummy = 0;
+}
+
+static void frontend_nav_obj_draw_slot(
+    const FrontendNavObjSlot *slot
+)
+{
+    const FrontendNavObjMeta *metadata;
+    s16 source_x;
+    s16 source_y;
+    s16 screen_x;
+    s16 screen_y;
+    u16 asset_offset = 0;
+    u8 y = 0;
+
+    if (
+        slot == 0 ||
+        !frontend_nav_obj_source_position(
+            slot->planet_index,
+            slot->graphic,
+            &metadata,
+            0,
+            &source_x,
+            &source_y
+        ) ||
+        !frontend_nav_obj_planet_visible(
+            source_x,
+            source_y,
+            metadata
+        )
+    ) {
+        return;
+    }
+    screen_x = frontend_source_to_screen_x(source_x);
+    screen_y = frontend_source_to_screen_y(source_y);
+    while (y < metadata->screen_height) {
+        u8 chunk_height = frontend_nav_obj_axis_chunk(
+            (u8)(metadata->screen_height - y)
+        );
+        u8 x = 0;
+
+        while (x < metadata->screen_width) {
+            u8 chunk_width = frontend_nav_obj_axis_chunk(
+                (u8)(metadata->screen_width - x)
+            );
+
+            frontend_nav_obj_put(
+                (s16)(screen_x + x),
+                (s16)(screen_y + y),
+                (u16)(
+                    FRONTEND_NAV_OBJ_VRAM_TILE_BASE +
+                    (slot->vram_offset + asset_offset) / 32u
+                ),
+                chunk_width,
+                chunk_height
+            );
+            asset_offset = (u16)(
+                asset_offset +
+                (u16)chunk_width * chunk_height
+            );
+            x = (u8)(x + chunk_width);
+        }
+        y = (u8)(y + chunk_height);
+    }
+}
+
+static void frontend_nav_obj_draw_dots(void)
+{
+    u8 route;
+    u8 route_count = frontend_next_choice_count();
+    u8 origin = frontend_map.map_origin;
+
+    if (origin == 0 || origin > 21) return;
+    for (route = 0; route < route_count; route++) {
+        u8 map_choice = frontend_next_map_choice(route);
+        u8 destination = frontend_map.map_planet[map_choice];
+        u8 dots = frontend_nav_dot_count(destination);
+        u8 dot;
+
+        for (dot = 0; dot < dots; dot++) {
+            s16 x = frontend_nav_part_way(
+                (s16)frontend_planet_x[origin - 1u],
+                (s16)frontend_planet_x[destination - 1u],
+                dots,
+                dot
+            );
+            s16 y = frontend_nav_part_way(
+                (s16)frontend_planet_y[origin - 1u],
+                (s16)frontend_planet_y[destination - 1u],
+                dots,
+                dot
+            );
+            u16 tile;
+
+            x = (s16)(x - frontend_nav_presented_x + 64);
+            y = (s16)(y - frontend_nav_presented_y + 83);
+            if (x <= 0 || x >= 140 || y <= 0 || y >= 168) {
+                continue;
+            }
+            tile = (u16)(
+                FRONTEND_NAV_OBJ_VRAM_TILE_BASE +
+                (
+                    (
+                        route == frontend_selection &&
+                        dot < frontend_nav_dot_animation
+                    ) ?
+                        FRONTEND_NAV_OBJ_DOT_ON_OFFSET :
+                        FRONTEND_NAV_OBJ_DOT_OFF_OFFSET
+                ) /
+                32u
+            );
+            frontend_nav_obj_put(
+                frontend_source_to_screen_x(x),
+                frontend_source_to_screen_y(y),
+                tile,
+                FRONTEND_NAV_OBJ_DOT_DIM,
+                FRONTEND_NAV_OBJ_DOT_DIM
+            );
+        }
+    }
+}
+
+static void frontend_nav_obj_render_oam(void)
+{
+    u8 old_oam_count = previous_oam_count;
+    u8 slot = frontend_nav_obj_slot_count;
+
+    if (!frontend_nav_obj_active) return;
+    oam_count = 0;
+    /*
+     * Software drew later planets over earlier ones.  Equal-priority GBA
+     * OBJ uses the lower OAM index in front, so emit the source list in
+     * reverse and append route dots behind every planet.
+     */
+    while (slot != 0) {
+        frontend_nav_obj_draw_slot(
+            &frontend_nav_obj_slot[--slot]
+        );
+    }
+    frontend_nav_obj_draw_dots();
+    {
+        u8 new_oam_count = oam_count;
+
+        while (oam_count < old_oam_count) {
+            oam_shadow[oam_count].attr0 = ATTR0_DISABLED;
+            oam_shadow[oam_count].attr1 = 0;
+            oam_shadow[oam_count].attr2 = 0;
+            oam_shadow[oam_count].dummy = 0;
+            oam_count++;
+        }
+        previous_oam_count = new_oam_count;
+        oam_count = new_oam_count;
+    }
+    oam_dirty = 1;
+    telemetry_frontend_nav_obj_updates++;
+}
+
+static void frontend_nav_obj_rebuild(void)
+{
+    u8 planets[FRONTEND_NAV_OBJ_SLOT_CAPACITY];
+    u8 candidate_count = frontend_nav_obj_collect_planets(planets);
+    u16 vram_offset = FRONTEND_NAV_OBJ_DOT_BYTES;
+    u8 candidate;
+
+    frontend_nav_obj_active = 1;
+    frontend_nav_obj_palette_pending = 1;
+    frontend_nav_obj_dot_tiles_pending = 1;
+    frontend_nav_obj_upload_count = 0;
+    frontend_nav_obj_slot_count = 0;
+    for (candidate = 0; candidate < candidate_count; candidate++) {
+        u8 planet_index = planets[candidate];
+        u16 graphic = frontend_nav_obj_graphic(planet_index);
+        const FrontendNavObjMeta *metadata;
+        s16 source_x;
+        s16 source_y;
+        u8 phase;
+        u16 reserve;
+        FrontendNavObjSlot *slot;
+
+        if (
+            graphic == UINT16_MAX ||
+            !frontend_nav_obj_source_position(
+                planet_index,
+                graphic,
+                &metadata,
+                &phase,
+                &source_x,
+                &source_y
+            ) ||
+            !frontend_nav_obj_planet_visible(
+                source_x,
+                source_y,
+                metadata
+            )
+        ) {
+            continue;
+        }
+        reserve = frontend_nav_obj_planet_reserve(planet_index);
+        if (
+            reserve == 0 ||
+            vram_offset + reserve > FRONTEND_NAV_OBJ_VRAM_BYTES ||
+            frontend_nav_obj_slot_count >=
+                FRONTEND_NAV_OBJ_SLOT_CAPACITY
+        ) {
+            telemetry_frontend_nav_obj_overflows++;
+            continue;
+        }
+        slot = &frontend_nav_obj_slot[
+            frontend_nav_obj_slot_count++
+        ];
+        slot->planet_index = planet_index;
+        slot->graphic = (u8)graphic;
+        slot->phase = phase;
+        slot->animated = frontend_planet_animated[planet_index];
+        slot->vram_offset = vram_offset;
+        slot->reserve_bytes = reserve;
+        frontend_nav_obj_schedule_upload(metadata, vram_offset);
+        vram_offset = (u16)(vram_offset + reserve);
+    }
+    frontend_nav_obj_render_oam();
+}
+
+static u8 frontend_nav_obj_has_visible_layout_change(void)
+{
+    u8 planets[FRONTEND_NAV_OBJ_SLOT_CAPACITY];
+    u8 candidate_count = frontend_nav_obj_collect_planets(planets);
+    u8 visible_count = 0;
+    u8 candidate;
+
+    for (candidate = 0; candidate < candidate_count; candidate++) {
+        u8 planet_index = planets[candidate];
+        u16 graphic = frontend_nav_obj_graphic(planet_index);
+        const FrontendNavObjMeta *metadata;
+        s16 source_x;
+        s16 source_y;
+
+        if (
+            graphic == UINT16_MAX ||
+            !frontend_nav_obj_source_position(
+                planet_index,
+                graphic,
+                &metadata,
+                0,
+                &source_x,
+                &source_y
+            ) ||
+            !frontend_nav_obj_planet_visible(
+                source_x,
+                source_y,
+                metadata
+            )
+        ) {
+            continue;
+        }
+        if (
+            visible_count >= frontend_nav_obj_slot_count ||
+            frontend_nav_obj_slot[visible_count].planet_index !=
+                planet_index
+        ) {
+            return 1;
+        }
+        visible_count++;
+    }
+    return visible_count != frontend_nav_obj_slot_count;
+}
+
+static void frontend_nav_obj_animate(void)
+{
+    u8 slot_index;
+
+    if (
+        !frontend_nav_obj_active ||
+        frontend_nav_obj_has_visible_layout_change()
+    ) {
+        frontend_nav_obj_rebuild();
+        return;
+    }
+    frontend_nav_obj_upload_count = 0;
+    for (
+        slot_index = 0;
+        slot_index < frontend_nav_obj_slot_count;
+        slot_index++
+    ) {
+        FrontendNavObjSlot *slot =
+            &frontend_nav_obj_slot[slot_index];
+        u16 graphic;
+        const FrontendNavObjMeta *metadata;
+        u8 phase;
+
+        if (!slot->animated) continue;
+        graphic = frontend_nav_obj_graphic(slot->planet_index);
+        if (
+            graphic == UINT16_MAX ||
+            !frontend_nav_obj_source_position(
+                slot->planet_index,
+                graphic,
+                &metadata,
+                &phase,
+                0,
+                0
+            ) ||
+            metadata->tile_bytes > slot->reserve_bytes
+        ) {
+            frontend_nav_obj_rebuild();
+            return;
+        }
+        slot->graphic = (u8)graphic;
+        slot->phase = phase;
+        frontend_nav_obj_schedule_upload(
+            metadata,
+            slot->vram_offset
+        );
+    }
+    frontend_nav_obj_render_oam();
+}
+
+static void frontend_nav_obj_commit_vblank(void)
+{
+    u8 upload;
+
+    if (!frontend_nav_obj_active) {
+        frontend_nav_obj_upload_count = 0;
+        frontend_nav_obj_palette_pending = 0;
+        frontend_nav_obj_dot_tiles_pending = 0;
+        return;
+    }
+    if (frontend_nav_obj_palette_pending) {
+        dmaCopy(
+            frontend_nav_obj_palette,
+            SPRITE_PALETTE,
+            FRONTEND_NAV_OBJ_PALETTE_BYTES
+        );
+        frontend_nav_obj_palette_pending = 0;
+    }
+    if (frontend_nav_obj_dot_tiles_pending) {
+        const FrontendNavObjMeta *off =
+            frontend_nav_obj_metadata(
+                FRONTEND_NAV_OBJ_DOT_OFF_CATALOG,
+                0
+            );
+        const FrontendNavObjMeta *on =
+            frontend_nav_obj_metadata(
+                FRONTEND_NAV_OBJ_DOT_ON_CATALOG,
+                0
+            );
+
+        if (off != 0 && on != 0) {
+            dmaCopy(
+                frontend_nav_obj_tiles + off->tile_offset,
+                FRONTEND_NAV_OBJ_VRAM +
+                    FRONTEND_NAV_OBJ_DOT_OFF_OFFSET,
+                off->tile_bytes
+            );
+            dmaCopy(
+                frontend_nav_obj_tiles + on->tile_offset,
+                FRONTEND_NAV_OBJ_VRAM +
+                    FRONTEND_NAV_OBJ_DOT_ON_OFFSET,
+                on->tile_bytes
+            );
+            telemetry_frontend_nav_obj_uploads += 2;
+            telemetry_frontend_nav_obj_upload_bytes +=
+                off->tile_bytes + on->tile_bytes;
+        }
+        frontend_nav_obj_dot_tiles_pending = 0;
+    }
+    for (
+        upload = 0;
+        upload < frontend_nav_obj_upload_count;
+        upload++
+    ) {
+        const FrontendNavObjUpload *pending =
+            &frontend_nav_obj_upload[upload];
+
+        dmaCopy(
+            pending->source,
+            FRONTEND_NAV_OBJ_VRAM + pending->vram_offset,
+            pending->bytes
+        );
+        telemetry_frontend_nav_obj_uploads++;
+        telemetry_frontend_nav_obj_upload_bytes += pending->bytes;
+    }
+    frontend_nav_obj_upload_count = 0;
+}
+
+static void frontend_nav_obj_disable(void)
+{
+    if (
+        frontend_nav_obj_active ||
+        previous_oam_count != 0
+    ) {
+        hide_all_sprites();
+    }
+    frontend_nav_obj_active = 0;
+    frontend_nav_obj_slot_count = 0;
+    frontend_nav_obj_upload_count = 0;
+    frontend_nav_obj_palette_pending = 0;
+    frontend_nav_obj_dot_tiles_pending = 0;
+}
+
 static u8 frontend_nav_planet_dimensions(
     u8 planet,
     u16 *width,
     u16 *height
 )
 {
-    OtShpSprite sprite;
+    const FrontendNavObjMeta *metadata;
+    u16 graphic;
 
     if (
         planet == 0 ||
-        planet > 21 ||
-        !ot_data_shp_sprite_read(
-            3,
-            (u16)(frontend_planet_graphic[planet - 1u] - 1u),
-            &sprite
-        ) ||
-        !sprite.populated
+        planet > 21
     ) {
         return 0;
     }
-    if (width != 0) *width = sprite.width;
-    if (height != 0) *height = sprite.height;
+    graphic = (u16)(frontend_planet_graphic[planet - 1u] - 1u);
+    metadata = frontend_nav_obj_metadata(graphic, 0);
+    if (
+        metadata == 0 ||
+        metadata->source_width == 0 ||
+        metadata->source_height == 0
+    ) {
+        return 0;
+    }
+    if (width != 0) *width = metadata->source_width;
+    if (height != 0) *height = metadata->source_height;
     return 1;
 }
 
@@ -3657,6 +4473,8 @@ static void frontend_nav_reset(void)
     if (origin == 0 || origin > 21) origin = 1;
     frontend_nav_x = (s16)frontend_planet_x[origin - 1u];
     frontend_nav_y = (s16)frontend_planet_y[origin - 1u];
+    frontend_nav_presented_x = frontend_nav_x;
+    frontend_nav_presented_y = frontend_nav_y;
     frontend_nav_target_x = frontend_nav_x;
     frontend_nav_target_y = frontend_nav_y;
     frontend_nav_planet_animation = 0;
@@ -3722,245 +4540,57 @@ static s16 frontend_nav_part_way(
     );
 }
 
-static void frontend_nav_draw_grid(void)
+static u8 frontend_nav_grid_phase(s16 coordinate)
 {
-    s16 shifted_x = (s16)(frontend_nav_x >> 1);
-    s16 shifted_y = (s16)(frontend_nav_y >> 1);
-    s16 inner_x0 = frontend_source_to_screen_x(19);
-    s16 inner_x1 = frontend_source_to_screen_x(136);
-    s16 inner_y0 = frontend_source_to_screen_y(16);
-    s16 inner_y1 = frontend_source_to_screen_y(170);
-    s16 wide_x0 = 0;
-    s16 wide_x1 = frontend_source_to_screen_x(161);
-    u8 index;
+    s16 phase = (s16)(coordinate % FRONTEND_NAV_GRID_PHASES);
 
-    frontend_fill_rect(
-        frontend_frame_scratch,
-        (u16)inner_x0,
-        (u16)inner_y0,
-        (u16)(inner_x1 - inner_x0),
-        (u16)(inner_y1 - inner_y0),
-        2
-    );
-    for (index = 1; index <= 20; index++) {
-        s16 x = (s16)(index * 15 - shifted_x);
-
-        if (x > 18 && x < 135) {
-            s16 screen_x = frontend_source_to_screen_x(x);
-
-            frontend_fill_rect(
-                frontend_frame_scratch,
-                (u16)(screen_x + 1),
-                (u16)inner_y0,
-                1,
-                (u16)(inner_y1 - inner_y0),
-                1
-            );
-            frontend_fill_rect(
-                frontend_frame_scratch,
-                (u16)screen_x,
-                (u16)inner_y0,
-                1,
-                (u16)(inner_y1 - inner_y0),
-                5
-            );
-        }
-    }
-    for (index = 1; index <= 20; index++) {
-        s16 y = (s16)(index * 15 - shifted_y);
-
-        if (y > 15 && y < 169) {
-            s16 screen_y = frontend_source_to_screen_y(y);
-            u8 x_index;
-
-            frontend_fill_rect(
-                frontend_frame_scratch,
-                (u16)inner_x0,
-                (u16)(screen_y + 1),
-                (u16)(inner_x1 - inner_x0),
-                1,
-                1
-            );
-            frontend_fill_rect(
-                frontend_frame_scratch,
-                (u16)wide_x0,
-                (u16)screen_y,
-                (u16)(wide_x1 - wide_x0),
-                1,
-                5
-            );
-            for (x_index = 1; x_index <= 20; x_index++) {
-                s16 x = (s16)(
-                    x_index * 15 - shifted_x
-                );
-
-                if (x > 18 && x < 135) {
-                    s16 screen_x =
-                        frontend_source_to_screen_x(x);
-
-                    frontend_frame_scratch[
-                        (u32)screen_y * SCREEN_WIDTH +
-                        (u16)screen_x
-                    ] = 7;
-                }
-            }
-        }
-    }
+    if (phase < 0) phase += FRONTEND_NAV_GRID_PHASES;
+    return (u8)phase;
 }
 
-static void frontend_nav_draw_dots(void)
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+frontend_nav_copy_bitmap_page(u8 *destination, const u8 *source)
 {
-    u8 route;
-    u8 route_count = frontend_next_choice_count();
-    u8 origin = frontend_map.map_origin;
+    u8 row;
 
-    for (route = 0; route < route_count; route++) {
-        u8 map_choice = frontend_next_map_choice(route);
-        u8 destination = frontend_map.map_planet[map_choice];
-        u8 dots = frontend_nav_dot_count(destination);
-        u8 dot;
+    /*
+     * The generated ROM page pads each 126-pixel row to 128 bytes.  Both
+     * pointers are therefore word aligned for every iteration, avoiding 138
+     * generic memcpy calls and keeping sequential Game Pak prefetch active.
+     */
+    for (row = 0; row < FRONTEND_NAV_BITMAP_HEIGHT; row++) {
+        const u32 *source_words =
+            (const u32 *)(const void *)source;
+        u32 *destination_words = (u32 *)(void *)destination;
+        u8 word;
 
-        for (dot = 0; dot < dots; dot++) {
-            s16 x = frontend_nav_part_way(
-                (s16)frontend_planet_x[origin - 1u],
-                (s16)frontend_planet_x[destination - 1u],
-                dots,
-                dot
-            );
-            s16 y = frontend_nav_part_way(
-                (s16)frontend_planet_y[origin - 1u],
-                (s16)frontend_planet_y[destination - 1u],
-                dots,
-                dot
-            );
-
-            x = (s16)(x - frontend_nav_x + 64);
-            y = (s16)(y - frontend_nav_y + 83);
-            if (x > 0 && x < 140 && y > 0 && y < 168) {
-                (void)frontend_blit_shp_source(
-                    frontend_frame_scratch,
-                    5,
-                    (
-                        route == frontend_selection &&
-                        dot < frontend_nav_dot_animation
-                    ) ?
-                        30 :
-                        29,
-                    x,
-                    y,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
-                );
-            }
+        for (word = 0; word < 31; word++) {
+            destination_words[word] = source_words[word];
         }
+        *(u16 *)(void *)(destination + 124) =
+            *(const u16 *)(const void *)(source + 124);
+        source += FRONTEND_NAV_BITMAP_STRIDE;
+        destination += SCREEN_WIDTH;
     }
-}
-
-static void frontend_nav_draw_planet(u8 planet_index)
-{
-    OtShpSprite sprite;
-    u16 graphic;
-    s16 source_x;
-    s16 source_y;
-
-    if (
-        planet_index >= 21 ||
-        frontend_planet_graphic[planet_index] == 0
-    ) {
-        return;
-    }
-    graphic = (u16)(frontend_planet_graphic[planet_index] - 1u);
-    if (
-        frontend_planet_animated[planet_index] &&
-        frontend_nav_planet_animation < 15
-    ) {
-        graphic = (u16)(
-            graphic + frontend_nav_planet_animation
-        );
-    }
-    if (
-        !ot_data_shp_sprite_read(3, graphic, &sprite) ||
-        !sprite.populated
-    ) {
-        return;
-    }
-    source_x = (s16)(
-        frontend_planet_x[planet_index] +
-        66 -
-        frontend_nav_x -
-        (s16)(sprite.width / 2u)
-    );
-    source_y = (s16)(
-        frontend_planet_y[planet_index] +
-        85 -
-        frontend_nav_y -
-        (s16)(sprite.height / 2u)
-    );
-    if (
-        source_x <= -7 ||
-        source_x + (s16)sprite.width >= 170 ||
-        source_y <= 0 ||
-        source_y >= 160
-    ) {
-        return;
-    }
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        3,
-        graphic,
-        (s16)(source_x + 3),
-        (s16)(source_y + 3),
-        FRONTEND_SOURCE_BLIT_DARK,
-        0,
-        0
-    );
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        3,
-        graphic,
-        source_x,
-        source_y,
-        FRONTEND_SOURCE_BLIT_NORMAL,
-        0,
-        0
-    );
 }
 
 static void frontend_nav_draw(void)
 {
-    u8 planet;
-    u8 choice_count = frontend_next_choice_count();
-
-    frontend_nav_draw_grid();
-    frontend_nav_draw_dots();
-    for (planet = 0; planet < 11; planet++) {
-        frontend_nav_draw_planet(planet);
-    }
-    for (planet = 0; planet < choice_count; planet++) {
-        u8 map_planet = frontend_map.map_planet[
-            frontend_next_map_choice(planet)
-        ];
-
-        if (map_planet > 11 && map_planet <= 21) {
-            frontend_nav_draw_planet((u8)(map_planet - 1u));
-        }
-    }
-    if (frontend_map.map_origin > 11 && frontend_map.map_origin <= 21) {
-        frontend_nav_draw_planet(
-            (u8)(frontend_map.map_origin - 1u)
-        );
-    }
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        5,
-        28,
-        0,
-        0,
-        FRONTEND_SOURCE_BLIT_NORMAL,
-        0,
-        0
+    u8 phase_x = frontend_nav_grid_phase(
+        (s16)(frontend_nav_presented_x >> 1)
     );
+    u8 phase_y = frontend_nav_grid_phase(
+        (s16)(frontend_nav_presented_y >> 1)
+    );
+    const u8 *source =
+        frontend_nav_bitmap_pages +
+        (
+            (u32)phase_y * FRONTEND_NAV_GRID_PHASES +
+            phase_x
+        ) *
+        FRONTEND_NAV_BITMAP_PAGE_BYTES;
+    frontend_nav_copy_bitmap_page(frontend_frame_scratch, source);
+    telemetry_frontend_nav_bitmap_redraws++;
 }
 
 static void frontend_render_next_level_item(u8 selection)
@@ -4014,6 +4644,8 @@ static void frontend_render_next_level(void)
         FRONTEND_FRAME_BYTES
     );
     frontend_nav_set_target();
+    frontend_nav_presented_x = frontend_nav_x;
+    frontend_nav_presented_y = frontend_nav_y;
     frontend_nav_draw();
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
@@ -4038,6 +4670,7 @@ static void frontend_render_next_level(void)
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_NEXT_LEVEL_0)
     );
+    frontend_nav_obj_rebuild();
 }
 
 static void frontend_render_next_level_selection(u8 old_selection)
@@ -4047,22 +4680,9 @@ static void frontend_render_next_level_selection(u8 old_selection)
     frontend_nav_dot_animation = 0;
     frontend_nav_dot_wait = 0;
     frontend_nav_set_target();
-    frontend_dirty_begin();
-    frontend_restore_menu_chrome_rect(
-        FRONTEND_NAV_DIRTY_X,
-        FRONTEND_NAV_DIRTY_Y,
-        FRONTEND_NAV_DIRTY_WIDTH,
-        FRONTEND_NAV_DIRTY_HEIGHT
-    );
-    frontend_nav_draw();
-    frontend_dirty_add(
-        FRONTEND_NAV_DIRTY_X,
-        FRONTEND_NAV_DIRTY_Y,
-        FRONTEND_NAV_DIRTY_WIDTH,
-        FRONTEND_NAV_DIRTY_HEIGHT
-    );
     frontend_render_next_level_item(old_selection);
     frontend_render_next_level_item(frontend_selection);
+    frontend_dirty_begin();
     {
         u16 old_y =
             old_selection < choice_count ?
@@ -4094,16 +4714,20 @@ static void frontend_render_next_level_selection(u8 old_selection)
         );
     }
     frontend_dirty_present();
+    /*
+     * Selecting "Exit" does not move the navigation camera.  The old path
+     * nevertheless decoded and redrew the complete 126x138 map on every
+     * cursor press.  Route dots are OBJ, so selection changes only need OAM
+     * plus the two affected native-text rows; genuine destination changes
+     * are picked up by the camera update below.
+     */
+    frontend_nav_obj_render_oam();
 }
 
 static void frontend_render_next_level_nav(void)
 {
-    frontend_restore_menu_chrome_rect(
-        FRONTEND_NAV_DIRTY_X,
-        FRONTEND_NAV_DIRTY_Y,
-        FRONTEND_NAV_DIRTY_WIDTH,
-        FRONTEND_NAV_DIRTY_HEIGHT
-    );
+    frontend_nav_presented_x = frontend_nav_x;
+    frontend_nav_presented_y = frontend_nav_y;
     frontend_nav_draw();
     frontend_dirty_begin();
     frontend_dirty_add(
@@ -4113,6 +4737,7 @@ static void frontend_render_next_level_nav(void)
         FRONTEND_NAV_DIRTY_HEIGHT
     );
     frontend_dirty_present();
+    frontend_nav_obj_rebuild();
 }
 
 static u8 frontend_stats_cube_total(void)
@@ -4809,6 +5434,14 @@ static void frontend_redraw_selection(u8 old_selection)
 
 static void frontend_enter_state(u8 state, u8 selection)
 {
+    u8 old_state = game_state;
+
+    if (
+        old_state == STATE_NEXT_LEVEL_MENU &&
+        state != STATE_NEXT_LEVEL_MENU
+    ) {
+        frontend_nav_obj_disable();
+    }
     if (state != STATE_LEVEL_STATS) {
         frontend_stats_overlay_active = 0;
         frontend_stats_tiles_pending = 0;
@@ -5152,6 +5785,11 @@ static void frontend_begin(void)
     frontend_stats_font_ready = 0;
     frontend_stats_scene_oam_count = 0;
     frontend_stats_glow_brightness = -4;
+    frontend_nav_obj_active = 0;
+    frontend_nav_obj_slot_count = 0;
+    frontend_nav_obj_upload_count = 0;
+    frontend_nav_obj_palette_pending = 0;
+    frontend_nav_obj_dot_tiles_pending = 0;
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
@@ -5236,7 +5874,9 @@ static void frontend_update(void)
         s16 delta_y = (s16)(
             frontend_nav_target_y - frontend_nav_y
         );
-        u8 redraw = 0;
+        u8 background_redraw = 0;
+        u8 planet_redraw = 0;
+        u8 dot_redraw = 0;
 
         if (delta_x >= -1 && delta_x <= 1) {
             frontend_nav_x = frontend_nav_target_x;
@@ -5258,7 +5898,7 @@ static void frontend_update(void)
                 frontend_nav_planet_animation >= 14 ?
                     0 :
                     (u8)(frontend_nav_planet_animation + 1u);
-            redraw = 1;
+            planet_redraw = 1;
         }
         if (++frontend_nav_dot_wait >= 6) {
             u8 choice_count = frontend_next_choice_count();
@@ -5275,19 +5915,26 @@ static void frontend_update(void)
                     frontend_nav_dot_animation++;
                 }
             }
-            redraw = 1;
+            dot_redraw = 1;
         }
         if (
-            (delta_x != 0 || delta_y != 0) &&
+            (
+                frontend_nav_presented_x != frontend_nav_x ||
+                frontend_nav_presented_y != frontend_nav_y
+            ) &&
             frontend_nav_animation_wait == 0
         ) {
-            redraw = 1;
+            background_redraw = 1;
         }
         if (
-            redraw &&
+            background_redraw &&
             frontend_pending_kind != FRONTEND_PENDING_FULL_FRAME
         ) {
             frontend_render_next_level_nav();
+        } else if (planet_redraw) {
+            frontend_nav_obj_animate();
+        } else if (dot_redraw) {
+            frontend_nav_obj_render_oam();
         }
     }
 
@@ -5663,11 +6310,16 @@ static void frontend_update(void)
 
             if (frontend_map_level[map_choice].episode_complete) {
                 frontend_advance_episode();
-            } else if (
-                !enter_level(frontend_map.map_section[map_choice])
-            ) {
-                frontend_enter_state(STATE_GAME_MENU, 4);
-                frontend_load_game_menu_song();
+            } else {
+                frontend_nav_obj_disable();
+                if (
+                    !enter_level(
+                        frontend_map.map_section[map_choice]
+                    )
+                ) {
+                    frontend_enter_state(STATE_GAME_MENU, 4);
+                    frontend_load_game_menu_song();
+                }
             }
         } else {
             frontend_enter_state(STATE_GAME_MENU, 4);

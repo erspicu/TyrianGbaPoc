@@ -752,6 +752,10 @@ extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
 extern const u8 frontend_cube[];
+extern const u8 frontend_nav_obj_tiles[];
+extern const u8 frontend_nav_obj_meta[];
+extern const u8 frontend_nav_obj_palette[];
+extern const u8 frontend_nav_bitmap_pages[];
 extern const u8 jukebox_font_tiles[];
 extern const u8 jukebox_backdrop_tiles[];
 extern const u8 jukebox_backdrop_map[];
@@ -1359,6 +1363,11 @@ volatile u32 telemetry_frontend_dirty_commits;
 volatile u32 telemetry_frontend_dirty_bytes;
 volatile u32 telemetry_frontend_runtime_shp_decodes;
 volatile u32 telemetry_frontend_runtime_sprite2_decodes;
+volatile u32 telemetry_frontend_nav_bitmap_redraws;
+volatile u32 telemetry_frontend_nav_obj_updates;
+volatile u32 telemetry_frontend_nav_obj_uploads;
+volatile u32 telemetry_frontend_nav_obj_upload_bytes;
+volatile u32 telemetry_frontend_nav_obj_overflows;
 volatile u32 telemetry_romfs_entries STRESS_COLD_BSS;
 volatile u32 telemetry_romfs_image_bytes STRESS_COLD_BSS;
 volatile u32 telemetry_romfs_payload_bytes STRESS_COLD_BSS;
@@ -1896,6 +1905,16 @@ int main(void)
                 game_state == STATE_GAME_MENU ?
                     0 :
                     KEY_A;
+#elif defined(AUTOTEST_FRONTEND_NAV_STRESS)
+            pad_pressed =
+                game_state == STATE_NEXT_LEVEL_MENU ?
+                    0 :
+                    KEY_A;
+#elif defined(AUTOTEST_FRONTEND_NAV_CAMERA_STRESS)
+            pad_pressed =
+                game_state == STATE_NEXT_LEVEL_MENU ?
+                    0 :
+                    KEY_A;
 #elif defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
             /*
              * Deterministically route to the requested front-end page.
@@ -2074,6 +2093,343 @@ int main(void)
                     );
 #endif
                     __asm__ volatile("swi 3");
+                }
+            }
+#endif
+#ifdef AUTOTEST_FRONTEND_NAV_CAMERA_STRESS
+            {
+                static u8 frontend_nav_camera_started;
+                static u8 frontend_nav_camera_direction;
+                static u8 frontend_nav_camera_transitions;
+                static s16 frontend_nav_camera_anchor_x;
+                static s16 frontend_nav_camera_anchor_y;
+                static u32 frontend_nav_camera_vblank_start;
+
+                if (game_state == STATE_NEXT_LEVEL_MENU) {
+                    if (!frontend_nav_camera_started) {
+                        if (
+                            !frontend_frame_pending &&
+                            frontend_nav_obj_active &&
+                            frontend_nav_x == frontend_nav_target_x &&
+                            frontend_nav_y == frontend_nav_target_y &&
+                            frontend_nav_presented_x == frontend_nav_x &&
+                            frontend_nav_presented_y == frontend_nav_y
+                        ) {
+                            frontend_nav_camera_started = 1;
+                            frontend_nav_camera_anchor_x =
+                                frontend_nav_target_x;
+                            frontend_nav_camera_anchor_y =
+                                frontend_nav_target_y;
+                            frontend_nav_camera_direction = 1;
+                            frontend_nav_target_x = (s16)(
+                                frontend_nav_camera_anchor_x + 45
+                            );
+                            frontend_nav_target_y = (s16)(
+                                frontend_nav_camera_anchor_y + 30
+                            );
+                            telemetry_missed_vblanks = 0;
+                            telemetry_frontend_full_redraws = 0;
+                            telemetry_frontend_dirty_commits = 0;
+                            telemetry_frontend_dirty_bytes = 0;
+                            telemetry_frontend_runtime_shp_decodes = 0;
+                            telemetry_frontend_runtime_sprite2_decodes = 0;
+                            telemetry_frontend_nav_bitmap_redraws = 0;
+                            telemetry_frontend_nav_obj_updates = 0;
+                            telemetry_frontend_nav_obj_uploads = 0;
+                            telemetry_frontend_nav_obj_upload_bytes = 0;
+                            telemetry_frontend_nav_obj_overflows = 0;
+                            frontend_nav_camera_vblank_start =
+                                telemetry_vblank_irqs;
+                            last_vblank_seen = current_vblank;
+                        }
+                    } else if (
+                        !frontend_frame_pending &&
+                        frontend_nav_x == frontend_nav_target_x &&
+                        frontend_nav_y == frontend_nav_target_y &&
+                        frontend_nav_presented_x == frontend_nav_x &&
+                        frontend_nav_presented_y == frontend_nav_y
+                    ) {
+                        if (frontend_nav_camera_transitions < 40) {
+                            frontend_nav_camera_transitions++;
+                        }
+                        if (frontend_nav_camera_transitions < 40) {
+                            frontend_nav_camera_direction ^= 1u;
+                            frontend_nav_target_x =
+                                frontend_nav_camera_direction ?
+                                    (s16)(
+                                        frontend_nav_camera_anchor_x + 45
+                                    ) :
+                                    frontend_nav_camera_anchor_x;
+                            frontend_nav_target_y =
+                                frontend_nav_camera_direction ?
+                                    (s16)(
+                                        frontend_nav_camera_anchor_y + 30
+                                    ) :
+                                    frontend_nav_camera_anchor_y;
+                        } else {
+                            volatile u8 *sram =
+                                (volatile u8 *)0x0E000000;
+
+                            sram[0] = 'T';
+                            sram[1] = 'G';
+                            sram[2] = 'N';
+                            sram[3] = 'C';
+                            sram_write_u32(
+                                4,
+                                frontend_nav_camera_transitions
+                            );
+                            sram_write_u32(8, telemetry_missed_vblanks);
+                            sram_write_u32(
+                                12,
+                                telemetry_vblank_irqs -
+                                    frontend_nav_camera_vblank_start
+                            );
+                            sram_write_u32(16, frontend_frame_pending);
+                            sram_write_u32(
+                                20,
+                                telemetry_frontend_full_redraws
+                            );
+                            sram_write_u32(
+                                24,
+                                telemetry_frontend_dirty_commits
+                            );
+                            sram_write_u32(
+                                28,
+                                telemetry_frontend_dirty_bytes
+                            );
+                            sram_write_u32(
+                                32,
+                                telemetry_frontend_runtime_shp_decodes
+                            );
+                            sram_write_u32(
+                                36,
+                                telemetry_frontend_runtime_sprite2_decodes
+                            );
+                            sram_write_u32(40, game_state);
+                            sram_write_u32(
+                                44,
+                                telemetry_frontend_nav_bitmap_redraws
+                            );
+                            sram_write_u32(
+                                48,
+                                telemetry_frontend_nav_obj_updates
+                            );
+                            sram_write_u32(
+                                52,
+                                telemetry_frontend_nav_obj_uploads
+                            );
+                            sram_write_u32(
+                                56,
+                                telemetry_frontend_nav_obj_upload_bytes
+                            );
+                            sram_write_u32(
+                                60,
+                                telemetry_frontend_nav_obj_overflows
+                            );
+                            sram_write_u32(64, mmActive());
+                            sram_write_u32(
+                                68,
+                                frontend_nav_obj_active
+                            );
+                            sram_write_u32(
+                                72,
+                                frontend_nav_obj_slot_count
+                            );
+                            sram_write_u32(
+                                76,
+                                frontend_nav_presented_x ==
+                                        frontend_nav_x &&
+                                    frontend_nav_presented_y ==
+                                        frontend_nav_y
+                            );
+                            __asm__ volatile("swi 3");
+                        }
+                    }
+                }
+            }
+#endif
+#ifdef AUTOTEST_FRONTEND_NAV_STRESS
+            {
+                static u8 frontend_nav_stress_phase;
+                static u16 frontend_nav_stress_updates;
+                static u32 frontend_nav_stress_vblank_start;
+                static u32 frontend_nav_stress_idle[16];
+
+                if (game_state == STATE_NEXT_LEVEL_MENU) {
+                    if (frontend_nav_stress_phase == 0) {
+                        if (
+                            !frontend_frame_pending &&
+                            frontend_nav_obj_active &&
+                            frontend_nav_x == frontend_nav_target_x &&
+                            frontend_nav_y == frontend_nav_target_y &&
+                            frontend_nav_presented_x == frontend_nav_x &&
+                            frontend_nav_presented_y == frontend_nav_y
+                        ) {
+                            frontend_nav_stress_phase = 1;
+                            telemetry_missed_vblanks = 0;
+                            telemetry_frontend_full_redraws = 0;
+                            telemetry_frontend_dirty_commits = 0;
+                            telemetry_frontend_dirty_bytes = 0;
+                            telemetry_frontend_runtime_shp_decodes = 0;
+                            telemetry_frontend_runtime_sprite2_decodes = 0;
+                            telemetry_frontend_nav_bitmap_redraws = 0;
+                            telemetry_frontend_nav_obj_updates = 0;
+                            telemetry_frontend_nav_obj_uploads = 0;
+                            telemetry_frontend_nav_obj_upload_bytes = 0;
+                            telemetry_frontend_nav_obj_overflows = 0;
+                            frontend_nav_stress_vblank_start =
+                                telemetry_vblank_irqs;
+                            last_vblank_seen = current_vblank;
+                        }
+                    } else if (frontend_nav_stress_phase == 1) {
+                        if (frontend_nav_stress_updates < 600) {
+                            frontend_nav_stress_updates++;
+                        } else {
+                            frontend_nav_stress_idle[0] =
+                                telemetry_missed_vblanks;
+                            frontend_nav_stress_idle[1] =
+                                telemetry_vblank_irqs -
+                                    frontend_nav_stress_vblank_start;
+                            frontend_nav_stress_idle[2] =
+                                frontend_frame_pending;
+                            frontend_nav_stress_idle[3] =
+                                telemetry_frontend_full_redraws;
+                            frontend_nav_stress_idle[4] =
+                                telemetry_frontend_dirty_commits;
+                            frontend_nav_stress_idle[5] =
+                                telemetry_frontend_dirty_bytes;
+                            frontend_nav_stress_idle[6] =
+                                telemetry_frontend_runtime_shp_decodes;
+                            frontend_nav_stress_idle[7] =
+                                telemetry_frontend_runtime_sprite2_decodes;
+                            frontend_nav_stress_idle[8] =
+                                telemetry_frontend_nav_bitmap_redraws;
+                            frontend_nav_stress_idle[9] =
+                                telemetry_frontend_nav_obj_updates;
+                            frontend_nav_stress_idle[10] =
+                                telemetry_frontend_nav_obj_uploads;
+                            frontend_nav_stress_idle[11] =
+                                telemetry_frontend_nav_obj_upload_bytes;
+                            frontend_nav_stress_idle[12] =
+                                telemetry_frontend_nav_obj_overflows;
+                            frontend_nav_stress_idle[13] = mmActive();
+                            frontend_nav_stress_idle[14] =
+                                frontend_nav_obj_active;
+                            frontend_nav_stress_idle[15] =
+                                frontend_nav_obj_slot_count;
+
+                            frontend_nav_stress_phase = 2;
+                            frontend_nav_stress_updates = 0;
+                            telemetry_missed_vblanks = 0;
+                            telemetry_frontend_full_redraws = 0;
+                            telemetry_frontend_dirty_commits = 0;
+                            telemetry_frontend_dirty_bytes = 0;
+                            telemetry_frontend_runtime_shp_decodes = 0;
+                            telemetry_frontend_runtime_sprite2_decodes = 0;
+                            telemetry_frontend_nav_bitmap_redraws = 0;
+                            telemetry_frontend_nav_obj_updates = 0;
+                            telemetry_frontend_nav_obj_uploads = 0;
+                            telemetry_frontend_nav_obj_upload_bytes = 0;
+                            telemetry_frontend_nav_obj_overflows = 0;
+                            frontend_nav_stress_vblank_start =
+                                telemetry_vblank_irqs;
+                            last_vblank_seen = current_vblank;
+                        }
+                    } else if (
+                        frontend_nav_stress_updates < 120 &&
+                        !frontend_frame_pending
+                    ) {
+                        u8 old_selection = frontend_selection;
+
+                        frontend_selection =
+                            frontend_selection == 0 ?
+                                frontend_next_choice_count() :
+                                0;
+                        frontend_render_next_level_selection(
+                            old_selection
+                        );
+                        frontend_nav_stress_updates++;
+                    } else if (
+                        frontend_nav_stress_updates == 120 &&
+                        !frontend_frame_pending
+                    ) {
+                        volatile u8 *sram =
+                            (volatile u8 *)0x0E000000;
+
+                        sram[0] = 'T';
+                        sram[1] = 'G';
+                        sram[2] = 'N';
+                        sram[3] = '7';
+                        sram_write_u32(4, 600);
+                        sram_write_u32(8, frontend_nav_stress_idle[0]);
+                        sram_write_u32(12, frontend_nav_stress_idle[1]);
+                        sram_write_u32(16, frontend_nav_stress_idle[2]);
+                        sram_write_u32(20, frontend_nav_stress_idle[3]);
+                        sram_write_u32(24, frontend_nav_stress_idle[4]);
+                        sram_write_u32(28, frontend_nav_stress_idle[5]);
+                        sram_write_u32(32, frontend_nav_stress_idle[6]);
+                        sram_write_u32(36, frontend_nav_stress_idle[7]);
+                        sram_write_u32(40, game_state);
+                        sram_write_u32(44, frontend_selection);
+                        sram_write_u32(48, frontend_nav_stress_idle[8]);
+                        sram_write_u32(52, frontend_nav_stress_idle[9]);
+                        sram_write_u32(56, frontend_nav_stress_idle[10]);
+                        sram_write_u32(60, frontend_nav_stress_idle[11]);
+                        sram_write_u32(64, frontend_nav_stress_idle[12]);
+                        sram_write_u32(68, frontend_nav_stress_idle[13]);
+                        sram_write_u32(72, frontend_nav_stress_idle[14]);
+                        sram_write_u32(76, frontend_nav_stress_idle[15]);
+                        sram_write_u32(80, frontend_nav_stress_updates);
+                        sram_write_u32(84, telemetry_missed_vblanks);
+                        sram_write_u32(
+                            88,
+                            telemetry_vblank_irqs -
+                                frontend_nav_stress_vblank_start
+                        );
+                        sram_write_u32(92, frontend_frame_pending);
+                        sram_write_u32(
+                            96,
+                            telemetry_frontend_full_redraws
+                        );
+                        sram_write_u32(
+                            100,
+                            telemetry_frontend_dirty_commits
+                        );
+                        sram_write_u32(
+                            104,
+                            telemetry_frontend_dirty_bytes
+                        );
+                        sram_write_u32(
+                            108,
+                            telemetry_frontend_runtime_shp_decodes
+                        );
+                        sram_write_u32(
+                            112,
+                            telemetry_frontend_runtime_sprite2_decodes
+                        );
+                        sram_write_u32(
+                            116,
+                            telemetry_frontend_nav_bitmap_redraws
+                        );
+                        sram_write_u32(
+                            120,
+                            telemetry_frontend_nav_obj_updates
+                        );
+                        sram_write_u32(
+                            124,
+                            telemetry_frontend_nav_obj_uploads
+                        );
+                        sram_write_u32(
+                            128,
+                            telemetry_frontend_nav_obj_upload_bytes
+                        );
+                        sram_write_u32(
+                            132,
+                            telemetry_frontend_nav_obj_overflows
+                        );
+                        sram_write_u32(136, mmActive());
+                        __asm__ volatile("swi 3");
+                    }
                 }
             }
 #endif
