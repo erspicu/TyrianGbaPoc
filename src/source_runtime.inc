@@ -267,7 +267,6 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
         (x & 7u);
 }
 
-#if TYRIAN_GBA_STRESS_LOADOUT
 /*
  * OpenTyrian draws weapon graphic 60034 with
  * blit_sprite_blend(OPTION_SHAPES, 33).  That authored sprite is 80x79,
@@ -278,6 +277,7 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
  */
 static u8 source_option_projectile_build(void)
 {
+#if TYRIAN_GBA_STRESS_LOADOUT
     OtShpSprite sprite;
     const u8 *encoded;
     u8 *target = (u8 *)source_sprite2_l2_tiles;
@@ -362,8 +362,194 @@ static u8 source_option_projectile_build(void)
     );
     source_option_projectile_valid = 1;
     return 1;
-}
+#else
+    static const u8 expected_width[
+        SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+    ] = {62, 65, 62};
+    static const u8 expected_height[
+        SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+    ] = {24, 28, 23};
+    OtDataView palette;
+    u8 frame;
+    u8 colour;
+
+    source_option_projectile_valid = 0;
+    if (
+        !source_enemy_palette_valid ||
+        !ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)
+    ) {
+        return 0;
+    }
+    SPRITE_PALETTE[
+        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16
+    ] = 0;
+    for (colour = 0; colour < 14; colour++) {
+        SPRITE_PALETTE[
+            SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 +
+            colour + 1u
+        ] = title_palette_colour(
+            &palette,
+            (u8)(114u + colour)
+        );
+    }
+    SPRITE_PALETTE[
+        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 15u
+    ] = 0;
+    for (
+        frame = 0;
+        frame < SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
+        frame++
+    ) {
+        OtShpSprite sprite;
+        const u8 *encoded;
+        u8 *target = (u8 *)source_sprite2_l2_tiles;
+        u32 source = 0;
+        u16 x = 0;
+        u16 y = 0;
+
+        memset(target, 0, SOURCE_OPTION_PROJECTILE_BYTES);
+        if (
+            !source_enemy_palette_valid ||
+            !ot_data_shp_sprite_read(
+                SOURCE_OPTION_PROJECTILE_SOURCE_TABLE,
+                (u16)(
+                    SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC + frame
+                ),
+                &sprite
+            ) ||
+            !sprite.populated ||
+            sprite.width != expected_width[frame] ||
+            sprite.height != expected_height[frame]
+        ) {
+            return 0;
+        }
+        encoded = sprite.encoded.data;
+        while (
+            source < sprite.encoded.size &&
+            y < sprite.height
+        ) {
+            u8 code = encoded[source++];
+
+            if (code == 255) {
+                if (source >= sprite.encoded.size) return 0;
+                x = (u16)(x + encoded[source++]);
+            } else if (code == 254) {
+                x = sprite.width;
+            } else if (code == 253) {
+                x++;
+            } else {
+                if (
+                    x < SOURCE_OPTION_PROJECTILE_SIZE_X &&
+                    y < SOURCE_OPTION_PROJECTILE_SIZE_Y
+                ) {
+                    u32 target_offset;
+                    u8 palette_index;
+
+                    if (code < 114 || code > 127) return 0;
+                    palette_index = (u8)(code - 113u);
+                    target_offset =
+                        (u32)(
+                            (y >> 3) *
+                                (
+                                    SOURCE_OPTION_PROJECTILE_SIZE_X /
+                                    8
+                                ) +
+                            (x >> 3)
+                        ) *
+                            32u +
+                        (u32)(y & 7u) * 4u +
+                        ((x & 7u) >> 1);
+                    if (x & 1u) {
+                        target[target_offset] |=
+                            (u8)(palette_index << 4);
+                    } else {
+                        target[target_offset] |= palette_index;
+                    }
+                }
+                x++;
+            }
+            if (x >= sprite.width) {
+                x = 0;
+                y++;
+            }
+        }
+        if (y < sprite.height) return 0;
+        dmaCopy(
+            target,
+            (u8 *)OBJ_BASE_ADR +
+                (
+                    SOURCE_OPTION_PROJECTILE_TILE_BASE +
+                    frame *
+                        SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME
+                ) *
+                32,
+            SOURCE_OPTION_PROJECTILE_BYTES
+        );
+        source_option_projectile_valid |= (u8)(1u << frame);
+    }
+    return source_option_projectile_valid ==
+        (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u;
 #endif
+}
+
+static u8 source_enemy_cache_slot_reserved(u8 slot)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    (void)slot;
+    return 0;
+#else
+    return
+        source_option_projectile_valid != 0 &&
+        slot >=
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+                SOURCE_OPTION_PROJECTILE_FRAME_COUNT &&
+        slot < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
+#endif
+}
+
+static u8 source_option_projectile_sync(void)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (source_option_projectile_valid) return 1;
+    return source_option_projectile_build();
+#else
+    u8 required =
+        source_parity_level.player_sidekick[0] == 9 ||
+        source_parity_level.player_sidekick[1] == 9;
+    u8 index;
+
+    if (!required) {
+        source_option_projectile_valid = 0;
+        return 1;
+    }
+    if (
+        source_option_projectile_valid ==
+            (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u
+    ) {
+        return 1;
+    }
+    /*
+     * The three 4bpp 64x32 Plasma Storm frames time-share the final three
+     * full-size enemy cache slots only while that option is equipped.
+     * Standard loadouts retain all 24 enemy slots and their established
+     * no-drop boss capacity.
+     */
+    for (
+        index =
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+                SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
+        index < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
+        index++
+    ) {
+        source_enemy_cache[index].valid = 0;
+    }
+    if (!source_option_projectile_build()) {
+        source_option_projectile_valid = 0;
+        return 0;
+    }
+    return 1;
+#endif
+}
 
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u32
 source_sprite2_l2_pack_raw_word(
@@ -790,6 +976,7 @@ static void source_enemy_cache_end_frame(void)
         index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
         index++
     ) {
+        if (source_enemy_cache_slot_reserved(index)) continue;
         if (
             source_enemy_cache[index].valid &&
             source_enemy_cache[index].last_epoch ==
@@ -852,6 +1039,7 @@ source_enemy_cache_acquire(
     ) {
         SourceEnemyCacheSlot *slot = &source_enemy_cache[index];
 
+        if (source_enemy_cache_slot_reserved(index)) continue;
         if (
             source_enemy_cache_slot_is_compact(index) &&
             draw->size != 0
@@ -1821,18 +2009,14 @@ static __attribute__((unused)) void source_apply_player_shot_result(
 )
 {
     u8 effect_index;
-#if TYRIAN_GBA_STRESS_LOADOUT
     u8 original_damage = shot != 0 ? shot->damage : 0;
-#endif
 
     if (!result->collided) return;
     if (shot != 0) {
-#if TYRIAN_GBA_STRESS_LOADOUT
         if (shot->infinite) {
             shot->damage = original_damage;
             shot->active = 1;
         } else
-#endif
         {
             shot->damage = result->remaining_damage;
             if (result->consumed) shot->active = 0;
@@ -1846,6 +2030,57 @@ static __attribute__((unused)) void source_apply_player_shot_result(
     ) {
         source_emit_effect(&result->effects[effect_index]);
     }
+}
+
+static u8 source_option_projectile_collision_radii(
+    u16 render_graphic,
+    u8 *radius_w,
+    u8 *radius_h
+)
+{
+    if (
+        render_graphic <= 60000 ||
+        radius_w == 0 ||
+        radius_h == 0
+    ) {
+        return 0;
+    }
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        render_graphic !=
+            60001 + SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC
+    ) {
+        return 0;
+    }
+    *radius_w = SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH / 2;
+    *radius_h = SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT / 2;
+#else
+    {
+        static const u8 width[
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        ] = {62, 65, 62};
+        static const u8 height[
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        ] = {24, 28, 23};
+        u16 graphic = (u16)(render_graphic - 60001u);
+        u8 frame;
+
+        if (
+            graphic < SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
+            graphic >=
+                SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC +
+                    SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        ) {
+            return 0;
+        }
+        frame = (u8)(
+            graphic - SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC
+        );
+        *radius_w = (u8)(width[frame] / 2u);
+        *radius_h = (u8)(height[frame] / 2u);
+    }
+#endif
+    return 1;
 }
 
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
@@ -1972,7 +2207,6 @@ source_process_player_collisions(void)
             collision_phase_started = true;
         }
 #endif
-#if TYRIAN_GBA_STRESS_LOADOUT
         if (shot->chain_weapon != 0) {
             if (
                 ot_level_port_player_shot_overlaps(
@@ -1983,7 +2217,11 @@ source_process_player_collisions(void)
             ) {
                 OtWeaponDefinition chain;
 
+#if TYRIAN_GBA_STRESS_LOADOUT
                 stress_shot_multi_pos[STRESS_BAY_MISC] = 0;
+#else
+                source_shot_multi_pos[SOURCE_WEAPON_BAY_MISC] = 0;
+#endif
                 if (
                     ot_data_hdt_weapon_read(
                         shot->chain_weapon,
@@ -1991,12 +2229,21 @@ source_process_player_collisions(void)
                     ) &&
                     source_weapon_is_valid(&chain)
                 ) {
+#if TYRIAN_GBA_STRESS_LOADOUT
                     stress_spawn_weapon(
                         &chain,
                         STRESS_BAY_MISC,
                         shot->x,
                         shot->y
                     );
+#else
+                    source_spawn_weapon(
+                        &chain,
+                        SOURCE_WEAPON_BAY_MISC,
+                        shot->x,
+                        shot->y
+                    );
+#endif
                     telemetry_player_chain_volleys++;
                 } else {
                     telemetry_stress_loadout_failures++;
@@ -2005,29 +2252,24 @@ source_process_player_collisions(void)
             }
             continue;
         }
-#endif
 #if TYRIAN_GBA_COLLISION_PACKED_CALL
         {
             u32 damage_and_radii = shot->damage;
+            u8 radius_w;
+            u8 radius_h;
 
-#if TYRIAN_GBA_STRESS_LOADOUT
-            if (shot->render_graphic > 60000) {
+            if (
+                source_option_projectile_collision_radii(
+                    shot->render_graphic,
+                    &radius_w,
+                    &radius_h
+                )
+            ) {
                 damage_and_radii |=
-                    (
-                        (u32)(
-                            SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH /
-                            2
-                        )
-                    ) << 8;
+                    (u32)radius_w << 8;
                 damage_and_radii |=
-                    (
-                        (u32)(
-                            SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT /
-                            2
-                        )
-                    ) << 16;
+                    (u32)radius_h << 16;
             }
-#endif
             ot_level_port_collide_player_shot_packed(
                 &source_parity_level,
                 shot->x,
@@ -2037,27 +2279,35 @@ source_process_player_collisions(void)
             );
         }
 #else
-#if TYRIAN_GBA_STRESS_LOADOUT
-        if (shot->render_graphic > 60000) {
+        {
+            u8 radius_w;
+            u8 radius_h;
+
+            if (
+                source_option_projectile_collision_radii(
+                    shot->render_graphic,
+                    &radius_w,
+                    &radius_h
+                )
+            ) {
             ot_level_port_collide_player_shot_sized(
                 &source_parity_level,
                 shot->x,
                 shot->y,
                 shot->damage,
-                SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH / 2,
-                SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT / 2,
+                    radius_w,
+                    radius_h,
                 &result
             );
-        } else
-#endif
-        {
-            ot_level_port_collide_player_shot(
-                &source_parity_level,
-                shot->x,
-                shot->y,
-                shot->damage,
-                &result
-            );
+            } else {
+                ot_level_port_collide_player_shot(
+                    &source_parity_level,
+                    shot->x,
+                    shot->y,
+                    shot->damage,
+                    &result
+                );
+            }
         }
 #endif
         source_apply_player_shot_result(shot, &result);
@@ -2195,12 +2445,12 @@ static void source_runtime_reset(void)
     if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         source_parity_level.assets_valid = false;
     }
-#if TYRIAN_GBA_STRESS_LOADOUT
-    if (!source_option_projectile_build()) {
+    if (!source_option_projectile_sync()) {
         source_parity_level.assets_valid = false;
+#if TYRIAN_GBA_STRESS_LOADOUT
         stress_loadout_valid = 0;
-    }
 #endif
+    }
     if (
         !source_layer_priority_self_test(
             &layer_passed_checks,

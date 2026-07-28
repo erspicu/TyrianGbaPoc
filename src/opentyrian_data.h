@@ -56,6 +56,8 @@ enum {
     OT_SHP_SECTION_COUNT = 12,
     OT_SHP_TABLE_SECTION_COUNT = 7,
     OT_SHP_MAX_SPRITES_PER_TABLE = 151,
+    OT_EPISODE_ITEM_GROUP_COUNT = 9,
+    OT_EPISODE_ITEM_GROUP_CAPACITY = 10,
     /*
      * Adapter-only ID for OpenTyrian's separately loaded
      * explosionSpriteSheet (newsh6.shp).  Authored shape-table values occupy
@@ -74,6 +76,12 @@ enum {
      * ends at 34 and the three adapter banks above occupy 35..37.
      */
     OT_COMP_SHAPE_TABLE_OPTIONS_SMALL = 38,
+    /*
+     * Adapter-only ID for OpenTyrian's shopSpriteSheet (newsh1.shp).
+     * It remains in ROMFS in its original Sprite2 command-stream format
+     * and is decoded only while the cold front-end upgrade screen is open.
+     */
+    OT_COMP_SHAPE_TABLE_SHOP = 39,
     OT_MUS_LDS_PATCH_BYTES = 46,
     OT_MUS_LDS_CHANNEL_COUNT = 9,
 };
@@ -236,6 +244,13 @@ typedef struct {
     uint8_t choice_count;
     uint8_t map_planet[OT_EPISODE_MAP_CHOICE_COUNT];
     uint16_t map_section[OT_EPISODE_MAP_CHOICE_COUNT];
+    uint8_t item_avail[
+        OT_EPISODE_ITEM_GROUP_COUNT
+    ][OT_EPISODE_ITEM_GROUP_CAPACITY];
+    uint8_t item_count[OT_EPISODE_ITEM_GROUP_COUNT];
+    uint8_t menu_song;
+    bool item_inventory_valid;
+    bool menu_song_valid;
     bool direct_level;
     bool episode_complete;
 } OtEpisodeMap;
@@ -307,6 +322,7 @@ typedef struct {
     char misc_text[68][42];
     char title_menu[7][21];
     char full_game_menu[7][18];
+    char upgrade_menu[9][18];
     char episode_name[6][31];
     char difficulty_name[7][21];
     char gameplay_name[5][26];

@@ -653,7 +653,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     skip_group(6)
     skip_group(34)
     full_game_menu = read_group(7)
-    skip_group(9)
+    upgrade_menu = read_group(9)
     skip_group(8)
     skip_group(6)
     skip_group(6)
@@ -666,6 +666,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
         "misc_text": misc_text,
         "title_menu": title_menu,
         "full_game_menu": full_game_menu,
+        "upgrade_menu": upgrade_menu,
         "episode_name": episode_name,
         "difficulty_name": difficulty_name,
         "gameplay_name": gameplay_name,
@@ -1033,7 +1034,7 @@ def build_frontend_mode4_assets(
         )
         for index in range(6):
             source_y = 38 + index * 16 + (16 if index == 5 else 0)
-            disabled = index < 4
+            disabled = index in (0, 1, 3)
             value = -8 if disabled else -3
             if selection == index:
                 value += 2
@@ -1139,6 +1140,7 @@ def build_frontend_mode4_assets(
 
     add("intro_logo_1", source.picture_frame(10), 10)
     add("intro_logo_2", source.picture_frame(12), 12)
+    add("menu_chrome", source.picture_frame(1), 1)
     metadata["FRONTEND_FRAME_TITLE_BASE"] = len(frames)
     for selection in range(3):
         add(f"title_{selection}", render_title(selection), 4)

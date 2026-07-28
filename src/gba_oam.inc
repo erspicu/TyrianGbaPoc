@@ -116,6 +116,36 @@ static void put_sprite_8bpp_64_blended(
 }
 #endif
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void put_sprite_4bpp_64x32_blended(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 priority
+)
+{
+    OBJATTR *object;
+
+    if (oam_count >= SPRITE_LIMIT) return;
+    if (
+        x <= -64 || x >= SCREEN_WIDTH ||
+        y <= -32 || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 = (y & 0x00ff) | ATTR0_NORMAL |
+                    ATTR0_TYPE_BLENDED |
+                    ATTR0_COLOR_16 | ATTR0_WIDE;
+    object->attr1 = (x & 0x01ff) | ATTR1_SIZE_64;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(priority) |
+                    ATTR2_PALETTE(
+                        SOURCE_OPTION_PROJECTILE_PALETTE_BANK
+                    );
+    object->dummy = 0;
+}
+#endif
+
 static void put_sprite_shaped(
     s16 x,
     s16 y,

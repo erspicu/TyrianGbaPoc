@@ -20,7 +20,11 @@
 #define SFX_WEAPON_1 SFX_SOURCE_SOUND_01
 #define SFX_EXPLOSION_9 SFX_SOURCE_SOUND_09
 #define SFX_EXPLOSION_11 SFX_SOURCE_SOUND_11
+#define SFX_SPRING SFX_SOURCE_SOUND_16
 #define SFX_ITEM SFX_SOURCE_SOUND_18
+#define SFX_CLINK SFX_SOURCE_SOUND_23
+#define SFX_CLICK SFX_SOURCE_SOUND_24
+#define SFX_CURSOR SFX_SOURCE_SOUND_28
 
 _Static_assert(
     SFX_SOURCE_SOUND_38 == SFX_SOURCE_SOUND_01 + 37 &&
@@ -39,12 +43,12 @@ _Static_assert(
 #define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
 
 /*
- * Development-only override.  The playable release follows the translated
- * shield, armor and death path; an explicit diagnostic build may still opt
- * into invincibility without changing gameplay data.
+ * Development-only override.  It is temporarily enabled for interactive
+ * campaign validation; forced-death regressions explicitly compile it out,
+ * so the translated shield, armor and death path remains covered.
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
 #endif
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 0 && \
     TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 1
@@ -181,13 +185,8 @@ enum {
  * NES/SNES low-detail proofs.  These pools intentionally raise the first
  * level's concurrency while staying under a conservative scanline budget.
  */
-#if TYRIAN_GBA_STRESS_LOADOUT
 /* OpenTyrian shots.h MAX_PWEAPON. */
 #define MAX_PLAYER_SHOTS 81
-#else
-/* Enough for four overlapping volleys at the Pulse-Cannon's maximum power. */
-#define MAX_PLAYER_SHOTS 20
-#endif
 #define MAX_ENEMY_SHOTS 60
 /* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
 #define MAX_EFFECTS 200
@@ -377,6 +376,31 @@ enum {
     (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE + \
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT * \
             SOURCE_ENEMY_TILES_PER_SLOT)
+#else
+/*
+ * Upgrade option 9 (Plasma Storm) uses OPTION_SHAPES 22..24 through
+ * blit_sprite_blend().  Keep all three authored frames resident so one
+ * three-projectile volley never aliases its own graphics.  The middle
+ * source sprite is 65 pixels wide; GBA crops its final column to the
+ * hardware's 64-pixel wide-OBJ limit while retaining 1:1 pixels.
+ */
+#define SOURCE_OPTION_PROJECTILE_SOURCE_TABLE 5
+#define SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC 22
+#define SOURCE_OPTION_PROJECTILE_FRAME_COUNT 3
+#define SOURCE_OPTION_PROJECTILE_SIZE_X 64
+#define SOURCE_OPTION_PROJECTILE_SIZE_Y 32
+#define SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME 32
+#define SOURCE_OPTION_PROJECTILE_PALETTE_BANK 12
+#define SOURCE_OPTION_PROJECTILE_TILES \
+    (SOURCE_OPTION_PROJECTILE_FRAME_COUNT * \
+        SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME)
+#define SOURCE_OPTION_PROJECTILE_BYTES \
+    (SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME * 32)
+#define SOURCE_OPTION_PROJECTILE_TILE_BASE \
+    (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE + \
+        (SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT - \
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT) * \
+            SOURCE_ENEMY_TILES_PER_SLOT)
 #endif
 
 /*
@@ -557,14 +581,12 @@ _Static_assert(
     "extra projectile cache overlaps the lower enemy cache"
 #endif
 );
-#if TYRIAN_GBA_STRESS_LOADOUT
 _Static_assert(
     SOURCE_OPTION_PROJECTILE_TILE_BASE +
         SOURCE_OPTION_PROJECTILE_TILES <=
         OBJ_TILE_COUNT,
     "source OPTION_SHAPES projectile exceeds OBJ VRAM"
 );
-#endif
 _Static_assert(
     SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT *
@@ -663,6 +685,9 @@ enum {
     STATE_LEVEL_STATS = 9,
     STATE_GAME_OVER = 10,
     STATE_JUKEBOX = 11,
+    STATE_UPGRADE_MENU = 12,
+    STATE_UPGRADE_SUBMENU = 13,
+    STATE_QUIT_CONFIRM = 14,
 };
 
 enum {
@@ -693,6 +718,28 @@ typedef struct {
     u8 source_song;
 } FrontendDemoHeader;
 
+typedef struct {
+    u8 id;
+    u8 power;
+} FrontendWeaponItem;
+
+/*
+ * One-player subset of OpenTyrian's PlayerItems.  This remains persistent
+ * while the level-port state is recreated for each ROMFS LVL section.
+ */
+typedef struct {
+    u8 ship;
+    FrontendWeaponItem weapon[2];
+    u8 shield;
+    u8 generator;
+    u8 sidekick[2];
+    u8 special;
+    u8 sidekick_level;
+    u8 sidekick_series;
+    u8 super_arcade_mode;
+    u8 weapon_mode;
+} FrontendPlayerItems;
+
 #define BOX_OVERLAPS(ax, ay, aw, ah, bx, by, bw, bh) \
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
      (ay) + (ah) > (by) && (by) + (bh) > (ay))
@@ -720,20 +767,18 @@ typedef struct {
     u8 active;
     u8 ttl;
     u8 damage;
-#if TYRIAN_GBA_STRESS_LOADOUT
     u8 infinite;
-#endif
     u8 animation;
     u8 animation_max;
     u8 trail;
-#if TYRIAN_GBA_STRESS_LOADOUT
     u8 reserved;
-#endif
     u16 graphic;
     u16 render_graphic;
-#if TYRIAN_GBA_STRESS_LOADOUT
     u16 chain_weapon;
-#endif
+    u8 aim_enemy;
+    u8 aim_delay;
+    u8 aim_delay_max;
+    u8 blast_filter;
     s16 x;
     s16 y;
     s16 xm;
@@ -920,6 +965,29 @@ static OtFrontendText frontend_text EWRAM_BSS;
 static u8 frontend_text_ready;
 static u8 frontend_map_ready;
 static u8 frontend_level_ready;
+static FrontendPlayerItems frontend_player_items EWRAM_BSS;
+static FrontendPlayerItems frontend_upgrade_original_items EWRAM_BSS;
+static u8 frontend_player_items_valid;
+static u8 frontend_upgrade_category EWRAM_BSS;
+static u8 frontend_upgrade_sub_count EWRAM_BSS;
+static u8 frontend_upgrade_sub_item[
+    OT_EPISODE_ITEM_GROUP_CAPACITY + 1
+] EWRAM_BSS;
+static u8 frontend_upgrade_sub_power[
+    OT_EPISODE_ITEM_GROUP_CAPACITY + 1
+] EWRAM_BSS;
+static u8 frontend_upgrade_sub_scroll EWRAM_BSS;
+static u32 frontend_upgrade_original_cash EWRAM_BSS;
+static u32 frontend_upgrade_trade_cash EWRAM_BSS;
+static u8 frontend_quit_yes EWRAM_BSS;
+static s16 frontend_nav_x EWRAM_BSS;
+static s16 frontend_nav_y EWRAM_BSS;
+static s16 frontend_nav_target_x EWRAM_BSS;
+static s16 frontend_nav_target_y EWRAM_BSS;
+static u8 frontend_nav_planet_animation EWRAM_BSS;
+static u8 frontend_nav_animation_wait EWRAM_BSS;
+static u8 frontend_nav_dot_animation EWRAM_BSS;
+static u8 frontend_nav_dot_wait EWRAM_BSS;
 static u16 frontend_timer EWRAM_BSS;
 static u8 frontend_stats_stage EWRAM_BSS;
 static u8 frontend_stats_cube_visible_count EWRAM_BSS;
@@ -962,6 +1030,22 @@ static FrontendGameplayArena frontend_gameplay_arena
     (frontend_gameplay_arena.frontend_frame)
 #define source_sprite2_l2_tiles \
     (frontend_gameplay_arena.sprite2_l2)
+/*
+ * Frontend Sprite2 decoding is only used while the first 38.4 KiB Mode-4
+ * frame is live.  Keep its 2 KiB 16-bit decode canvas in the otherwise
+ * unused tail of the shared 64 KiB arena instead of charging EWRAM twice.
+ */
+#define frontend_sprite2_decode_scratch \
+    ((u16 *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_FRAME_BYTES \
+    ))
+_Static_assert(
+    FRONTEND_FRAME_BYTES +
+        OT_SPRITE2_FRAME_PIXELS * sizeof(u16) <=
+        sizeof(FrontendGameplayArena),
+    "frontend Sprite2 decode canvas must fit the shared arena tail"
+);
 /* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
 static s16 player_source_x;
 static s16 player_source_y;
@@ -980,7 +1064,6 @@ static u8 player_shield;
 static u8 player_shield_max;
 static u8 player_lives;
 static s8 player_end_warp;
-static u8 fire_cooldown;
 static s8 player_bank;
 static u16 player_ship_graphic;
 static u8 player_ship_animation;
@@ -988,13 +1071,56 @@ static u8 player_generator_power;
 static u32 player_cash;
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
+enum {
+    SOURCE_WEAPON_BAY_FRONT = 0,
+    SOURCE_WEAPON_BAY_REAR = 1,
+    SOURCE_WEAPON_BAY_LEFT_SIDEKICK = 2,
+    SOURCE_WEAPON_BAY_RIGHT_SIDEKICK = 3,
+    SOURCE_WEAPON_BAY_MISC = 4,
+    SOURCE_WEAPON_BAY_COUNT = 5,
+};
+
+typedef struct {
+    OtOptionDefinition option;
+    OtWeaponDefinition weapon;
+    u8 item_id;
+    u8 weapon_charge;
+    u8 valid;
+    u8 weapon_valid;
+    u8 ammo;
+    u8 ammo_max;
+    u16 ammo_refill_ticks;
+    u16 ammo_refill_ticks_max;
+    u8 animation_enabled;
+    u8 animation_frame;
+    u8 charge;
+    u8 charge_ticks;
+    s16 x;
+    s16 y;
+} SourceSidekickRuntime;
+
 static OtWeaponDefinition source_front_weapon EWRAM_BSS;
+static OtWeaponDefinition source_rear_weapon EWRAM_BSS;
+static SourceSidekickRuntime source_sidekick[2] EWRAM_BSS;
 static u8 source_front_weapon_valid;
 static u8 source_front_weapon_bound;
 static u8 source_front_weapon_port_id;
 static u8 source_front_weapon_power;
 static u16 source_front_weapon_hdt_id;
-static u8 source_front_shot_multi_pos;
+static u8 source_rear_weapon_valid;
+static u8 source_rear_weapon_bound;
+static u8 source_rear_weapon_port_id;
+static u8 source_rear_weapon_power;
+static u8 source_rear_weapon_mode;
+static u16 source_rear_weapon_hdt_id;
+static u8 source_shot_repeat[SOURCE_WEAPON_BAY_COUNT];
+static u8 source_shot_multi_pos[SOURCE_WEAPON_BAY_COUNT];
+static s16 source_player_old_x[20];
+static s16 source_player_old_y[20];
+static u8 source_sidekick_orbit_phase;
+static s8 source_sidekick_attachment_move;
+static u8 source_sidekick_attachment_linked;
+static u8 source_sidekick_attachment_return;
 static s16 source_player_delta_x;
 static s16 source_player_delta_y;
 #endif
@@ -1025,8 +1151,8 @@ static s16 stress_sidekick_x[2];
 static s16 stress_sidekick_y[2];
 static s16 stress_player_delta_x;
 static s16 stress_player_delta_y;
-static u8 source_option_projectile_valid;
 #endif
+static u8 source_option_projectile_valid;
 
 static u8 boss_bar_flash;
 static u8 boss_bar_palette_dirty;
@@ -1185,6 +1311,7 @@ volatile u32 telemetry_player_shot_spawns;
 volatile u32 telemetry_player_shot_drops;
 volatile u32 telemetry_player_shot_max_active;
 volatile u32 telemetry_player_chain_volleys;
+volatile u32 telemetry_upgrade_loadout_pass;
 volatile u32 telemetry_stress_loadout_failures;
 volatile u32 telemetry_stress_option_blend_draws;
 volatile u32 telemetry_stress_psg_triggers;
@@ -1417,6 +1544,7 @@ static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
 static void source_projectile_cache_commit(void);
 static void source_effect_cache_commit(void);
+static u8 source_option_projectile_sync(void);
 static void source_spawn_explosion(
     s16 x,
     s16 y,
@@ -1428,6 +1556,9 @@ static void source_begin_end_level_audio(void);
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static void source_front_weapon_init(void);
 static u8 source_front_weapon_sync(void);
+#ifdef AUTOTEST
+static u8 autotest_source_upgrade_loadout(void);
+#endif
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT
 static void stress_loadout_init(void);
@@ -1470,6 +1601,8 @@ static inline void stress_cycle_accumulate(
 }
 #endif
 static void frontend_commit_vblank(void);
+static void frontend_campaign_apply_to_level(void);
+static void frontend_campaign_sync_from_level(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
 static void jukebox_update(void);
@@ -1740,6 +1873,29 @@ int main(void)
                     0 :
                     KEY_A;
 #elif defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
+            /*
+             * Deterministically route to the requested front-end page.
+             * The normal Game Menu cursor starts on "Play Next Level", so
+             * captures of Upgrade Ship and Quit Game need the same explicit
+             * menu choice a player would make before pressing A.
+             */
+            if (
+                game_state == STATE_GAME_MENU &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                        STATE_UPGRADE_MENU ||
+                    AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                        STATE_UPGRADE_SUBMENU
+                )
+            ) {
+                frontend_selection = 2;
+            } else if (
+                game_state == STATE_GAME_MENU &&
+                AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                    STATE_QUIT_CONFIRM
+            ) {
+                frontend_selection = 5;
+            }
             pad_pressed =
                 game_state == AUTOTEST_FRONTEND_CAPTURE_STATE ?
                     0 :

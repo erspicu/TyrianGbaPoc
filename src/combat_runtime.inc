@@ -10,6 +10,10 @@ static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
 }
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
+static const u8 source_weapon_sound_slot[SOURCE_WEAPON_BAY_COUNT] = {
+    0, 2, 4, 4, 2
+};
+
 static u8 source_front_weapon_sync(void)
 {
     OtWeaponPortDefinition front_port;
@@ -30,7 +34,7 @@ static u8 source_front_weapon_sync(void)
     source_front_weapon_power = power;
     source_front_weapon_hdt_id = 0;
     source_front_weapon_valid = 0;
-    source_front_shot_multi_pos = 0;
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_FRONT] = 0;
     memset(&source_front_weapon, 0, sizeof(source_front_weapon));
     if (
         port_id == 0 ||
@@ -57,14 +61,132 @@ static u8 source_front_weapon_sync(void)
     return source_front_weapon_valid;
 }
 
+static u8 source_rear_weapon_sync(void)
+{
+    OtWeaponPortDefinition rear_port;
+    u8 port_id = source_parity_level.player_rear_weapon_id;
+    u8 power = source_parity_level.player_rear_weapon_power;
+    u8 mode = source_parity_level.player_weapon_mode;
+    u16 weapon_id;
+
+    if (
+        source_rear_weapon_bound &&
+        source_rear_weapon_port_id == port_id &&
+        source_rear_weapon_power == power &&
+        source_rear_weapon_mode == mode
+    ) {
+        return source_rear_weapon_valid;
+    }
+
+    source_rear_weapon_bound = 1;
+    source_rear_weapon_port_id = port_id;
+    source_rear_weapon_power = power;
+    source_rear_weapon_mode = mode;
+    source_rear_weapon_hdt_id = 0;
+    source_rear_weapon_valid = 0;
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_REAR] = 0;
+    memset(&source_rear_weapon, 0, sizeof(source_rear_weapon));
+    if (
+        port_id == 0 ||
+        power == 0 ||
+        power > 11 ||
+        !ot_data_hdt_weapon_port_read(port_id, &rear_port) ||
+        rear_port.opnum == 0
+    ) {
+        return 0;
+    }
+    if (mode == 0 || mode > rear_port.opnum || mode > 2) {
+        mode = 1;
+        source_parity_level.player_weapon_mode = mode;
+        source_rear_weapon_mode = mode;
+    }
+    weapon_id = rear_port.op[mode - 1u][power - 1u];
+    source_rear_weapon_hdt_id = weapon_id;
+    source_rear_weapon_valid =
+        weapon_id != 0 &&
+        ot_data_hdt_weapon_read(weapon_id, &source_rear_weapon) &&
+        source_weapon_is_valid(&source_rear_weapon);
+    return source_rear_weapon_valid;
+}
+
+static u8 source_sidekick_sync(u8 side)
+{
+    SourceSidekickRuntime *runtime;
+    u8 item_id;
+    u16 weapon_id;
+
+    if (side > 1) return 0;
+    runtime = &source_sidekick[side];
+    item_id = source_parity_level.player_sidekick[side];
+    if (runtime->item_id != item_id) {
+        memset(runtime, 0, sizeof(*runtime));
+        runtime->item_id = item_id;
+        runtime->weapon_charge = 0xff;
+        runtime->x = player_source_x;
+        runtime->y = (s16)(player_source_y - 20);
+        if (
+            item_id == 0 ||
+            !ot_data_hdt_option_read(item_id, &runtime->option)
+        ) {
+            return 0;
+        }
+        runtime->valid = runtime->option.option != 0;
+        runtime->ammo = runtime->option.ammo;
+        runtime->ammo_max = runtime->option.ammo;
+        runtime->ammo_refill_ticks_max =
+            (u16)(105u - runtime->ammo) * 4u;
+        runtime->ammo_refill_ticks =
+            runtime->ammo_refill_ticks_max;
+        runtime->animation_enabled =
+            runtime->option.option == 1;
+        runtime->charge_ticks = 20;
+    }
+    if (!runtime->valid) return 0;
+    if (
+        runtime->weapon_charge == runtime->charge &&
+        runtime->weapon_valid
+    ) {
+        return 1;
+    }
+    runtime->weapon_charge = runtime->charge;
+    runtime->weapon_valid = 0;
+    memset(&runtime->weapon, 0, sizeof(runtime->weapon));
+    if (runtime->option.weapon_port == 0) return 1;
+    weapon_id = (u16)(runtime->option.weapon + runtime->charge);
+    runtime->weapon_valid =
+        weapon_id != 0 &&
+        ot_data_hdt_weapon_read(weapon_id, &runtime->weapon) &&
+        source_weapon_is_valid(&runtime->weapon);
+    return runtime->weapon_valid;
+}
+
 static void source_front_weapon_init(void)
 {
+    u8 index;
+
     source_front_weapon_bound = 0;
     source_front_weapon_port_id = 0;
     source_front_weapon_power = 0;
     source_front_weapon_hdt_id = 0;
     source_front_weapon_valid = 0;
-    source_front_shot_multi_pos = 0;
+    source_rear_weapon_bound = 0;
+    source_rear_weapon_port_id = 0;
+    source_rear_weapon_power = 0;
+    source_rear_weapon_mode = 0;
+    source_rear_weapon_hdt_id = 0;
+    source_rear_weapon_valid = 0;
+    memset(source_shot_repeat, 0, sizeof(source_shot_repeat));
+    memset(source_shot_multi_pos, 0, sizeof(source_shot_multi_pos));
+    memset(source_sidekick, 0, sizeof(source_sidekick));
+    for (index = 0; index < 20; index++) {
+        source_player_old_x[index] =
+            (s16)(player_source_x - (19 - index));
+        source_player_old_y[index] = (s16)(player_source_y - 18);
+    }
+    source_sidekick_orbit_phase = 0;
+    source_sidekick_attachment_move = 0;
+    source_sidekick_attachment_linked = 1;
+    source_sidekick_attachment_return = 0;
     source_player_delta_x = 0;
     source_player_delta_y = 0;
 #if TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER
@@ -78,6 +200,9 @@ static void source_front_weapon_init(void)
         TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER == 11 ? 50 : 1;
 #endif
     (void)source_front_weapon_sync();
+    (void)source_rear_weapon_sync();
+    (void)source_sidekick_sync(0);
+    (void)source_sidekick_sync(1);
 }
 #endif
 
@@ -283,28 +408,48 @@ static void stress_spawn_weapon(
 #endif
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
-static void spawn_player_shot(void)
+static s8 source_clamp_s16_to_s8(
+    s16 value,
+    s8 minimum,
+    s8 maximum
+)
+{
+    if (value < minimum) return minimum;
+    if (value > maximum) return maximum;
+    return (s8)value;
+}
+
+static u8 source_spawn_weapon(
+    const OtWeaponDefinition *weapon,
+    u8 bay,
+    s16 origin_x,
+    s16 origin_y
+)
 {
     u8 multi;
+    u8 spawned = 0;
 
     if (
         !player_alive ||
         source_parity_level.end_level ||
-        !source_front_weapon_sync()
+        weapon == 0 ||
+        bay >= SOURCE_WEAPON_BAY_COUNT ||
+        !source_weapon_is_valid(weapon)
     ) {
-        return;
+        return 0;
     }
-    if (source_front_weapon.sound > 0) {
-        /* shots.c soundChannel[SHOT_FRONT] is source queue slot zero. */
-        source_parity_level.frame_sound_queue[0] =
-            source_front_weapon.sound;
+    if (weapon->sound > 0) {
+        source_parity_level.frame_sound_queue[
+            source_weapon_sound_slot[bay]
+        ] = weapon->sound;
     }
-    for (multi = 0; multi < source_front_weapon.multi; multi++) {
+    for (multi = 0; multi < weapon->multi; multi++) {
         PlayerShot *shot = 0;
         u8 index;
         u8 position;
         u8 delay;
         u8 attack;
+        u8 circle;
 
         for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
             if (!player_shots[index].active) {
@@ -314,63 +459,151 @@ static void spawn_player_shot(void)
         }
         if (shot == 0) {
             telemetry_player_shot_drops++;
-            return;
+            break;
         }
         if (
-            source_front_shot_multi_pos == source_front_weapon.max ||
-            source_front_shot_multi_pos > 8
+            source_shot_multi_pos[bay] == weapon->max ||
+            source_shot_multi_pos[bay] > 8
         ) {
-            source_front_shot_multi_pos = 1;
+            source_shot_multi_pos[bay] = 1;
         } else {
-            source_front_shot_multi_pos++;
+            source_shot_multi_pos[bay]++;
         }
-        position = (u8)(source_front_shot_multi_pos - 1u);
-        delay = source_front_weapon.delay[position];
+        position = (u8)(source_shot_multi_pos[bay] - 1u);
+        delay = weapon->delay[position];
         if (delay == 121) delay = 255;
 
         memset(shot, 0, sizeof(*shot));
-        shot->x = (s16)(
-            player_source_x + source_front_weapon.bx[position]
-        );
-        shot->y = (s16)(
-            player_source_y + source_front_weapon.by[position]
-        );
-        shot->xc = source_front_weapon.accelerationx;
-        shot->yc = (s16)-source_front_weapon.acceleration;
-        shot->xm = source_front_weapon.sx[position];
-        shot->ym = (s16)-source_front_weapon.sy[position];
-        if (source_front_weapon.sy[position] == 98) {
+        shot->x = (s16)(origin_x + weapon->bx[position]);
+        shot->y = (s16)(origin_y + weapon->by[position]);
+        shot->xc = weapon->accelerationx;
+        shot->yc = (s8)-weapon->acceleration;
+        shot->xm = weapon->sx[position];
+        if (delay == 99 || delay == 98) {
+            shot->xm = (s16)(
+                shot->xm +
+                source_clamp_s16_to_s8(
+                    (s16)(origin_x - player_source_x),
+                    -5,
+                    5
+                )
+            );
+        }
+        if (delay == 99 || delay == 100) {
+            shot->ym = source_clamp_s16_to_s8(
+                (s16)(
+                    origin_y -
+                    player_source_y -
+                    weapon->sy[position]
+                ),
+                -4,
+                4
+            );
+        } else if (weapon->sy[position] == 98) {
             shot->ym = 0;
             shot->yc = -1;
-        } else if (source_front_weapon.sy[position] > 100) {
-            shot->ym = source_front_weapon.sy[position];
+        } else if (weapon->sy[position] > 100) {
+            shot->ym = weapon->sy[position];
             shot->y = (s16)(shot->y - source_player_delta_y);
+        } else {
+            shot->ym = (s16)-weapon->sy[position];
         }
-        if (source_front_weapon.sx[position] > 100) {
-            shot->xm = source_front_weapon.sx[position];
+        if (weapon->sx[position] > 100) {
+            shot->xm = weapon->sx[position];
             shot->x = (s16)(shot->x - source_player_delta_x);
             if (shot->xm == 101) {
                 shot->y = (s16)(shot->y - source_player_delta_y);
             }
         }
-        shot->graphic = source_front_weapon.sg[position];
+        shot->graphic = weapon->sg[position];
         shot->render_graphic = shot->graphic;
         shot->animation_max =
             delay > 100 && delay < 120 ?
                 (u8)(delay - 99u) :
-                (u8)(source_front_weapon.weapani + 1u);
+                (u8)(weapon->weapani + 1u);
         if (shot->animation_max == 0) shot->animation_max = 1;
         shot->trail =
-            source_front_weapon.delay[position] == 121 ?
+            weapon->delay[position] == 121 ?
                 0 :
-                source_front_weapon.trail;
-        attack = source_front_weapon.attack[position];
-        shot->damage = attack;
+                weapon->trail;
+        shot->blast_filter = weapon->shipblastfilter;
+        attack = weapon->attack[position];
+        if (attack > 99 && attack < 250) {
+            shot->chain_weapon = (u16)(attack - 100u);
+            shot->damage = 1;
+        } else if (attack >= 250) {
+            shot->damage = (u8)(attack - 250u);
+            shot->infinite = 1;
+        } else {
+            shot->damage = attack;
+        }
         if (shot->damage == 0) shot->damage = 1;
+        circle = weapon->circlesize;
+        shot->complicated = circle != 0;
+        if (circle != 0) {
+            if (circle > 19) {
+                shot->circle_size_x = (u8)(circle % 20u);
+                shot->circle_size_y = (u8)(circle / 20u);
+            } else {
+                shot->circle_size_x = circle;
+                shot->circle_size_y = circle;
+            }
+            shot->dev_x = (s8)(shot->circle_size_x >> 1);
+            shot->dev_y = (s8)(shot->circle_size_y >> 1);
+            shot->dir_x = 1;
+            shot->dir_y = -1;
+        }
+        if (weapon->aim > 5) {
+            u8 enemy_index;
+            u16 best_distance = 65000;
+
+            for (
+                enemy_index = 0;
+                enemy_index < OT_ENEMY_COUNT;
+                enemy_index++
+            ) {
+                const OtEnemy *enemy =
+                    &source_parity_level.enemy[enemy_index];
+                u16 distance;
+                s16 dx;
+                s16 dy;
+
+                if (
+                    source_parity_level.enemy_avail[enemy_index] == 1 ||
+                    enemy->scoreitem
+                ) {
+                    continue;
+                }
+                dx = (s16)(
+                    enemy->ex + enemy->mapoffset - shot->x
+                );
+                dy = (s16)(enemy->ey - shot->y);
+                distance = (u16)(
+                    (dx < 0 ? -dx : dx) +
+                    (dy < 0 ? -dy : dy)
+                );
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    shot->aim_enemy = (u8)(enemy_index + 1u);
+                }
+            }
+            if (shot->aim_enemy != 0) {
+                shot->aim_delay = 5;
+                shot->aim_delay_max = (u8)(weapon->aim - 5u);
+                if (shot->aim_delay_max == 0) {
+                    shot->aim_delay_max = 1;
+                }
+            }
+        }
         shot->ttl = delay;
         shot->active = shot->graphic != 0 && delay != 0;
-        if (shot->active) telemetry_player_shot_spawns++;
+        if (shot->active) {
+            telemetry_player_shot_spawns++;
+            spawned++;
+        }
     }
+    source_shot_repeat[bay] = weapon->shotrepeat;
+    return spawned;
 }
 #endif
 
@@ -524,6 +757,341 @@ static void player_damage(u16 damage)
     }
     source_parity_level.player_armor = player_armor;
 }
+
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static s16 source_sidekick_sine(u8 phase)
+{
+    return ((const s16 *)jukebox_sine)[phase];
+}
+
+static void source_player_history_update(s16 old_x, s16 old_y)
+{
+    u8 index;
+
+    if (player_source_x == old_x && player_source_y == old_y) return;
+    for (index = 1; index < 20; index++) {
+        source_player_old_x[index - 1u] =
+            source_player_old_x[index];
+        source_player_old_y[index - 1u] =
+            source_player_old_y[index];
+    }
+    source_player_old_x[19] = player_source_x;
+    source_player_old_y[19] = player_source_y;
+}
+
+static void source_sidekick_positions_update(void)
+{
+    SourceSidekickRuntime *left = &source_sidekick[0];
+    SourceSidekickRuntime *right = &source_sidekick[1];
+    u8 orbiting =
+        (left->valid && left->option.style == 4) +
+        (right->valid && right->option.style == 4);
+    s16 orbit_x;
+    s16 orbit_y;
+
+    if (orbiting != 0) {
+        source_sidekick_orbit_phase = (u8)(
+            source_sidekick_orbit_phase +
+            (orbiting == 2 ? 8u : 6u)
+        );
+    }
+    orbit_x = (s16)(
+        (s32)source_sidekick_sine(source_sidekick_orbit_phase) *
+        20 /
+        32767
+    );
+    orbit_y = (s16)(
+        (s32)source_sidekick_sine(
+            (u8)(source_sidekick_orbit_phase + 64u)
+        ) *
+        20 /
+        32767
+    );
+
+    if (left->valid) {
+        switch (left->option.style) {
+        case 0:
+            left->x = (s16)(player_source_x - 14);
+            left->y = player_source_y;
+            break;
+        case 1:
+        case 3:
+            left->x = source_player_old_x[9];
+            left->y = source_player_old_y[9];
+            break;
+        case 2:
+            left->x = player_source_x;
+            left->y = (s16)(player_source_y - 20);
+            if (left->y < 10) left->y = 10;
+            break;
+        case 4:
+            left->x = (s16)(player_source_x + orbit_x);
+            left->y = (s16)(player_source_y + orbit_y);
+            break;
+        default:
+            break;
+        }
+    }
+    if (right->valid) {
+        switch (right->option.style) {
+        case 0:
+            right->x = (s16)(player_source_x + 16);
+            right->y = player_source_y;
+            break;
+        case 1:
+        case 3:
+            right->x = source_player_old_x[0];
+            right->y = source_player_old_y[0];
+            break;
+        case 2:
+            if (!source_sidekick_attachment_linked) {
+                s16 target_y = (s16)(player_source_y - 20);
+                s16 step;
+                s16 distance;
+
+                right->y = (s16)(
+                    right->y + source_sidekick_attachment_move / 2
+                );
+                if (source_sidekick_attachment_move >= -2) {
+                    step =
+                        source_sidekick_attachment_return ? 2 : 0;
+                    if (right->y > target_y + 5) {
+                        step = 2;
+                        source_sidekick_attachment_move = (s8)(
+                            source_sidekick_attachment_move -
+                            1 -
+                            source_sidekick_attachment_return
+                        );
+                    } else if (right->y > target_y) {
+                        step = 3;
+                        if (source_sidekick_attachment_move > 0) {
+                            source_sidekick_attachment_move--;
+                        } else {
+                            source_sidekick_attachment_move++;
+                        }
+                    } else if (right->y > target_y - 5) {
+                        step = 2;
+                        source_sidekick_attachment_move++;
+                    } else if (
+                        source_sidekick_attachment_move <
+                            2 +
+                            source_sidekick_attachment_return * 4
+                    ) {
+                        source_sidekick_attachment_move = (s8)(
+                            source_sidekick_attachment_move +
+                            1 +
+                            source_sidekick_attachment_return
+                        );
+                    }
+                    if (source_sidekick_attachment_return) {
+                        step = (s16)(step * 2);
+                    }
+                    distance = (s16)(right->x - player_source_x);
+                    if (distance < 0) distance = (s16)-distance;
+                    if (distance < step) step = 1;
+                    if (right->x > player_source_x) {
+                        right->x = (s16)(right->x - step);
+                    } else if (right->x < player_source_x) {
+                        right->x = (s16)(right->x + step);
+                    }
+                    distance = (s16)(right->y - target_y);
+                    if (distance < 0) distance = (s16)-distance;
+                    step = (s16)(right->x - player_source_x);
+                    if (step < 0) step = (s16)-step;
+                    if (distance + step < 8) {
+                        source_sidekick_attachment_linked = 1;
+                        source_parity_level.frame_sound_queue[2] =
+                            23;
+                    }
+                    if (pad_now & KEY_L) {
+                        source_sidekick_attachment_return = 1;
+                    }
+                } else {
+                    source_sidekick_attachment_move = (s8)(
+                        source_sidekick_attachment_move +
+                        1 +
+                        source_sidekick_attachment_return
+                    );
+                    source_spawn_explosion(
+                        (s16)(right->x + 1),
+                        (s16)(right->y + 10),
+                        0,
+                        0,
+                        0
+                    );
+                }
+            } else {
+                right->x = player_source_x;
+                right->y = (s16)(player_source_y - 20);
+                if (pad_pressed & KEY_L) {
+                    source_sidekick_attachment_linked = 0;
+                    source_sidekick_attachment_return = 0;
+                    source_sidekick_attachment_move = -20;
+                    source_parity_level.frame_sound_queue[3] =
+                        26;
+                }
+            }
+            if (right->y < 10) right->y = 10;
+            break;
+        case 4:
+            right->x = (s16)(player_source_x - orbit_x);
+            right->y = (s16)(player_source_y - orbit_y);
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+static void source_rear_mode_update(void)
+{
+    OtWeaponPortDefinition port;
+    u8 port_id = source_parity_level.player_rear_weapon_id;
+
+    if (
+        !(pad_pressed & KEY_L) ||
+        port_id == 0 ||
+        !ot_data_hdt_weapon_port_read(port_id, &port) ||
+        port.opnum == 0
+    ) {
+        return;
+    }
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_REAR] = 0;
+    source_parity_level.player_weapon_mode++;
+    if (
+        source_parity_level.player_weapon_mode > port.opnum ||
+        source_parity_level.player_weapon_mode > 2
+    ) {
+        source_parity_level.player_weapon_mode = 1;
+    }
+    source_rear_weapon_bound = 0;
+    (void)source_rear_weapon_sync();
+}
+
+static void source_sidekick_fire_update(u8 side, u16 button)
+{
+    SourceSidekickRuntime *runtime = &source_sidekick[side];
+    u8 bay = (u8)(
+        SOURCE_WEAPON_BAY_LEFT_SIDEKICK + side
+    );
+    u8 fire = 0;
+
+    if (!source_sidekick_sync(side) || !runtime->weapon_valid) {
+        return;
+    }
+    if (source_shot_repeat[bay] != 0) return;
+
+    if (runtime->ammo_max > 0) {
+        if (runtime->ammo_refill_ticks > 0) {
+            runtime->ammo_refill_ticks--;
+        } else {
+            runtime->ammo_refill_ticks =
+                runtime->ammo_refill_ticks_max;
+            if (runtime->ammo < runtime->ammo_max) {
+                runtime->ammo++;
+            }
+        }
+        fire = (pad_now & button) != 0 && runtime->ammo > 0;
+    } else {
+        fire = (pad_now & (KEY_A | button)) != 0;
+    }
+    if (!fire) return;
+    if (
+        source_spawn_weapon(
+            &runtime->weapon,
+            bay,
+            runtime->x,
+            runtime->y
+        ) == 0
+    ) {
+        return;
+    }
+    if (runtime->ammo_max > 0) runtime->ammo--;
+    if (runtime->charge > 0) {
+        source_shot_multi_pos[bay] = 0;
+        runtime->charge = 0;
+        runtime->weapon_charge = 0xff;
+    }
+    runtime->charge_ticks = 20;
+    runtime->animation_enabled = 1;
+}
+
+static void source_sidekick_animation_update(u8 side)
+{
+    SourceSidekickRuntime *runtime = &source_sidekick[side];
+
+    if (!runtime->valid) return;
+    if (
+        runtime->animation_enabled &&
+        runtime->option.animation_count > 0
+    ) {
+        runtime->animation_frame++;
+        if (
+            runtime->animation_frame >=
+                runtime->option.animation_count
+        ) {
+            runtime->animation_frame = 0;
+            runtime->animation_enabled =
+                runtime->option.option == 1;
+        }
+    }
+    if (runtime->charge_ticks > 0) runtime->charge_ticks--;
+    if (runtime->charge_ticks == 0) {
+        if (runtime->charge < runtime->option.power) {
+            runtime->charge++;
+            runtime->weapon_charge = 0xff;
+        }
+        runtime->charge_ticks = 20;
+    }
+}
+
+static void source_player_weapons_update(void)
+{
+    u8 bay;
+
+    (void)source_front_weapon_sync();
+    (void)source_rear_weapon_sync();
+    (void)source_sidekick_sync(0);
+    (void)source_sidekick_sync(1);
+    if (!source_option_projectile_sync()) {
+        source_parity_level.assets_valid = false;
+    }
+    source_rear_mode_update();
+    for (bay = 0; bay < SOURCE_WEAPON_BAY_COUNT; bay++) {
+        if (source_shot_repeat[bay] > 0) {
+            source_shot_repeat[bay]--;
+        }
+    }
+    if (pad_now & KEY_A) {
+        if (
+            source_front_weapon_valid &&
+            source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] == 0
+        ) {
+            source_spawn_weapon(
+                &source_front_weapon,
+                SOURCE_WEAPON_BAY_FRONT,
+                player_source_x,
+                player_source_y
+            );
+        }
+        if (
+            source_rear_weapon_valid &&
+            source_shot_repeat[SOURCE_WEAPON_BAY_REAR] == 0
+        ) {
+            source_spawn_weapon(
+                &source_rear_weapon,
+                SOURCE_WEAPON_BAY_REAR,
+                player_source_x,
+                player_source_y
+            );
+        }
+    }
+    source_sidekick_fire_update(0, KEY_B);
+    source_sidekick_fire_update(1, KEY_R);
+    source_sidekick_animation_update(0);
+    source_sidekick_animation_update(1);
+}
+#endif
 
 static void update_player(void)
 {
@@ -817,14 +1385,9 @@ static void update_player(void)
 #else
     source_player_delta_x = (s16)(player_source_x - old_x);
     source_player_delta_y = (s16)(player_source_y - old_y);
-    if (fire_cooldown) fire_cooldown--;
-    if ((pad_now & (KEY_A | KEY_B)) && !fire_cooldown) {
-        spawn_player_shot();
-        fire_cooldown =
-            source_front_weapon_valid ?
-                source_front_weapon.shotrepeat :
-                PLAYER_SHOT_COOLDOWN;
-    }
+    source_player_history_update(old_x, old_y);
+    source_sidekick_positions_update();
+    source_player_weapons_update();
 #endif
     if (player_invulnerable) player_invulnerable--;
     ot_level_port_update_parallax(&source_parity_level, player_source_x);
@@ -932,6 +1495,43 @@ static void update_shots(void)
                 player_shot->trail,
                 0
             );
+        }
+        if (player_shot->aim_enemy != 0) {
+            if (player_shot->aim_delay > 0) {
+                player_shot->aim_delay--;
+            }
+            if (player_shot->aim_delay == 0) {
+                u8 enemy_index =
+                    (u8)(player_shot->aim_enemy - 1u);
+
+                player_shot->aim_delay =
+                    player_shot->aim_delay_max;
+                if (
+                    enemy_index < OT_ENEMY_COUNT &&
+                    source_parity_level.enemy_avail[enemy_index] != 1
+                ) {
+                    const OtEnemy *enemy =
+                        &source_parity_level.enemy[enemy_index];
+                    s16 target_x = (s16)(
+                        enemy->ex + enemy->mapoffset
+                    );
+
+                    if (player_shot->x < target_x) {
+                        player_shot->xm++;
+                    } else {
+                        player_shot->xm--;
+                    }
+                    if (player_shot->y < enemy->ey) {
+                        player_shot->ym++;
+                    } else {
+                        player_shot->ym--;
+                    }
+                } else if (player_shot->xm > 0) {
+                    player_shot->xm++;
+                } else {
+                    player_shot->xm--;
+                }
+            }
         }
         player_shot->render_graphic = (u16)(
             player_shot->graphic + player_shot->animation

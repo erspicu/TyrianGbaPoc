@@ -49,6 +49,150 @@ static void sram_write_u32(u32 offset, u32 value)
     sram[offset + 3] = (u8)(value >> 24);
 }
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+/*
+ * Cold-start regression for the Upgrade Ship equipment path.  It binds
+ * stock HDT rear/sidekick definitions, exercises both rear modes, fires
+ * ordinary and OPTION_SHAPES sidekick volleys, then restores the selected
+ * campaign/demo loadout before the first authored gameplay tick.
+ */
+static u8 autotest_source_upgrade_loadout(void)
+{
+    OtWeaponPortDefinition rear_port;
+    OtOptionDefinition left_option;
+    OtOptionDefinition right_option;
+    OtOptionDefinition plasma_option;
+    u8 saved_front_id =
+        source_parity_level.player_front_weapon_id;
+    u8 saved_front_power =
+        source_parity_level.player_front_weapon_power;
+    u8 saved_rear_id =
+        source_parity_level.player_rear_weapon_id;
+    u8 saved_rear_power =
+        source_parity_level.player_rear_weapon_power;
+    u8 saved_weapon_mode =
+        source_parity_level.player_weapon_mode;
+    u8 saved_sidekick[2] = {
+        source_parity_level.player_sidekick[0],
+        source_parity_level.player_sidekick[1]
+    };
+    u16 saved_pad_now = pad_now;
+    u16 saved_pad_pressed = pad_pressed;
+    u8 pass = 1;
+    u8 index;
+    u8 active;
+    u8 special_frames;
+    u8 expected_shots;
+
+    pass =
+        pass &&
+        ot_data_hdt_weapon_port_read(10, &rear_port) &&
+        rear_port.opnum == 2 &&
+        ot_data_hdt_option_read(19, &left_option) &&
+        ot_data_hdt_option_read(20, &right_option) &&
+        ot_data_hdt_option_read(9, &plasma_option);
+    if (!pass) goto restore;
+
+    clear_entities();
+    source_parity_level.player_front_weapon_id = 1;
+    source_parity_level.player_front_weapon_power = 1;
+    source_parity_level.player_rear_weapon_id = 10;
+    source_parity_level.player_rear_weapon_power = 1;
+    source_parity_level.player_weapon_mode = 1;
+    source_parity_level.player_sidekick[0] = 19;
+    source_parity_level.player_sidekick[1] = 20;
+    source_front_weapon_init();
+    source_sidekick_positions_update();
+    expected_shots = (u8)(
+        source_front_weapon.multi +
+        source_rear_weapon.multi +
+        source_sidekick[0].weapon.multi +
+        source_sidekick[1].weapon.multi
+    );
+    pass =
+        pass &&
+        source_front_weapon_valid &&
+        source_rear_weapon_valid &&
+        source_rear_weapon_hdt_id == rear_port.op[0][0] &&
+        source_sidekick[0].valid &&
+        source_sidekick[0].weapon_valid &&
+        source_sidekick[0].option.weapon == left_option.weapon &&
+        source_sidekick[1].valid &&
+        source_sidekick[1].weapon_valid &&
+        source_sidekick[1].option.weapon == right_option.weapon;
+
+    pad_now = KEY_A | KEY_B | KEY_R;
+    pad_pressed = 0;
+    source_player_weapons_update();
+    active = 0;
+    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+        if (player_shots[index].active) active++;
+    }
+    pass = pass && active == expected_shots;
+
+    pad_now = 0;
+    pad_pressed = KEY_L;
+    source_player_weapons_update();
+    pass =
+        pass &&
+        source_parity_level.player_weapon_mode == 2 &&
+        source_rear_weapon_hdt_id == rear_port.op[1][0];
+
+    clear_entities();
+    source_parity_level.player_sidekick[0] = 9;
+    source_parity_level.player_sidekick[1] = 0;
+    source_front_weapon_init();
+    source_sidekick_positions_update();
+    pad_now = KEY_B;
+    pad_pressed = 0;
+    source_player_weapons_update();
+    active = 0;
+    special_frames = 0;
+    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+        if (!player_shots[index].active) continue;
+        active++;
+        if (
+            player_shots[index].render_graphic >= 60023 &&
+            player_shots[index].render_graphic <= 60025
+        ) {
+            special_frames |= (u8)(
+                1u <<
+                    (player_shots[index].render_graphic - 60023u)
+            );
+        }
+    }
+    pass =
+        pass &&
+        plasma_option.weapon == 88 &&
+        source_sidekick[0].weapon_valid &&
+        source_sidekick[0].ammo ==
+            (u8)(plasma_option.ammo - 1u) &&
+        active == 3 &&
+        special_frames == 7 &&
+        source_option_projectile_valid == 7;
+
+restore:
+    clear_entities();
+    source_parity_level.player_front_weapon_id = saved_front_id;
+    source_parity_level.player_front_weapon_power = saved_front_power;
+    source_parity_level.player_rear_weapon_id = saved_rear_id;
+    source_parity_level.player_rear_weapon_power = saved_rear_power;
+    source_parity_level.player_weapon_mode = saved_weapon_mode;
+    source_parity_level.player_sidekick[0] = saved_sidekick[0];
+    source_parity_level.player_sidekick[1] = saved_sidekick[1];
+    memset(
+        source_parity_level.frame_sound_queue,
+        0,
+        sizeof(source_parity_level.frame_sound_queue)
+    );
+    pad_now = saved_pad_now;
+    pad_pressed = saved_pad_pressed;
+    source_front_weapon_init();
+    (void)source_option_projectile_sync();
+    return pass;
+}
+#endif
+
 #ifdef AUTOTEST_ROMFS_LEVEL_MATRIX
 enum {
     ROMFS_MATRIX_SCHEMA = 2,
@@ -1939,7 +2083,7 @@ static void autotest_demo_validate_header(u8 demo_number)
         1, 11, 1, 1, 1
     };
     static const u8 expected_song[FRONTEND_DEMO_COUNT] = {
-        18, 33, 16, 16, 14
+        17, 32, 15, 15, 13
     };
     static const u16 expected_ship_graphic[FRONTEND_DEMO_COUNT] = {
         233, 195, 157, 157, 157
@@ -2377,7 +2521,11 @@ static void autotest_finish(void)
         frontend_stats_cube_visible_count == 2 &&
         source_parity_level.enemy_shot_active_count == 2 &&
         source_parity_level.active_enemy_count == 0 &&
-        player_cash == 4573 &&
+        /*
+         * Full Game starts Episode 1 with the stock 10,000 credits from
+         * tyrian2.c; the authored first-level rewards add another 4,573.
+         */
+        player_cash == 14573 &&
         /*
          * Runtime ROMFS background decoding adds a small, bounded amount of
          * work compared with the former first-level-only generated maps.
@@ -2404,6 +2552,9 @@ static void autotest_finish(void)
         bg1_scroll_speed == 1 &&
         bg2_scroll_speed == 2 &&
         bg3_scroll_speed == 0 &&
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        telemetry_upgrade_loadout_pass == 1 &&
+#endif
         telemetry_layer_rule_checks == 252 &&
         telemetry_layer_rule_failures == 0
     );
@@ -2689,6 +2840,7 @@ static void autotest_finish(void)
     sram_write_u32(6300, SPRITE2_RAW_DATA_BYTES);
     sram_write_u32(6304, SPRITE2_RAW_DATA_CRC32);
     sram_write_u32(6308, SOURCE_SPRITE2_L2_SLOT_COUNT);
+    sram_write_u32(6312, telemetry_upgrade_loadout_pass);
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);

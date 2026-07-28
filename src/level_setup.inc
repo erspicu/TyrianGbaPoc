@@ -356,12 +356,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     player_shield_max = 0;
     player_lives = 1;
     player_end_warp = -4;
-    fire_cooldown = 0;
     player_bank = 0;
     player_ship_graphic = 0;
     player_ship_animation = 0;
     player_generator_power = 0;
-    player_cash = 0;
+    if (frontend_demo_active || !frontend_player_items_valid) {
+        player_cash = 0;
+    }
     game_paused = 0;
 #ifdef AUTOTEST_CASH_VISUAL_TEST
     player_cash = 12345;
@@ -428,6 +429,8 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
             frontend_demo_header.sidekick_level;
         source_parity_level.player_sidekick_series =
             frontend_demo_header.sidekick_series;
+    } else {
+        frontend_campaign_apply_to_level();
     }
     if (!source_player_equipment_apply()) {
         frontend_level_ready = 0;
@@ -439,6 +442,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_front_weapon_init();
 #endif
     source_runtime_reset();
+#if defined(AUTOTEST) && !TYRIAN_GBA_STRESS_LOADOUT
+    telemetry_upgrade_loadout_pass =
+        autotest_source_upgrade_loadout();
+#endif
 
     telemetry_display_frames = 0;
     telemetry_logic_updates = 0;

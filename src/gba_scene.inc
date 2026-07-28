@@ -123,15 +123,31 @@ static void render_player_sprite(u8 priority)
     }
 }
 
-#if TYRIAN_GBA_STRESS_LOADOUT
-static void render_stress_sidekicks(u8 priority)
+static void render_player_sidekicks(u8 priority)
 {
     u8 side;
 
-    if (!player_alive || !stress_loadout_valid) return;
+    if (!player_alive || source_parity_level.end_level) return;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (!stress_loadout_valid) return;
+#endif
     for (side = 0; side < 2; side++) {
+#if TYRIAN_GBA_STRESS_LOADOUT
         const OtOptionDefinition *option =
             side == 0 ? &stress_left_option : &stress_right_option;
+        u8 animation = stress_sidekick_animation[side];
+        u8 charge = 0;
+        s16 source_x = stress_sidekick_x[side];
+        s16 source_y = stress_sidekick_y[side];
+#else
+        const SourceSidekickRuntime *runtime =
+            &source_sidekick[side];
+        const OtOptionDefinition *option = &runtime->option;
+        u8 animation = runtime->animation_frame;
+        u8 charge = runtime->charge;
+        s16 source_x = runtime->x;
+        s16 source_y = runtime->y;
+#endif
         OtEnemyDrawCommand draw;
         u16 graphic;
         u16 tile;
@@ -139,18 +155,20 @@ static void render_stress_sidekicks(u8 priority)
         s16 screen_y;
 
         if (
+#if !TYRIAN_GBA_STRESS_LOADOUT
+            !runtime->valid ||
+#endif
             option->option == 0 ||
-            option->animation_count == 0
+            option->animation_count == 0 ||
+            animation >= option->animation_count
         ) {
             continue;
         }
-        graphic = option->graphic[
-            stress_sidekick_animation[side]
-        ];
+        graphic = (u16)(option->graphic[animation] + charge);
         draw = (OtEnemyDrawCommand){
             .active = true,
-            .x = stress_sidekick_x[side],
-            .y = stress_sidekick_y[side],
+            .x = source_x,
+            .y = source_y,
             .graphic = graphic,
             .shape_table =
                 option->style == 1 || option->style == 2 ?
@@ -171,10 +189,10 @@ static void render_stress_sidekicks(u8 priority)
              * canvas (4,2); compensate that unchanged source layout.
              */
             screen_x = source_world_to_screen_x(
-                (s16)(stress_sidekick_x[side] - 10)
+                (s16)(source_x - 10)
             );
             screen_y = source_world_to_screen_y(
-                (s16)(stress_sidekick_y[side] - 2)
+                (s16)(source_y - 2)
             );
             put_sprite_8bpp_32(
                 screen_x,
@@ -184,8 +202,8 @@ static void render_stress_sidekicks(u8 priority)
             );
         } else if (source_enemy_cache_tile_is_compact(tile)) {
             put_sprite_8bpp_16(
-                source_world_to_screen_x(stress_sidekick_x[side]),
-                source_world_to_screen_y(stress_sidekick_y[side]),
+                source_world_to_screen_x(source_x),
+                source_world_to_screen_y(source_y),
                 tile,
                 priority
             );
@@ -195,10 +213,10 @@ static void render_stress_sidekicks(u8 priority)
              */
             put_sprite_8bpp_32(
                 source_world_to_screen_x(
-                    (s16)(stress_sidekick_x[side] - 8)
+                    (s16)(source_x - 8)
                 ),
                 source_world_to_screen_y(
-                    (s16)(stress_sidekick_y[side] - 8)
+                    (s16)(source_y - 8)
                 ),
                 tile,
                 priority
@@ -206,7 +224,6 @@ static void render_stress_sidekicks(u8 priority)
         }
     }
 }
-#endif
 
 #if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static void render_player_shots(u8 priority)
@@ -224,8 +241,8 @@ static void render_player_shots(u8 priority)
             s16 screen_x;
             s16 screen_y;
 
-#if TYRIAN_GBA_STRESS_LOADOUT
             if (frame > 60000) {
+#if TYRIAN_GBA_STRESS_LOADOUT
                 if (
                     frame !=
                         60001 +
@@ -248,9 +265,50 @@ static void render_player_shots(u8 priority)
                     priority
                 );
                 telemetry_stress_option_blend_draws++;
+#else
+                u16 option_graphic = (u16)(frame - 60001u);
+                u8 option_frame;
+
+                if (
+                    option_graphic <
+                        SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
+                    option_graphic >=
+                        SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC +
+                            SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+                ) {
+                    continue;
+                }
+                option_frame = (u8)(
+                    option_graphic -
+                    SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC
+                );
+                if (
+                    (
+                        source_option_projectile_valid &
+                        (1u << option_frame)
+                    ) == 0
+                ) {
+                    continue;
+                }
+                screen_x = source_player_shot_screen_x(
+                    &player_shots[index]
+                );
+                screen_y = source_player_shot_screen_y(
+                    &player_shots[index]
+                );
+                put_sprite_4bpp_64x32_blended(
+                    screen_x,
+                    screen_y,
+                    (u16)(
+                        SOURCE_OPTION_PROJECTILE_TILE_BASE +
+                        option_frame *
+                            SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME
+                    ),
+                    priority
+                );
+#endif
                 continue;
             }
-#endif
             if (frame > 1000) frame %= 1000;
             shape_table =
                 frame > 500 ?
@@ -557,11 +615,9 @@ static void render_source_play_scene(void)
     render_source_enemy_shots(
         source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT)
     );
-#if TYRIAN_GBA_STRESS_LOADOUT
-    render_stress_sidekicks(
+    render_player_sidekicks(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
     );
-#endif
     render_player_sprite(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
     );

@@ -8,6 +8,8 @@ CAMPAIGN_EPISODE ?= 1
 CAMPAIGN_SECTION ?= 1
 CAMPAIGN_LEVELS ?= 4
 STRESS_DIAGNOSTIC ?= active_mask
+CAPTURE_STATE ?= 7
+CAPTURE_SELECTION ?=
 
 ifeq ($(DETAIL_LEVEL),low)
 DETAIL_LEVEL_VALUE := 0
@@ -200,6 +202,13 @@ ARCADE_ROUTE_TEST_TARGET := tyrian_gba_arcade_route_smoke_ep1_section1_v40_$(CON
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v40_$(CONFIG_SUFFIX)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
+FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX)
+ifneq ($(strip $(CAPTURE_SELECTION)),)
+FRONTEND_CAPTURE_SELECTION_FLAG := \
+	-DAUTOTEST_FRONTEND_CAPTURE_SELECTION=$(CAPTURE_SELECTION)
+else
+FRONTEND_CAPTURE_SELECTION_FLAG :=
+endif
 BUILD := build
 RES := res
 
@@ -326,7 +335,8 @@ MAIN_INCLUDES := $(wildcard src/*.inc)
 .PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
 	campaign-smoke-autotest \
-	full-loadout-stress full-loadout-playable assets clean distclean
+	full-loadout-stress full-loadout-playable frontend-capture \
+	assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
 
@@ -349,6 +359,8 @@ campaign-smoke-autotest: $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba
 full-loadout-stress: $(BUILD)/$(STRESS_TARGET).gba
 
 full-loadout-playable: $(BUILD)/$(PLAYABLE_STRESS_TARGET).gba
+
+frontend-capture: $(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -492,6 +504,18 @@ $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o: \
 		-DTYRIAN_GBA_WALL_CLOCK_LOGIC=1 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DAUTOTEST_FRONTEND_CAPTURE_STATE=$(CAPTURE_STATE) \
+		$(FRONTEND_CAPTURE_SELECTION_FLAG) \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -594,6 +618,13 @@ $(BUILD)/$(PLAYABLE_STRESS_TARGET).elf: \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(PLAYABLE_STRESS_TARGET).map $^ \
+	-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(FRONTEND_CAPTURE_TARGET).elf: \
+		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_CAPTURE_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
@@ -644,6 +675,11 @@ $(BUILD)/$(PLAYABLE_STRESS_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR FULL ARM" -cTYGP -m00
 
+$(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba: \
+		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR UI CAP" -cTYGU -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -670,6 +706,8 @@ clean:
 		$(STRESS_LEVEL_OBJECT:.o=.d) \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -711,7 +749,10 @@ clean:
 		$(BUILD)/$(STRESS_TARGET).map \
 		$(BUILD)/$(PLAYABLE_STRESS_TARGET).elf \
 		$(BUILD)/$(PLAYABLE_STRESS_TARGET).gba \
-		$(BUILD)/$(PLAYABLE_STRESS_TARGET).map
+		$(BUILD)/$(PLAYABLE_STRESS_TARGET).map \
+		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).elf \
+		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba \
+		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -730,6 +771,7 @@ distclean: clean
 -include $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d
 -include $(STRESS_LEVEL_OBJECT:.o=.d)
 -include $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d
 -include $(BUILD)/opentyrian_sprite2.d

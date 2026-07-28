@@ -281,6 +281,33 @@ static uint16_t script_number(const char *text)
     return (uint16_t)value;
 }
 
+static uint8_t script_item_values(
+    const char *text,
+    uint8_t destination[OT_EPISODE_ITEM_GROUP_CAPACITY]
+)
+{
+    uint8_t count = 0;
+
+    if (text == 0 || destination == 0) return 0;
+    memset(destination, 0, OT_EPISODE_ITEM_GROUP_CAPACITY);
+    while (
+        *text != '\0' &&
+        count < OT_EPISODE_ITEM_GROUP_CAPACITY
+    ) {
+        uint16_t value;
+
+        while (*text == ' ' || *text == '\t' || *text == ',') {
+            text++;
+        }
+        if (*text < '0' || *text > '9') break;
+        value = script_number(text);
+        if (value > UINT8_MAX) value = UINT8_MAX;
+        destination[count++] = (uint8_t)value;
+        while (*text >= '0' && *text <= '9') text++;
+    }
+    return count;
+}
+
 static bool episode_seek_section(
     const OtRomFsStat *file,
     uint16_t section,
@@ -710,7 +737,17 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
     }
     if (!hdt_pascal_skip(&position)) return false;
 
-    if (!hdt_group_skip(&position, 9)) return false; /* Menu 2 */
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 9; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->upgrade_menu[index],
+                sizeof(text->upgrade_menu[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
     if (!hdt_group_skip(&position, 8)) return false; /* Menu 3 */
     if (!hdt_group_skip(&position, 6)) return false; /* In-game menu */
     if (!hdt_group_skip(&position, 6)) return false; /* Detail level */
@@ -1327,6 +1364,22 @@ bool ot_data_episode_map_resolve(
                         )) {
                         return false;
                     }
+                    resolved.item_count[item_group] =
+                        script_item_values(
+                            strlen(line) > 8 ? line + 8 : "",
+                            resolved.item_avail[item_group]
+                        );
+                }
+                resolved.item_inventory_valid = true;
+                break;
+            }
+
+            case 'i': {
+                uint16_t one_based_song = script_number(line + 3);
+
+                if (one_based_song != 0 && one_based_song <= UINT8_MAX) {
+                    resolved.menu_song = (uint8_t)(one_based_song - 1u);
+                    resolved.menu_song_valid = true;
                 }
                 break;
             }
@@ -2094,6 +2147,14 @@ bool ot_data_comp_shape_bank_view(
     }
     if (shape_table == OT_COMP_SHAPE_TABLE_OPTIONS_SMALL) {
         return ot_data_shp_section_view(9, view);
+    }
+    if (shape_table == OT_COMP_SHAPE_TABLE_SHOP) {
+        if (!stat_data_file("newsh1.shp", &stat) || stat.size == 0) {
+            return false;
+        }
+        view->data = stat.data;
+        view->size = stat.size;
+        return true;
     }
     if (shape_table > sizeof(shape_file) / sizeof(shape_file[0])) {
         return false;

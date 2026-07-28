@@ -34,10 +34,49 @@ static const char jukebox_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
 static const u8 jukebox_setup_choices[] = {0, 2, 3, 6, 8};
 
-static JukeboxStar jukebox_stars[JUKEBOX_STAR_COUNT] EWRAM_DATA;
-static u16 jukebox_text_map[32 * 32] EWRAM_DATA;
-static u16 jukebox_bg_palette_shadow[256] EWRAM_DATA;
-static u16 jukebox_obj_palette_shadow[256] EWRAM_DATA;
+/*
+ * The Jukebox, Mode-4 frontend and gameplay Sprite2 L2 are mutually
+ * exclusive display modes.  Overlay the Jukebox's stars, tile map and
+ * palette shadows on the same EWRAM arena instead of reserving another
+ * 3,968 bytes permanently.
+ */
+enum {
+    JUKEBOX_STARS_OFFSET = 0,
+    JUKEBOX_TEXT_MAP_OFFSET =
+        JUKEBOX_STARS_OFFSET +
+        sizeof(JukeboxStar) * JUKEBOX_STAR_COUNT,
+    JUKEBOX_BG_PALETTE_OFFSET =
+        JUKEBOX_TEXT_MAP_OFFSET +
+        sizeof(u16) * 32 * 32,
+    JUKEBOX_OBJ_PALETTE_OFFSET =
+        JUKEBOX_BG_PALETTE_OFFSET +
+        sizeof(u16) * 256,
+    JUKEBOX_SHARED_BYTES =
+        JUKEBOX_OBJ_PALETTE_OFFSET +
+        sizeof(u16) * 256,
+};
+#define JUKEBOX_SHARED_BASE \
+    ((u8 *)(void *)&frontend_gameplay_arena)
+#define jukebox_stars \
+    (*(JukeboxStar (*)[JUKEBOX_STAR_COUNT])(void *)( \
+        JUKEBOX_SHARED_BASE + JUKEBOX_STARS_OFFSET \
+    ))
+#define jukebox_text_map \
+    (*(u16 (*)[32 * 32])(void *)( \
+        JUKEBOX_SHARED_BASE + JUKEBOX_TEXT_MAP_OFFSET \
+    ))
+#define jukebox_bg_palette_shadow \
+    (*(u16 (*)[256])(void *)( \
+        JUKEBOX_SHARED_BASE + JUKEBOX_BG_PALETTE_OFFSET \
+    ))
+#define jukebox_obj_palette_shadow \
+    (*(u16 (*)[256])(void *)( \
+        JUKEBOX_SHARED_BASE + JUKEBOX_OBJ_PALETTE_OFFSET \
+    ))
+_Static_assert(
+    JUKEBOX_SHARED_BYTES <= sizeof(FrontendGameplayArena),
+    "Jukebox transient state must fit the shared frontend/gameplay arena"
+);
 static u32 jukebox_rng_state;
 static u16 jukebox_setup_timer;
 static u16 jukebox_scroll_phase;
