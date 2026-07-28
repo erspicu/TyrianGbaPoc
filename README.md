@@ -108,6 +108,14 @@ readout down 8 pixels, and resets all four enemy shape slots at every level
 boundary exactly like OpenTyrian. Episode 4 section 1 completes with zero
 unknown visuals, decode failures, cache drops or RLE fallbacks.
 
+The v38 release makes Secret, Game Over and end-level presentation follow
+the source flow. Secret music returns to the level theme, transition songs
+are one-shot, and the Game Over scene continues moving. End-level statistics
+are drawn over the last gameplay frame using the ROMFS `SMALL_FONT_SHAPES`,
+the source coordinates and hue-15 glow/final colour. A brightness-weighted
+4bpp background palette selector also fixes dark-green corruption on mixed
+mechanical tiles without violating the Episode 2 frame budget.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -128,7 +136,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v37_detail_high_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v38_detail_high_speed_normal.gba
 ```
 
 `build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
@@ -148,6 +156,8 @@ under `Backup`, and the reproducible source asset conversions are
 
 - [v37 source audio, max single weapon and Episode 4 Sprite parity](MD/Tyrian-GBA-Source-Audio-Gameplay-Parity-v37.md)
 - [v37 updated plan](MD/Tyrian-GBA-Updated-Plan-v37.md)
+- [v38 Secret/end-flow/statistics/palette parity](MD/Tyrian-GBA-Secret-EndFlow-Stats-Palette-v38.md)
+- [v38 updated plan](MD/Tyrian-GBA-Updated-Plan-v38.md)
 - [v36 hotpath and IWRAM evaluation](MD/Tyrian-GBA-Hotpath-Evaluation-v36.md)
 - [v36 updated plan](MD/Tyrian-GBA-Updated-Plan-v36.md)
 - [v35 fixed-timestep drop-frame and ARM7 evaluation](MD/Tyrian-GBA-Drop-Frame-ARM7-v35.md)

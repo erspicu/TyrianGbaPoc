@@ -36,8 +36,14 @@ static SourceEnemyUpload
 static SourceSprite2L2Slot source_sprite2_l2[
     SOURCE_SPRITE2_L2_SLOT_COUNT
 ] EWRAM_BSS;
+/*
+ * The complete build-time raw Sprite2 catalog makes this 2 KiB decoder
+ * scratch a debug/fallback-only path.  Keep it in IWRAM BSS: the packed
+ * background colour-error table recovered enough IWRAM headroom, while this
+ * placement restores the release EWRAM safety margin without shrinking L2.
+ */
 static u16 source_enemy_decode_pixels[OT_SPRITE2_FRAME_PIXELS]
-    EWRAM_BSS __attribute__((aligned(4)));
+    __attribute__((aligned(4)));
 static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
     EWRAM_BSS;
 static u32 source_enemy_cache_epoch;
@@ -2031,7 +2037,8 @@ source_process_player_collisions(void)
          * mainint.c plays source song 30 ("Zanac"), then displays
          * miscText[59] ("Secret Level!") for 150 ticks.
          */
-        audio_load_source_song_preserve_effects(30);
+        audio_load_source_song_once_preserve_effects(30);
+        secret_level_music_active = 1;
         secret_level_tile_upload_pending = 1;
         secret_level_palette_dirty = 1;
     }

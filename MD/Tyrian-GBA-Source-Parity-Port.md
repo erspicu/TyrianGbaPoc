@@ -913,16 +913,40 @@ projectile graphics；一般版把未使用的四個 explosion slots 改作兩�
    轉場，保存關卡間 player、cash、cube、weapon 與 global flags。
 5. 完成 turret 251..255、magnet、special effects 與 misc-shot 104。
 
+## v38 Secret、結束流程、摘要字色與混合地圖色
+
+Secret Level song 30 現在以 one-shot 播放，150-tick 提示結束後恢復
+目前關卡 BGM；位於 PC y=10 的提示依 GBA 上方 12-pixel crop 向下補償。
+end-level song 9 與 GAME OVER song 10 同樣改為 one-shot。
+
+GAME OVER 不再凍結最後一幀，而會像 OpenTyrian 的 `level_loop` 一樣
+持續更新背景、敵人與效果。Boss end-flight 保留原本的 40-tick 前進；
+進入 `JE_endLevelAni()` 後才在最後 gameplay frame 上逐段顯示摘要。
+
+摘要不再使用自建等寬字型或黑色 BG3。runtime 直接解碼 ROMFS
+`tyrian.shp` 的 `SMALL_FONT_SHAPES`，沿用 PC 座標、可變字寬、
+`JE_outTextGlow()` 的 hue 15 glow 與 brightness -4 最終色。
+
+`erro4.png` 的綠色地物已確認是 4bpp BG tile 的 palette-bank 選擇，
+不是 Sprite2 索引錯誤。最終以 source RGB 能量取代不透明 pixel 多數決，
+保留 O(64) 成本；固定畫面恢復灰／棕主體，Episode 2 route 仍只有
+24／10,475 missed VBlank。
+
+詳細紀錄：
+
+- `Tyrian-GBA-Secret-EndFlow-Stats-Palette-v38.md`
+- `Tyrian-GBA-Updated-Plan-v38.md`
+
 ## 建置
 
 ```powershell
 .\build.ps1
 ```
 
-目前 ROMFS v37 預設 ROM：
+目前 ROMFS v38 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v37_detail_high_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v38_detail_high_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

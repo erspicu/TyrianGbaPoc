@@ -127,15 +127,20 @@ _Static_assert(
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
-#define FRONTEND_STATS_SCREEN_BLOCK 30
-#define FRONTEND_STATS_TILE_BASE 454
-#define FRONTEND_STATS_RESERVED_TILES 58
+#define FRONTEND_STATS_FONT_GLYPH_COUNT \
+    (JUKEBOX_FONT_TILE_COUNT - 1u)
+#define FRONTEND_STATS_FONT_TILES_PER_GLYPH 4u
+#define FRONTEND_STATS_TILE_BASE SOURCE_ENEMY_CACHE_LOWER_TILE_BASE
 #define FRONTEND_STATS_CUBE_TILE_BASE \
-    (FRONTEND_STATS_TILE_BASE + JUKEBOX_FONT_TILE_COUNT)
-#define FRONTEND_STATS_CUBE_TILE_COUNT 9
+    ((FRONTEND_STATS_TILE_BASE + \
+        FRONTEND_STATS_FONT_GLYPH_COUNT * \
+            FRONTEND_STATS_FONT_TILES_PER_GLYPH + 15u) & ~15u)
+#define FRONTEND_STATS_CUBE_TILE_COUNT 16u
+#define FRONTEND_STATS_TILE_COUNT \
+    (FRONTEND_STATS_CUBE_TILE_BASE - FRONTEND_STATS_TILE_BASE + \
+        FRONTEND_STATS_CUBE_TILE_COUNT)
 #define FRONTEND_STATS_TILE_BYTES \
-    (FRONTEND_STATS_RESERVED_TILES * 32)
-#define FRONTEND_STATS_MAP_OFFSET 2048
+    (FRONTEND_STATS_TILE_COUNT * 32u)
 #define MAP_RING_ROWS 32
 #define BG_MAP_COLUMNS 64
 #define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
@@ -831,7 +836,14 @@ static u16 frontend_stats_timer EWRAM_BSS;
 static u8 frontend_level_completed EWRAM_BSS;
 static u8 frontend_stats_overlay_active EWRAM_BSS;
 static u8 frontend_stats_tiles_pending EWRAM_BSS;
-static u8 frontend_stats_map_dirty EWRAM_BSS;
+static u8 frontend_stats_palette_dirty EWRAM_BSS;
+static u8 frontend_stats_font_ready EWRAM_BSS;
+static u8 frontend_stats_scene_oam_count EWRAM_BSS;
+static s8 frontend_stats_glow_brightness EWRAM_BSS;
+static u8 frontend_stats_glyph_width[
+    FRONTEND_STATS_FONT_GLYPH_COUNT
+] EWRAM_BSS;
+static u16 frontend_stats_obj_palette[32] EWRAM_BSS;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;
@@ -984,6 +996,7 @@ static u8 oam_dirty;
 static u8 game_over_tile_upload_pending;
 static u8 secret_level_tile_upload_pending;
 static u8 secret_level_palette_dirty;
+static u8 secret_level_music_active;
 static u32 last_vblank_seen;
 
 volatile u32 telemetry_vblank_irqs;
@@ -1290,6 +1303,7 @@ static u8 autotest_screenshot_delay;
 
 static s16 source_player_screen_x(void);
 static s16 source_player_screen_y(void);
+static s16 source_world_to_screen_y(s16 source_y);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
 static void source_enemy_cache_commit(void);
@@ -1639,9 +1653,46 @@ int main(void)
 #endif
 
         if (game_state == STATE_GAME_OVER) {
+            u8 game_over_logic_updates = 0;
+
             game_over_update();
             if (game_state == STATE_GAME_OVER) {
+                /*
+                 * OpenTyrian keeps executing level_loop while GAME OVER is
+                 * overlaid; only the player is gone.  Advance the translated
+                 * event/enemy/background loop at the same configured source
+                 * cadence instead of freezing the final death frame.
+                 */
+                telemetry_wall_vblanks += vblank_steps;
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                logic_accumulator +=
+                    vblank_steps * TYRIAN_GBA_LOGIC_NUMERATOR;
+#else
+                logic_accumulator += TYRIAN_GBA_LOGIC_NUMERATOR;
+#endif
+                while (
+                    logic_accumulator >=
+                        TYRIAN_GBA_LOGIC_DENOMINATOR
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                    &&
+                    game_over_logic_updates <
+                        PRESENTATION_MAX_CATCHUP_TICKS
+#else
+                    &&
+                    game_over_logic_updates == 0
+#endif
+                ) {
+                    logic_accumulator -=
+                        TYRIAN_GBA_LOGIC_DENOMINATOR;
+                    update_logic();
+                    game_over_logic_updates++;
+                }
                 render_game();
+                background_prefetch_step(
+                    game_over_logic_updates != 0 ?
+                        0 :
+                        BACKGROUND_PREFETCH_IDLE_MISSES
+                );
                 telemetry_display_frames++;
 #ifdef AUTOTEST_DEATH_FLOW
                 autotest_death_update();

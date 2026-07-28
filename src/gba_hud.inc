@@ -85,12 +85,17 @@ static void render_secret_level_text(void)
 {
     u8 index;
     s16 x = source_world_to_screen_x(90);
-    s16 y = source_world_to_screen_y(10);
+    s16 y = (s16)(
+        source_world_to_screen_y(10) +
+        SOURCE_PRESENTATION_Y_ORIGIN
+    );
 
     /*
-     * Direct tyrian2.c placement of miscText[59], with the same gameplay
-     * crop used by every source-space object.  Repeated letters reference
-     * one eight-glyph transient bank instead of consuming extra OBJ VRAM.
+     * Direct tyrian2.c placement of miscText[59].  Unlike world geometry,
+     * a system notice must survive the 12-pixel top crop, so the GBA
+     * presentation adapter offsets top-edge notices downward by that crop.
+     * Repeated letters reference one eight-glyph transient bank instead of
+     * consuming extra OBJ VRAM.
      */
     for (index = 0; index < SECRET_LEVEL_TEXT_GLYPH_COUNT; index++) {
         u8 glyph = secret_level_glyph_map[index];

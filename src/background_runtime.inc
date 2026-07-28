@@ -152,8 +152,19 @@ static OtDataView background_lookup_view[BACKGROUND_LAYER_COUNT];
  */
 static const u8 *background_shape_pixels[BACKGROUND_SHAPE_COUNT]
     STRESS_EWRAM_BSS;
+/*
+ * Nearest colour within each selected 4bpp palette bank.
+ */
 static u8 background_palette_nearest
-    [BACKGROUND_PALETTE_BANKS][OT_PALETTE_COLOUR_COUNT];
+    [BACKGROUND_PALETTE_BANKS][OT_PALETTE_COLOUR_COUNT]
+    EWRAM_BSS __attribute__((aligned(4)));
+/*
+ * palette.dat uses the low nibble as brightness, but an RGB-energy lookup is
+ * a better generic tie-breaker for special banks.  Keep this tiny hot table
+ * in IWRAM; it replaces the expensive per-tile 16-bank RGB error search.
+ */
+static u8 background_source_weight[OT_PALETTE_COLOUR_COUNT]
+    __attribute__((aligned(4)));
 static u32 background_cache_approximations;
 static u32 background_cache_evictions;
 static u32 background_cache_uploads;
@@ -374,6 +385,14 @@ static u8 background_setup_palette(void)
                 }
             }
             background_palette_nearest[bank][source_index] = best;
+            if (bank == 0) {
+                const u8 *rgb =
+                    palette.data + (u32)source_index * 3u;
+
+                background_source_weight[source_index] = (u8)(
+                    rgb[0] + rgb[1] + rgb[2]
+                );
+            }
         }
         for (
             source_index = 0;
@@ -557,9 +576,9 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
     const u8 *bottom = bottom_shape != 0 ?
         background_shape_pixels[bottom_shape - 1u] :
         0;
-    u8 hue_count[BACKGROUND_PALETTE_BANKS] = {0};
+    u16 hue_mask = 0;
+    u16 hue_weight[BACKGROUND_PALETTE_BANKS] = {0};
     u8 best_bank = 0;
-    u8 best_count = 0;
     u8 y;
 
     for (y = 0; y < 8; y++) {
@@ -582,16 +601,41 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
                 ] :
                 0;
             if (source[(u8)(y * 8u + x)] != 0) {
-                hue_count[
-                    source[(u8)(y * 8u + x)] >> 4
-                ]++;
+                u8 source_index = source[(u8)(y * 8u + x)];
+                u8 hue = source_index >> 4;
+
+                hue_mask |= (u16)(
+                    1u << hue
+                );
+                hue_weight[hue] = (u16)(
+                    hue_weight[hue] +
+                    background_source_weight[source_index]
+                );
             }
         }
     }
-    for (y = 0; y < BACKGROUND_PALETTE_BANKS; y++) {
-        if (hue_count[y] > best_count) {
-            best_count = hue_count[y];
-            best_bank = y;
+    if (hue_mask != 0 && (hue_mask & (hue_mask - 1u)) == 0) {
+        while ((hue_mask & 1u) == 0) {
+            best_bank++;
+            hue_mask >>= 1;
+        }
+    } else if (hue_mask != 0) {
+        u16 best_weight = 0;
+        u8 bank;
+
+        /*
+         * The former majority-hue rule can turn a gray/brown mechanical
+         * tile green when numerous near-black green pixels outnumber its
+         * brighter gray structure.  Select the authored hue contributing
+         * the greatest RGB energy instead of counting every nonzero pixel
+         * equally.  This preserves the O(64) source path and avoids the
+         * measured Episode-2 regression of a 16-bank per-pixel search.
+         */
+        for (bank = 0; bank < BACKGROUND_PALETTE_BANKS; bank++) {
+            if (hue_weight[bank] > best_weight) {
+                best_weight = hue_weight[bank];
+                best_bank = bank;
+            }
         }
     }
     for (y = 0; y < 8; y++) {

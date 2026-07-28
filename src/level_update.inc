@@ -187,12 +187,13 @@ static void source_begin_end_level_audio(void)
 {
     if (level_exit_music_started) return;
     level_exit_music_started = 1;
+    secret_level_music_active = 0;
     /*
      * tyrian2.c selects zero-based source song 9 as soon as an alive player
      * enters endLevel.  Keep it running through JE_endLevelAni(), where the
      * "Level completed" voice and cube effects are mixed over the module.
      */
-    audio_load_source_song_preserve_effects(9);
+    audio_load_source_song_once_preserve_effects(9);
     telemetry_end_level_music_starts++;
     telemetry_end_level_initial_warp = (u8)player_end_warp;
 }
@@ -247,6 +248,26 @@ static void source_update_secret_level_display(void)
 
     if (source_parity_level.display_time == 0) return;
     source_parity_level.display_time--;
+    if (
+        source_parity_level.display_time == 0 &&
+        secret_level_music_active
+    ) {
+        /*
+         * Source song 30 is a finite Secret Level sting.  Maxmod's normal
+         * module path is deliberately looped for level music, so explicitly
+         * return to the selected level theme when the source's 150-tick
+         * notice expires.
+         */
+        secret_level_music_active = 0;
+        if (
+            game_state == STATE_PLAY &&
+            !source_parity_level.end_level
+        ) {
+            audio_load_source_song_preserve_effects(
+                frontend_level.source_song
+            );
+        }
+    }
     flash = (int16_t)(
         source_parity_level.display_flash +
         source_parity_level.display_flash_change

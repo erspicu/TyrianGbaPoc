@@ -18,13 +18,13 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v37_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v37_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v37_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v37_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v37_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v37_$configSuffix"
-$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v37_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v38_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v38_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v38_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v38_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v38_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v38_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v38_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -1116,7 +1116,7 @@ $telemetryChecks = [ordered]@{
                 $telemetry.sprite2_compact_uploads * 256 -and
         $telemetry.sprite2_cache_slots -eq 24
     )
-    # v37 runs the stock five-shot, power-11 Pulse-Cannon.  This intentionally
+    # v38 runs the stock five-shot, power-11 Pulse-Cannon.  This intentionally
     # replaces the old single power-1 bullet workload while retaining exact
     # deterministic cache goldens for the new source loadout.
     sprite2_workload_unchanged = (
@@ -1324,7 +1324,10 @@ $deathChecks = [ordered]@{
     )
     source_double_large_explosions = (
         $deathTelemetry.large_explosion_calls -eq 120 -and
-        $deathTelemetry.active_effects -eq 96 -and
+        # GAME OVER now keeps the translated PC level loop alive.  Four
+        # settled overlay frames therefore age sixteen of the 96 effects
+        # that were active on the formerly frozen first frame.
+        $deathTelemetry.active_effects -eq 80 -and
         $deathTelemetry.effect_drops -eq 0
     )
     source_explosion_sound_cadence = (

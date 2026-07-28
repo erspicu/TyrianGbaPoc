@@ -450,29 +450,22 @@ static void commit_vblank_work(void)
         if (frontend_stats_tiles_pending) {
             dmaCopy(
                 frontend_frame_scratch,
-                (u8 *)CHAR_BASE_BLOCK(2) +
+                (u8 *)OBJ_BASE_ADR +
                     FRONTEND_STATS_TILE_BASE * 32u,
                 FRONTEND_STATS_TILE_BYTES
             );
             frontend_stats_tiles_pending = 0;
         }
-        if (frontend_stats_map_dirty) {
+        if (frontend_stats_palette_dirty) {
             dmaCopy(
-                frontend_frame_scratch + FRONTEND_STATS_MAP_OFFSET,
-                SCREEN_BASE_BLOCK(FRONTEND_STATS_SCREEN_BLOCK),
-                32u * 32u * sizeof(u16)
+                frontend_stats_obj_palette,
+                SPRITE_PALETTE + 14u * 16u,
+                sizeof(frontend_stats_obj_palette)
             );
-            frontend_stats_map_dirty = 0;
+            frontend_stats_palette_dirty = 0;
         }
-        REG_BG3HOFS = 0;
-        REG_BG3VOFS = 0;
-        REG_BG3CNT =
-            BG_PRIORITY(0) |
-            CHAR_BASE(2) |
-            SCREEN_BASE(FRONTEND_STATS_SCREEN_BLOCK) |
-            BG_16_COLOR | BG_SIZE_0;
         REG_DISPCNT =
-            MODE_0 | BG0_ON | BG2_ON | BG3_ON |
+            MODE_0 | BG0_ON | BG2_ON |
             OBJ_ON | OBJ_1D_MAP |
             (source_background2_present() ? BG1_ON : 0);
     }
@@ -485,14 +478,16 @@ static void commit_vblank_work(void)
         secret_level_tile_upload_pending = 0;
     }
     if (secret_level_palette_dirty) {
-        u8 flash = source_parity_level.display_flash;
+        if (game_state == STATE_PLAY) {
+            u8 flash = source_parity_level.display_flash;
 
-        if (flash > 5) flash = 5;
-        dmaCopy(
-            secret_level_palettes + flash * 32,
-            SPRITE_PALETTE + OBJ_PAL_SECRET_LEVEL * 16,
-            32
-        );
+            if (flash > 5) flash = 5;
+            dmaCopy(
+                secret_level_palettes + flash * 32,
+                SPRITE_PALETTE + OBJ_PAL_SECRET_LEVEL * 16,
+                32
+            );
+        }
         secret_level_palette_dirty = 0;
     }
     if (game_over_tile_upload_pending) {
@@ -538,7 +533,8 @@ static void commit_vblank_work(void)
 
 static void audio_load_source_song_internal(
     u8 source_song,
-    u8 cancel_effects
+    u8 cancel_effects,
+    mm_pmode mode
 )
 {
     mmStop();
@@ -560,7 +556,7 @@ static void audio_load_source_song_internal(
      * asserts source song N == Maxmod module N, so Jukebox and game flow use
      * one authoritative zero-based index without a four-song switch table.
      */
-    mmStart(source_song, MM_PLAY_LOOP);
+    mmStart(source_song, mode);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
 }
@@ -579,12 +575,29 @@ static void audio_set_source_music_volume(u8 source_volume)
 
 static void audio_load_source_song(u8 source_song)
 {
-    audio_load_source_song_internal(source_song, 1);
+    audio_load_source_song_internal(
+        source_song,
+        1,
+        MM_PLAY_LOOP
+    );
 }
 
 static void audio_load_source_song_preserve_effects(u8 source_song)
 {
-    audio_load_source_song_internal(source_song, 0);
+    audio_load_source_song_internal(
+        source_song,
+        0,
+        MM_PLAY_LOOP
+    );
+}
+
+static void audio_load_source_song_once_preserve_effects(u8 source_song)
+{
+    audio_load_source_song_internal(
+        source_song,
+        0,
+        MM_PLAY_ONCE
+    );
 }
 
 static void audio_effect(u16 effect)

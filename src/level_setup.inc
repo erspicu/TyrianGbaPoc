@@ -125,6 +125,7 @@ static u8 enter_level(u16 selected_section)
     game_over_tile_upload_pending = 0;
     secret_level_tile_upload_pending = 0;
     secret_level_palette_dirty = 0;
+    secret_level_music_active = 0;
     clear_entities();
     hide_all_sprites();
 
