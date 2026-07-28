@@ -127,6 +127,8 @@ ENEMY_FRAME_BYTES = ENEMY_FRAME_TILES * 32
 FRONTEND_FRAME_WIDTH = 240
 FRONTEND_FRAME_HEIGHT = 160
 FRONTEND_FRAME_BYTES = FRONTEND_FRAME_WIDTH * FRONTEND_FRAME_HEIGHT
+FRONTEND_MENU_SOURCE_CROP_X = 0
+FRONTEND_MENU_SOURCE_WIDTH = 300
 FRONTEND_GLYPH_WIDTH = 8
 FRONTEND_GLYPH_HEIGHT = 8
 FRONTEND_GLYPH_CHARACTERS = "0123456789%"
@@ -702,7 +704,15 @@ class FrontendSourceRenderer:
         return max(0, source_y * FRONTEND_FRAME_HEIGHT // 200)
 
     def palette_rgb(self, picture_number: int) -> np.ndarray:
-        palette_number = FRONTEND_PCX_PALETTES[picture_number - 1]
+        return self.palette_rgb_index(
+            FRONTEND_PCX_PALETTES[picture_number - 1]
+        )
+
+    def palette_rgb_index(self, palette_number: int) -> np.ndarray:
+        if not 0 <= palette_number < 23:
+            raise ValueError(
+                f"palette number outside source file: {palette_number}"
+            )
         offset = palette_number * 256 * 3
         return np.frombuffer(
             self.palette_data[offset : offset + 256 * 3],
@@ -710,7 +720,12 @@ class FrontendSourceRenderer:
         ).reshape(256, 3)
 
     def palette_gba(self, picture_number: int) -> bytes:
-        rgb = self.palette_rgb(picture_number).astype(np.uint16)
+        return self.palette_gba_index(
+            FRONTEND_PCX_PALETTES[picture_number - 1]
+        )
+
+    def palette_gba_index(self, palette_number: int) -> bytes:
+        rgb = self.palette_rgb_index(palette_number).astype(np.uint16)
         words = (
             (rgb[:, 0] >> 1)
             | ((rgb[:, 1] >> 1) << 5)
@@ -757,6 +772,22 @@ class FrontendSourceRenderer:
         picture = self.decode_picture(picture_number)
         source_x = np.arange(FRONTEND_FRAME_WIDTH) * 320 // FRONTEND_FRAME_WIDTH
         source_y = np.arange(FRONTEND_FRAME_HEIGHT) * 200 // FRONTEND_FRAME_HEIGHT
+        return picture[np.ix_(source_y, source_x)].copy()
+
+    def menu_picture_frame(self, picture_number: int) -> np.ndarray:
+        """Crop 320x200 menu art to 300x200 before the 240x160 resize."""
+        picture = self.decode_picture(picture_number)
+        source_x = (
+            FRONTEND_MENU_SOURCE_CROP_X +
+            np.arange(FRONTEND_FRAME_WIDTH) *
+            FRONTEND_MENU_SOURCE_WIDTH //
+            FRONTEND_FRAME_WIDTH
+        )
+        source_y = (
+            np.arange(FRONTEND_FRAME_HEIGHT) *
+            200 //
+            FRONTEND_FRAME_HEIGHT
+        )
         return picture[np.ix_(source_y, source_x)].copy()
 
     def sprite(self, table: int, sprite_index: int) -> np.ndarray | None:
@@ -965,16 +996,23 @@ def build_frontend_mode4_assets(
     frontend_preview = preview / "frontend_mode4"
     frontend_preview.mkdir(parents=True, exist_ok=True)
 
-    def add(name: str, frame: np.ndarray, picture_number: int) -> int:
+    def add(
+        name: str,
+        frame: np.ndarray,
+        picture_number: int,
+        palette_index: int | None = None,
+    ) -> int:
         if frame.shape != (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH):
             raise ValueError(f"front-end frame has invalid shape: {frame.shape}")
         index = len(frames)
         frames.append(frame.copy())
-        palettes.append(source.palette_gba(picture_number))
+        if palette_index is None:
+            palette_index = FRONTEND_PCX_PALETTES[picture_number - 1]
+        palettes.append(source.palette_gba_index(palette_index))
         names.append(name)
         metadata[f"FRONTEND_FRAME_{name.upper()}"] = index
         rgb = np.minimum(
-            source.palette_rgb(picture_number).astype(np.uint16) * 4,
+            source.palette_rgb_index(palette_index).astype(np.uint16) * 4,
             255,
         ).astype(np.uint8)
         Image.fromarray(rgb[frame], "RGB").save(
@@ -982,9 +1020,13 @@ def build_frontend_mode4_assets(
         )
         return index
 
-    def render_title(selection: int) -> np.ndarray:
+    def render_title_chrome() -> np.ndarray:
         frame = source.picture_frame(4)
         source.draw_logo(frame)
+        return frame
+
+    def render_title(selection: int) -> np.ndarray:
+        frame = render_title_chrome()
         source.draw_text(
             frame, "Start New Game", 160, 108, 1, "center",
             15, -1 if selection == 0 else -4, 2,
@@ -1140,7 +1182,12 @@ def build_frontend_mode4_assets(
 
     add("intro_logo_1", source.picture_frame(10), 10)
     add("intro_logo_2", source.picture_frame(12), 12)
-    add("menu_chrome", source.picture_frame(1), 1)
+    add("menu_chrome", source.menu_picture_frame(1), 1)
+    add("title_chrome", render_title_chrome(), 4)
+    add("select_chrome", source.picture_frame(2), 2)
+    metadata["FRONTEND_MENU_SOURCE_CROP_X"] = FRONTEND_MENU_SOURCE_CROP_X
+    metadata["FRONTEND_MENU_SOURCE_WIDTH"] = FRONTEND_MENU_SOURCE_WIDTH
+    metadata["FRONTEND_NEXT_LEVEL_PALETTE_INDEX"] = 17
     metadata["FRONTEND_FRAME_TITLE_BASE"] = len(frames)
     for selection in range(3):
         add(f"title_{selection}", render_title(selection), 4)
@@ -1200,7 +1247,12 @@ def build_frontend_mode4_assets(
 
     metadata["FRONTEND_FRAME_NEXT_LEVEL_BASE"] = len(frames)
     for selection in range(2):
-        add(f"next_level_{selection}", render_next_level(selection), 1)
+        add(
+            f"next_level_{selection}",
+            render_next_level(selection),
+            1,
+            palette_index=17,
+        )
 
     add("stats_completed", render_stats(0, False, False), 1)
     add("stats_cash", render_stats(1, False, False), 1)
@@ -1401,6 +1453,12 @@ def build_frontend_mode4_assets(
         f"frontend_palettes_bytes={len(palette_bytes)}",
         f"frontend_dynamic_glyph_bytes={len(glyphs)}",
         f"frontend_data_cube_stamp_bytes={cube_stamp.size}",
+        (
+            "frontend_menu_crop="
+            f"{FRONTEND_MENU_SOURCE_CROP_X},0,"
+            f"{FRONTEND_MENU_SOURCE_WIDTH},200"
+        ),
+        "frontend_next_level_palette_index=17",
         f"frontend_full_state_transfer_bytes={FRONTEND_FRAME_BYTES + 512}",
         f"frontend_zlib_reference_bytes={len(zlib.compress(frame_bytes, 9))}",
         f"frontend_tile_unique_min={min(unique_counts)}",

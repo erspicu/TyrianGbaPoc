@@ -203,6 +203,7 @@ CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX)
+FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_FLAG := \
 	-DAUTOTEST_FRONTEND_CAPTURE_SELECTION=$(CAPTURE_SELECTION)
@@ -336,6 +337,7 @@ MAIN_INCLUDES := $(wildcard src/*.inc)
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
+	frontend-menu-stress \
 	assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
@@ -361,6 +363,8 @@ full-loadout-stress: $(BUILD)/$(STRESS_TARGET).gba
 full-loadout-playable: $(BUILD)/$(PLAYABLE_STRESS_TARGET).gba
 
 frontend-capture: $(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba
+
+frontend-menu-stress: $(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -516,6 +520,16 @@ $(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).o: \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_STRESS \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -628,6 +642,13 @@ $(BUILD)/$(FRONTEND_CAPTURE_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).elf: \
+		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(TARGET).gba: $(BUILD)/$(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN GBA" -cTYGA -m00
@@ -680,6 +701,11 @@ $(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR UI CAP" -cTYGU -m00
 
+$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba: \
+		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR UI TEST" -cTYGF -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -708,6 +734,8 @@ clean:
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -752,7 +780,10 @@ clean:
 		$(BUILD)/$(PLAYABLE_STRESS_TARGET).map \
 		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).elf \
 		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).gba \
-		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).map
+		$(BUILD)/$(FRONTEND_CAPTURE_TARGET).map \
+		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).elf \
+		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba \
+		$(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -764,6 +795,7 @@ distclean: clean
 -include $(BUILD)/main_death_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_demo_test_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d

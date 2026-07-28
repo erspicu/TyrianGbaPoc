@@ -12,6 +12,7 @@ enum {
     FRONTEND_PENDING_NONE = 0,
     FRONTEND_PENDING_FULL_FRAME = 1,
     FRONTEND_PENDING_SELECTION_PATCH = 2,
+    FRONTEND_PENDING_DIRTY_RECTS = 3,
     FRONTEND_STATS_STAGE_COMPLETED = 0,
     FRONTEND_STATS_STAGE_CASH = 1,
     FRONTEND_STATS_STAGE_ENEMIES = 2,
@@ -59,6 +60,11 @@ enum {
     FRONTEND_UPGRADE_DONE = 7,
     FRONTEND_WEAPON_FRONT = 0,
     FRONTEND_WEAPON_REAR = 1,
+    FRONTEND_DIRTY_RECT_CAPACITY = 8,
+    FRONTEND_NAV_DIRTY_X = 0,
+    FRONTEND_NAV_DIRTY_Y = 0,
+    FRONTEND_NAV_DIRTY_WIDTH = 126,
+    FRONTEND_NAV_DIRTY_HEIGHT = 138,
 };
 
 #define FRONTEND_MODE4_PAGE0 ((u8 *)0x06000000)
@@ -70,8 +76,14 @@ _Static_assert(
     "Mode 4 frame must be exactly 240x160 bytes"
 );
 _Static_assert(
-    FRONTEND_FRAME_COUNT == 32,
+    FRONTEND_FRAME_COUNT == 34,
     "generated front-end state atlas changed"
+);
+_Static_assert(
+    FRONTEND_MENU_SOURCE_CROP_X == 0 &&
+        FRONTEND_MENU_SOURCE_WIDTH == 300 &&
+        FRONTEND_NEXT_LEVEL_PALETTE_INDEX == 17,
+    "front-end 300x200 crop or OpenTyrian navigation palette changed"
 );
 _Static_assert(
     FRONTEND_GLYPH_COUNT == 11 &&
@@ -81,6 +93,10 @@ _Static_assert(
 
 static void frontend_redraw(void);
 static void frontend_enter_state(u8 state, u8 selection);
+static void frontend_render_upgrade_submenu_update(
+    u8 old_selection,
+    u8 old_scroll
+);
 
 static const u8 frontend_upgrade_item_group[
     FRONTEND_UPGRADE_CATEGORY_COUNT
@@ -230,6 +246,174 @@ _Static_assert(
 static const char frontend_runtime_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
 
+#ifndef TYRIAN_GBA_UPGRADE_LIST_FONT_MODE
+#define TYRIAN_GBA_UPGRADE_LIST_FONT_MODE 1
+#endif
+
+_Static_assert(
+    TYRIAN_GBA_UPGRADE_LIST_FONT_MODE >= 0 &&
+        TYRIAN_GBA_UPGRADE_LIST_FONT_MODE <= 2,
+    "upgrade-list font mode must be 0=5x7, 1=adaptive or 2=8px-wide"
+);
+
+/*
+ * GBA-native 5x7 proportional UI face.  This is intentionally independent
+ * of the 320x200 PC glyph sheets: menu art is cropped/scaled first and these
+ * one-pixel strokes are composited last at the final 240x160 resolution.
+ * Bits are left-to-right within each glyph's naturally occupied width.
+ */
+static const u8 frontend_native_font_rows[][7] = {
+    {0x0e,0x11,0x11,0x1f,0x11,0x11,0x11}, /* A */
+    {0x1e,0x11,0x11,0x1e,0x11,0x11,0x1e}, /* B */
+    {0x0f,0x10,0x10,0x10,0x10,0x10,0x0f}, /* C */
+    {0x1e,0x11,0x11,0x11,0x11,0x11,0x1e}, /* D */
+    {0x1f,0x10,0x10,0x1e,0x10,0x10,0x1f}, /* E */
+    {0x1f,0x10,0x10,0x1e,0x10,0x10,0x10}, /* F */
+    {0x0f,0x10,0x10,0x13,0x11,0x11,0x0f}, /* G */
+    {0x11,0x11,0x11,0x1f,0x11,0x11,0x11}, /* H */
+    {0x07,0x02,0x02,0x02,0x02,0x02,0x07}, /* I */
+    {0x07,0x01,0x01,0x01,0x01,0x05,0x02}, /* J */
+    {0x11,0x12,0x14,0x18,0x14,0x12,0x11}, /* K */
+    {0x10,0x10,0x10,0x10,0x10,0x10,0x1f}, /* L */
+    {0x11,0x1b,0x15,0x15,0x11,0x11,0x11}, /* M */
+    {0x11,0x19,0x19,0x15,0x13,0x13,0x11}, /* N */
+    {0x0e,0x11,0x11,0x11,0x11,0x11,0x0e}, /* O */
+    {0x1e,0x11,0x11,0x1e,0x10,0x10,0x10}, /* P */
+    {0x0e,0x11,0x11,0x11,0x15,0x12,0x0d}, /* Q */
+    {0x1e,0x11,0x11,0x1e,0x14,0x12,0x11}, /* R */
+    {0x0f,0x10,0x10,0x0e,0x01,0x01,0x1e}, /* S */
+    {0x1f,0x04,0x04,0x04,0x04,0x04,0x04}, /* T */
+    {0x11,0x11,0x11,0x11,0x11,0x11,0x0e}, /* U */
+    {0x11,0x11,0x11,0x11,0x11,0x0a,0x04}, /* V */
+    {0x11,0x11,0x11,0x15,0x15,0x1b,0x11}, /* W */
+    {0x11,0x11,0x0a,0x04,0x0a,0x11,0x11}, /* X */
+    {0x11,0x11,0x0a,0x04,0x04,0x04,0x04}, /* Y */
+    {0x1f,0x01,0x02,0x04,0x08,0x10,0x1f}, /* Z */
+    {0x0e,0x11,0x13,0x15,0x19,0x11,0x0e}, /* 0 */
+    {0x07,0x02,0x02,0x02,0x02,0x02,0x07}, /* 1 */
+    {0x0e,0x11,0x01,0x02,0x04,0x08,0x1f}, /* 2 */
+    {0x1e,0x01,0x01,0x0e,0x01,0x01,0x1e}, /* 3 */
+    {0x02,0x06,0x0a,0x12,0x1f,0x02,0x02}, /* 4 */
+    {0x1f,0x10,0x10,0x1e,0x01,0x01,0x1e}, /* 5 */
+    {0x0e,0x10,0x10,0x1e,0x11,0x11,0x0e}, /* 6 */
+    {0x1f,0x01,0x02,0x04,0x08,0x08,0x08}, /* 7 */
+    {0x0e,0x11,0x11,0x0e,0x11,0x11,0x0e}, /* 8 */
+    {0x0e,0x11,0x11,0x0f,0x01,0x01,0x0e}, /* 9 */
+    {0x00,0x00,0x00,0x00,0x00,0x01,0x01}, /* . */
+    {0x00,0x00,0x00,0x00,0x01,0x01,0x02}, /* , */
+    {0x01,0x01,0x01,0x01,0x01,0x00,0x01}, /* ! */
+    {0x0e,0x11,0x01,0x02,0x04,0x00,0x04}, /* ? */
+    {0x01,0x01,0x01,0x00,0x00,0x00,0x00}, /* ' */
+    {0x01,0x02,0x02,0x04,0x08,0x08,0x10}, /* / */
+    {0x00,0x01,0x01,0x00,0x01,0x01,0x00}, /* : */
+    {0x00,0x00,0x00,0x07,0x00,0x00,0x00}, /* - */
+    {0x19,0x1a,0x02,0x04,0x08,0x0b,0x13}, /* % */
+};
+
+/*
+ * Dense 3x5 face for the Upgrade Ship inventory rows only.  Long stock
+ * weapon names must share the right-hand panel with their source icon,
+ * price and OWN marker; shrinking the general menu face would make every
+ * other page harder to read.
+ */
+#if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
+static const u8 frontend_compact_font_rows[][6] = {
+    {0x6,0x9,0x9,0xf,0x9,0x9}, /* A */
+    {0xe,0x9,0xe,0x9,0x9,0xe}, /* B */
+    {0x7,0x8,0x8,0x8,0x8,0x7}, /* C */
+    {0xe,0x9,0x9,0x9,0x9,0xe}, /* D */
+    {0xf,0x8,0xe,0x8,0x8,0xf}, /* E */
+    {0xf,0x8,0xe,0x8,0x8,0x8}, /* F */
+    {0x7,0x8,0xb,0x9,0x9,0x7}, /* G */
+    {0x9,0x9,0xf,0x9,0x9,0x9}, /* H */
+    {0x7,0x2,0x2,0x2,0x2,0x7}, /* I */
+    {0x3,0x1,0x1,0x1,0x9,0x6}, /* J */
+    {0x9,0xa,0xc,0xa,0x9,0x9}, /* K */
+    {0x8,0x8,0x8,0x8,0x8,0xf}, /* L */
+    {0x9,0xf,0xf,0x9,0x9,0x9}, /* M */
+    {0x9,0xd,0xd,0xb,0xb,0x9}, /* N */
+    {0x6,0x9,0x9,0x9,0x9,0x6}, /* O */
+    {0xe,0x9,0xe,0x8,0x8,0x8}, /* P */
+    {0x6,0x9,0x9,0x9,0xb,0x7}, /* Q */
+    {0xe,0x9,0xe,0xa,0x9,0x9}, /* R */
+    {0x7,0x8,0x6,0x1,0x1,0xe}, /* S */
+    {0xf,0x2,0x2,0x2,0x2,0x2}, /* T */
+    {0x9,0x9,0x9,0x9,0x9,0x6}, /* U */
+    {0x9,0x9,0x9,0x9,0x6,0x6}, /* V */
+    {0x9,0x9,0x9,0xf,0xf,0x9}, /* W */
+    {0x9,0x9,0x6,0x6,0x9,0x9}, /* X */
+    {0x9,0x9,0x6,0x2,0x2,0x2}, /* Y */
+    {0xf,0x1,0x2,0x4,0x8,0xf}, /* Z */
+    {0x6,0x9,0xb,0xd,0x9,0x6}, /* 0 */
+    {0x2,0x6,0x2,0x2,0x2,0x7}, /* 1 */
+    {0xe,0x1,0x2,0x4,0x8,0xf}, /* 2 */
+    {0xe,0x1,0x6,0x1,0x1,0xe}, /* 3 */
+    {0x2,0x6,0xa,0xf,0x2,0x2}, /* 4 */
+    {0xf,0x8,0xe,0x1,0x1,0xe}, /* 5 */
+    {0x7,0x8,0xe,0x9,0x9,0x6}, /* 6 */
+    {0xf,0x1,0x2,0x4,0x4,0x4}, /* 7 */
+    {0x6,0x9,0x6,0x9,0x9,0x6}, /* 8 */
+    {0x6,0x9,0x7,0x1,0x1,0xe}, /* 9 */
+    {0x0,0x0,0x0,0x0,0x2},     /* . */
+    {0x0,0x0,0x0,0x2,0x4},     /* , */
+    {0x2,0x2,0x2,0x2,0x0,0x2}, /* ! */
+    {0xe,0x1,0x2,0x4,0x0,0x4}, /* ? */
+    {0x2,0x2,0x0,0x0,0x0,0x0}, /* ' */
+    {0x1,0x1,0x2,0x4,0x8,0x8}, /* / */
+    {0x0,0x2,0x0,0x0,0x2,0x0}, /* : */
+    {0x0,0x0,0xf,0x0,0x0,0x0}, /* - */
+    {0x9,0x1,0x2,0x4,0x8,0x9}, /* % */
+};
+
+static const u8 frontend_tiny_font_rows[][5] = {
+    {0x2,0x5,0x7,0x5,0x5}, /* A */
+    {0x6,0x5,0x6,0x5,0x6}, /* B */
+    {0x3,0x4,0x4,0x4,0x3}, /* C */
+    {0x6,0x5,0x5,0x5,0x6}, /* D */
+    {0x7,0x4,0x6,0x4,0x7}, /* E */
+    {0x7,0x4,0x6,0x4,0x4}, /* F */
+    {0x3,0x4,0x5,0x5,0x3}, /* G */
+    {0x5,0x5,0x7,0x5,0x5}, /* H */
+    {0x7,0x2,0x2,0x2,0x7}, /* I */
+    {0x1,0x1,0x1,0x5,0x2}, /* J */
+    {0x5,0x5,0x6,0x5,0x5}, /* K */
+    {0x4,0x4,0x4,0x4,0x7}, /* L */
+    {0x5,0x7,0x7,0x5,0x5}, /* M */
+    {0x5,0x7,0x7,0x7,0x5}, /* N */
+    {0x2,0x5,0x5,0x5,0x2}, /* O */
+    {0x6,0x5,0x6,0x4,0x4}, /* P */
+    {0x2,0x5,0x5,0x7,0x3}, /* Q */
+    {0x6,0x5,0x6,0x5,0x5}, /* R */
+    {0x3,0x4,0x2,0x1,0x6}, /* S */
+    {0x7,0x2,0x2,0x2,0x2}, /* T */
+    {0x5,0x5,0x5,0x5,0x7}, /* U */
+    {0x5,0x5,0x5,0x5,0x2}, /* V */
+    {0x5,0x5,0x7,0x7,0x5}, /* W */
+    {0x5,0x5,0x2,0x5,0x5}, /* X */
+    {0x5,0x5,0x2,0x2,0x2}, /* Y */
+    {0x7,0x1,0x2,0x4,0x7}, /* Z */
+    {0x2,0x5,0x5,0x5,0x2}, /* 0 */
+    {0x2,0x6,0x2,0x2,0x7}, /* 1 */
+    {0x6,0x1,0x2,0x4,0x7}, /* 2 */
+    {0x6,0x1,0x2,0x1,0x6}, /* 3 */
+    {0x1,0x3,0x5,0x7,0x1}, /* 4 */
+    {0x7,0x4,0x6,0x1,0x6}, /* 5 */
+    {0x3,0x4,0x6,0x5,0x2}, /* 6 */
+    {0x7,0x1,0x2,0x2,0x2}, /* 7 */
+    {0x2,0x5,0x2,0x5,0x2}, /* 8 */
+    {0x2,0x5,0x3,0x1,0x6}, /* 9 */
+    {0x0,0x0,0x0,0x2},     /* . */
+    {0x0,0x0,0x2,0x4},     /* , */
+    {0x2,0x2,0x2,0x0,0x2}, /* ! */
+    {0x6,0x1,0x2,0x0,0x2}, /* ? */
+    {0x2,0x2,0x0,0x0,0x0}, /* ' */
+    {0x1,0x1,0x2,0x4,0x4}, /* / */
+    {0x0,0x2,0x0,0x2,0x0}, /* : */
+    {0x0,0x0,0x7,0x0,0x0}, /* - */
+    {0x5,0x1,0x2,0x4,0x5}, /* % */
+};
+#endif
+
 _Static_assert(
     sizeof(frontend_runtime_font_characters) - 1u ==
         JUKEBOX_FONT_TILE_COUNT - 1u,
@@ -240,6 +424,26 @@ _Static_assert(
         FRONTEND_STATS_FONT_GLYPH_COUNT,
     "source stats glyph count changed"
 );
+_Static_assert(
+    sizeof(frontend_native_font_rows) /
+        sizeof(frontend_native_font_rows[0]) ==
+        sizeof(frontend_runtime_font_characters) - 1u,
+    "native front-end glyph catalog changed"
+);
+#if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
+_Static_assert(
+    sizeof(frontend_compact_font_rows) /
+        sizeof(frontend_compact_font_rows[0]) ==
+        sizeof(frontend_runtime_font_characters) - 1u,
+    "compact inventory glyph catalog changed"
+);
+_Static_assert(
+    sizeof(frontend_tiny_font_rows) /
+        sizeof(frontend_tiny_font_rows[0]) ==
+        sizeof(frontend_runtime_font_characters) - 1u,
+    "tiny inventory glyph catalog changed"
+);
+#endif
 _Static_assert(
     FRONTEND_STATS_TILE_BASE + FRONTEND_STATS_TILE_COUNT <=
         SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
@@ -387,6 +591,7 @@ static void frontend_show_immediate(
     frontend_display_page = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_dirty_count = 0;
     frontend_mode4_active = 1;
     REG_DISPCNT = MODE_4 | BG2_ON;
     game_paused = 0;
@@ -397,6 +602,7 @@ static void frontend_present(
     const u8 *palette
 )
 {
+    telemetry_frontend_full_redraws++;
     if (!frontend_mode4_active) {
         frontend_show_immediate(frame, palette);
         return;
@@ -404,6 +610,133 @@ static void frontend_present(
     frontend_pending_frame = frame;
     frontend_pending_palette = palette;
     frontend_pending_kind = FRONTEND_PENDING_FULL_FRAME;
+    frontend_dirty_count = 0;
+    frontend_frame_pending = 1;
+}
+
+static void frontend_dirty_begin(void)
+{
+    frontend_dirty_count = 0;
+}
+
+static void frontend_dirty_add(
+    s16 x,
+    s16 y,
+    s16 width,
+    s16 height
+)
+{
+    s16 right;
+    s16 bottom;
+    u8 index;
+
+    if (width <= 0 || height <= 0) return;
+    right = (s16)(x + width);
+    bottom = (s16)(y + height);
+    if (
+        right <= 0 ||
+        bottom <= 0 ||
+        x >= SCREEN_WIDTH ||
+        y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    if (right > SCREEN_WIDTH) right = SCREEN_WIDTH;
+    if (bottom > SCREEN_HEIGHT) bottom = SCREEN_HEIGHT;
+    width = (s16)(right - x);
+    height = (s16)(bottom - y);
+    if (width <= 0 || height <= 0) return;
+
+    /*
+     * Merge overlapping rectangles.  This keeps the VBlank DMA call count
+     * bounded while preserving exact row transfers for disjoint menu areas.
+     */
+    for (index = 0; index < frontend_dirty_count; index++) {
+        s16 old_right = (s16)(
+            frontend_dirty_x[index] + frontend_dirty_width[index]
+        );
+        s16 old_bottom = (s16)(
+            frontend_dirty_y[index] + frontend_dirty_height[index]
+        );
+
+        if (
+            x <= old_right &&
+            right >= (s16)frontend_dirty_x[index] &&
+            y <= old_bottom &&
+            bottom >= (s16)frontend_dirty_y[index]
+        ) {
+            s16 merged_x =
+                x < (s16)frontend_dirty_x[index] ?
+                    x :
+                    (s16)frontend_dirty_x[index];
+            s16 merged_y =
+                y < (s16)frontend_dirty_y[index] ?
+                    y :
+                    (s16)frontend_dirty_y[index];
+            s16 merged_right =
+                right > old_right ? right : old_right;
+            s16 merged_bottom =
+                bottom > old_bottom ? bottom : old_bottom;
+
+            frontend_dirty_x[index] = (u16)merged_x;
+            frontend_dirty_y[index] = (u16)merged_y;
+            frontend_dirty_width[index] =
+                (u16)(merged_right - merged_x);
+            frontend_dirty_height[index] =
+                (u16)(merged_bottom - merged_y);
+            return;
+        }
+    }
+    if (frontend_dirty_count >= FRONTEND_DIRTY_RECT_CAPACITY) {
+        /*
+         * The planned callers need at most four rectangles.  If a future
+         * page exceeds that, merge the overflow into the final slot rather
+         * than falling back to a hidden full-frame redraw.
+         */
+        index = (u8)(FRONTEND_DIRTY_RECT_CAPACITY - 1u);
+        {
+            s16 old_right = (s16)(
+                frontend_dirty_x[index] + frontend_dirty_width[index]
+            );
+            s16 old_bottom = (s16)(
+                frontend_dirty_y[index] + frontend_dirty_height[index]
+            );
+            s16 merged_x =
+                x < (s16)frontend_dirty_x[index] ?
+                    x :
+                    (s16)frontend_dirty_x[index];
+            s16 merged_y =
+                y < (s16)frontend_dirty_y[index] ?
+                    y :
+                    (s16)frontend_dirty_y[index];
+            s16 merged_right =
+                right > old_right ? right : old_right;
+            s16 merged_bottom =
+                bottom > old_bottom ? bottom : old_bottom;
+
+            frontend_dirty_x[index] = (u16)merged_x;
+            frontend_dirty_y[index] = (u16)merged_y;
+            frontend_dirty_width[index] =
+                (u16)(merged_right - merged_x);
+            frontend_dirty_height[index] =
+                (u16)(merged_bottom - merged_y);
+        }
+        return;
+    }
+    index = frontend_dirty_count++;
+    frontend_dirty_x[index] = (u16)x;
+    frontend_dirty_y[index] = (u16)y;
+    frontend_dirty_width[index] = (u16)width;
+    frontend_dirty_height[index] = (u16)height;
+}
+
+static void frontend_dirty_present(void)
+{
+    if (frontend_dirty_count == 0) return;
+    frontend_pending_frame = frontend_frame_scratch;
+    frontend_pending_kind = FRONTEND_PENDING_DIRTY_RECTS;
     frontend_frame_pending = 1;
 }
 
@@ -563,6 +896,30 @@ static void frontend_commit_selection_patch(void)
     }
 }
 
+static void frontend_commit_dirty_rects(void)
+{
+    u8 index;
+    u8 *target = frontend_visible_page();
+
+    for (index = 0; index < frontend_dirty_count; index++) {
+        u32 bytes =
+            (u32)frontend_dirty_width[index] *
+            frontend_dirty_height[index];
+
+        frontend_commit_rect(
+            frontend_pending_frame,
+            target,
+            frontend_dirty_x[index],
+            frontend_dirty_y[index],
+            frontend_dirty_width[index],
+            frontend_dirty_height[index]
+        );
+        telemetry_frontend_dirty_bytes += bytes;
+    }
+    telemetry_frontend_dirty_commits++;
+    frontend_dirty_count = 0;
+}
+
 static void frontend_commit_vblank(void)
 {
     u8 next_page;
@@ -571,6 +928,12 @@ static void frontend_commit_vblank(void)
     if (!frontend_frame_pending) return;
     if (frontend_pending_kind == FRONTEND_PENDING_SELECTION_PATCH) {
         frontend_commit_selection_patch();
+        frontend_frame_pending = 0;
+        frontend_pending_kind = FRONTEND_PENDING_NONE;
+        return;
+    }
+    if (frontend_pending_kind == FRONTEND_PENDING_DIRTY_RECTS) {
+        frontend_commit_dirty_rects();
         frontend_frame_pending = 0;
         frontend_pending_kind = FRONTEND_PENDING_NONE;
         return;
@@ -630,9 +993,26 @@ static u8 frontend_runtime_font_advance_scaled(
     u8 space_width
 )
 {
-    return tile_index == 0 ?
-        space_width :
-        glyph_width;
+    u8 occupied;
+    u8 row;
+    u8 advance;
+
+    if (tile_index == 0) return space_width;
+    if (
+        tile_index >
+        sizeof(frontend_native_font_rows) /
+            sizeof(frontend_native_font_rows[0])
+    ) {
+        return glyph_width;
+    }
+    occupied = 0;
+    for (row = 0; row < 7; row++) {
+        occupied |= frontend_native_font_rows[tile_index - 1u][row];
+    }
+    advance = 1;
+    while (occupied >>= 1) advance++;
+    if (advance < glyph_width) advance++;
+    return advance > glyph_width ? glyph_width : advance;
 }
 
 static void frontend_blit_runtime_font_scaled(
@@ -644,53 +1024,34 @@ static void frontend_blit_runtime_font_scaled(
     u8 glyph_width
 )
 {
-    const u8 *tile;
+    const u8 *glyph;
+    u8 occupied = 0;
+    u8 natural_width = 1;
     u8 row;
 
-    if (tile_index == 0 || tile_index >= JUKEBOX_FONT_TILE_COUNT) {
+    (void)glyph_width;
+    if (
+        tile_index == 0 ||
+        tile_index >
+            sizeof(frontend_native_font_rows) /
+                sizeof(frontend_native_font_rows[0])
+    ) {
         return;
     }
-    tile = jukebox_font_tiles + (u32)tile_index * 32u;
-    for (row = 0; row < 8; row++) {
-        u8 output_column;
+    glyph = frontend_native_font_rows[tile_index - 1u];
+    for (row = 0; row < 7; row++) occupied |= glyph[row];
+    while (occupied >>= 1) natural_width++;
+    for (row = 0; row < 7; row++) {
+        u8 column;
         s16 target_y = (s16)(y + row);
 
         if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
-        for (
-            output_column = 0;
-            output_column < glyph_width;
-            output_column++
-        ) {
-            u8 first_source = (u8)(
-                output_column * 8u / glyph_width
-            );
-            u8 last_source = (u8)(
-                (
-                    (u16)(output_column + 1u) * 8u +
-                    glyph_width - 1u
-                ) /
-                glyph_width
-            );
-            u8 source_column;
-            u8 pixel = 0;
-            s16 target_x = (s16)(x + output_column);
-
-            for (
-                source_column = first_source;
-                source_column < last_source;
-                source_column++
-            ) {
-                u8 packed = tile[
-                    (u16)row * 4u + (source_column >> 1)
-                ];
-
-                pixel |= (source_column & 1u) != 0 ?
-                    packed >> 4 :
-                    packed & 0x0fu;
-            }
+        for (column = 0; column < natural_width; column++) {
+            s16 target_x = (s16)(x + column);
 
             if (
-                pixel != 0 &&
+                (glyph[row] &
+                    (1u << (natural_width - column - 1u))) != 0 &&
                 target_x >= 0 &&
                 target_x < SCREEN_WIDTH
             ) {
@@ -741,6 +1102,244 @@ static void frontend_draw_runtime_text_clipped_scaled(
         );
         x = (s16)(x + advance);
     }
+}
+
+#if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
+static void frontend_blit_compact_font(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    const u8 *glyph;
+    u8 row;
+
+    if (
+        tile_index == 0 ||
+        tile_index >
+            sizeof(frontend_compact_font_rows) /
+                sizeof(frontend_compact_font_rows[0])
+    ) {
+        return;
+    }
+    glyph = frontend_compact_font_rows[tile_index - 1u];
+    for (row = 0; row < 6; row++) {
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < 4; column++) {
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (glyph[row] & (1u << (3u - column))) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                frame[
+                    (u16)target_y * SCREEN_WIDTH +
+                    (u16)target_x
+                ] = colour;
+            }
+        }
+    }
+}
+
+static void frontend_blit_tiny_font(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    const u8 *glyph;
+    u8 row;
+
+    if (
+        tile_index == 0 ||
+        tile_index >
+            sizeof(frontend_tiny_font_rows) /
+                sizeof(frontend_tiny_font_rows[0])
+    ) {
+        return;
+    }
+    glyph = frontend_tiny_font_rows[tile_index - 1u];
+    for (row = 0; row < 5; row++) {
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < 3; column++) {
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (glyph[row] & (1u << (2u - column))) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                frame[
+                    (u16)target_y * SCREEN_WIDTH +
+                    (u16)target_x
+                ] = colour;
+            }
+        }
+    }
+}
+#elif TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 2
+static void frontend_blit_wide_font(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    const u8 *glyph;
+    u8 occupied = 0;
+    u8 natural_width = 1;
+    u8 row;
+
+    if (
+        tile_index == 0 ||
+        tile_index >
+            sizeof(frontend_native_font_rows) /
+                sizeof(frontend_native_font_rows[0])
+    ) {
+        return;
+    }
+    glyph = frontend_native_font_rows[tile_index - 1u];
+    for (row = 0; row < 7; row++) occupied |= glyph[row];
+    while (occupied >>= 1) natural_width++;
+    for (row = 0; row < 7; row++) {
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < 7; column++) {
+            u8 source_column = (u8)(
+                (u16)column * natural_width / 7u
+            );
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (glyph[row] &
+                    (1u << (natural_width - source_column - 1u))) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                frame[
+                    (u16)target_y * SCREEN_WIDTH +
+                    (u16)target_x
+                ] = colour;
+            }
+        }
+    }
+}
+#endif
+
+static void frontend_draw_upgrade_list_text(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+#if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
+    const char *measure = text;
+    s16 compact_width = 0;
+    u8 use_tiny;
+
+    while (*measure != '\0') {
+        compact_width = (s16)(
+            compact_width + (*measure++ == ' ' ? 3 : 5)
+        );
+    }
+    use_tiny = compact_width > right - x;
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_runtime_font_tile(*text++);
+
+        if (tile_index == 0) {
+            x = (s16)(x + (use_tiny ? 2 : 3));
+            continue;
+        }
+        if (use_tiny) {
+            if (x + 3 > right) break;
+            frontend_blit_tiny_font(
+                frame,
+                tile_index,
+                (s16)(x + 1),
+                (s16)(y + 1),
+                FRONTEND_NEXT_SHADOW_COLOUR
+            );
+            frontend_blit_tiny_font(
+                frame,
+                tile_index,
+                x,
+                y,
+                colour
+            );
+            x = (s16)(x + 4);
+        } else {
+            if (x + 4 > right) break;
+            frontend_blit_compact_font(
+                frame,
+                tile_index,
+                (s16)(x + 1),
+                (s16)(y + 1),
+                FRONTEND_NEXT_SHADOW_COLOUR
+            );
+            frontend_blit_compact_font(
+                frame,
+                tile_index,
+                x,
+                y,
+                colour
+            );
+            x = (s16)(x + 5);
+        }
+    }
+#elif TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 2
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_runtime_font_tile(*text++);
+
+        if (tile_index == 0) {
+            x = (s16)(x + 4);
+            continue;
+        }
+        if (x + 7 > right) break;
+        frontend_blit_wide_font(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            (s16)(y + 1),
+            FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_wide_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + 8);
+    }
+#else
+    frontend_draw_runtime_text_clipped_scaled(
+        frame,
+        text,
+        x,
+        y,
+        right,
+        colour,
+        FRONTEND_COMPACT_FONT_WIDTH,
+        FRONTEND_COMPACT_FONT_SPACE
+    );
+#endif
 }
 
 static void frontend_draw_runtime_text_clipped(
@@ -941,6 +1540,47 @@ static void frontend_fill_rect(
     }
 }
 
+static void frontend_restore_frame_rect(
+    u8 frame_index,
+    u16 x,
+    u16 y,
+    u16 width,
+    u16 height
+)
+{
+    const u8 *chrome =
+        frontend_frame_address(frame_index);
+    u16 row;
+
+    if (x >= SCREEN_WIDTH || y >= SCREEN_HEIGHT) return;
+    if (x + width > SCREEN_WIDTH) width = (u16)(SCREEN_WIDTH - x);
+    if (y + height > SCREEN_HEIGHT) height = (u16)(SCREEN_HEIGHT - y);
+    for (row = 0; row < height; row++) {
+        memcpy(
+            frontend_frame_scratch +
+                (u32)(y + row) * SCREEN_WIDTH + x,
+            chrome + (u32)(y + row) * SCREEN_WIDTH + x,
+            width
+        );
+    }
+}
+
+static void frontend_restore_menu_chrome_rect(
+    u16 x,
+    u16 y,
+    u16 width,
+    u16 height
+)
+{
+    frontend_restore_frame_rect(
+        FRONTEND_FRAME_MENU_CHROME,
+        x,
+        y,
+        width,
+        height
+    );
+}
+
 enum {
     FRONTEND_SOURCE_BLIT_NORMAL = 0,
     FRONTEND_SOURCE_BLIT_DARK = 1,
@@ -1015,6 +1655,25 @@ static u8 frontend_source_colour(
     return (u8)((hue << 4) | (u8)value);
 }
 
+static s16 frontend_source_to_screen_x(s16 source_x)
+{
+    return (s16)(
+        (
+            (s32)source_x - FRONTEND_MENU_SOURCE_CROP_X
+        ) *
+        SCREEN_WIDTH /
+        FRONTEND_MENU_SOURCE_WIDTH
+    );
+}
+
+static s16 frontend_source_to_screen_y(s16 source_y)
+{
+    return (s16)(
+        (s32)source_y * SCREEN_HEIGHT /
+        OT_PIC_DECODED_HEIGHT
+    );
+}
+
 static void frontend_source_plot(
     u8 *frame,
     s16 source_x,
@@ -1030,17 +1689,19 @@ static void frontend_source_plot(
 
     if (
         frame == 0 ||
-        source_x < 0 ||
-        source_x >= OT_PIC_DECODED_WIDTH ||
+        source_x < (s16)FRONTEND_MENU_SOURCE_CROP_X ||
+        source_x >=
+            (s16)(
+                FRONTEND_MENU_SOURCE_CROP_X +
+                FRONTEND_MENU_SOURCE_WIDTH
+            ) ||
         source_y < 0 ||
-        source_y >= OT_PIC_DECODED_HEIGHT
+        source_y >= (s16)OT_PIC_DECODED_HEIGHT
     ) {
         return;
     }
-    x = (u16)((u32)(u16)source_x * SCREEN_WIDTH /
-              OT_PIC_DECODED_WIDTH);
-    y = (u16)((u32)(u16)source_y * SCREEN_HEIGHT /
-              OT_PIC_DECODED_HEIGHT);
+    x = (u16)frontend_source_to_screen_x(source_x);
+    y = (u16)frontend_source_to_screen_y(source_y);
     frame[(u32)y * SCREEN_WIDTH + x] =
         frontend_source_colour(pixel, mode, hue, brightness);
 }
@@ -1069,6 +1730,7 @@ static u8 frontend_blit_shp_source(
     ) {
         return 0;
     }
+    telemetry_frontend_runtime_shp_decodes++;
     while (position < sprite.encoded.size && y < sprite.height) {
         u8 code = sprite.encoded.data[position++];
 
@@ -1127,6 +1789,7 @@ static u8 frontend_blit_comp_source(
     ) {
         return 0;
     }
+    telemetry_frontend_runtime_sprite2_decodes++;
     /*
      * ot_sprite2_frame_decode() uses the gameplay 32x32 container with the
      * first component at (4,2).  blit_sprite2x2() anchors that component at
@@ -1167,16 +1830,28 @@ static void frontend_shade_source_rect(
     u8 amount
 )
 {
-    u16 x0 = (u16)((u32)source_x0 * SCREEN_WIDTH /
-                   OT_PIC_DECODED_WIDTH);
-    u16 y0 = (u16)((u32)source_y0 * SCREEN_HEIGHT /
-                   OT_PIC_DECODED_HEIGHT);
-    u16 x1 = (u16)((u32)(source_x1 + 1) * SCREEN_WIDTH /
-                   OT_PIC_DECODED_WIDTH);
-    u16 y1 = (u16)((u32)(source_y1 + 1) * SCREEN_HEIGHT /
-                   OT_PIC_DECODED_HEIGHT);
+    s16 mapped_x0 = frontend_source_to_screen_x(source_x0);
+    s16 mapped_y0 = frontend_source_to_screen_y(source_y0);
+    s16 mapped_x1 = frontend_source_to_screen_x(
+        (s16)(source_x1 + 1)
+    );
+    s16 mapped_y1 = frontend_source_to_screen_y(
+        (s16)(source_y1 + 1)
+    );
+    u16 x0;
+    u16 y0;
+    u16 x1;
+    u16 y1;
     u16 y;
 
+    if (mapped_x0 < 0) mapped_x0 = 0;
+    if (mapped_y0 < 0) mapped_y0 = 0;
+    if (mapped_x1 < 0) mapped_x1 = 0;
+    if (mapped_y1 < 0) mapped_y1 = 0;
+    x0 = (u16)mapped_x0;
+    y0 = (u16)mapped_y0;
+    x1 = (u16)mapped_x1;
+    y1 = (u16)mapped_y1;
     if (x1 > SCREEN_WIDTH) x1 = SCREEN_WIDTH;
     if (y1 > SCREEN_HEIGHT) y1 = SCREEN_HEIGHT;
     for (y = y0; y < y1; y++) {
@@ -1190,42 +1865,6 @@ static void frontend_shade_source_rect(
             frame[(u32)y * SCREEN_WIDTH + x] =
                 (u8)((pixel & 0xf0u) | value);
         }
-    }
-}
-
-static void frontend_fill_source_rect(
-    u8 *frame,
-    s16 source_x0,
-    s16 source_y0,
-    s16 source_x1,
-    s16 source_y1,
-    u8 colour
-)
-{
-    u16 x0 = (u16)((u32)source_x0 * SCREEN_WIDTH /
-                   OT_PIC_DECODED_WIDTH);
-    u16 y0 = (u16)((u32)source_y0 * SCREEN_HEIGHT /
-                   OT_PIC_DECODED_HEIGHT);
-    u16 x1 = (u16)(
-        (u32)(source_x1 + 1) * SCREEN_WIDTH /
-        OT_PIC_DECODED_WIDTH
-    );
-    u16 y1 = (u16)(
-        (u32)(source_y1 + 1) * SCREEN_HEIGHT /
-        OT_PIC_DECODED_HEIGHT
-    );
-
-    if (x1 > SCREEN_WIDTH) x1 = SCREEN_WIDTH;
-    if (y1 > SCREEN_HEIGHT) y1 = SCREEN_HEIGHT;
-    if (x1 > x0 && y1 > y0) {
-        frontend_fill_rect(
-            frame,
-            x0,
-            y0,
-            (u16)(x1 - x0),
-            (u16)(y1 - y0),
-            colour
-        );
     }
 }
 
@@ -1733,18 +2372,337 @@ static void frontend_draw_ship_illustration(u8 *frame)
     }
 }
 
+static const char *frontend_game_menu_label(u8 index)
+{
+    static const char *const fallback[7] = {
+        "GAME MENU",
+        "DATA CUBES",
+        "SHIP SPECS",
+        "UPGRADE SHIP",
+        "OPTIONS",
+        "PLAY NEXT LEVEL",
+        "QUIT GAME",
+    };
+
+    if (
+        frontend_text_ready &&
+        index < 7 &&
+        frontend_text.full_game_menu[index][0] != '\0'
+    ) {
+        return frontend_text.full_game_menu[index];
+    }
+    return fallback[index < 7 ? index : 0];
+}
+
+static const char *frontend_pre_game_title_label(u8 selection)
+{
+    static const char *const fallback[3] = {
+        "START NEW GAME",
+        "DEMO",
+        "JUKEBOX",
+    };
+    static const u8 source_index[3] = {0, 5, 0xff};
+
+    if (
+        selection < 3 &&
+        source_index[selection] != 0xff &&
+        frontend_text_ready &&
+        frontend_text.title_menu[source_index[selection]][0] != '\0'
+    ) {
+        return frontend_text.title_menu[source_index[selection]];
+    }
+    return fallback[selection < 3 ? selection : 0];
+}
+
+static const char *frontend_pre_game_header(u8 state)
+{
+    if (state == STATE_PLAY_MODE_MENU) return "PLAY MODE";
+    if (
+        state == STATE_EPISODE_MENU &&
+        frontend_text_ready &&
+        frontend_text.episode_name[0][0] != '\0'
+    ) {
+        return frontend_text.episode_name[0];
+    }
+    if (
+        state == STATE_DIFFICULTY_MENU &&
+        frontend_text_ready &&
+        frontend_text.difficulty_name[0][0] != '\0'
+    ) {
+        return frontend_text.difficulty_name[0];
+    }
+    return state == STATE_EPISODE_MENU ?
+        "SELECT AN EPISODE" :
+        "DIFFICULTY LEVEL";
+}
+
+static u8 frontend_pre_game_item_count(u8 state)
+{
+    switch (state) {
+    case STATE_TITLE:
+    case STATE_DIFFICULTY_MENU:
+        return 3;
+    case STATE_PLAY_MODE_MENU:
+        return 2;
+    case STATE_EPISODE_MENU:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+static const char *frontend_pre_game_item_label(
+    u8 state,
+    u8 selection
+)
+{
+    static const char *const play_mode[2] = {
+        "FULL GAME",
+        "ARCADE",
+    };
+    static const char *const episode[4] = {
+        "EPISODE 1: ESCAPE",
+        "EPISODE 2: TREACHERY",
+        "EPISODE 3: MISSION: SUICIDE",
+        "EPISODE 4: AN END TO FATE",
+    };
+    static const char *const difficulty[3] = {
+        "EASY",
+        "NORMAL",
+        "HARD",
+    };
+
+    if (state == STATE_TITLE) {
+        return frontend_pre_game_title_label(selection);
+    }
+    if (state == STATE_PLAY_MODE_MENU) {
+        return play_mode[selection < 2 ? selection : 0];
+    }
+    if (state == STATE_EPISODE_MENU) {
+        if (
+            selection < 4 &&
+            frontend_text_ready &&
+            frontend_text.episode_name[selection + 1u][0] != '\0'
+        ) {
+            return frontend_text.episode_name[selection + 1u];
+        }
+        return episode[selection < 4 ? selection : 0];
+    }
+    if (
+        state == STATE_DIFFICULTY_MENU &&
+        selection < 3 &&
+        frontend_text_ready &&
+        frontend_text.difficulty_name[selection + 1u][0] != '\0'
+    ) {
+        return frontend_text.difficulty_name[selection + 1u];
+    }
+    return difficulty[selection < 3 ? selection : 0];
+}
+
+static s16 frontend_pre_game_item_y(u8 state, u8 selection)
+{
+    switch (state) {
+    case STATE_TITLE:
+        return (s16)(86 + selection * 10u);
+    case STATE_EPISODE_MENU:
+        return (s16)(40 + selection * 24u);
+    case STATE_PLAY_MODE_MENU:
+    case STATE_DIFFICULTY_MENU:
+    default:
+        return (s16)(43 + selection * 19u);
+    }
+}
+
+static void frontend_pre_game_item_rect(
+    u8 state,
+    u8 selection,
+    u16 *x,
+    u16 *y,
+    u16 *width,
+    u16 *height
+)
+{
+    *x = state == STATE_EPISODE_MENU ? 8 : 64;
+    *y = (u16)frontend_pre_game_item_y(state, selection);
+    *width = state == STATE_EPISODE_MENU ? 184 : 112;
+    *height = 9;
+}
+
+static void frontend_draw_pre_game_item(
+    u8 state,
+    u8 selection,
+    u8 active_selection
+)
+{
+    const char *label =
+        frontend_pre_game_item_label(state, selection);
+    s16 y = frontend_pre_game_item_y(state, selection);
+    u8 colour = selection == active_selection ? 0xfeu : 0xfau;
+
+    if (state == STATE_EPISODE_MENU) {
+        frontend_draw_runtime_text_clipped(
+            frontend_frame_scratch,
+            label,
+            15,
+            y,
+            190,
+            colour
+        );
+    } else {
+        frontend_draw_runtime_text_centered(
+            frontend_frame_scratch,
+            label,
+            120,
+            y,
+            colour
+        );
+    }
+}
+
+static void frontend_render_pre_game_menu(void)
+{
+    u8 base_frame =
+        game_state == STATE_TITLE ?
+            FRONTEND_FRAME_TITLE_CHROME :
+            FRONTEND_FRAME_SELECT_CHROME;
+    u8 item_count = frontend_pre_game_item_count(game_state);
+    u8 selection;
+
+    memcpy(
+        frontend_frame_scratch,
+        frontend_frame_address(base_frame),
+        FRONTEND_FRAME_BYTES
+    );
+    if (game_state != STATE_TITLE) {
+        frontend_draw_runtime_text_centered(
+            frontend_frame_scratch,
+            frontend_pre_game_header(game_state),
+            120,
+            15,
+            0xfbu
+        );
+    }
+    for (selection = 0; selection < item_count; selection++) {
+        frontend_draw_pre_game_item(
+            game_state,
+            selection,
+            frontend_selection
+        );
+    }
+    frontend_present(
+        frontend_frame_scratch,
+        frontend_palette_address(base_frame)
+    );
+}
+
+static void frontend_render_pre_game_selection(u8 old_selection)
+{
+    u8 base_frame =
+        game_state == STATE_TITLE ?
+            FRONTEND_FRAME_TITLE_CHROME :
+            FRONTEND_FRAME_SELECT_CHROME;
+    u8 selection[2] = {old_selection, frontend_selection};
+    u8 index;
+
+    frontend_dirty_begin();
+    for (index = 0; index < 2; index++) {
+        u16 x;
+        u16 y;
+        u16 width;
+        u16 height;
+
+        frontend_pre_game_item_rect(
+            game_state,
+            selection[index],
+            &x,
+            &y,
+            &width,
+            &height
+        );
+        frontend_restore_frame_rect(
+            base_frame,
+            x,
+            y,
+            width,
+            height
+        );
+        frontend_draw_pre_game_item(
+            game_state,
+            selection[index],
+            frontend_selection
+        );
+        frontend_dirty_add(x, y, width, height);
+    }
+    frontend_dirty_present();
+}
+
+static s16 frontend_game_menu_item_y(u8 selection)
+{
+    return frontend_source_to_screen_y(
+        (s16)(
+            38 +
+            selection * 16 +
+            (selection == 5 ? 16 : 0)
+        )
+    );
+}
+
+static void frontend_draw_game_menu_item(
+    u8 selection,
+    u8 active_selection
+)
+{
+    u8 disabled = (
+        selection == 0 ||
+        selection == 1 ||
+        selection == 3
+    );
+    u8 colour;
+
+    if (disabled) {
+        colour =
+            selection == active_selection ? 0xf8u : 0xf4u;
+    } else {
+        colour =
+            selection == active_selection ? 0xfeu : 0xfau;
+    }
+    frontend_draw_runtime_text_clipped(
+        frontend_frame_scratch,
+        frontend_game_menu_label((u8)(selection + 1u)),
+        125,
+        frontend_game_menu_item_y(selection),
+        238,
+        colour
+    );
+}
+
+static void frontend_draw_game_menu_text(u8 active_selection)
+{
+    u8 selection;
+
+    frontend_draw_runtime_text_centered(
+        frontend_frame_scratch,
+        frontend_game_menu_label(0),
+        178,
+        6,
+        0xfbu
+    );
+    for (selection = 0; selection < 6; selection++) {
+        frontend_draw_game_menu_item(selection, active_selection);
+    }
+}
+
 static void frontend_compose_game_menu(u8 selection)
 {
     memcpy(
         frontend_frame_scratch,
-        frontend_frame_address(
-            (u8)(FRONTEND_FRAME_GAME_MENU_BASE + selection)
-        ),
+        frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
         FRONTEND_FRAME_BYTES
     );
     if (frontend_player_items_valid) {
         frontend_draw_ship_illustration(frontend_frame_scratch);
     }
+    frontend_draw_game_menu_text(selection);
 }
 
 static void frontend_render_game_menu(void)
@@ -1754,6 +2712,25 @@ static void frontend_render_game_menu(void)
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
     );
+}
+
+static void frontend_render_game_menu_selection(u8 old_selection)
+{
+    u8 selection[2] = {old_selection, frontend_selection};
+    u8 index;
+
+    frontend_dirty_begin();
+    for (index = 0; index < 2; index++) {
+        s16 y = frontend_game_menu_item_y(selection[index]);
+
+        frontend_restore_menu_chrome_rect(120, (u16)y, 120, 9);
+        frontend_draw_game_menu_item(
+            selection[index],
+            frontend_selection
+        );
+        frontend_dirty_add(120, y, 120, 9);
+    }
+    frontend_dirty_present();
 }
 
 static const char *frontend_upgrade_menu_text(
@@ -1769,6 +2746,46 @@ static const char *frontend_upgrade_menu_text(
         return frontend_text.upgrade_menu[index];
     }
     return fallback;
+}
+
+static const char *frontend_upgrade_menu_item_label(u8 index)
+{
+    static const char *const fallback[
+        FRONTEND_UPGRADE_MENU_ITEM_COUNT
+    ] = {
+        "SHIP TYPE",
+        "FRONT GUN",
+        "REAR GUN",
+        "SHIELD",
+        "GENERATOR",
+        "LEFT SIDEKICK",
+        "RIGHT SIDEKICK",
+        "DONE"
+    };
+
+    return frontend_upgrade_menu_text(
+        (u8)(index + 1u),
+        fallback[
+            index < FRONTEND_UPGRADE_MENU_ITEM_COUNT ? index : 0
+        ]
+    );
+}
+
+static s16 frontend_upgrade_menu_item_y(u8 index)
+{
+    return (s16)(30 + index * 10u);
+}
+
+static void frontend_draw_upgrade_menu_item(u8 index)
+{
+    frontend_draw_runtime_text_clipped(
+        frontend_frame_scratch,
+        frontend_upgrade_menu_item_label(index),
+        125,
+        frontend_upgrade_menu_item_y(index),
+        238,
+        index == frontend_selection ? 0xfeu : 0xfau
+    );
 }
 
 static void frontend_upgrade_sort_items(void)
@@ -1990,6 +3007,7 @@ static void frontend_upgrade_commit_submenu(void)
 static void frontend_upgrade_move_submenu(s8 direction)
 {
     u8 old_selection = frontend_selection;
+    u8 old_scroll = frontend_upgrade_sub_scroll;
     u8 item_count = (u8)(frontend_upgrade_sub_count + 1u);
     u8 attempts = 0;
 
@@ -2027,12 +3045,17 @@ static void frontend_upgrade_move_submenu(s8 direction)
     }
     if (frontend_selection != old_selection) {
         audio_effect(SFX_CURSOR);
+        frontend_render_upgrade_submenu_update(
+            old_selection,
+            old_scroll
+        );
     }
-    frontend_redraw();
 }
 
 static void frontend_upgrade_power_adjust(s8 direction)
 {
+    u8 old_selection = frontend_selection;
+    u8 old_scroll = frontend_upgrade_sub_scroll;
     u8 *power;
     u8 candidate;
 
@@ -2077,23 +3100,14 @@ static void frontend_upgrade_power_adjust(s8 direction)
     *power = candidate;
     frontend_upgrade_apply_preview();
     audio_effect(SFX_CURSOR);
-    frontend_redraw();
+    frontend_render_upgrade_submenu_update(
+        old_selection,
+        old_scroll
+    );
 }
 
 static void frontend_render_upgrade_menu(void)
 {
-    static const char *const fallback[
-        FRONTEND_UPGRADE_MENU_ITEM_COUNT
-    ] = {
-        "SHIP TYPE",
-        "FRONT GUN",
-        "REAR GUN",
-        "SHIELD",
-        "GENERATOR",
-        "LEFT SIDEKICK",
-        "RIGHT SIDEKICK",
-        "DONE"
-    };
     u8 index;
 
     memcpy(
@@ -2114,17 +3128,7 @@ static void frontend_render_upgrade_menu(void)
         index < FRONTEND_UPGRADE_MENU_ITEM_COUNT;
         index++
     ) {
-        frontend_draw_runtime_text_clipped(
-            frontend_frame_scratch,
-            frontend_upgrade_menu_text(
-                (u8)(index + 1u),
-                fallback[index]
-            ),
-            125,
-            (s16)(30 + index * 10u),
-            238,
-            index == frontend_selection ? 0xfeu : 0xfau
-        );
+        frontend_draw_upgrade_menu_item(index);
     }
     frontend_present(
         frontend_frame_scratch,
@@ -2132,28 +3136,26 @@ static void frontend_render_upgrade_menu(void)
     );
 }
 
-static void frontend_render_upgrade_submenu(void)
+static void frontend_render_upgrade_menu_selection(u8 old_selection)
 {
-    u8 first = frontend_upgrade_sub_scroll;
-    u8 visible_index;
+    u8 selection[2] = {old_selection, frontend_selection};
+    u8 index;
+
+    frontend_dirty_begin();
+    for (index = 0; index < 2; index++) {
+        s16 y = frontend_upgrade_menu_item_y(selection[index]);
+
+        frontend_restore_menu_chrome_rect(120, (u16)y, 120, 9);
+        frontend_draw_upgrade_menu_item(selection[index]);
+        frontend_dirty_add(120, y, 120, 9);
+    }
+    frontend_dirty_present();
+}
+
+static void frontend_draw_upgrade_submenu_preview(void)
+{
     char line[40];
     char digits[11];
-
-    memcpy(
-        frontend_frame_scratch,
-        frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
-        FRONTEND_FRAME_BYTES
-    );
-    frontend_draw_runtime_text_centered(
-        frontend_frame_scratch,
-        frontend_upgrade_menu_text(
-            (u8)(frontend_upgrade_category + 1u),
-            "UPGRADE"
-        ),
-        176,
-        6,
-        0xfbu
-    );
 
     if (
         frontend_upgrade_category == FRONTEND_UPGRADE_SHIP ||
@@ -2220,94 +3222,6 @@ static void frontend_render_upgrade_submenu(void)
             );
         }
     }
-
-    for (visible_index = 0; visible_index < 6; visible_index++) {
-        u8 item_index = (u8)(first + visible_index);
-        s16 y = (s16)(21 + visible_index * 21u);
-        u8 selected = item_index == frontend_selection;
-
-        if (item_index < frontend_upgrade_sub_count) {
-            u8 item = frontend_upgrade_sub_item[item_index];
-            u32 cost = frontend_upgrade_total_cost(
-                frontend_upgrade_category,
-                item,
-                frontend_upgrade_sub_power[item_index]
-            );
-            u8 affordable = cost <= frontend_upgrade_trade_cash;
-            const u8 *owned = frontend_player_item_field_const(
-                &frontend_upgrade_original_items,
-                frontend_upgrade_category
-            );
-
-            frontend_upgrade_item_name(
-                frontend_upgrade_category,
-                item,
-                line,
-                sizeof(line)
-            );
-            frontend_draw_item_source(
-                frontend_frame_scratch,
-                frontend_upgrade_category,
-                item,
-                168,
-                (s16)(y * 5 / 4 - 4)
-            );
-            frontend_draw_runtime_text_clipped_scaled(
-                frontend_frame_scratch,
-                line,
-                148,
-                y,
-                237,
-                !affordable ? 0xf4u :
-                    (selected ? 0xfeu : 0xfau),
-                FRONTEND_COMPACT_FONT_WIDTH,
-                FRONTEND_COMPACT_FONT_SPACE
-            );
-            frontend_text_with_u32(
-                line,
-                sizeof(line),
-                "COST ",
-                cost
-            );
-            frontend_draw_runtime_text_clipped_scaled(
-                frontend_frame_scratch,
-                line,
-                148,
-                (s16)(y + 9),
-                207,
-                !affordable ? 0xf3u :
-                    (selected ? 0xfcu : 0xf8u),
-                FRONTEND_COMPACT_FONT_WIDTH,
-                FRONTEND_COMPACT_FONT_SPACE
-            );
-            if (owned != 0 && *owned == item && item != 0) {
-                frontend_draw_runtime_text_clipped_scaled(
-                    frontend_frame_scratch,
-                    "OWN",
-                    211,
-                    (s16)(y + 9),
-                    237,
-                    0xedu,
-                    FRONTEND_COMPACT_FONT_WIDTH,
-                    FRONTEND_COMPACT_FONT_SPACE
-                );
-            }
-        } else if (item_index == frontend_upgrade_sub_count) {
-            frontend_draw_runtime_text_clipped(
-                frontend_frame_scratch,
-                (
-                    frontend_text_ready &&
-                    frontend_text.misc_text[13][0] != '\0'
-                ) ?
-                    frontend_text.misc_text[13] :
-                    "DONE",
-                139,
-                y,
-                238,
-                selected ? 0xfeu : 0xfau
-            );
-        }
-    }
     frontend_u32_string(frontend_upgrade_cash_left(), digits);
     frontend_draw_runtime_text_clipped(
         frontend_frame_scratch,
@@ -2325,10 +3239,244 @@ static void frontend_render_upgrade_submenu(void)
         115,
         0xfeu
     );
+}
+
+static void frontend_draw_upgrade_submenu_row(u8 visible_index)
+{
+    u8 item_index = (u8)(
+        frontend_upgrade_sub_scroll + visible_index
+    );
+    s16 y = (s16)(21 + visible_index * 21u);
+    u8 selected = item_index == frontend_selection;
+    char line[40];
+
+    if (item_index < frontend_upgrade_sub_count) {
+        u8 item = frontend_upgrade_sub_item[item_index];
+        u32 cost = frontend_upgrade_total_cost(
+            frontend_upgrade_category,
+            item,
+            frontend_upgrade_sub_power[item_index]
+        );
+        u8 affordable = cost <= frontend_upgrade_trade_cash;
+        const u8 *owned = frontend_player_item_field_const(
+            &frontend_upgrade_original_items,
+            frontend_upgrade_category
+        );
+
+        frontend_upgrade_item_name(
+            frontend_upgrade_category,
+            item,
+            line,
+            sizeof(line)
+        );
+        frontend_draw_item_source(
+            frontend_frame_scratch,
+            frontend_upgrade_category,
+            item,
+            160,
+            (s16)(y * 5 / 4 - 4)
+        );
+        frontend_draw_upgrade_list_text(
+            frontend_frame_scratch,
+            line,
+            142,
+            y,
+            231,
+            !affordable ? 0xf4u :
+                (selected ? 0xfeu : 0xfau)
+        );
+        frontend_text_with_u32(
+            line,
+            sizeof(line),
+            "COST ",
+            cost
+        );
+        frontend_draw_upgrade_list_text(
+            frontend_frame_scratch,
+            line,
+            142,
+            (s16)(y + 9),
+            201,
+            !affordable ? 0xf3u :
+                (selected ? 0xfcu : 0xf8u)
+        );
+        if (owned != 0 && *owned == item && item != 0) {
+            frontend_draw_upgrade_list_text(
+                frontend_frame_scratch,
+                "OWN",
+                205,
+                (s16)(y + 9),
+                231,
+                0xedu
+            );
+        }
+    } else if (item_index == frontend_upgrade_sub_count) {
+        frontend_draw_upgrade_list_text(
+            frontend_frame_scratch,
+            (
+                frontend_text_ready &&
+                frontend_text.misc_text[13][0] != '\0'
+            ) ?
+                frontend_text.misc_text[13] :
+                "DONE",
+            133,
+            y,
+            232,
+            selected ? 0xfeu : 0xfau
+        );
+    }
+}
+
+static void frontend_draw_upgrade_submenu_rows(void)
+{
+    u8 visible_index;
+
+    for (visible_index = 0; visible_index < 6; visible_index++) {
+        frontend_draw_upgrade_submenu_row(visible_index);
+    }
+}
+
+static void frontend_render_upgrade_submenu(void)
+{
+    memcpy(
+        frontend_frame_scratch,
+        frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
+        FRONTEND_FRAME_BYTES
+    );
+    frontend_draw_runtime_text_centered(
+        frontend_frame_scratch,
+        frontend_upgrade_menu_text(
+            (u8)(frontend_upgrade_category + 1u),
+            "UPGRADE"
+        ),
+        176,
+        6,
+        0xfbu
+    );
+    frontend_draw_upgrade_submenu_preview();
+    frontend_draw_upgrade_submenu_rows();
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
     );
+}
+
+static void frontend_render_upgrade_submenu_update(
+    u8 old_selection,
+    u8 old_scroll
+)
+{
+    u8 selection[2] = {old_selection, frontend_selection};
+    u8 index;
+
+    frontend_dirty_begin();
+    /*
+     * The left preview is the only configuration-dependent illustration.
+     * Rebuild it without touching the 120-pixel-wide list or page chrome.
+     */
+    frontend_restore_menu_chrome_rect(0, 16, 120, 144);
+    frontend_draw_upgrade_submenu_preview();
+    frontend_dirty_add(0, 16, 120, 144);
+
+    if (old_scroll != frontend_upgrade_sub_scroll) {
+        frontend_restore_menu_chrome_rect(120, 16, 120, 132);
+        frontend_draw_upgrade_submenu_rows();
+        frontend_dirty_add(120, 16, 120, 132);
+    } else {
+        for (index = 0; index < 2; index++) {
+            u8 item_index = selection[index];
+
+            if (
+                item_index >= frontend_upgrade_sub_scroll &&
+                item_index <
+                    frontend_upgrade_sub_scroll + 6u
+            ) {
+                u8 visible_index = (u8)(
+                    item_index - frontend_upgrade_sub_scroll
+                );
+                s16 y = (s16)(17 + visible_index * 21u);
+
+                frontend_restore_menu_chrome_rect(
+                    120,
+                    (u16)y,
+                    120,
+                    27
+                );
+                frontend_draw_upgrade_submenu_row(visible_index);
+                frontend_dirty_add(120, y, 120, 27);
+            }
+        }
+    }
+    frontend_dirty_present();
+}
+
+static void frontend_quit_capture_choice_background(void)
+{
+    u8 row;
+
+    for (row = 0; row < 14; row++) {
+        memcpy(
+            frontend_quit_choice_background + (u16)row * 160u,
+            frontend_frame_scratch +
+                (u32)(104u + row) * SCREEN_WIDTH + 32u,
+            160
+        );
+    }
+}
+
+static void frontend_quit_restore_choice_background(void)
+{
+    u8 row;
+
+    for (row = 0; row < 14; row++) {
+        memcpy(
+            frontend_frame_scratch +
+                (u32)(104u + row) * SCREEN_WIDTH + 32u,
+            frontend_quit_choice_background + (u16)row * 160u,
+            160
+        );
+    }
+}
+
+static void frontend_draw_quit_choices(
+    const char *yes,
+    const char *no
+)
+{
+    frontend_draw_runtime_text_centered(
+        frontend_frame_scratch,
+        yes,
+        66,
+        108,
+        frontend_quit_yes ? 0xfeu : 0xf6u
+    );
+    frontend_draw_runtime_text_centered(
+        frontend_frame_scratch,
+        no,
+        137,
+        108,
+        frontend_quit_yes ? 0xf6u : 0xfeu
+    );
+}
+
+static void frontend_render_quit_selection(void)
+{
+    const char *yes =
+        frontend_text_ready &&
+        frontend_text.misc_text[9][0] != '\0' ?
+            frontend_text.misc_text[9] :
+            "OK";
+    const char *no =
+        frontend_text_ready &&
+        frontend_text.misc_text[10][0] != '\0' ?
+            frontend_text.misc_text[10] :
+            "CANCEL";
+
+    frontend_quit_restore_choice_background();
+    frontend_draw_quit_choices(yes, no);
+    frontend_dirty_begin();
+    frontend_dirty_add(32, 104, 160, 14);
+    frontend_dirty_present();
 }
 
 static void frontend_render_quit_confirm(void)
@@ -2376,9 +3524,9 @@ static void frontend_render_quit_confirm(void)
     frontend_draw_runtime_text_clipped_scaled(
         frontend_frame_scratch,
         question,
+        37,
         53,
-        53,
-        190,
+        174,
         0xfeu,
         FRONTEND_COMPACT_FONT_WIDTH,
         FRONTEND_COMPACT_FONT_SPACE
@@ -2386,27 +3534,15 @@ static void frontend_render_quit_confirm(void)
     frontend_draw_runtime_text_wrapped_compact(
         frontend_frame_scratch,
         help,
-        53,
+        37,
         73,
-        190,
+        174,
         9,
         3,
         0xfau
     );
-    frontend_draw_runtime_text_centered(
-        frontend_frame_scratch,
-        yes,
-        74,
-        102,
-        frontend_quit_yes ? 0xfeu : 0xf6u
-    );
-    frontend_draw_runtime_text_centered(
-        frontend_frame_scratch,
-        no,
-        145,
-        102,
-        frontend_quit_yes ? 0xf6u : 0xfeu
-    );
+    frontend_quit_capture_choice_background();
+    frontend_draw_quit_choices(yes, no);
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
@@ -2590,69 +3726,83 @@ static void frontend_nav_draw_grid(void)
 {
     s16 shifted_x = (s16)(frontend_nav_x >> 1);
     s16 shifted_y = (s16)(frontend_nav_y >> 1);
+    s16 inner_x0 = frontend_source_to_screen_x(19);
+    s16 inner_x1 = frontend_source_to_screen_x(136);
+    s16 inner_y0 = frontend_source_to_screen_y(16);
+    s16 inner_y1 = frontend_source_to_screen_y(170);
+    s16 wide_x0 = 0;
+    s16 wide_x1 = frontend_source_to_screen_x(161);
     u8 index;
 
-    frontend_fill_source_rect(
+    frontend_fill_rect(
         frontend_frame_scratch,
-        19,
-        16,
-        135,
-        169,
+        (u16)inner_x0,
+        (u16)inner_y0,
+        (u16)(inner_x1 - inner_x0),
+        (u16)(inner_y1 - inner_y0),
         2
     );
     for (index = 1; index <= 20; index++) {
         s16 x = (s16)(index * 15 - shifted_x);
 
         if (x > 18 && x < 135) {
-            s16 y;
+            s16 screen_x = frontend_source_to_screen_x(x);
 
-            for (y = 16; y <= 169; y++) {
-                frontend_source_plot(
-                    frontend_frame_scratch,
-                    (s16)(x + 1),
-                    y,
-                    1,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
-                );
-                frontend_source_plot(
-                    frontend_frame_scratch,
-                    x,
-                    y,
-                    5,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
-                );
-            }
+            frontend_fill_rect(
+                frontend_frame_scratch,
+                (u16)(screen_x + 1),
+                (u16)inner_y0,
+                1,
+                (u16)(inner_y1 - inner_y0),
+                1
+            );
+            frontend_fill_rect(
+                frontend_frame_scratch,
+                (u16)screen_x,
+                (u16)inner_y0,
+                1,
+                (u16)(inner_y1 - inner_y0),
+                5
+            );
         }
     }
     for (index = 1; index <= 20; index++) {
         s16 y = (s16)(index * 15 - shifted_y);
 
         if (y > 15 && y < 169) {
-            s16 x;
+            s16 screen_y = frontend_source_to_screen_y(y);
+            u8 x_index;
 
-            for (x = 19; x <= 135; x++) {
-                frontend_source_plot(
-                    frontend_frame_scratch,
-                    x,
-                    (s16)(y + 1),
-                    1,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
+            frontend_fill_rect(
+                frontend_frame_scratch,
+                (u16)inner_x0,
+                (u16)(screen_y + 1),
+                (u16)(inner_x1 - inner_x0),
+                1,
+                1
+            );
+            frontend_fill_rect(
+                frontend_frame_scratch,
+                (u16)wide_x0,
+                (u16)screen_y,
+                (u16)(wide_x1 - wide_x0),
+                1,
+                5
+            );
+            for (x_index = 1; x_index <= 20; x_index++) {
+                s16 x = (s16)(
+                    x_index * 15 - shifted_x
                 );
-                frontend_source_plot(
-                    frontend_frame_scratch,
-                    x,
-                    y,
-                    5,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
-                );
+
+                if (x > 18 && x < 135) {
+                    s16 screen_x =
+                        frontend_source_to_screen_x(x);
+
+                    frontend_frame_scratch[
+                        (u32)screen_y * SCREEN_WIDTH +
+                        (u16)screen_x
+                    ] = 7;
+                }
             }
         }
     }
@@ -2886,17 +4036,83 @@ static void frontend_render_next_level(void)
     frontend_render_next_level_item(choice_count);
     frontend_present(
         frontend_frame_scratch,
-        frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
+        frontend_palette_address(FRONTEND_FRAME_NEXT_LEVEL_0)
     );
 }
 
 static void frontend_render_next_level_selection(u8 old_selection)
 {
-    (void)old_selection;
+    u8 choice_count = frontend_next_choice_count();
+
     frontend_nav_dot_animation = 0;
     frontend_nav_dot_wait = 0;
     frontend_nav_set_target();
-    frontend_render_next_level();
+    frontend_dirty_begin();
+    frontend_restore_menu_chrome_rect(
+        FRONTEND_NAV_DIRTY_X,
+        FRONTEND_NAV_DIRTY_Y,
+        FRONTEND_NAV_DIRTY_WIDTH,
+        FRONTEND_NAV_DIRTY_HEIGHT
+    );
+    frontend_nav_draw();
+    frontend_dirty_add(
+        FRONTEND_NAV_DIRTY_X,
+        FRONTEND_NAV_DIRTY_Y,
+        FRONTEND_NAV_DIRTY_WIDTH,
+        FRONTEND_NAV_DIRTY_HEIGHT
+    );
+    frontend_render_next_level_item(old_selection);
+    frontend_render_next_level_item(frontend_selection);
+    {
+        u16 old_y =
+            old_selection < choice_count ?
+                (u16)(
+                    FRONTEND_NEXT_CHOICE_Y +
+                    old_selection * FRONTEND_NEXT_CHOICE_STEP
+                ) :
+                FRONTEND_NEXT_EXIT_Y;
+        u16 new_y =
+            frontend_selection < choice_count ?
+                (u16)(
+                    FRONTEND_NEXT_CHOICE_Y +
+                    frontend_selection *
+                        FRONTEND_NEXT_CHOICE_STEP
+                ) :
+                FRONTEND_NEXT_EXIT_Y;
+
+        frontend_dirty_add(
+            FRONTEND_NEXT_PANEL_X,
+            (s16)old_y,
+            FRONTEND_NEXT_PANEL_WIDTH,
+            FRONTEND_NEXT_ITEM_HEIGHT
+        );
+        frontend_dirty_add(
+            FRONTEND_NEXT_PANEL_X,
+            (s16)new_y,
+            FRONTEND_NEXT_PANEL_WIDTH,
+            FRONTEND_NEXT_ITEM_HEIGHT
+        );
+    }
+    frontend_dirty_present();
+}
+
+static void frontend_render_next_level_nav(void)
+{
+    frontend_restore_menu_chrome_rect(
+        FRONTEND_NAV_DIRTY_X,
+        FRONTEND_NAV_DIRTY_Y,
+        FRONTEND_NAV_DIRTY_WIDTH,
+        FRONTEND_NAV_DIRTY_HEIGHT
+    );
+    frontend_nav_draw();
+    frontend_dirty_begin();
+    frontend_dirty_add(
+        FRONTEND_NAV_DIRTY_X,
+        FRONTEND_NAV_DIRTY_Y,
+        FRONTEND_NAV_DIRTY_WIDTH,
+        FRONTEND_NAV_DIRTY_HEIGHT
+    );
+    frontend_dirty_present();
 }
 
 static u8 frontend_stats_cube_total(void)
@@ -3500,6 +4716,15 @@ static void frontend_redraw(void)
 {
     u8 frame;
 
+    if (
+        game_state == STATE_TITLE ||
+        game_state == STATE_PLAY_MODE_MENU ||
+        game_state == STATE_EPISODE_MENU ||
+        game_state == STATE_DIFFICULTY_MENU
+    ) {
+        frontend_render_pre_game_menu();
+        return;
+    }
     if (game_state == STATE_LEVEL_STATS) {
         frontend_render_stats();
         return;
@@ -3538,12 +4763,28 @@ static void frontend_redraw_selection(u8 old_selection)
         frontend_selection
     );
 
+    if (
+        game_state == STATE_TITLE ||
+        game_state == STATE_PLAY_MODE_MENU ||
+        game_state == STATE_EPISODE_MENU ||
+        game_state == STATE_DIFFICULTY_MENU
+    ) {
+        frontend_render_pre_game_selection(old_selection);
+        return;
+    }
     if (game_state == STATE_NEXT_LEVEL_MENU) {
         frontend_render_next_level_selection(old_selection);
         return;
     }
+    if (game_state == STATE_GAME_MENU) {
+        frontend_render_game_menu_selection(old_selection);
+        return;
+    }
+    if (game_state == STATE_UPGRADE_MENU) {
+        frontend_render_upgrade_menu_selection(old_selection);
+        return;
+    }
     if (
-        game_state == STATE_UPGRADE_MENU ||
         game_state == STATE_UPGRADE_SUBMENU ||
         game_state == STATE_QUIT_CONFIRM
     ) {
@@ -4046,7 +5287,7 @@ static void frontend_update(void)
             redraw &&
             frontend_pending_kind != FRONTEND_PENDING_FULL_FRAME
         ) {
-            frontend_render_next_level();
+            frontend_render_next_level_nav();
         }
     }
 
@@ -4242,7 +5483,7 @@ static void frontend_update(void)
             frontend_quit_yes ^= 1u;
             frontend_selection = frontend_quit_yes ? 0 : 1;
             audio_effect(SFX_CURSOR);
-            frontend_redraw();
+            frontend_render_quit_selection();
             return;
         }
     }
@@ -4268,7 +5509,10 @@ static void frontend_update(void)
                 frontend_player_items.weapon_mode = 1;
             }
             audio_effect(SFX_CURSOR);
-            frontend_redraw();
+            frontend_render_upgrade_submenu_update(
+                frontend_selection,
+                frontend_upgrade_sub_scroll
+            );
         } else {
             audio_effect(SFX_CLINK);
         }
@@ -4383,6 +5627,9 @@ static void frontend_update(void)
         break;
     case STATE_UPGRADE_SUBMENU:
         if (frontend_selection < frontend_upgrade_sub_count) {
+            u8 old_selection = frontend_selection;
+            u8 old_scroll = frontend_upgrade_sub_scroll;
+
             frontend_selection = frontend_upgrade_sub_count;
             if (
                 frontend_selection >=
@@ -4392,7 +5639,10 @@ static void frontend_update(void)
                     (u8)(frontend_selection - 5u);
             }
             audio_effect(SFX_CLICK);
-            frontend_redraw();
+            frontend_render_upgrade_submenu_update(
+                old_selection,
+                old_scroll
+            );
         } else {
             frontend_upgrade_commit_submenu();
         }

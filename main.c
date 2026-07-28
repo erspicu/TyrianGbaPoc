@@ -1010,6 +1010,11 @@ static u8 frontend_pending_kind EWRAM_BSS;
 static u8 frontend_patch_state EWRAM_BSS;
 static u8 frontend_patch_old_selection EWRAM_BSS;
 static u8 frontend_patch_new_selection EWRAM_BSS;
+static u8 frontend_dirty_count EWRAM_BSS;
+static u16 frontend_dirty_x[8] EWRAM_BSS;
+static u16 frontend_dirty_y[8] EWRAM_BSS;
+static u16 frontend_dirty_width[8] EWRAM_BSS;
+static u16 frontend_dirty_height[8] EWRAM_BSS;
 static const u8 *frontend_pending_frame EWRAM_BSS;
 static const u8 *frontend_pending_palette EWRAM_BSS;
 /*
@@ -1040,11 +1045,25 @@ static FrontendGameplayArena frontend_gameplay_arena
         (u8 *)(void *)&frontend_gameplay_arena + \
         FRONTEND_FRAME_BYTES \
     ))
+#define FRONTEND_QUIT_CHOICE_BACKGROUND_BYTES (160u * 14u)
+#define frontend_quit_choice_background \
+    ((u8 *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_FRAME_BYTES + \
+        OT_SPRITE2_FRAME_PIXELS * sizeof(u16) \
+    ))
 _Static_assert(
     FRONTEND_FRAME_BYTES +
         OT_SPRITE2_FRAME_PIXELS * sizeof(u16) <=
         sizeof(FrontendGameplayArena),
     "frontend Sprite2 decode canvas must fit the shared arena tail"
+);
+_Static_assert(
+    FRONTEND_FRAME_BYTES +
+        OT_SPRITE2_FRAME_PIXELS * sizeof(u16) +
+        FRONTEND_QUIT_CHOICE_BACKGROUND_BYTES <=
+        sizeof(FrontendGameplayArena),
+    "frontend quit-choice cache must fit the shared arena tail"
 );
 /* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
 static s16 player_source_x;
@@ -1335,6 +1354,11 @@ volatile u32 telemetry_effect_cache_upload_bytes;
 volatile u32 telemetry_effect_cache_max_uploads;
 volatile u32 telemetry_effect_cache_max_visible_unique;
 volatile u32 telemetry_state_transitions;
+volatile u32 telemetry_frontend_full_redraws;
+volatile u32 telemetry_frontend_dirty_commits;
+volatile u32 telemetry_frontend_dirty_bytes;
+volatile u32 telemetry_frontend_runtime_shp_decodes;
+volatile u32 telemetry_frontend_runtime_sprite2_decodes;
 volatile u32 telemetry_romfs_entries STRESS_COLD_BSS;
 volatile u32 telemetry_romfs_image_bytes STRESS_COLD_BSS;
 volatile u32 telemetry_romfs_payload_bytes STRESS_COLD_BSS;
@@ -1869,7 +1893,7 @@ int main(void)
             pad_pressed = autotest_demo_input();
 #elif defined(AUTOTEST_FRONTEND_STRESS)
             pad_pressed =
-                game_state == STATE_TITLE ?
+                game_state == STATE_GAME_MENU ?
                     0 :
                     KEY_A;
 #elif defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
@@ -1889,6 +1913,16 @@ int main(void)
                 )
             ) {
                 frontend_selection = 2;
+            } else if (
+                game_state == STATE_UPGRADE_MENU &&
+                AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                    STATE_UPGRADE_SUBMENU
+            ) {
+                /*
+                 * The front-weapon inventory has the longest labels and is
+                 * the deterministic visual regression page for state 13.
+                 */
+                frontend_selection = 1;
             } else if (
                 game_state == STATE_GAME_MENU &&
                 AUTOTEST_FRONTEND_CAPTURE_STATE ==
@@ -2046,40 +2080,77 @@ int main(void)
 #ifdef AUTOTEST_FRONTEND_STRESS
             {
                 static u8 frontend_stress_started;
-                static u16 frontend_stress_frames;
+                static u16 frontend_stress_updates;
+                static u32 frontend_stress_vblank_start;
 
-                if (game_state == STATE_TITLE) {
+                if (game_state == STATE_GAME_MENU) {
                     if (!frontend_stress_started) {
-                        frontend_stress_started = 1;
-                        telemetry_missed_vblanks = 0;
-                        last_vblank_seen = current_vblank;
-                    }
-                    {
+                        if (!frontend_frame_pending) {
+                            frontend_stress_started = 1;
+                            telemetry_missed_vblanks = 0;
+                            telemetry_frontend_full_redraws = 0;
+                            telemetry_frontend_dirty_commits = 0;
+                            telemetry_frontend_dirty_bytes = 0;
+                            telemetry_frontend_runtime_shp_decodes = 0;
+                            telemetry_frontend_runtime_sprite2_decodes = 0;
+                            frontend_stress_vblank_start =
+                                telemetry_vblank_irqs;
+                            last_vblank_seen = current_vblank;
+                        }
+                    } else if (
+                        frontend_stress_updates < 600 &&
+                        !frontend_frame_pending
+                    ) {
                         u8 old_selection = frontend_selection;
 
-#ifndef AUTOTEST_FRONTEND_STRESS_NO_REDRAW
-                        frontend_selection ^= 1u;
+                        frontend_selection =
+                            frontend_selection == 4 ? 5 : 4;
                         frontend_redraw_selection(old_selection);
-#else
-                        (void)old_selection;
-#endif
-                    }
-                    frontend_stress_frames++;
-                    if (frontend_stress_frames == 600) {
+                        frontend_stress_updates++;
+                    } else if (
+                        frontend_stress_updates == 600 &&
+                        !frontend_frame_pending
+                    ) {
                         volatile u8 *sram =
                             (volatile u8 *)0x0E000000;
 
                         sram[0] = 'T';
                         sram[1] = 'G';
                         sram[2] = 'F';
-                        sram[3] = '4';
-                        sram_write_u32(4, frontend_stress_frames);
+                        sram[3] = '5';
+                        sram_write_u32(4, frontend_stress_updates);
                         sram_write_u32(8, telemetry_missed_vblanks);
-                        sram_write_u32(12, telemetry_vblank_irqs);
+                        sram_write_u32(
+                            12,
+                            telemetry_vblank_irqs -
+                                frontend_stress_vblank_start
+                        );
                         sram_write_u32(
                             16,
                             frontend_frame_pending
                         );
+                        sram_write_u32(
+                            20,
+                            telemetry_frontend_full_redraws
+                        );
+                        sram_write_u32(
+                            24,
+                            telemetry_frontend_dirty_commits
+                        );
+                        sram_write_u32(
+                            28,
+                            telemetry_frontend_dirty_bytes
+                        );
+                        sram_write_u32(
+                            32,
+                            telemetry_frontend_runtime_shp_decodes
+                        );
+                        sram_write_u32(
+                            36,
+                            telemetry_frontend_runtime_sprite2_decodes
+                        );
+                        sram_write_u32(40, game_state);
+                        sram_write_u32(44, frontend_selection);
                         __asm__ volatile("swi 3");
                     }
                 }
