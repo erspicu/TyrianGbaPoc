@@ -906,8 +906,9 @@ projectile graphics；一般版把未使用的四個 explosion slots 改作兩�
 
 ## 下一個移植階段
 
-1. 把固定 Power-11 驗證裝備接回 campaign equipment state。
-2. 恢復 stock ammo、charge、cooldown 與裝備互斥。
+1. 保存動態 weapon／power、cash、cube、armor 與 shield 到跨關
+   campaign state，並接上原版裝備選單。
+2. 恢復 stock energy／ammo、charge、cooldown 與裝備互斥。
 3. 建立合法 front／rear／sidekick／special 組合效能矩陣。
 4. 將四關 campaign 擴大成 Episode 1 完整 Full Game 與 Episode 2
    轉場，保存關卡間 player、cash、cube、weapon 與 global flags。
@@ -937,16 +938,50 @@ GAME OVER 不再凍結最後一幀，而會像 OpenTyrian 的 `level_loop` 一�
 - `Tyrian-GBA-Secret-EndFlow-Stats-Palette-v38.md`
 - `Tyrian-GBA-Updated-Plan-v38.md`
 
+## v39 正常武器狀態與可死亡 release
+
+一般 ROM 已移除固定 HDT weapon 165／Pulse-Cannon Power 11。關卡從
+`JE_initPlayerData()` 的 front weapon ID 1、power 1 開始，射擊介面直接
+照 `JE_mainGamePlayerFunctions()` 的索引規則讀取：
+
+```text
+weaponPort[player_front_weapon_id].op[0][player_front_weapon_power - 1]
+```
+
+目前狀態首次使用或 weapon ID／power 改變時才重新讀 ROMFS HDT；每次
+重新綁定同時清空 `shotMultiPos[SHOT_FRONT]`。因此 `power_up_weapon()`
+與 HOT DOG 等已移植拾取分支修改的不是遙測假狀態，而會在下一次發射
+實際換成對應的 stock HDT volley。
+
+`TYRIAN_GBA_DEV_PLAYER_INVINCIBLE` 預設由 1 改成 0；release 現在執行
+shield → armor → explosion → GAME OVER 的正常流程。固定 Power 11
+只保留成 `AUTOTEST` 專用參數，用於維持既有完整 Boss 路線的精確金標，
+非 AUTOTEST build 若嘗試啟用會在編譯時直接失敗。
+
+death regression 以無固定武器覆寫的 release-like 配置驗證：
+
+- front weapon ID = 1
+- front power = 1
+- 動態 HDT record = 155
+- weapon definition valid = 1
+- dev invincible = 0
+- 完整死亡與返回 Game Menu = PASS
+
+詳細紀錄：
+
+- `Tyrian-GBA-Normal-Weapon-Mortal-Player-v39.md`
+- `Tyrian-GBA-Updated-Plan-v39.md`
+
 ## 建置
 
 ```powershell
 .\build.ps1
 ```
 
-目前 ROMFS v38 預設 ROM：
+目前 ROMFS v39 預設 ROM：
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v38_detail_high_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v39_detail_high_speed_normal.gba
 ```
 
 ROM 與中間產物不納入 Git。

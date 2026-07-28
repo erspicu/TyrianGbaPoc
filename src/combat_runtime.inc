@@ -10,48 +10,74 @@ static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
 }
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
-static void source_front_weapon_init(void)
+static u8 source_front_weapon_sync(void)
 {
     OtWeaponPortDefinition front_port;
-    u16 weapon_id = 0;
+    u8 port_id = source_parity_level.player_front_weapon_id;
+    u8 power = source_parity_level.player_front_weapon_power;
+    u16 weapon_id;
 
+    if (
+        source_front_weapon_bound &&
+        source_front_weapon_port_id == port_id &&
+        source_front_weapon_power == power
+    ) {
+        return source_front_weapon_valid;
+    }
+
+    source_front_weapon_bound = 1;
+    source_front_weapon_port_id = port_id;
+    source_front_weapon_power = power;
+    source_front_weapon_hdt_id = 0;
+    source_front_weapon_valid = 0;
+    source_front_shot_multi_pos = 0;
     memset(&source_front_weapon, 0, sizeof(source_front_weapon));
-    source_front_weapon_valid =
-        ot_data_hdt_weapon_port_read(1, &front_port);
-    if (!source_front_weapon_valid) return;
-    weapon_id = front_port.op[0][10];
-    source_front_weapon_valid =
-        weapon_id == 165 &&
-        ot_data_hdt_weapon_read(weapon_id, &source_front_weapon) &&
-        source_weapon_is_valid(&source_front_weapon);
-    if (!source_front_weapon_valid) return;
+    if (
+        port_id == 0 ||
+        power == 0 ||
+        power > 11 ||
+        !ot_data_hdt_weapon_port_read(port_id, &front_port)
+    ) {
+        return 0;
+    }
 
     /*
-     * Stock tyrian.hdt Pulse-Cannon power 11.  These assertions prevent a
-     * mounted data variant from silently becoming a GBA-authored loadout.
+     * mainint.c JE_mainGamePlayerFunctions():
+     * weaponPort[item].op[0][items.weapon[FRONT].power - 1].
+     * Front weapons always use mode zero; weapon_mode belongs to the rear
+     * port.  Reading this table on state changes preserves every stock power
+     * level instead of pinning the adapter to HDT record 165.
      */
-    if (
-        source_front_weapon.shotrepeat != 5 ||
-        source_front_weapon.multi != 5 ||
-        source_front_weapon.max != 5 ||
-        source_front_weapon.sound != 25 ||
-        source_front_weapon.sg[0] != 62 ||
-        source_front_weapon.sg[1] != 59 ||
-        source_front_weapon.attack[0] != 5 ||
-        source_front_weapon.attack[1] != 2 ||
-        source_front_weapon.attack[2] != 2 ||
-        source_front_weapon.attack[3] != 2 ||
-        source_front_weapon.attack[4] != 2
-    ) {
-        source_front_weapon_valid = 0;
-        return;
-    }
+    weapon_id = front_port.op[0][power - 1u];
+    source_front_weapon_hdt_id = weapon_id;
+    source_front_weapon_valid =
+        weapon_id != 0 &&
+        ot_data_hdt_weapon_read(weapon_id, &source_front_weapon) &&
+        source_weapon_is_valid(&source_front_weapon);
+    return source_front_weapon_valid;
+}
+
+static void source_front_weapon_init(void)
+{
+    source_front_weapon_bound = 0;
+    source_front_weapon_port_id = 0;
+    source_front_weapon_power = 0;
+    source_front_weapon_hdt_id = 0;
+    source_front_weapon_valid = 0;
     source_front_shot_multi_pos = 0;
     source_player_delta_x = 0;
     source_player_delta_y = 0;
-    source_parity_level.player_front_weapon_id = 1;
-    source_parity_level.player_front_weapon_power = 11;
-    source_parity_level.player_rear_weapon_id = 0;
+#if TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER
+    /*
+     * Regression-only loadout.  Release builds cannot enable this macro,
+     * and therefore start from JE_initPlayerData() power 1.
+     */
+    source_parity_level.player_front_weapon_power =
+        TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER;
+    source_parity_level.player_purple_balls_needed =
+        TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER == 11 ? 50 : 1;
+#endif
+    (void)source_front_weapon_sync();
 }
 #endif
 
@@ -264,7 +290,7 @@ static void spawn_player_shot(void)
     if (
         !player_alive ||
         source_parity_level.end_level ||
-        !source_front_weapon_valid
+        !source_front_weapon_sync()
     ) {
         return;
     }

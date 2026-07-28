@@ -18,13 +18,13 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v38_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v38_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v38_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v38_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v38_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v38_$configSuffix"
-$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v38_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v39_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v39_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v39_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v39_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v39_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v39_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v39_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -1116,9 +1116,9 @@ $telemetryChecks = [ordered]@{
                 $telemetry.sprite2_compact_uploads * 256 -and
         $telemetry.sprite2_cache_slots -eq 24
     )
-    # v38 runs the stock five-shot, power-11 Pulse-Cannon.  This intentionally
-    # replaces the old single power-1 bullet workload while retaining exact
-    # deterministic cache goldens for the new source loadout.
+    # The regression-only power-11 override retains the established five-shot
+    # workload and exact cache goldens.  The playable v39 ROM does not compile
+    # this override and binds the source power-1 campaign state dynamically.
     sprite2_workload_unchanged = (
         $telemetry.sprite2_cache_misses -eq 283 -and
         $telemetry.sprite2_cache_evictions -eq 259 -and
@@ -1259,7 +1259,7 @@ if ($deathRuntimeErrors.Count -ne 0) {
     )
 }
 $deathSaveBytes = [System.IO.File]::ReadAllBytes($deathTestSave)
-if ($deathSaveBytes.Length -lt 120) {
+if ($deathSaveBytes.Length -lt 144) {
     throw "Death auto-test SRAM telemetry is truncated"
 }
 $deathMagic = [Text.Encoding]::ASCII.GetString($deathSaveBytes, 0, 4)
@@ -1300,6 +1300,12 @@ $deathTelemetry = [ordered]@{
     game_over_exits = Read-DeathTelemetryU32 108
     return_music_active = Read-DeathTelemetryU32 112
     full_pass = Read-DeathTelemetryU32 116
+    fixed_weapon_override = Read-DeathTelemetryU32 120
+    front_weapon_id = Read-DeathTelemetryU32 124
+    front_weapon_power = Read-DeathTelemetryU32 128
+    front_weapon_hdt_id = Read-DeathTelemetryU32 132
+    front_weapon_valid = Read-DeathTelemetryU32 136
+    normal_weapon_pass = Read-DeathTelemetryU32 140
 }
 $deathChecks = [ordered]@{
     rom_reported_game_over_pass = $deathTelemetry.game_over_pass -eq 1
@@ -1316,6 +1322,14 @@ $deathChecks = [ordered]@{
     )
     release_invincibility_override = (
         $deathTelemetry.dev_invincible -eq 0
+    )
+    normal_release_weapon_binding = (
+        $deathTelemetry.fixed_weapon_override -eq 0 -and
+        $deathTelemetry.front_weapon_id -eq 1 -and
+        $deathTelemetry.front_weapon_power -eq 1 -and
+        $deathTelemetry.front_weapon_hdt_id -eq 155 -and
+        $deathTelemetry.front_weapon_valid -eq 1 -and
+        $deathTelemetry.normal_weapon_pass -eq 1
     )
     source_death_completion = (
         $deathTelemetry.player_alive -eq 0 -and

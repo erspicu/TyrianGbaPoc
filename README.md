@@ -25,9 +25,9 @@ The current scope is deliberately narrow:
 - Mode-4 double-buffered menu transitions and selection-row-only updates;
   invalid keys perform no redraw
 - three independently scrolling Mode-0 background layers (MAP1, MAP2 and MAP3)
-- all source records remain directly addressable; with the max-power stock
-  Pulse-Cannon, the deterministic first-level route consumes 892 records
-  through the earlier authored boss exit (888 applied and four skipped)
+- all source records remain directly addressable; the regression-only
+  max-power Pulse-Cannon route consumes 892 records through the authored boss
+  exit (888 applied and four skipped)
 - PC `curLoc` timing and source enemy identity, pool, position, movement,
   armor, animation, link, turret and death fields
 - the original four 25-slot enemy groups: 473/473 event spawns, 21 successful
@@ -56,22 +56,21 @@ The current scope is deliberately narrow:
 - exact PC player inertia, background parallax and enemy map offsets; the GBA
   crops `game_screen x=36..275, y=12..171` and restricts the player to source
   `y=17..152`, keeping the complete 24x28 ship inside that visible crop
-- stock Port 1 Pulse-Cannon at power 11 from HDT weapon 165, including its
-  five-shot 62/59 graphics, stable USP Talon bank poses, source explosion and
-  reward assets, TINY_FONT cash and FONT_SHAPES status labels
-- shield-to-armor player damage, explosion and Game Over flow; the validation
-  ROM defaults to `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1`, while a diagnostic
-  build can explicitly set it to `0`
+- stock new-game Port 1 Pulse-Cannon at power 1 from HDT weapon 155; weapon
+  ID/power changes dynamically rebind through `weaponPort.op[0][power-1]`, so
+  source power-up pickups are no longer masked by a fixed power-11 adapter
+- shield-to-armor player damage, explosion and Game Over flow; the playable
+  ROM defaults to `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0`
 - the linked source boss group, PC-style boss health bar, end-level flight,
   level statistics and return to Game Menu
 - complete tracker music plus all 29 Tyrian SFX and nine voices, with the
   original Normal-speed target of about 34.78 logic updates/second
 
-The validation build keeps the player invincible without suppressing
-collision telemetry. A dedicated forced-death regression compiles the flag
-off and verifies that Game Over selects stock MUS song 29 (the title/menu
-music) instead of leaving level song 17 active. The normal level-statistics
-return makes the same explicit music transition.
+The playable build is mortal. Deterministic gameplay tests bypass damage and
+request power 11 only through an `AUTOTEST`-restricted compile-time override,
+so their established boss/cache goldens do not alter the release. A dedicated
+forced-death regression verifies the release-like power-1/HDT-155 binding,
+normal death, and the stock Game Over/menu music transitions.
 
 The v29 full route passes schema-25 SRAM telemetry with 100 source enemy kills
 and the boss group fully cleared. Its Sprite2 L2 reduces first-level missed
@@ -116,6 +115,13 @@ the source coordinates and hue-15 glow/final colour. A brightness-weighted
 4bpp background palette selector also fixes dark-green corruption on mixed
 mechanical tiles without violating the Episode 2 frame budget.
 
+The v39 release removes the fixed HDT-165/power-11 player weapon adapter.
+Playable levels now start from OpenTyrian's Pulse-Cannon power 1 state and
+resolve the active HDT weapon only when weapon ID or power changes. Power-up
+pickups therefore change the actual volley on the next shot. Release
+invincibility is off; the normal shield, armor, explosion and Game Over path
+is active.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -136,7 +142,7 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v38_detail_high_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v39_detail_high_speed_normal.gba
 ```
 
 `build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
@@ -158,6 +164,8 @@ under `Backup`, and the reproducible source asset conversions are
 - [v37 updated plan](MD/Tyrian-GBA-Updated-Plan-v37.md)
 - [v38 Secret/end-flow/statistics/palette parity](MD/Tyrian-GBA-Secret-EndFlow-Stats-Palette-v38.md)
 - [v38 updated plan](MD/Tyrian-GBA-Updated-Plan-v38.md)
+- [v39 normal weapon and mortal-player release](MD/Tyrian-GBA-Normal-Weapon-Mortal-Player-v39.md)
+- [v39 updated plan](MD/Tyrian-GBA-Updated-Plan-v39.md)
 - [v36 hotpath and IWRAM evaluation](MD/Tyrian-GBA-Hotpath-Evaluation-v36.md)
 - [v36 updated plan](MD/Tyrian-GBA-Updated-Plan-v36.md)
 - [v35 fixed-timestep drop-frame and ARM7 evaluation](MD/Tyrian-GBA-Drop-Frame-ARM7-v35.md)

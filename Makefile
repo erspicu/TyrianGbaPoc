@@ -189,13 +189,13 @@ $(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cu
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v38_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v38_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v38_$(CONFIG_SUFFIX)
-JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v38_$(CONFIG_SUFFIX)
-ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v38_$(CONFIG_SUFFIX)
-ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v38_$(CONFIG_SUFFIX)
-CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v38_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v39_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v39_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v39_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v39_$(CONFIG_SUFFIX)
+ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v39_$(CONFIG_SUFFIX)
+ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v39_$(CONFIG_SUFFIX)
+CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v39_$(CONFIG_SUFFIX)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 BUILD := build
@@ -377,7 +377,9 @@ $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
 		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
-	$(CC) $(CFLAGS) -DAUTOTEST -MMD -MP -c $< -o $@
+	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
@@ -414,6 +416,7 @@ $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUF
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(ROUTE_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(ROUTE_SECTION) \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o: \
@@ -426,6 +429,7 @@ $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_lev
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(CAMPAIGN_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(CAMPAIGN_SECTION) \
 		-DAUTOTEST_CAMPAIGN_LEVEL_COUNT=$(CAMPAIGN_LEVELS) \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o: \

@@ -1635,6 +1635,7 @@ static void autotest_death_update(void)
     const OtDataCatalog *catalog;
     volatile u8 *sram;
     u8 game_over_pass;
+    u8 normal_weapon_pass;
 
     if (++settled_frames < 4) return;
 
@@ -1668,6 +1669,28 @@ static void autotest_death_update(void)
     sram_write_u32(76, telemetry_effect_drops);
     sram_write_u32(80, telemetry_display_frames);
     sram_write_u32(84, oam_count);
+    normal_weapon_pass = (
+        TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER == 0 &&
+        source_parity_level.player_front_weapon_id == 1 &&
+        source_parity_level.player_front_weapon_power == 1 &&
+        source_front_weapon_bound &&
+        source_front_weapon_port_id == 1 &&
+        source_front_weapon_power == 1 &&
+        source_front_weapon_hdt_id == 155 &&
+        source_front_weapon_valid
+    );
+    sram_write_u32(120, TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER);
+    sram_write_u32(
+        124,
+        source_parity_level.player_front_weapon_id
+    );
+    sram_write_u32(
+        128,
+        source_parity_level.player_front_weapon_power
+    );
+    sram_write_u32(132, source_front_weapon_hdt_id);
+    sram_write_u32(136, source_front_weapon_valid);
+    sram_write_u32(140, normal_weapon_pass);
     game_over_pass = (
         game_state == STATE_GAME_OVER &&
         catalog != 0 &&
@@ -1716,6 +1739,7 @@ static void autotest_death_update(void)
     sram_write_u32(
         116,
         game_over_pass &&
+        normal_weapon_pass &&
         catalog != 0 &&
         catalog->selected_mus_song == 29 &&
         game_state == STATE_GAME_MENU &&

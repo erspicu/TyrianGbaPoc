@@ -39,12 +39,12 @@ _Static_assert(
 #define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
 
 /*
- * Development-validation switch.  Keep the release validation ROM
- * invincible while authored level flow is being inspected.  A diagnostic
- * build can explicitly set it to 0 to exercise real player death.
+ * Development-only override.  The playable release follows the translated
+ * shield, armor and death path; an explicit diagnostic build may still opt
+ * into invincibility without changing gameplay data.
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
 #endif
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 0 && \
     TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 1
@@ -61,6 +61,21 @@ _Static_assert(
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT != 0 && TYRIAN_GBA_STRESS_LOADOUT != 1
 #error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
+#endif
+
+/*
+ * Deterministic source-route tests retain their established power-11
+ * workload without locking the playable ROM.  Zero means "use campaign
+ * state"; non-zero values are accepted only by AUTOTEST builds.
+ */
+#ifndef TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER
+#define TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER 0
+#endif
+#if TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER > 11
+#error TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER must be 0..11
+#endif
+#if !defined(AUTOTEST) && TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER != 0
+#error Fixed front-weapon power is restricted to AUTOTEST builds
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT
 /*
@@ -170,7 +185,7 @@ enum {
 /* OpenTyrian shots.h MAX_PWEAPON. */
 #define MAX_PLAYER_SHOTS 81
 #else
-/* Four overlapping five-shot power-11 Pulse-Cannon volleys. */
+/* Enough for four overlapping volleys at the Pulse-Cannon's maximum power. */
 #define MAX_PLAYER_SHOTS 20
 #endif
 #define MAX_ENEMY_SHOTS 60
@@ -896,6 +911,10 @@ static u32 player_cash;
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static OtWeaponDefinition source_front_weapon EWRAM_BSS;
 static u8 source_front_weapon_valid;
+static u8 source_front_weapon_bound;
+static u8 source_front_weapon_port_id;
+static u8 source_front_weapon_power;
+static u16 source_front_weapon_hdt_id;
 static u8 source_front_shot_multi_pos;
 static s16 source_player_delta_x;
 static s16 source_player_delta_y;
@@ -1318,6 +1337,7 @@ static void source_spawn_explosion(
 );
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static void source_front_weapon_init(void);
+static u8 source_front_weapon_sync(void);
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT
 static void stress_loadout_init(void);
