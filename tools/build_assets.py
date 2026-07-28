@@ -156,6 +156,23 @@ FRONTEND_NAV_PLANET_ANIMATED = (
     1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,
     1, 0, 0, 0, 0, 0, 0, 0, 0, 1,
 )
+FRONTEND_NATIVE_FONT_CHARACTERS = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%"
+)
+FRONTEND_NATIVE_FONT_HEIGHT = 7
+FRONTEND_NATIVE_FONT_WIDTH = 6
+FRONTEND_NATIVE_FONT_SPACE = 3
+FRONTEND_NATIVE_FONT_SHADOW = 240
+FRONTEND_STATIC_MENU_PANEL_X = 120
+FRONTEND_STATIC_MENU_PANEL_Y = 0
+FRONTEND_STATIC_MENU_PANEL_WIDTH = 120
+FRONTEND_STATIC_MENU_PANEL_HEIGHT = 120
+FRONTEND_STATIC_MENU_PANEL_BYTES = (
+    FRONTEND_STATIC_MENU_PANEL_WIDTH *
+    FRONTEND_STATIC_MENU_PANEL_HEIGHT
+)
+FRONTEND_STATIC_GAME_MENU_COUNT = 6
+FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
 
 assert GBA_VIEW_CROP_X == 12
 assert GBA_VIEW_CROP_Y == 12
@@ -203,6 +220,43 @@ JUKEBOX_FONT_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%"
 JUKEBOX_BACKDROP_TILE_COUNT = 16
 JUKEBOX_STAR_TILE_COUNT = 3
 JUKEBOX_RECIPROCAL_MAX_Z = 500
+
+
+def load_frontend_native_font(path: Path) -> np.ndarray:
+    characters: list[str] = []
+    rows: list[list[int]] = []
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="ascii").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != FRONTEND_NATIVE_FONT_HEIGHT + 1:
+            raise ValueError(
+                "native font row must contain one glyph and seven bytes: "
+                f"{path}:{line_number}"
+            )
+        character = fields[0]
+        if len(character) != 1:
+            raise ValueError(
+                f"native font glyph key is not one character: {character!r}"
+            )
+        values = [int(field, 16) for field in fields[1:]]
+        if any(value < 0 or value > 0x1f for value in values):
+            raise ValueError(
+                f"native font row exceeds five occupied bits: {character!r}"
+            )
+        characters.append(character)
+        rows.append(values)
+    if "".join(characters) != FRONTEND_NATIVE_FONT_CHARACTERS:
+        raise ValueError(
+            "native font character order changed: "
+            f"{''.join(characters)!r}"
+        )
+    return np.asarray(rows, dtype=np.uint8)
 
 
 def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
@@ -1005,7 +1059,16 @@ class FrontendSourceRenderer:
 def build_frontend_nav_obj_assets(
     source: FrontendSourceRenderer,
     preview: Path,
-) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+) -> tuple[
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    dict[str, int],
+    list[str],
+]:
     """Pre-scale the source navigation sprites for bitmap-mode OBJ VRAM.
 
     Mode 4 leaves 16 KiB at 0x06014000 for OBJ characters.  Planet animation
@@ -1433,6 +1496,747 @@ def build_frontend_nav_bitmap_pages(
     return bytes(pages), metadata, report
 
 
+def build_frontend_static_menu_panels(
+    source: FrontendSourceRenderer,
+    native_font: np.ndarray,
+    preview: Path,
+) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+    """Bake final-resolution text panels shared by the static menu family."""
+    font_index = {
+        character: index
+        for index, character in enumerate(FRONTEND_NATIVE_FONT_CHARACTERS)
+    }
+    fallback_index = font_index["?"]
+    menu_chrome = source.menu_picture_frame(1)
+    panels: list[np.ndarray] = []
+    names: list[str] = []
+    pre_game_frames: list[np.ndarray] = []
+    pre_game_names: list[str] = []
+    preview_dir = preview / "frontend_static_menu_panels"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+
+    def glyph_index(character: str) -> int | None:
+        if character == " ":
+            return None
+        return font_index.get(character.upper(), fallback_index)
+
+    def glyph_width(index: int) -> int:
+        occupied = 0
+        for value in native_font[index]:
+            occupied |= int(value)
+        return max(1, occupied.bit_length())
+
+    def glyph_advance(
+        index: int | None,
+        maximum_width: int = FRONTEND_NATIVE_FONT_WIDTH,
+        space_width: int = FRONTEND_NATIVE_FONT_SPACE,
+    ) -> int:
+        if index is None:
+            return space_width
+        advance = glyph_width(index)
+        if advance < maximum_width:
+            advance += 1
+        return min(maximum_width, advance)
+
+    def text_width(
+        text: str,
+        maximum_width: int = FRONTEND_NATIVE_FONT_WIDTH,
+        space_width: int = FRONTEND_NATIVE_FONT_SPACE,
+    ) -> int:
+        return sum(
+            glyph_advance(
+                glyph_index(character),
+                maximum_width,
+                space_width,
+            )
+            for character in text
+        )
+
+    def draw_glyph(
+        frame: np.ndarray,
+        index: int | None,
+        x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        if index is None:
+            return
+        natural_width = glyph_width(index)
+        for row, value in enumerate(native_font[index]):
+            target_y = y + row
+            if target_y < 0 or target_y >= FRONTEND_FRAME_HEIGHT:
+                continue
+            for column in range(natural_width):
+                target_x = x + column
+                if (
+                    0 <= target_x < FRONTEND_FRAME_WIDTH and
+                    int(value) & (1 << (natural_width - column - 1))
+                ):
+                    frame[target_y, target_x] = colour
+
+    def draw_text(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        colour: int,
+        maximum_width: int = FRONTEND_NATIVE_FONT_WIDTH,
+        space_width: int = FRONTEND_NATIVE_FONT_SPACE,
+    ) -> None:
+        for character in text:
+            index = glyph_index(character)
+            advance = glyph_advance(index, maximum_width, space_width)
+            if x >= right or x + advance > right:
+                break
+            draw_glyph(
+                frame,
+                index,
+                x + 1,
+                y + 1,
+                FRONTEND_NATIVE_FONT_SHADOW,
+            )
+            draw_glyph(frame, index, x, y, colour)
+            x += advance
+
+    def draw_centered(
+        frame: np.ndarray,
+        text: str,
+        center_x: int,
+        y: int,
+        colour: int,
+        maximum_width: int = FRONTEND_NATIVE_FONT_WIDTH,
+        space_width: int = FRONTEND_NATIVE_FONT_SPACE,
+    ) -> None:
+        draw_text(
+            frame,
+            text,
+            center_x -
+                text_width(text, maximum_width, space_width) // 2,
+            y,
+            FRONTEND_FRAME_WIDTH,
+            colour,
+            maximum_width,
+            space_width,
+        )
+
+    def draw_wrapped(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        line_height: int,
+        max_lines: int,
+        colour: int,
+        maximum_width: int,
+        space_width: int,
+    ) -> None:
+        line = ""
+        line_index = 0
+        for word in text.split():
+            candidate = f"{line} {word}" if line else word
+            if (
+                line and
+                text_width(
+                    candidate,
+                    maximum_width,
+                    space_width,
+                ) > right - x
+            ):
+                draw_text(
+                    frame,
+                    line,
+                    x,
+                    y + line_index * line_height,
+                    right,
+                    colour,
+                    maximum_width,
+                    space_width,
+                )
+                line_index += 1
+                if line_index >= max_lines:
+                    return
+                line = word
+            else:
+                line = candidate
+        if line and line_index < max_lines:
+            draw_text(
+                frame,
+                line,
+                x,
+                y + line_index * line_height,
+                right,
+                colour,
+                maximum_width,
+                space_width,
+            )
+
+    def add(name: str, frame: np.ndarray) -> None:
+        panel = frame[
+            FRONTEND_STATIC_MENU_PANEL_Y:
+                FRONTEND_STATIC_MENU_PANEL_Y +
+                FRONTEND_STATIC_MENU_PANEL_HEIGHT,
+            FRONTEND_STATIC_MENU_PANEL_X:
+                FRONTEND_STATIC_MENU_PANEL_X +
+                FRONTEND_STATIC_MENU_PANEL_WIDTH,
+        ].copy()
+        if panel.size != FRONTEND_STATIC_MENU_PANEL_BYTES:
+            raise AssertionError("static menu panel dimensions changed")
+        panels.append(panel)
+        names.append(name)
+
+        rgb = np.minimum(
+            source.palette_rgb_index(0).astype(np.uint16) * 4,
+            255,
+        ).astype(np.uint8)
+        Image.fromarray(rgb[frame], "RGB").save(
+            preview_dir / f"{len(panels) - 1:02d}_{name}.png"
+        )
+
+    def add_pre_game(
+        name: str,
+        frame: np.ndarray,
+        palette_index: int,
+    ) -> None:
+        pre_game_frames.append(frame.copy())
+        pre_game_names.append(name)
+        rgb = np.minimum(
+            source.palette_rgb_index(palette_index).astype(np.uint16) * 4,
+            255,
+        ).astype(np.uint8)
+        Image.fromarray(rgb[frame], "RGB").save(
+            preview_dir /
+            f"pre_game_{len(pre_game_frames) - 1:02d}_{name}.png"
+        )
+
+    title_menu = source.text["title_menu"]
+    title_fallback = ("START NEW GAME", "DEMO", "JUKEBOX")
+    for selection in range(3):
+        frame = source.picture_frame(4)
+        source.draw_logo(frame)
+        labels = (
+            title_menu[0] or title_fallback[0],
+            title_menu[5] or title_fallback[1],
+            title_fallback[2],
+        )
+        for index, label in enumerate(labels):
+            draw_centered(
+                frame,
+                label,
+                120,
+                86 + index * 10,
+                0xfe if index == selection else 0xfa,
+            )
+        add_pre_game(f"title_{selection}", frame, 8)
+
+    for selection in range(2):
+        frame = source.picture_frame(2)
+        draw_centered(frame, "PLAY MODE", 120, 15, 0xfb)
+        for index, label in enumerate(("FULL GAME", "ARCADE")):
+            draw_centered(
+                frame,
+                label,
+                120,
+                43 + index * 19,
+                0xfe if index == selection else 0xfa,
+            )
+        add_pre_game(f"play_mode_{selection}", frame, 7)
+
+    episode_names = source.text["episode_name"]
+    episode_fallback = (
+        "SELECT AN EPISODE",
+        "EPISODE 1: ESCAPE",
+        "EPISODE 2: TREACHERY",
+        "EPISODE 3: MISSION: SUICIDE",
+        "EPISODE 4: AN END TO FATE",
+    )
+    for selection in range(4):
+        frame = source.picture_frame(2)
+        draw_centered(
+            frame,
+            episode_names[0] or episode_fallback[0],
+            120,
+            15,
+            0xfb,
+        )
+        for index in range(4):
+            draw_text(
+                frame,
+                episode_names[index + 1] or episode_fallback[index + 1],
+                15,
+                40 + index * 24,
+                190,
+                0xfe if index == selection else 0xfa,
+            )
+        add_pre_game(f"episode_{selection}", frame, 7)
+
+    difficulty_names = source.text["difficulty_name"]
+    difficulty_fallback = (
+        "DIFFICULTY LEVEL",
+        "EASY",
+        "NORMAL",
+        "HARD",
+    )
+    for selection in range(3):
+        frame = source.picture_frame(2)
+        draw_centered(
+            frame,
+            difficulty_names[0] or difficulty_fallback[0],
+            120,
+            15,
+            0xfb,
+        )
+        for index in range(3):
+            draw_centered(
+                frame,
+                difficulty_names[index + 1] or
+                    difficulty_fallback[index + 1],
+                120,
+                43 + index * 19,
+                0xfe if index == selection else 0xfa,
+            )
+        add_pre_game(f"difficulty_{selection}", frame, 7)
+
+    full_game_menu = source.text["full_game_menu"]
+    game_fallback = (
+        "GAME MENU",
+        "DATA CUBES",
+        "SHIP SPECS",
+        "UPGRADE SHIP",
+        "OPTIONS",
+        "PLAY NEXT LEVEL",
+        "QUIT GAME",
+    )
+    for selection in range(FRONTEND_STATIC_GAME_MENU_COUNT):
+        frame = menu_chrome.copy()
+        title = full_game_menu[0] or game_fallback[0]
+
+        draw_centered(frame, title, 178, 6, 0xfb)
+        for index in range(FRONTEND_STATIC_GAME_MENU_COUNT):
+            disabled = index in (0, 1, 3)
+            colour = (
+                0xf8 if index == selection else 0xf4
+            ) if disabled else (
+                0xfe if index == selection else 0xfa
+            )
+            source_y = 38 + index * 16 + (16 if index == 5 else 0)
+            draw_text(
+                frame,
+                full_game_menu[index + 1] or game_fallback[index + 1],
+                125,
+                source_y * FRONTEND_FRAME_HEIGHT // 200,
+                238,
+                colour,
+            )
+        add(f"game_menu_{selection}", frame)
+
+    upgrade_menu = source.text["upgrade_menu"]
+    upgrade_fallback = (
+        "UPGRADE SHIP",
+        "SHIP TYPE",
+        "FRONT GUN",
+        "REAR GUN",
+        "SHIELD",
+        "GENERATOR",
+        "LEFT SIDEKICK",
+        "RIGHT SIDEKICK",
+        "DONE",
+    )
+    for selection in range(FRONTEND_STATIC_UPGRADE_MENU_COUNT):
+        frame = menu_chrome.copy()
+
+        draw_centered(
+            frame,
+            upgrade_menu[0] or upgrade_fallback[0],
+            176,
+            7,
+            0xfb,
+        )
+        for index in range(FRONTEND_STATIC_UPGRADE_MENU_COUNT):
+            draw_text(
+                frame,
+                upgrade_menu[index + 1] or upgrade_fallback[index + 1],
+                125,
+                30 + index * 10,
+                238,
+                0xfe if index == selection else 0xfa,
+            )
+        add(f"upgrade_menu_{selection}", frame)
+
+    # The quit dialog is a transparent overlay on the player's current
+    # ship/menu state, so it cannot be baked as an opaque full frame.  Store
+    # exact row runs after the one-time SHP decode and 300x200 -> 240x160
+    # coordinate mapping.  Runtime then shades the live background and
+    # performs only sequential ROM copies; the two short choice labels stay
+    # dynamic so cursor changes remain a tiny dirty-rectangle update.
+    quit_overlay = np.full(
+        (FRONTEND_FRAME_HEIGHT, FRONTEND_FRAME_WIDTH),
+        0xFF,
+        dtype=np.uint8,
+    )
+    quit_sprite = source.sprite(5, 35)
+    if quit_sprite is None:
+        raise ValueError("OPTION_SHAPES quit dialog sprite 35 is empty")
+    for sprite_y in range(quit_sprite.shape[0]):
+        for sprite_x in range(quit_sprite.shape[1]):
+            pixel = int(quit_sprite[sprite_y, sprite_x])
+            if pixel == 0xFF:
+                continue
+            source_x = 50 + sprite_x
+            source_y = 50 + sprite_y
+            if (
+                source_x < FRONTEND_MENU_SOURCE_CROP_X or
+                source_x >=
+                    FRONTEND_MENU_SOURCE_CROP_X +
+                    FRONTEND_MENU_SOURCE_WIDTH or
+                source_y < 0 or
+                source_y >= 200
+            ):
+                continue
+            target_x = (
+                (source_x - FRONTEND_MENU_SOURCE_CROP_X) *
+                FRONTEND_FRAME_WIDTH //
+                FRONTEND_MENU_SOURCE_WIDTH
+            )
+            target_y = source_y * FRONTEND_FRAME_HEIGHT // 200
+            quit_overlay[target_y, target_x] = pixel
+
+    misc_text = source.text["misc_text"]
+    draw_text(
+        quit_overlay,
+        misc_text[28] or "ARE YOU SURE YOU WANT TO EXIT?",
+        37,
+        53,
+        174,
+        0xFE,
+        5,
+        3,
+    )
+    draw_wrapped(
+        quit_overlay,
+        misc_text[30] or "YOU WILL RETURN TO THE MAIN MENU.",
+        37,
+        73,
+        174,
+        9,
+        3,
+        0xFA,
+        5,
+        3,
+    )
+    def encode_sparse(
+        canvas: np.ndarray,
+        mask: np.ndarray,
+        magic: bytes,
+    ) -> tuple[bytes, int]:
+        runs: list[tuple[int, bytes]] = []
+
+        if len(magic) != 4:
+            raise AssertionError("sparse overlay magic must be four bytes")
+        for target_y in range(FRONTEND_FRAME_HEIGHT):
+            opaque = np.flatnonzero(mask[target_y])
+            if not opaque.size:
+                continue
+            run_start = int(opaque[0])
+            previous = run_start
+            for value in opaque[1:]:
+                target_x = int(value)
+                if target_x != previous + 1:
+                    runs.append(
+                        (
+                            target_y * FRONTEND_FRAME_WIDTH + run_start,
+                            canvas[
+                                target_y,
+                                run_start:previous + 1,
+                            ].tobytes(),
+                        )
+                    )
+                    run_start = target_x
+                previous = target_x
+            runs.append(
+                (
+                    target_y * FRONTEND_FRAME_WIDTH + run_start,
+                    canvas[
+                        target_y,
+                        run_start:previous + 1,
+                    ].tobytes(),
+                )
+            )
+        stream = bytearray(magic)
+        stream.extend(struct.pack("<HH", 1, len(runs)))
+        for offset, pixels in runs:
+            stream.extend(struct.pack("<HH", offset, len(pixels)))
+            stream.extend(pixels)
+            stream.extend(b"\x00" * (-len(pixels) & 3))
+        return bytes(stream), len(runs)
+
+    quit_dense_x = 36
+    quit_dense_y = 40
+    quit_dense_width = 156
+    quit_dense_height = 81
+    quit_dense_mask = quit_overlay != 0xFF
+    outside_dense = quit_dense_mask.copy()
+    outside_dense[
+        quit_dense_y:quit_dense_y + quit_dense_height,
+        quit_dense_x:quit_dense_x + quit_dense_width,
+    ] = False
+    if outside_dense.any():
+        raise AssertionError("quit overlay escaped its dense rectangle")
+    quit_dense = quit_overlay[
+        quit_dense_y:quit_dense_y + quit_dense_height,
+        quit_dense_x:quit_dense_x + quit_dense_width,
+    ].copy()
+    quit_stream = bytearray(b"OTQF")
+    quit_stream.extend(
+        struct.pack(
+            "<6H",
+            1,
+            quit_dense_x,
+            quit_dense_y,
+            quit_dense_width,
+            quit_dense_height,
+            0,
+        )
+    )
+    quit_stream.extend(quit_dense.tobytes())
+    quit_stream = bytes(quit_stream)
+    choice_frames: list[np.ndarray] = []
+    for yes_selected in (True, False):
+        choice_frame = quit_overlay.copy()
+        draw_centered(
+            choice_frame,
+            misc_text[9] or "OK",
+            66,
+            108,
+            0xFE if yes_selected else 0xF6,
+        )
+        draw_centered(
+            choice_frame,
+            misc_text[10] or "CANCEL",
+            137,
+            108,
+            0xF6 if yes_selected else 0xFE,
+        )
+        choice_frames.append(choice_frame)
+    choice_mask = (
+        (choice_frames[0] != quit_overlay) |
+        (choice_frames[1] != quit_overlay)
+    )
+    choice_streams: list[bytes] = []
+    choice_run_count = 0
+    for choice_frame in choice_frames:
+        stream, run_count = encode_sparse(
+            choice_frame,
+            choice_mask,
+            b"OTQC",
+        )
+        if choice_streams and (
+            len(stream) != len(choice_streams[0]) or
+            run_count != choice_run_count
+        ):
+            raise AssertionError("quit choice sparse layouts diverged")
+        choice_streams.append(stream)
+        choice_run_count = run_count
+    choice_bytes = b"".join(choice_streams)
+    shade_x0 = 65 * FRONTEND_FRAME_WIDTH // FRONTEND_MENU_SOURCE_WIDTH
+    shade_x1 = 256 * FRONTEND_FRAME_WIDTH // FRONTEND_MENU_SOURCE_WIDTH
+    shade_y0 = 55 * FRONTEND_FRAME_HEIGHT // 200
+    shade_y1 = 156 * FRONTEND_FRAME_HEIGHT // 200
+    shade_mask = np.zeros_like(quit_dense_mask)
+    shade_mask[shade_y0:shade_y1, shade_x0:shade_x1] = True
+    visible_shade_mask = shade_mask & ~quit_dense_mask
+    shade_runs: list[tuple[int, int]] = []
+    for target_y in range(FRONTEND_FRAME_HEIGHT):
+        visible = np.flatnonzero(visible_shade_mask[target_y])
+        if not visible.size:
+            continue
+        run_start = int(visible[0])
+        previous = run_start
+        for value in visible[1:]:
+            target_x = int(value)
+            if target_x != previous + 1:
+                shade_runs.append(
+                    (
+                        target_y * FRONTEND_FRAME_WIDTH + run_start,
+                        previous - run_start + 1,
+                    )
+                )
+                run_start = target_x
+            previous = target_x
+        shade_runs.append(
+            (
+                target_y * FRONTEND_FRAME_WIDTH + run_start,
+                previous - run_start + 1,
+            )
+        )
+    shade_stream = bytearray(b"OTQS")
+    shade_stream.extend(struct.pack("<HH", 1, len(shade_runs)))
+    for offset, length in shade_runs:
+        shade_stream.extend(struct.pack("<HH", offset, length))
+    shade_stream = bytes(shade_stream)
+
+    quit_preview = menu_chrome.copy()
+    shade = quit_preview[shade_y0:shade_y1, shade_x0:shade_x1]
+    low = shade & 0x0F
+    shade[:] = (shade & 0xF0) | np.maximum(low, 3) - 3
+    overlay_opaque = quit_overlay != 0xFF
+    quit_preview[overlay_opaque] = quit_overlay[overlay_opaque]
+    quit_preview[choice_mask] = choice_frames[0][choice_mask]
+    rgb = np.minimum(
+        source.palette_rgb_index(0).astype(np.uint16) * 4,
+        255,
+    ).astype(np.uint8)
+    Image.fromarray(rgb[quit_preview], "RGB").save(
+        preview_dir / "quit_dialog_static_overlay.png"
+    )
+
+    panel_bytes = b"".join(panel.tobytes() for panel in panels)
+    pre_game_bytes = b"".join(
+        frame.tobytes() for frame in pre_game_frames
+    )
+    metadata = {
+        "FRONTEND_NATIVE_FONT_GLYPH_COUNT": native_font.shape[0],
+        "FRONTEND_NATIVE_FONT_HEIGHT": native_font.shape[1],
+        "FRONTEND_NATIVE_FONT_BYTES": native_font.size,
+        "FRONTEND_STATIC_MENU_PANEL_X": FRONTEND_STATIC_MENU_PANEL_X,
+        "FRONTEND_STATIC_MENU_PANEL_Y": FRONTEND_STATIC_MENU_PANEL_Y,
+        "FRONTEND_STATIC_MENU_PANEL_WIDTH":
+            FRONTEND_STATIC_MENU_PANEL_WIDTH,
+        "FRONTEND_STATIC_MENU_PANEL_HEIGHT":
+            FRONTEND_STATIC_MENU_PANEL_HEIGHT,
+        "FRONTEND_STATIC_MENU_PANEL_BYTES":
+            FRONTEND_STATIC_MENU_PANEL_BYTES,
+        "FRONTEND_STATIC_GAME_MENU_BASE": 0,
+        "FRONTEND_STATIC_GAME_MENU_COUNT":
+            FRONTEND_STATIC_GAME_MENU_COUNT,
+        "FRONTEND_STATIC_UPGRADE_MENU_BASE":
+            FRONTEND_STATIC_GAME_MENU_COUNT,
+        "FRONTEND_STATIC_UPGRADE_MENU_COUNT":
+            FRONTEND_STATIC_UPGRADE_MENU_COUNT,
+        "FRONTEND_STATIC_MENU_PANEL_COUNT": len(panels),
+        "FRONTEND_STATIC_MENU_PANELS_BYTES": len(panel_bytes),
+        "FRONTEND_STATIC_PRE_GAME_TITLE_BASE": 0,
+        "FRONTEND_STATIC_PRE_GAME_TITLE_COUNT": 3,
+        "FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE": 3,
+        "FRONTEND_STATIC_PRE_GAME_PLAY_MODE_COUNT": 2,
+        "FRONTEND_STATIC_PRE_GAME_EPISODE_BASE": 5,
+        "FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT": 4,
+        "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE": 9,
+        "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT": 3,
+        "FRONTEND_STATIC_PRE_GAME_FRAME_COUNT": len(pre_game_frames),
+        "FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES": len(pre_game_bytes),
+        "FRONTEND_STATIC_QUIT_OVERLAY_VERSION": 1,
+        "FRONTEND_STATIC_QUIT_OVERLAY_X": quit_dense_x,
+        "FRONTEND_STATIC_QUIT_OVERLAY_Y": quit_dense_y,
+        "FRONTEND_STATIC_QUIT_OVERLAY_WIDTH": quit_dense_width,
+        "FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT": quit_dense_height,
+        "FRONTEND_STATIC_QUIT_OVERLAY_HEADER_BYTES": 16,
+        "FRONTEND_STATIC_QUIT_OVERLAY_PIXEL_BYTES": quit_dense.size,
+        "FRONTEND_STATIC_QUIT_OVERLAY_BYTES": len(quit_stream),
+        "FRONTEND_STATIC_QUIT_CHOICE_VERSION": 1,
+        "FRONTEND_STATIC_QUIT_CHOICE_COUNT": len(choice_streams),
+        "FRONTEND_STATIC_QUIT_CHOICE_RUN_COUNT": choice_run_count,
+        "FRONTEND_STATIC_QUIT_CHOICE_VARIANT_BYTES":
+            len(choice_streams[0]),
+        "FRONTEND_STATIC_QUIT_CHOICES_BYTES": len(choice_bytes),
+        "FRONTEND_STATIC_QUIT_SHADE_VERSION": 1,
+        "FRONTEND_STATIC_QUIT_SHADE_RUN_COUNT": len(shade_runs),
+        "FRONTEND_STATIC_QUIT_SHADE_PIXEL_COUNT":
+            int(visible_shade_mask.sum()),
+        "FRONTEND_STATIC_QUIT_SHADE_BYTES": len(shade_stream),
+    }
+    report = [
+        "frontend_static_menu_panel_source=stock PIC/text + GBA native font",
+        (
+            "frontend_static_menu_panel_strategy="
+            "build-time right-panel bake; runtime aligned ROM copy"
+        ),
+        f"frontend_native_font_bytes={native_font.size}",
+        f"frontend_static_menu_panel_count={len(panels)}",
+        (
+            "frontend_static_menu_panel_dimensions="
+            f"{FRONTEND_STATIC_MENU_PANEL_WIDTH}x"
+            f"{FRONTEND_STATIC_MENU_PANEL_HEIGHT}"
+        ),
+        f"frontend_static_menu_panel_bytes={len(panel_bytes)}",
+        (
+            "frontend_static_menu_panel_crc32="
+            f"{zlib.crc32(panel_bytes):08x}"
+        ),
+        f"frontend_static_pre_game_frame_count={len(pre_game_frames)}",
+        f"frontend_static_pre_game_frames_bytes={len(pre_game_bytes)}",
+        (
+            "frontend_static_pre_game_frames_crc32="
+            f"{zlib.crc32(pre_game_bytes):08x}"
+        ),
+        (
+            "frontend_static_quit_overlay_strategy="
+            "build-time dense aligned rectangle + transparent word mask"
+        ),
+        (
+            "frontend_static_quit_overlay_dimensions="
+            f"{quit_dense_width}x{quit_dense_height}"
+        ),
+        (
+            "frontend_static_quit_overlay_transparent_pixels="
+            f"{int((quit_dense == 0xFF).sum())}"
+        ),
+        f"frontend_static_quit_overlay_bytes={len(quit_stream)}",
+        (
+            "frontend_static_quit_overlay_crc32="
+            f"{zlib.crc32(quit_stream):08x}"
+        ),
+        (
+            "frontend_static_quit_choice_strategy="
+            "build-time exact sparse colour patches"
+        ),
+        f"frontend_static_quit_choice_runs={choice_run_count}",
+        (
+            "frontend_static_quit_choice_variant_bytes="
+            f"{len(choice_streams[0])}"
+        ),
+        f"frontend_static_quit_choices_bytes={len(choice_bytes)}",
+        (
+            "frontend_static_quit_choices_crc32="
+            f"{zlib.crc32(choice_bytes):08x}"
+        ),
+        (
+            "frontend_static_quit_shade_strategy="
+            "only pixels visible outside the opaque dialog"
+        ),
+        f"frontend_static_quit_shade_runs={len(shade_runs)}",
+        (
+            "frontend_static_quit_shade_pixels="
+            f"{int(visible_shade_mask.sum())}"
+        ),
+        f"frontend_static_quit_shade_bytes={len(shade_stream)}",
+        (
+            "frontend_static_quit_shade_crc32="
+            f"{zlib.crc32(shade_stream):08x}"
+        ),
+        *(
+            f"frontend_static_menu_panel_{index:02d}={name},"
+            f"crc32={zlib.crc32(panels[index].tobytes()):08x}"
+            for index, name in enumerate(names)
+        ),
+        *(
+            f"frontend_static_pre_game_frame_{index:02d}={name},"
+            f"crc32={zlib.crc32(pre_game_frames[index].tobytes()):08x}"
+            for index, name in enumerate(pre_game_names)
+        ),
+    ]
+    return (
+        panel_bytes,
+        pre_game_bytes,
+        quit_stream,
+        choice_bytes,
+        shade_stream,
+        metadata,
+        report,
+    )
+
+
 def build_frontend_mode4_assets(
     data_root: Path,
     preview: Path,
@@ -1445,10 +2249,31 @@ def build_frontend_mode4_assets(
     bytes,
     bytes,
     bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
     dict[str, int],
     list[str],
 ]:
     source = FrontendSourceRenderer(data_root)
+    native_font = load_frontend_native_font(
+        Path(__file__).with_name("frontend_native_font.txt")
+    )
+    (
+        static_menu_panels,
+        static_pre_game_frames,
+        static_quit_overlay,
+        static_quit_choices,
+        static_quit_shade,
+        static_menu_metadata,
+        static_menu_report,
+    ) = build_frontend_static_menu_panels(
+        source,
+        native_font,
+        preview,
+    )
     (
         nav_obj_tiles,
         nav_obj_meta,
@@ -1960,13 +2785,21 @@ def build_frontend_mode4_assets(
     ]
     metadata.update(nav_obj_metadata)
     metadata.update(nav_bitmap_metadata)
+    metadata.update(static_menu_metadata)
     report.extend(nav_obj_report)
     report.extend(nav_bitmap_report)
+    report.extend(static_menu_report)
     return (
         frame_bytes,
         palette_bytes,
         bytes(glyphs),
         cube_stamp.tobytes(),
+        native_font.tobytes(),
+        static_menu_panels,
+        static_pre_game_frames,
+        static_quit_overlay,
+        static_quit_choices,
+        static_quit_shade,
         nav_obj_tiles,
         nav_obj_meta,
         nav_obj_palette,
@@ -4830,6 +5663,12 @@ def main() -> None:
         frontend_palettes,
         frontend_glyphs,
         frontend_cube,
+        frontend_native_font,
+        frontend_static_menu_panels,
+        frontend_static_pre_game_frames,
+        frontend_static_quit_overlay,
+        frontend_static_quit_choices,
+        frontend_static_quit_shade,
         frontend_nav_obj_tiles,
         frontend_nav_obj_meta,
         frontend_nav_obj_palette,
@@ -4841,6 +5680,24 @@ def main() -> None:
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
     (output / "frontend_cube.bin").write_bytes(frontend_cube)
+    (output / "frontend_native_font.bin").write_bytes(
+        frontend_native_font
+    )
+    (output / "frontend_static_menu_panels.bin").write_bytes(
+        frontend_static_menu_panels
+    )
+    (output / "frontend_static_pre_game_frames.bin").write_bytes(
+        frontend_static_pre_game_frames
+    )
+    (output / "frontend_static_quit_overlay.bin").write_bytes(
+        frontend_static_quit_overlay
+    )
+    (output / "frontend_static_quit_choices.bin").write_bytes(
+        frontend_static_quit_choices
+    )
+    (output / "frontend_static_quit_shade.bin").write_bytes(
+        frontend_static_quit_shade
+    )
     (output / "frontend_nav_obj_tiles.bin").write_bytes(
         frontend_nav_obj_tiles
     )

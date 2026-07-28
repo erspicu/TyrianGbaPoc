@@ -206,6 +206,7 @@ FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)_$(C
 FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFFIX)
 FRONTEND_NAV_STRESS_TARGET := tyrian_gba_frontend_nav_obj_stress_v43_$(CONFIG_SUFFIX)
 FRONTEND_NAV_CAMERA_STRESS_TARGET := tyrian_gba_frontend_nav_camera_stress_v43_$(CONFIG_SUFFIX)
+FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v44_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_FLAG := \
 	-DAUTOTEST_FRONTEND_CAPTURE_SELECTION=$(CAPTURE_SELECTION)
@@ -252,6 +253,7 @@ VFS_INPUTS := \
 
 ASSET_INPUTS := \
 	tools/build_assets.py \
+	tools/frontend_native_font.txt \
 	../../org/TyrianSnesPoc/tools/build_assets.py \
 	../../org/TyrianNesPoc/tools/build_assets.py \
 	../../org/AprCSTyrian/Build/data/tyrian.hdt \
@@ -282,6 +284,12 @@ ASSET_BINARIES := \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
 	$(RES)/frontend_cube.bin \
+	$(RES)/frontend_native_font.bin \
+	$(RES)/frontend_static_menu_panels.bin \
+	$(RES)/frontend_static_pre_game_frames.bin \
+	$(RES)/frontend_static_quit_overlay.bin \
+	$(RES)/frontend_static_quit_choices.bin \
+	$(RES)/frontend_static_quit_shade.bin \
 	$(RES)/frontend_nav_obj_tiles.bin \
 	$(RES)/frontend_nav_obj_meta.bin \
 	$(RES)/frontend_nav_obj_palette.bin \
@@ -344,6 +352,7 @@ MAIN_INCLUDES := $(wildcard src/*.inc)
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
 	frontend-menu-stress frontend-nav-stress frontend-nav-camera-stress \
+	frontend-transition-stress \
 	assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
@@ -375,6 +384,8 @@ frontend-menu-stress: $(BUILD)/$(FRONTEND_MENU_STRESS_TARGET).gba
 frontend-nav-stress: $(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).gba
 
 frontend-nav-camera-stress: $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba
+
+frontend-transition-stress: $(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 
@@ -560,6 +571,16 @@ $(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).o: \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_TRANSITION_STRESS \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -693,6 +714,13 @@ $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).elf: \
+		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(TARGET).gba: $(BUILD)/$(TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN GBA" -cTYGA -m00
@@ -760,6 +788,11 @@ $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR NAV MOVE" -cTYGK -m00
 
+$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba: \
+		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR UI MOVE" -cTYGW -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -794,6 +827,8 @@ clean:
 		$(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -847,7 +882,10 @@ clean:
 		$(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).map \
 		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).elf \
 		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba \
-		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).map
+		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).map \
+		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).elf \
+		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba \
+		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -862,6 +900,7 @@ distclean: clean
 -include $(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d

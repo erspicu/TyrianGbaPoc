@@ -41,6 +41,36 @@ frontend_cube:
 	.incbin "res/frontend_cube.bin"
 
 	.balign 4
+	.global frontend_native_font
+frontend_native_font:
+	.incbin "res/frontend_native_font.bin"
+
+	.balign 4
+	.global frontend_static_menu_panels
+frontend_static_menu_panels:
+	.incbin "res/frontend_static_menu_panels.bin"
+
+	.balign 4
+	.global frontend_static_pre_game_frames
+frontend_static_pre_game_frames:
+	.incbin "res/frontend_static_pre_game_frames.bin"
+
+	.balign 4
+	.global frontend_static_quit_overlay
+frontend_static_quit_overlay:
+	.incbin "res/frontend_static_quit_overlay.bin"
+
+	.balign 4
+	.global frontend_static_quit_choices
+frontend_static_quit_choices:
+	.incbin "res/frontend_static_quit_choices.bin"
+
+	.balign 4
+	.global frontend_static_quit_shade
+frontend_static_quit_shade:
+	.incbin "res/frontend_static_quit_shade.bin"
+
+	.balign 4
 	.global frontend_nav_obj_tiles
 frontend_nav_obj_tiles:
 	.incbin "res/frontend_nav_obj_tiles.bin"

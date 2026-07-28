@@ -125,6 +125,72 @@ _Static_assert(
             FRONTEND_NAV_BITMAP_STRIDE * FRONTEND_NAV_DIRTY_HEIGHT,
     "generated navigation bitmap phase table changed"
 );
+_Static_assert(
+    FRONTEND_STATIC_MENU_PANEL_X == 120 &&
+        FRONTEND_STATIC_MENU_PANEL_Y == 0 &&
+        FRONTEND_STATIC_MENU_PANEL_WIDTH == 120 &&
+        FRONTEND_STATIC_MENU_PANEL_HEIGHT == 120 &&
+        FRONTEND_STATIC_MENU_PANEL_BYTES ==
+            FRONTEND_STATIC_MENU_PANEL_WIDTH *
+                FRONTEND_STATIC_MENU_PANEL_HEIGHT &&
+        FRONTEND_STATIC_GAME_MENU_COUNT == 6 &&
+        FRONTEND_STATIC_UPGRADE_MENU_COUNT == 8 &&
+        FRONTEND_STATIC_UPGRADE_MENU_BASE ==
+            FRONTEND_STATIC_GAME_MENU_COUNT &&
+        FRONTEND_STATIC_MENU_PANEL_COUNT ==
+            FRONTEND_STATIC_GAME_MENU_COUNT +
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT &&
+        FRONTEND_STATIC_MENU_PANELS_BYTES ==
+            FRONTEND_STATIC_MENU_PANEL_COUNT *
+                FRONTEND_STATIC_MENU_PANEL_BYTES,
+    "generated static menu panel atlas changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_PRE_GAME_TITLE_BASE == 0 &&
+        FRONTEND_STATIC_PRE_GAME_TITLE_COUNT == 3 &&
+        FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE == 3 &&
+        FRONTEND_STATIC_PRE_GAME_PLAY_MODE_COUNT == 2 &&
+        FRONTEND_STATIC_PRE_GAME_EPISODE_BASE == 5 &&
+        FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT == 4 &&
+        FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE == 9 &&
+        FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT == 3 &&
+        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 12 &&
+        FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES ==
+            FRONTEND_STATIC_PRE_GAME_FRAME_COUNT *
+                FRONTEND_FRAME_BYTES,
+    "generated static pre-game frame atlas changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_QUIT_OVERLAY_VERSION == 1 &&
+        FRONTEND_STATIC_QUIT_OVERLAY_X % 4 == 0 &&
+        FRONTEND_STATIC_QUIT_OVERLAY_WIDTH % 4 == 0 &&
+        FRONTEND_STATIC_QUIT_OVERLAY_HEADER_BYTES == 16 &&
+        FRONTEND_STATIC_QUIT_OVERLAY_PIXEL_BYTES ==
+            FRONTEND_STATIC_QUIT_OVERLAY_WIDTH *
+                FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT &&
+        FRONTEND_STATIC_QUIT_OVERLAY_BYTES ==
+            FRONTEND_STATIC_QUIT_OVERLAY_HEADER_BYTES +
+                FRONTEND_STATIC_QUIT_OVERLAY_PIXEL_BYTES,
+    "generated static quit-dialog overlay changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_QUIT_CHOICE_VERSION == 1 &&
+        FRONTEND_STATIC_QUIT_CHOICE_COUNT == 2 &&
+        FRONTEND_STATIC_QUIT_CHOICE_RUN_COUNT > 0 &&
+        FRONTEND_STATIC_QUIT_CHOICE_VARIANT_BYTES > 8 &&
+        FRONTEND_STATIC_QUIT_CHOICES_BYTES ==
+            FRONTEND_STATIC_QUIT_CHOICE_COUNT *
+                FRONTEND_STATIC_QUIT_CHOICE_VARIANT_BYTES,
+    "generated static quit-choice overlays changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_QUIT_SHADE_VERSION == 1 &&
+        FRONTEND_STATIC_QUIT_SHADE_RUN_COUNT > 0 &&
+        FRONTEND_STATIC_QUIT_SHADE_PIXEL_COUNT > 0 &&
+        FRONTEND_STATIC_QUIT_SHADE_BYTES ==
+            8 + FRONTEND_STATIC_QUIT_SHADE_RUN_COUNT * 4,
+    "generated static quit-shade runs changed"
+);
 
 typedef struct {
     u32 tile_offset;
@@ -346,58 +412,10 @@ _Static_assert(
 );
 
 /*
- * GBA-native 5x7 proportional UI face.  This is intentionally independent
- * of the 320x200 PC glyph sheets: menu art is cropped/scaled first and these
- * one-pixel strokes are composited last at the final 240x160 resolution.
- * Bits are left-to-right within each glyph's naturally occupied width.
+ * The GBA-native 5x7 face is stored as one shared build asset.  The same
+ * rows drive both runtime text and build-time static panel baking, so the
+ * fast pages cannot drift visually from dynamic labels.
  */
-static const u8 frontend_native_font_rows[][7] = {
-    {0x0e,0x11,0x11,0x1f,0x11,0x11,0x11}, /* A */
-    {0x1e,0x11,0x11,0x1e,0x11,0x11,0x1e}, /* B */
-    {0x0f,0x10,0x10,0x10,0x10,0x10,0x0f}, /* C */
-    {0x1e,0x11,0x11,0x11,0x11,0x11,0x1e}, /* D */
-    {0x1f,0x10,0x10,0x1e,0x10,0x10,0x1f}, /* E */
-    {0x1f,0x10,0x10,0x1e,0x10,0x10,0x10}, /* F */
-    {0x0f,0x10,0x10,0x13,0x11,0x11,0x0f}, /* G */
-    {0x11,0x11,0x11,0x1f,0x11,0x11,0x11}, /* H */
-    {0x07,0x02,0x02,0x02,0x02,0x02,0x07}, /* I */
-    {0x07,0x01,0x01,0x01,0x01,0x05,0x02}, /* J */
-    {0x11,0x12,0x14,0x18,0x14,0x12,0x11}, /* K */
-    {0x10,0x10,0x10,0x10,0x10,0x10,0x1f}, /* L */
-    {0x11,0x1b,0x15,0x15,0x11,0x11,0x11}, /* M */
-    {0x11,0x19,0x19,0x15,0x13,0x13,0x11}, /* N */
-    {0x0e,0x11,0x11,0x11,0x11,0x11,0x0e}, /* O */
-    {0x1e,0x11,0x11,0x1e,0x10,0x10,0x10}, /* P */
-    {0x0e,0x11,0x11,0x11,0x15,0x12,0x0d}, /* Q */
-    {0x1e,0x11,0x11,0x1e,0x14,0x12,0x11}, /* R */
-    {0x0f,0x10,0x10,0x0e,0x01,0x01,0x1e}, /* S */
-    {0x1f,0x04,0x04,0x04,0x04,0x04,0x04}, /* T */
-    {0x11,0x11,0x11,0x11,0x11,0x11,0x0e}, /* U */
-    {0x11,0x11,0x11,0x11,0x11,0x0a,0x04}, /* V */
-    {0x11,0x11,0x11,0x15,0x15,0x1b,0x11}, /* W */
-    {0x11,0x11,0x0a,0x04,0x0a,0x11,0x11}, /* X */
-    {0x11,0x11,0x0a,0x04,0x04,0x04,0x04}, /* Y */
-    {0x1f,0x01,0x02,0x04,0x08,0x10,0x1f}, /* Z */
-    {0x0e,0x11,0x13,0x15,0x19,0x11,0x0e}, /* 0 */
-    {0x07,0x02,0x02,0x02,0x02,0x02,0x07}, /* 1 */
-    {0x0e,0x11,0x01,0x02,0x04,0x08,0x1f}, /* 2 */
-    {0x1e,0x01,0x01,0x0e,0x01,0x01,0x1e}, /* 3 */
-    {0x02,0x06,0x0a,0x12,0x1f,0x02,0x02}, /* 4 */
-    {0x1f,0x10,0x10,0x1e,0x01,0x01,0x1e}, /* 5 */
-    {0x0e,0x10,0x10,0x1e,0x11,0x11,0x0e}, /* 6 */
-    {0x1f,0x01,0x02,0x04,0x08,0x08,0x08}, /* 7 */
-    {0x0e,0x11,0x11,0x0e,0x11,0x11,0x0e}, /* 8 */
-    {0x0e,0x11,0x11,0x0f,0x01,0x01,0x0e}, /* 9 */
-    {0x00,0x00,0x00,0x00,0x00,0x01,0x01}, /* . */
-    {0x00,0x00,0x00,0x00,0x01,0x01,0x02}, /* , */
-    {0x01,0x01,0x01,0x01,0x01,0x00,0x01}, /* ! */
-    {0x0e,0x11,0x01,0x02,0x04,0x00,0x04}, /* ? */
-    {0x01,0x01,0x01,0x00,0x00,0x00,0x00}, /* ' */
-    {0x01,0x02,0x02,0x04,0x08,0x08,0x10}, /* / */
-    {0x00,0x01,0x01,0x00,0x01,0x01,0x00}, /* : */
-    {0x00,0x00,0x00,0x07,0x00,0x00,0x00}, /* - */
-    {0x19,0x1a,0x02,0x04,0x08,0x0b,0x13}, /* % */
-};
 
 /*
  * Dense 3x5 face for the Upgrade Ship inventory rows only.  Long stock
@@ -514,9 +532,12 @@ _Static_assert(
     "source stats glyph count changed"
 );
 _Static_assert(
-    sizeof(frontend_native_font_rows) /
-        sizeof(frontend_native_font_rows[0]) ==
-        sizeof(frontend_runtime_font_characters) - 1u,
+    FRONTEND_NATIVE_FONT_GLYPH_COUNT ==
+        sizeof(frontend_runtime_font_characters) - 1u &&
+        FRONTEND_NATIVE_FONT_HEIGHT == 7 &&
+        FRONTEND_NATIVE_FONT_BYTES ==
+            FRONTEND_NATIVE_FONT_GLYPH_COUNT *
+                FRONTEND_NATIVE_FONT_HEIGHT,
     "native front-end glyph catalog changed"
 );
 #if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
@@ -1124,16 +1145,15 @@ static u8 frontend_runtime_font_advance_scaled(
     u8 advance;
 
     if (tile_index == 0) return space_width;
-    if (
-        tile_index >
-        sizeof(frontend_native_font_rows) /
-            sizeof(frontend_native_font_rows[0])
-    ) {
+    if (tile_index > FRONTEND_NATIVE_FONT_GLYPH_COUNT) {
         return glyph_width;
     }
     occupied = 0;
     for (row = 0; row < 7; row++) {
-        occupied |= frontend_native_font_rows[tile_index - 1u][row];
+        occupied |= frontend_native_font[
+            (u16)(tile_index - 1u) * FRONTEND_NATIVE_FONT_HEIGHT +
+            row
+        ];
     }
     advance = 1;
     while (occupied >>= 1) advance++;
@@ -1158,13 +1178,13 @@ static void frontend_blit_runtime_font_scaled(
     (void)glyph_width;
     if (
         tile_index == 0 ||
-        tile_index >
-            sizeof(frontend_native_font_rows) /
-                sizeof(frontend_native_font_rows[0])
+        tile_index > FRONTEND_NATIVE_FONT_GLYPH_COUNT
     ) {
         return;
     }
-    glyph = frontend_native_font_rows[tile_index - 1u];
+    glyph =
+        frontend_native_font +
+        (u16)(tile_index - 1u) * FRONTEND_NATIVE_FONT_HEIGHT;
     for (row = 0; row < 7; row++) occupied |= glyph[row];
     while (occupied >>= 1) natural_width++;
     for (row = 0; row < 7; row++) {
@@ -1330,13 +1350,13 @@ static void frontend_blit_wide_font(
 
     if (
         tile_index == 0 ||
-        tile_index >
-            sizeof(frontend_native_font_rows) /
-                sizeof(frontend_native_font_rows[0])
+        tile_index > FRONTEND_NATIVE_FONT_GLYPH_COUNT
     ) {
         return;
     }
-    glyph = frontend_native_font_rows[tile_index - 1u];
+    glyph =
+        frontend_native_font +
+        (u16)(tile_index - 1u) * FRONTEND_NATIVE_FONT_HEIGHT;
     for (row = 0; row < 7; row++) occupied |= glyph[row];
     while (occupied >>= 1) natural_width++;
     for (row = 0; row < 7; row++) {
@@ -1707,6 +1727,303 @@ static void frontend_restore_menu_chrome_rect(
     );
 }
 
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+frontend_copy_static_menu_panel(u8 panel_index)
+{
+    const u8 *source;
+    u8 *destination;
+    u8 row;
+
+    if (panel_index >= FRONTEND_STATIC_MENU_PANEL_COUNT) return 0;
+    source =
+        frontend_static_menu_panels +
+        (u32)panel_index * FRONTEND_STATIC_MENU_PANEL_BYTES;
+    destination =
+        frontend_frame_scratch +
+        (u32)FRONTEND_STATIC_MENU_PANEL_Y * SCREEN_WIDTH +
+        FRONTEND_STATIC_MENU_PANEL_X;
+    for (row = 0; row < FRONTEND_STATIC_MENU_PANEL_HEIGHT; row++) {
+        const u32 *source_words =
+            (const u32 *)(const void *)source;
+        u32 *destination_words =
+            (u32 *)(void *)destination;
+        u8 word;
+
+        for (
+            word = 0;
+            word < FRONTEND_STATIC_MENU_PANEL_WIDTH / 4u;
+            word++
+        ) {
+            destination_words[word] = source_words[word];
+        }
+        source += FRONTEND_STATIC_MENU_PANEL_WIDTH;
+        destination += SCREEN_WIDTH;
+    }
+    return 1;
+}
+
+/*
+ * Sparse choice patches run only on Quit selection changes.  Keep this
+ * comparatively large parser in ROM so the gameplay hot-path retains the
+ * project's 6 KiB IWRAM safety margin.
+ */
+static __attribute__((noinline, noclone)) u8
+frontend_apply_static_sparse_overlay(
+    const u8 *source,
+    u32 total_bytes,
+    u16 expected_run_count,
+    u16 expected_version,
+    u8 magic_kind
+)
+{
+    u32 consumed = 8;
+    u16 run_count;
+    u16 run;
+
+    if (
+        source[0] != 'O' ||
+        source[1] != 'T' ||
+        source[2] != 'Q' ||
+        source[3] != magic_kind ||
+        (u16)(source[4] | (source[5] << 8)) !=
+            expected_version
+    ) {
+        return 0;
+    }
+    run_count = (u16)(source[6] | (source[7] << 8));
+    if (run_count != expected_run_count) {
+        return 0;
+    }
+    source += 8;
+    for (run = 0; run < run_count; run++) {
+        u16 offset;
+        u16 length;
+        u16 padded_length;
+        u8 *destination;
+
+        if (
+            consumed + 4u >
+            total_bytes
+        ) {
+            return 0;
+        }
+        offset = (u16)(source[0] | (source[1] << 8));
+        length = (u16)(source[2] | (source[3] << 8));
+        source += 4;
+        consumed += 4;
+        padded_length = (u16)((length + 3u) & ~3u);
+        if (
+            length == 0 ||
+            (u32)offset + length > FRONTEND_FRAME_BYTES ||
+            consumed + padded_length >
+                total_bytes
+        ) {
+            return 0;
+        }
+        destination = frontend_frame_scratch + offset;
+        if ((offset & 3u) == 0) {
+            const u32 *source_words =
+                (const u32 *)(const void *)source;
+            u32 *destination_words =
+                (u32 *)(void *)destination;
+            u16 word_count = (u16)(length >> 2);
+            u16 tail_count = (u16)(length & 3u);
+            u16 word;
+            const u8 *tail_source;
+
+            for (word = 0; word < word_count; word++) {
+                destination_words[word] = source_words[word];
+            }
+            destination += (u16)(word_count << 2);
+            tail_source = source + (u16)(word_count << 2);
+            while (tail_count-- != 0) {
+                *destination++ = *tail_source++;
+            }
+        } else {
+            u16 byte;
+
+            for (byte = 0; byte < length; byte++) {
+                destination[byte] = source[byte];
+            }
+        }
+        source += padded_length;
+        consumed += padded_length;
+    }
+    return consumed == total_bytes;
+}
+
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+frontend_apply_static_quit_overlay(void)
+{
+    const u8 *source =
+        frontend_static_quit_overlay +
+        FRONTEND_STATIC_QUIT_OVERLAY_HEADER_BYTES;
+    u8 row;
+
+    if (
+        frontend_static_quit_overlay[0] != 'O' ||
+        frontend_static_quit_overlay[1] != 'T' ||
+        frontend_static_quit_overlay[2] != 'Q' ||
+        frontend_static_quit_overlay[3] != 'F' ||
+        (u16)(
+            frontend_static_quit_overlay[4] |
+            (frontend_static_quit_overlay[5] << 8)
+        ) != FRONTEND_STATIC_QUIT_OVERLAY_VERSION ||
+        (u16)(
+            frontend_static_quit_overlay[6] |
+            (frontend_static_quit_overlay[7] << 8)
+        ) != FRONTEND_STATIC_QUIT_OVERLAY_X ||
+        (u16)(
+            frontend_static_quit_overlay[8] |
+            (frontend_static_quit_overlay[9] << 8)
+        ) != FRONTEND_STATIC_QUIT_OVERLAY_Y ||
+        (u16)(
+            frontend_static_quit_overlay[10] |
+            (frontend_static_quit_overlay[11] << 8)
+        ) != FRONTEND_STATIC_QUIT_OVERLAY_WIDTH ||
+        (u16)(
+            frontend_static_quit_overlay[12] |
+            (frontend_static_quit_overlay[13] << 8)
+        ) != FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT
+    ) {
+        return 0;
+    }
+    for (
+        row = 0;
+        row < FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT;
+        row++
+    ) {
+        const u32 *source_words =
+            (const u32 *)(const void *)source;
+        u32 *destination_words = (u32 *)(void *)(
+            frontend_frame_scratch +
+            (u32)(FRONTEND_STATIC_QUIT_OVERLAY_Y + row) *
+                SCREEN_WIDTH +
+            FRONTEND_STATIC_QUIT_OVERLAY_X
+        );
+        u8 word;
+
+        for (
+            word = 0;
+            word < FRONTEND_STATIC_QUIT_OVERLAY_WIDTH / 4u;
+            word++
+        ) {
+            u32 pixel = source_words[word];
+            u32 inverse = ~pixel;
+            u32 transparent = (
+                (inverse - 0x01010101u) &
+                ~inverse &
+                0x80808080u
+            );
+
+            if (transparent == 0) {
+                destination_words[word] = pixel;
+            } else {
+                const u8 *source_pixels =
+                    (const u8 *)(const void *)&pixel;
+                u8 *destination_pixels =
+                    (u8 *)(void *)&destination_words[word];
+                u8 index;
+
+                for (index = 0; index < 4; index++) {
+                    if (source_pixels[index] != 0xFF) {
+                        destination_pixels[index] =
+                            source_pixels[index];
+                    }
+                }
+            }
+        }
+        source += FRONTEND_STATIC_QUIT_OVERLAY_WIDTH;
+    }
+    return 1;
+}
+
+static u8 frontend_apply_static_quit_choice(void)
+{
+    u8 variant = frontend_quit_yes ? 0 : 1;
+
+    return frontend_apply_static_sparse_overlay(
+        frontend_static_quit_choices +
+            (u32)variant *
+                FRONTEND_STATIC_QUIT_CHOICE_VARIANT_BYTES,
+        FRONTEND_STATIC_QUIT_CHOICE_VARIANT_BYTES,
+        FRONTEND_STATIC_QUIT_CHOICE_RUN_COUNT,
+        FRONTEND_STATIC_QUIT_CHOICE_VERSION,
+        'C'
+    );
+}
+
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+frontend_apply_static_quit_shade(void)
+{
+    const u8 *source = frontend_static_quit_shade;
+    u16 run_count;
+    u16 shaded_pixels = 0;
+    u16 run;
+
+    if (
+        source[0] != 'O' ||
+        source[1] != 'T' ||
+        source[2] != 'Q' ||
+        source[3] != 'S' ||
+        (u16)(source[4] | (source[5] << 8)) !=
+            FRONTEND_STATIC_QUIT_SHADE_VERSION
+    ) {
+        return 0;
+    }
+    run_count = (u16)(source[6] | (source[7] << 8));
+    if (run_count != FRONTEND_STATIC_QUIT_SHADE_RUN_COUNT) {
+        return 0;
+    }
+    source += 8;
+    for (run = 0; run < run_count; run++) {
+        u16 offset = (u16)(source[0] | (source[1] << 8));
+        u16 length = (u16)(source[2] | (source[3] << 8));
+        u8 *destination;
+
+        source += 4;
+        if (
+            length == 0 ||
+            (u32)offset + length > FRONTEND_FRAME_BYTES
+        ) {
+            return 0;
+        }
+        destination = frontend_frame_scratch + offset;
+        shaded_pixels = (u16)(shaded_pixels + length);
+        while (length != 0 && ((u32)destination & 3u) != 0) {
+            u8 pixel = *destination;
+            u8 value = pixel & 0x0Fu;
+
+            value = value > 3 ? (u8)(value - 3u) : 0;
+            *destination++ = (u8)((pixel & 0xF0u) | value);
+            length--;
+        }
+        while (length >= 4) {
+            u32 *pixels = (u32 *)(void *)destination;
+            u32 pixel = *pixels;
+            u32 value = pixel & 0x0f0f0f0fu;
+            u32 difference =
+                (value | 0x10101010u) - 0x03030303u;
+            u32 valid = difference & 0x10101010u;
+            u32 mask = valid - (valid >> 4);
+
+            *pixels =
+                (pixel & 0xf0f0f0f0u) |
+                (difference & mask);
+            destination += 4;
+            length = (u16)(length - 4u);
+        }
+        while (length-- != 0) {
+            u8 pixel = *destination;
+            u8 value = pixel & 0x0Fu;
+
+            value = value > 3 ? (u8)(value - 3u) : 0;
+            *destination++ = (u8)((pixel & 0xF0u) | value);
+        }
+    }
+    return shaded_pixels == FRONTEND_STATIC_QUIT_SHADE_PIXEL_COUNT;
+}
+
 enum {
     FRONTEND_SOURCE_BLIT_NORMAL = 0,
     FRONTEND_SOURCE_BLIT_DARK = 1,
@@ -1947,7 +2264,8 @@ static u8 frontend_blit_comp_source(
     return 1;
 }
 
-static void frontend_shade_source_rect(
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+frontend_shade_source_rect(
     u8 *frame,
     s16 source_x0,
     s16 source_y0,
@@ -1980,6 +2298,39 @@ static void frontend_shade_source_rect(
     y1 = (u16)mapped_y1;
     if (x1 > SCREEN_WIDTH) x1 = SCREEN_WIDTH;
     if (y1 > SCREEN_HEIGHT) y1 = SCREEN_HEIGHT;
+    if (
+        amount == 3 &&
+        (x0 & 3u) == 0 &&
+        ((x1 - x0) & 3u) == 0
+    ) {
+        /*
+         * Process four independent palette-value nibbles per ARM word.
+         * Setting bit 4 before subtracting prevents cross-byte borrows; the
+         * surviving bit 4 then expands into a 0x0f mask.  This reproduces
+         * max(value - 3, 0) exactly, without per-pixel branches.
+         */
+        for (y = y0; y < y1; y++) {
+            u32 *pixels = (u32 *)(void *)(
+                frame + (u32)y * SCREEN_WIDTH + x0
+            );
+            u16 word_count = (u16)((x1 - x0) >> 2);
+            u16 word;
+
+            for (word = 0; word < word_count; word++) {
+                u32 pixel = pixels[word];
+                u32 value = pixel & 0x0f0f0f0fu;
+                u32 difference =
+                    (value | 0x10101010u) - 0x03030303u;
+                u32 valid = difference & 0x10101010u;
+                u32 mask = valid - (valid >> 4);
+
+                pixels[word] =
+                    (pixel & 0xf0f0f0f0u) |
+                    (difference & mask);
+            }
+        }
+        return;
+    }
     for (y = y0; y < y1; y++) {
         u16 x;
 
@@ -2691,8 +3042,40 @@ static void frontend_render_pre_game_menu(void)
         game_state == STATE_TITLE ?
             FRONTEND_FRAME_TITLE_CHROME :
             FRONTEND_FRAME_SELECT_CHROME;
+    u8 static_base;
     u8 item_count = frontend_pre_game_item_count(game_state);
     u8 selection;
+
+    switch (game_state) {
+    case STATE_TITLE:
+        static_base = FRONTEND_STATIC_PRE_GAME_TITLE_BASE;
+        break;
+    case STATE_PLAY_MODE_MENU:
+        static_base = FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE;
+        break;
+    case STATE_EPISODE_MENU:
+        static_base = FRONTEND_STATIC_PRE_GAME_EPISODE_BASE;
+        break;
+    case STATE_DIFFICULTY_MENU:
+        static_base = FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE;
+        break;
+    default:
+        static_base = FRONTEND_STATIC_PRE_GAME_FRAME_COUNT;
+        break;
+    }
+    if (
+        frontend_selection < item_count &&
+        static_base + frontend_selection <
+            FRONTEND_STATIC_PRE_GAME_FRAME_COUNT
+    ) {
+        frontend_present(
+            frontend_static_pre_game_frames +
+                (u32)(static_base + frontend_selection) *
+                    FRONTEND_FRAME_BYTES,
+            frontend_palette_address(base_frame)
+        );
+        return;
+    }
 
     memcpy(
         frontend_frame_scratch,
@@ -2818,6 +3201,8 @@ static void frontend_draw_game_menu_text(u8 active_selection)
     }
 }
 
+static void frontend_quit_capture_dialog_background(void);
+
 static void frontend_compose_game_menu(u8 selection)
 {
     memcpy(
@@ -2828,12 +3213,22 @@ static void frontend_compose_game_menu(u8 selection)
     if (frontend_player_items_valid) {
         frontend_draw_ship_illustration(frontend_frame_scratch);
     }
-    frontend_draw_game_menu_text(selection);
+    if (
+        selection >= FRONTEND_STATIC_GAME_MENU_COUNT ||
+        !frontend_copy_static_menu_panel(
+            (u8)(FRONTEND_STATIC_GAME_MENU_BASE + selection)
+        )
+    ) {
+        frontend_draw_game_menu_text(selection);
+    }
 }
 
 static void frontend_render_game_menu(void)
 {
     frontend_compose_game_menu(frontend_selection);
+    frontend_quit_capture_dialog_background();
+    frontend_quit_dialog_cache_valid = 1;
+    frontend_quit_dialog_cache_selection = frontend_selection;
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
@@ -2856,6 +3251,9 @@ static void frontend_render_game_menu_selection(u8 old_selection)
         );
         frontend_dirty_add(120, y, 120, 9);
     }
+    frontend_quit_capture_dialog_background();
+    frontend_quit_dialog_cache_valid = 1;
+    frontend_quit_dialog_cache_selection = frontend_selection;
     frontend_dirty_present();
 }
 
@@ -2912,6 +3310,26 @@ static void frontend_draw_upgrade_menu_item(u8 index)
         238,
         index == frontend_selection ? 0xfeu : 0xfau
     );
+}
+
+static void frontend_draw_upgrade_menu_text(void)
+{
+    u8 index;
+
+    frontend_draw_runtime_text_centered(
+        frontend_frame_scratch,
+        frontend_upgrade_menu_text(0, "UPGRADE SHIP"),
+        176,
+        7,
+        0xfbu
+    );
+    for (
+        index = 0;
+        index < FRONTEND_UPGRADE_MENU_ITEM_COUNT;
+        index++
+    ) {
+        frontend_draw_upgrade_menu_item(index);
+    }
 }
 
 static void frontend_upgrade_sort_items(void)
@@ -3070,6 +3488,7 @@ static void frontend_upgrade_apply_preview(void)
     );
     if (field == 0) return;
     *field = frontend_upgrade_sub_item[frontend_selection];
+    frontend_quit_dialog_cache_valid = 0;
     if (
         frontend_upgrade_category ==
             FRONTEND_UPGRADE_FRONT_WEAPON ||
@@ -3113,6 +3532,7 @@ static void frontend_upgrade_cancel_submenu(void)
 {
     frontend_player_items = frontend_upgrade_original_items;
     player_cash = frontend_upgrade_original_cash;
+    frontend_quit_dialog_cache_valid = 0;
     frontend_enter_state(
         STATE_UPGRADE_MENU,
         frontend_upgrade_category
@@ -3234,27 +3654,22 @@ static void frontend_upgrade_power_adjust(s8 direction)
 
 static void frontend_render_upgrade_menu(void)
 {
-    u8 index;
-
     memcpy(
         frontend_frame_scratch,
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
         FRONTEND_FRAME_BYTES
     );
     frontend_draw_ship_illustration(frontend_frame_scratch);
-    frontend_draw_runtime_text_centered(
-        frontend_frame_scratch,
-        frontend_upgrade_menu_text(0, "UPGRADE SHIP"),
-        176,
-        7,
-        0xfbu
-    );
-    for (
-        index = 0;
-        index < FRONTEND_UPGRADE_MENU_ITEM_COUNT;
-        index++
+    if (
+        frontend_selection >= FRONTEND_STATIC_UPGRADE_MENU_COUNT ||
+        !frontend_copy_static_menu_panel(
+            (u8)(
+                FRONTEND_STATIC_UPGRADE_MENU_BASE +
+                frontend_selection
+            )
+        )
     ) {
-        frontend_draw_upgrade_menu_item(index);
+        frontend_draw_upgrade_menu_text();
     }
     frontend_present(
         frontend_frame_scratch,
@@ -3276,6 +3691,105 @@ static void frontend_render_upgrade_menu_selection(u8 old_selection)
         frontend_dirty_add(120, y, 120, 9);
     }
     frontend_dirty_present();
+}
+
+static u8 frontend_render_quit_transition(
+    u8 old_state,
+    u8 new_state
+);
+
+static u8 frontend_render_shared_menu_transition(
+    u8 old_state,
+    u8 new_state
+)
+{
+    if (
+        !frontend_mode4_active ||
+        frontend_frame_pending
+    ) {
+        return 0;
+    }
+    if (
+        (
+            old_state == STATE_GAME_MENU &&
+            new_state == STATE_QUIT_CONFIRM
+        ) ||
+        (
+            old_state == STATE_QUIT_CONFIRM &&
+            new_state == STATE_GAME_MENU
+        )
+    ) {
+        return frontend_render_quit_transition(
+            old_state,
+            new_state
+        );
+    }
+    if (
+        !(
+            (
+                old_state == STATE_GAME_MENU &&
+                new_state == STATE_UPGRADE_MENU
+            ) ||
+            (
+                old_state == STATE_UPGRADE_MENU &&
+                new_state == STATE_GAME_MENU
+            )
+        )
+    ) {
+        return 0;
+    }
+
+    /*
+     * Game Menu and Upgrade Ship share the exact same menu chrome and ship
+     * illustration.  Keep the already composed left half resident and only
+     * replace the native-text panel; rebuilding the old path decoded four
+     * SHP sprites and copied the full 38.4 KiB frame on every transition.
+    */
+    if (new_state == STATE_GAME_MENU) {
+        if (
+            frontend_selection >= FRONTEND_STATIC_GAME_MENU_COUNT ||
+            !frontend_copy_static_menu_panel(
+                (u8)(
+                    FRONTEND_STATIC_GAME_MENU_BASE +
+                    frontend_selection
+                )
+            )
+        ) {
+            return 0;
+        }
+        if (
+            !frontend_quit_dialog_cache_valid ||
+            frontend_quit_dialog_cache_selection !=
+                frontend_selection
+        ) {
+            frontend_quit_capture_dialog_background();
+            frontend_quit_dialog_cache_valid = 1;
+            frontend_quit_dialog_cache_selection =
+                frontend_selection;
+        }
+    } else {
+        if (
+            frontend_selection >= FRONTEND_STATIC_UPGRADE_MENU_COUNT ||
+            !frontend_copy_static_menu_panel(
+                (u8)(
+                    FRONTEND_STATIC_UPGRADE_MENU_BASE +
+                    frontend_selection
+                )
+            )
+        ) {
+            return 0;
+        }
+    }
+    /*
+     * A half-screen rectangle would require 120 tiny DMA launches because
+     * Mode 4 rows are 240 bytes wide.  One contiguous page transfer is both
+     * faster and friendlier to Maxmod than that row-wise commit.
+     */
+    frontend_present(
+        frontend_frame_scratch,
+        frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
+    );
+    return 1;
 }
 
 static void frontend_draw_upgrade_submenu_preview(void)
@@ -3564,6 +4078,30 @@ static void frontend_quit_restore_choice_background(void)
     }
 }
 
+static void frontend_quit_capture_dialog_background(void)
+{
+    /*
+     * Cache complete scanlines.  The extra 5.9 KiB costs less than 100
+     * separate memcpy calls and still leaves 768 bytes in the shared arena.
+     */
+    memcpy(
+        frontend_quit_dialog_background,
+        frontend_frame_scratch +
+            (u32)FRONTEND_QUIT_DIALOG_CACHE_Y * SCREEN_WIDTH,
+        FRONTEND_QUIT_DIALOG_CACHE_BYTES
+    );
+}
+
+static void frontend_quit_restore_dialog_background(void)
+{
+    memcpy(
+        frontend_frame_scratch +
+            (u32)FRONTEND_QUIT_DIALOG_CACHE_Y * SCREEN_WIDTH,
+        frontend_quit_dialog_background,
+        FRONTEND_QUIT_DIALOG_CACHE_BYTES
+    );
+}
+
 static void frontend_draw_quit_choices(
     const char *yes,
     const char *no
@@ -3598,14 +4136,16 @@ static void frontend_render_quit_selection(void)
             frontend_text.misc_text[10] :
             "CANCEL";
 
-    frontend_quit_restore_choice_background();
-    frontend_draw_quit_choices(yes, no);
+    if (!frontend_apply_static_quit_choice()) {
+        frontend_quit_restore_choice_background();
+        frontend_draw_quit_choices(yes, no);
+    }
     frontend_dirty_begin();
     frontend_dirty_add(32, 104, 160, 14);
     frontend_dirty_present();
 }
 
-static void frontend_render_quit_confirm(void)
+static void frontend_compose_quit_dialog(void)
 {
     const char *question =
         frontend_text_ready &&
@@ -3627,48 +4167,148 @@ static void frontend_render_quit_confirm(void)
         frontend_text.misc_text[10][0] != '\0' ?
             frontend_text.misc_text[10] :
             "CANCEL";
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    u32 cycle_start = stress_cycle_counter_read();
+    u32 elapsed;
+#endif
 
+    if (!frontend_apply_static_quit_shade()) {
+        frontend_shade_source_rect(
+            frontend_frame_scratch,
+            65,
+            55,
+            255,
+            155,
+            3
+        );
+    }
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    elapsed = stress_cycle_counter_read() - cycle_start;
+    if (elapsed > telemetry_frontend_quit_shade_cycles_max) {
+        telemetry_frontend_quit_shade_cycles_max = elapsed;
+    }
+    cycle_start = stress_cycle_counter_read();
+#endif
+    if (!frontend_apply_static_quit_overlay()) {
+        (void)frontend_blit_shp_source(
+            frontend_frame_scratch,
+            5,
+            35,
+            50,
+            50,
+            FRONTEND_SOURCE_BLIT_NORMAL,
+            0,
+            0
+        );
+        frontend_draw_runtime_text_clipped_scaled(
+            frontend_frame_scratch,
+            question,
+            37,
+            53,
+            174,
+            0xfeu,
+            FRONTEND_COMPACT_FONT_WIDTH,
+            FRONTEND_COMPACT_FONT_SPACE
+        );
+        frontend_draw_runtime_text_wrapped_compact(
+            frontend_frame_scratch,
+            help,
+            37,
+            73,
+            174,
+            9,
+            3,
+            0xfau
+        );
+    }
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    elapsed = stress_cycle_counter_read() - cycle_start;
+    if (elapsed > telemetry_frontend_quit_overlay_cycles_max) {
+        telemetry_frontend_quit_overlay_cycles_max = elapsed;
+    }
+    cycle_start = stress_cycle_counter_read();
+#endif
+    if (!frontend_apply_static_quit_choice()) {
+        frontend_quit_capture_choice_background();
+        frontend_draw_quit_choices(yes, no);
+    }
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    elapsed = stress_cycle_counter_read() - cycle_start;
+    if (elapsed > telemetry_frontend_quit_choices_cycles_max) {
+        telemetry_frontend_quit_choices_cycles_max = elapsed;
+    }
+#endif
+}
+
+static u8 frontend_render_quit_transition(
+    u8 old_state,
+    u8 new_state
+)
+{
+    if (
+        old_state == STATE_GAME_MENU &&
+        new_state == STATE_QUIT_CONFIRM
+    ) {
+        /*
+         * The confirmation dialog is an overlay on the current Game Menu.
+         * Preserve its affected rectangle instead of decoding the four SHP
+         * ship sprites and rebuilding all menu chrome a second time.
+         */
+        if (
+            !frontend_quit_dialog_cache_valid ||
+            frontend_quit_dialog_cache_selection != 5
+        ) {
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+            u32 cycle_start = stress_cycle_counter_read();
+#endif
+            if (
+                !frontend_copy_static_menu_panel(
+                    FRONTEND_STATIC_GAME_MENU_BASE + 5u
+                )
+            ) {
+                return 0;
+            }
+            frontend_quit_capture_dialog_background();
+            frontend_quit_dialog_cache_valid = 1;
+            frontend_quit_dialog_cache_selection = 5;
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+            {
+                u32 elapsed =
+                    stress_cycle_counter_read() - cycle_start;
+
+                if (
+                    elapsed >
+                    telemetry_frontend_quit_capture_cycles_max
+                ) {
+                    telemetry_frontend_quit_capture_cycles_max =
+                        elapsed;
+                }
+            }
+#endif
+        }
+        frontend_compose_quit_dialog();
+    } else if (
+        old_state == STATE_QUIT_CONFIRM &&
+        new_state == STATE_GAME_MENU
+    ) {
+        frontend_quit_restore_dialog_background();
+    } else {
+        return 0;
+    }
+    frontend_present(
+        frontend_frame_scratch,
+        frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
+    );
+    return 1;
+}
+
+static void frontend_render_quit_confirm(void)
+{
     frontend_compose_game_menu(5);
-    frontend_shade_source_rect(
-        frontend_frame_scratch,
-        65,
-        55,
-        255,
-        155,
-        3
-    );
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        5,
-        35,
-        50,
-        50,
-        FRONTEND_SOURCE_BLIT_NORMAL,
-        0,
-        0
-    );
-    frontend_draw_runtime_text_clipped_scaled(
-        frontend_frame_scratch,
-        question,
-        37,
-        53,
-        174,
-        0xfeu,
-        FRONTEND_COMPACT_FONT_WIDTH,
-        FRONTEND_COMPACT_FONT_SPACE
-    );
-    frontend_draw_runtime_text_wrapped_compact(
-        frontend_frame_scratch,
-        help,
-        37,
-        73,
-        174,
-        9,
-        3,
-        0xfau
-    );
-    frontend_quit_capture_choice_background();
-    frontend_draw_quit_choices(yes, no);
+    frontend_quit_capture_dialog_background();
+    frontend_quit_dialog_cache_valid = 1;
+    frontend_quit_dialog_cache_selection = 5;
+    frontend_compose_quit_dialog();
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
@@ -5450,7 +6090,9 @@ static void frontend_enter_state(u8 state, u8 selection)
     }
     game_state = state;
     frontend_selection = selection;
-    frontend_redraw();
+    if (!frontend_render_shared_menu_transition(old_state, state)) {
+        frontend_redraw();
+    }
     telemetry_state_transitions++;
 }
 
