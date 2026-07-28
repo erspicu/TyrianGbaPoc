@@ -39,12 +39,12 @@ _Static_assert(
 #define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
 
 /*
- * Development-validation switch.  The release default exercises the
- * translated shield/armor/death path.  A diagnostic build may explicitly
- * override it with -DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1.
+ * Development-validation switch.  Keep the release validation ROM
+ * invincible while authored level flow is being inspected.  A diagnostic
+ * build can explicitly set it to 0 to exercise real player death.
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
 #endif
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 0 && \
     TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 1

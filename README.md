@@ -59,18 +59,19 @@ The current scope is deliberately narrow:
 - stock Port 1 Pulse-Cannon at power 11 from HDT weapon 165, including its
   five-shot 62/59 graphics, stable USP Talon bank poses, source explosion and
   reward assets, TINY_FONT cash and FONT_SHAPES status labels
-- shield-to-armor player damage, explosion and Game Over flow; the release
-  ROM defaults to `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0`, while a diagnostic
-  build can explicitly set it to `1`
+- shield-to-armor player damage, explosion and Game Over flow; the validation
+  ROM defaults to `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1`, while a diagnostic
+  build can explicitly set it to `0`
 - the linked source boss group, PC-style boss health bar, end-level flight,
   level statistics and return to Game Menu
 - complete tracker music plus all 29 Tyrian SFX and nine voices, with the
   original Normal-speed target of about 34.78 logic updates/second
 
-The release build now permits real player damage and death. A dedicated
-forced-death regression also verifies that Game Over selects stock MUS song
-29 (the title/menu music) instead of leaving level song 17 active. The
-normal level-statistics return makes the same explicit music transition.
+The validation build keeps the player invincible without suppressing
+collision telemetry. A dedicated forced-death regression compiles the flag
+off and verifies that Game Over selects stock MUS song 29 (the title/menu
+music) instead of leaving level song 17 active. The normal level-statistics
+return makes the same explicit music transition.
 
 The v29 full route passes schema-25 SRAM telemetry with 100 source enemy kills
 and the boss group fully cleared. Its Sprite2 L2 reduces first-level missed
