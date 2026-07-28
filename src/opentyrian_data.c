@@ -11,13 +11,9 @@
 
 enum {
     OT_HDT_ITEM_COUNT_BYTES = 14,
-    OT_HDT_SPECIAL_COUNT = 47,
     OT_HDT_SPECIAL_RECORD_BYTES = 37,
-    OT_HDT_POWER_COUNT = 7,
     OT_HDT_POWER_RECORD_BYTES = 37,
-    OT_HDT_SHIP_COUNT = 14,
     OT_HDT_SHIP_RECORD_BYTES = 41,
-    OT_HDT_SHIELD_COUNT = 11,
     OT_HDT_SHIELD_RECORD_BYTES = 37,
     OT_LEVEL_MAP_SHAPE_LAYER_BYTES = OT_LEVEL_MAP_SHAPE_COUNT * 2,
     OT_LEVEL_MAP_SHAPE_BYTES = 3 * OT_LEVEL_MAP_SHAPE_LAYER_BYTES,
@@ -33,7 +29,10 @@ typedef struct {
     uint32_t weapon_table_offset;
     uint32_t port_table_offset;
     uint32_t special_table_offset;
+    uint32_t power_table_offset;
+    uint32_t ship_table_offset;
     uint32_t option_table_offset;
+    uint32_t shield_table_offset;
     uint32_t enemy_table_offset;
 } OtItemDatabase;
 
@@ -184,14 +183,20 @@ static bool item_database_view(
     items->special_table_offset =
         items->port_table_offset +
         OT_HDT_PORT_COUNT * OT_HDT_PORT_RECORD_BYTES;
-    items->option_table_offset =
+    items->power_table_offset =
         items->special_table_offset +
-        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES +
-        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES +
+        OT_HDT_SPECIAL_COUNT * OT_HDT_SPECIAL_RECORD_BYTES;
+    items->ship_table_offset =
+        items->power_table_offset +
+        OT_HDT_POWER_COUNT * OT_HDT_POWER_RECORD_BYTES;
+    items->option_table_offset =
+        items->ship_table_offset +
         OT_HDT_SHIP_COUNT * OT_HDT_SHIP_RECORD_BYTES;
-    items->enemy_table_offset =
+    items->shield_table_offset =
         items->option_table_offset +
-        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES +
+        OT_HDT_OPTION_COUNT * OT_HDT_OPTION_RECORD_BYTES;
+    items->enemy_table_offset =
+        items->shield_table_offset +
         OT_HDT_SHIELD_COUNT * OT_HDT_SHIELD_RECORD_BYTES;
     return true;
 }
@@ -1742,6 +1747,65 @@ bool ot_data_hdt_special_read(
     return true;
 }
 
+bool ot_data_hdt_power_read(
+    uint8_t power_id,
+    OtPowerDefinition *power
+)
+{
+    const uint8_t *source;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
+        power == 0 ||
+        power_id >= OT_HDT_POWER_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.items.data +
+        data_state.items.power_table_offset +
+        (uint32_t)power_id * OT_HDT_POWER_RECORD_BYTES;
+    hdt_item_name_copy(source, power->name);
+    power->itemgraphic = read_u16(source + 31);
+    power->power = source[33];
+    power->speed = (int8_t)source[34];
+    power->cost = read_u16(source + 35);
+    return true;
+}
+
+bool ot_data_hdt_ship_read(
+    uint8_t ship_id,
+    OtShipDefinition *ship
+)
+{
+    const uint8_t *source;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
+        ship == 0 ||
+        ship_id >= OT_HDT_SHIP_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.items.data +
+        data_state.items.ship_table_offset +
+        (uint32_t)ship_id * OT_HDT_SHIP_RECORD_BYTES;
+    hdt_item_name_copy(source, ship->name);
+    ship->shipgraphic = read_u16(source + 31);
+    ship->itemgraphic = read_u16(source + 33);
+    ship->animation = source[35];
+    ship->speed = (int8_t)source[36];
+    ship->damage = source[37];
+    ship->cost = read_u16(source + 38);
+    ship->bigshipgraphic = source[40];
+    return true;
+}
+
 bool ot_data_hdt_option_read(
     uint8_t option_id,
     OtOptionDefinition *option
@@ -1781,6 +1845,34 @@ bool ot_data_hdt_option_read(
     option->ammo = source[83];
     option->stop = source[84] != 0;
     option->icon_graphic = source[85];
+    return true;
+}
+
+bool ot_data_hdt_shield_read(
+    uint8_t shield_id,
+    OtShieldDefinition *shield
+)
+{
+    const uint8_t *source;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        data_state.items.data == 0 ||
+        shield == 0 ||
+        shield_id >= OT_HDT_SHIELD_COUNT
+    ) {
+        return false;
+    }
+    source =
+        data_state.items.data +
+        data_state.items.shield_table_offset +
+        (uint32_t)shield_id * OT_HDT_SHIELD_RECORD_BYTES;
+    hdt_item_name_copy(source, shield->name);
+    shield->recharge_power = source[31];
+    shield->max_power = source[32];
+    shield->itemgraphic = read_u16(source + 33);
+    shield->cost = read_u16(source + 35);
     return true;
 }
 

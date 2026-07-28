@@ -112,6 +112,40 @@ static void render_secret_level_text(void)
     }
 }
 
+static void render_insert_coin_text(void)
+{
+    u8 index;
+    s16 x = source_world_to_screen_x(115);
+    s16 y = (s16)(
+        source_world_to_screen_y(10) +
+        SOURCE_PRESENTATION_Y_ORIGIN
+    );
+
+    /*
+     * Direct mainint.c demo overlay:
+     *   JE_dString(VGAScreen, 115, 10, miscText[7], SMALL_FONT_SHAPES)
+     * As with the Secret Level notice, compensate for the 12-pixel top crop
+     * so this fixed HUD text remains at GBA y=10.  The blank uses
+     * JE_dString's exact six-pixel advance.
+     */
+    for (index = 0; index < INSERT_COIN_TEXT_GLYPH_COUNT; index++) {
+        u8 glyph = insert_coin_glyph_map[index];
+
+        if (glyph == INSERT_COIN_SPACE_GLYPH) {
+            x = (s16)(x + 6);
+            continue;
+        }
+        put_sprite_shaped(
+            x, y,
+            OBJ_TILE_INSERT_COIN_RUNTIME + glyph * 2,
+            OBJ_PAL_INSERT_COIN,
+            ATTR0_TALL, ATTR1_SIZE_8,
+            8, 16, 0
+        );
+        x = (s16)(x + insert_coin_glyph_advances[glyph]);
+    }
+}
+
 static u8 source_boss_bar_armor(u8 bar)
 {
     u8 link = source_parity_level.boss_bar_link[bar];

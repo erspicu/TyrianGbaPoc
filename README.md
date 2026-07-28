@@ -1,16 +1,17 @@
-# Tyrian GBA First-Level Technical Demo
+# Tyrian GBA Source-Parity Port
 
-This project is an independent Game Boy Advance proof of concept built from
-the original Tyrian data already present in this workspace.  It is not a
-binary conversion of the NES or SNES ROM.
+This project is a progressively complete Game Boy Advance port of Tyrian,
+built from the original game data and the OpenTyrian source in this
+workspace. It is not a binary conversion of the NES or SNES ROM.
 
-The `opentyrian-source-parity-port` branch replaces reconstructed gameplay
-with a line-oriented translation of the OpenTyrian first-level loop. Events,
-four 25-entry enemy pools, movement, projectiles, collision, damage, linked
-death, rewards, the authored boss group, end-level flight and statistics all
-run from stock LVL/HDT data. A small GBA adapter takes a final 1:1 central
-240x160 crop from the original 264x184 gameplay viewport; it never rescales
-or writes presentation positions back into gameplay.
+The `opentyrian-source-parity-port` branch treats OpenTyrian as the gameplay
+specification. Selected-level events, four 25-entry enemy pools, movement,
+projectiles, collision, damage, linked death, rewards, authored boss groups,
+end-level flight and statistics run from stock LVL/HDT data. Platform changes
+are confined to GBA presentation, input, audio and storage adapters. A final
+1:1 central 240x160 crop is taken from the original 264x184 gameplay
+viewport; the adapter never rescales or writes presentation positions back
+into gameplay.
 
 ROMFS v1 embeds 68 stock Tyrian runtime files behind a seekable, stdio-like
 read-only API. Gameplay loaders parse MUS, SHP, PIC, HDT and LVL directly from
@@ -18,10 +19,12 @@ the memory-mapped image. Interactive front-end PIC/SHP/HDT composition is
 performed at build time into GBA Mode-4 frames so cursor movement never
 re-decodes source assets.
 
-The current scope is deliberately narrow:
+The currently integrated and continuously checked scope includes:
 
-- two original intro logos and the requested Start New Game, Play Mode,
+- two original intro logos; Start New Game, Demo and JukeBox; Play Mode,
   Episode, Difficulty, Game Menu and Next Level flow
+- all five stock demo recordings, including source equipment headers and
+  input streams, plus the original 30-second title-idle attract-mode trigger
 - Mode-4 double-buffered menu transitions and selection-row-only updates;
   invalid keys perform no redraw
 - three independently scrolling Mode-0 background layers (MAP1, MAP2 and MAP3)
@@ -122,6 +125,21 @@ pickups therefore change the actual volley on the next shot. Release
 invincibility is off; the normal shield, armor, explosion and Game Over path
 is active.
 
+The v40 release closes the title/demo, transition-audio, statistics and
+Arcade-pickup gaps against OpenTyrian. Victory, Game Over and Secret cues use
+finite variants whose source Bxx loop is removed at build time, and runtime
+tests require each cue to stop naturally exactly once. End-level statistics
+stay over the live gameplay frame, use the smaller TINY font, preserve the
+source hue-15 text treatment, and draw Data Cubes with `JE_drawCube` hue 9.
+Arcade mode now consumes and applies front weapon, rear weapon, sidekick,
+special and purple-ball drops through the source value ranges.
+
+Player ship, generator and shield state now come from the selected episode's
+HDT database, including Episode 4's embedded item records. Ordinary ships are
+drawn from the source Sprite2 bank. A dedicated 1 KiB player VRAM cache keeps
+banking animation from reducing the 24-frame enemy working set; this was
+validated by a zero-drop four-level Episode 1 campaign.
+
 ## Controls
 
 - D-pad Up/Down: move through menus
@@ -142,16 +160,17 @@ From PowerShell:
 The release ROM is written to:
 
 ```text
-build/tyrian_gba_level1_pc_flow_mode4_romfs_v39_detail_high_speed_normal.gba
+build/tyrian_gba_level1_pc_flow_mode4_romfs_v40_detail_high_speed_normal.gba
 ```
 
-`build.ps1` also builds deterministic Episode 1, Episode 2, death, Jukebox,
-four-level campaign and all-62-section matrix tests, runs them under mGBA,
-and checks their SRAM telemetry and memory budgets. After a successful run,
-historical and test ROMs move to `Backup`, rebuildable intermediates are
-removed, and `build` retains only the latest release ROM. Pass
-`-KeepIntermediates` when debugging requires ELF, map, log, save, preview and
-verification files.
+`build.ps1` also builds deterministic gameplay, death, JukeBox, Demo, Arcade,
+Episode 2/3/4 first-route, Episode 1 four-level campaign and all-62-section
+ROMFS matrix tests. It runs every ROM under mGBA and checks SRAM telemetry,
+finite audio completion, cache/drop invariants and GBA memory budgets. After
+a successful run, historical and test ROMs move to `Backup`, rebuildable
+intermediates are removed, and `build` retains only the latest release ROM.
+Pass `-KeepIntermediates` when debugging requires ELF, map, log, save, preview
+and verification files.
 
 The GBA toolchain is kept under `tools/gba-sdk`.  Generated native resources
 are under `res`, the current release ROM is under `build`, historical ROMs are
@@ -160,6 +179,7 @@ under `Backup`, and the reproducible source asset conversions are
 
 ## Documentation
 
+- [v40 source-parity closure and QA](MD/Tyrian-GBA-Source-Parity-QA-v40.md)
 - [v37 source audio, max single weapon and Episode 4 Sprite parity](MD/Tyrian-GBA-Source-Audio-Gameplay-Parity-v37.md)
 - [v37 updated plan](MD/Tyrian-GBA-Updated-Plan-v37.md)
 - [v38 Secret/end-flow/statistics/palette parity](MD/Tyrian-GBA-Secret-EndFlow-Stats-Palette-v38.md)

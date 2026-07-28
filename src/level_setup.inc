@@ -1,4 +1,4 @@
-/* GBA level entry/exit and resource setup; legacy v11 baseline. */
+/* GBA selected-level entry, exit and source-resource setup. */
 
 static void clear_entities(void)
 {
@@ -69,6 +69,116 @@ static u8 autotest_secret_level_collision(void)
         source_parity_level.orbiting_asteroid_pickup_count == 1 &&
         source_parity_level.enemy_avail[0] == 1;
 }
+
+#ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
+static u8 autotest_arcade_equipment_collision(void)
+{
+    OtPlayerCollisionResult result;
+    OtEnemy *pickup = &source_parity_level.enemy[0];
+    u8 pass = 1;
+
+    if (!source_parity_level.arcade_mode) return 0;
+    source_parity_level.player_x = 80;
+    source_parity_level.player_y = 96;
+
+    /*
+     * evalue==30000: mainint.c always consumes the purple ball, awards
+     * 100 credits, and advances the front weapon's purple-ball progression.
+     */
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 30000;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 100 &&
+        source_parity_level.player_front_weapon_power == 2 &&
+        source_parity_level.enemy_avail[0] == 1;
+
+    /*
+     * evalue>32100: player-one special-weapon pickup branch.
+     */
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 32102;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 250 &&
+        source_parity_level.player_special == 2 &&
+        source_parity_level.enemy_avail[0] == 1;
+
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 32021;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 250 &&
+        source_parity_level.player_sidekick[0] == 21 &&
+        source_parity_level.player_sidekick[1] == 21 &&
+        source_parity_level.enemy_avail[0] == 1;
+
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 31029;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 250 &&
+        source_parity_level.player_rear_weapon_id == 29 &&
+        source_parity_level.player_rear_weapon_power == 1 &&
+        source_parity_level.enemy_avail[0] == 1;
+
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 30007;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 250 &&
+        source_parity_level.player_front_weapon_id == 7 &&
+        source_parity_level.player_special == 10 &&
+        source_parity_level.enemy_avail[0] == 1 &&
+        source_parity_level.high_value_pickup_count == 5;
+    return pass;
+}
+#endif
 #endif
 
 static u16 title_palette_colour(const OtDataView *palette, u8 index)
@@ -83,29 +193,63 @@ static u16 title_palette_colour(const OtDataView *palette, u8 index)
     );
 }
 
-static u8 enter_level(u16 selected_section)
+/*
+ * Direct JE_getShipInfo() and start_level_first shield setup for the fixed
+ * single-player GBA path.  IDs remain the original HDT item indices; this
+ * routine deliberately reads the currently selected episode database after
+ * ot_data_level_select(), including Episode 4's embedded item block.
+ */
+static u8 source_player_equipment_apply(void)
 {
-    OtEpisodeLevel selected_level;
+    OtPowerDefinition power;
+    OtShipDefinition ship;
+    OtShieldDefinition shield;
 
     if (
-        selected_section == 0 ||
-        !ot_data_episode_level_resolve(
-            (u8)(frontend_episode + 1u),
-            selected_section,
-            frontend_play_mode,
-            frontend_difficulty,
-            &selected_level
+        !ot_data_hdt_power_read(
+            source_parity_level.player_generator,
+            &power
         ) ||
-        selected_level.episode_complete ||
+        !ot_data_hdt_ship_read(
+            source_parity_level.player_ship,
+            &ship
+        ) ||
+        !ot_data_hdt_shield_read(
+            source_parity_level.player_shield_item,
+            &shield
+        )
+    ) {
+        return 0;
+    }
+
+    player_generator_power = power.power;
+    player_ship_graphic = ship.shipgraphic;
+    player_ship_animation = ship.animation;
+    player_armor = ship.damage;
+    source_parity_level.player_armor = player_armor;
+    player_shield = shield.max_power;
+    player_shield_max = (u8)(shield.max_power * 2u);
+    return 1;
+}
+
+static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
+{
+    if (
+        selected_level == 0 ||
+        selected_level->episode == 0 ||
+        selected_level->episode > OT_EPISODE_COUNT ||
+        selected_level->lvl_file_number == 0 ||
+        selected_level->source_song >= JUKEBOX_MUSIC_COUNT ||
+        selected_level->episode_complete ||
         !ot_data_level_select(
-            selected_level.episode,
-            selected_level.lvl_file_number
+            selected_level->episode,
+            selected_level->lvl_file_number
         )
     ) {
         frontend_level_ready = 0;
         return 0;
     }
-    frontend_level = selected_level;
+    frontend_level = *selected_level;
     frontend_level_ready = 1;
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
@@ -124,6 +268,7 @@ static u8 enter_level(u16 selected_section)
     source_background2_upload_pending = 0;
     game_over_tile_upload_pending = 0;
     secret_level_tile_upload_pending = 0;
+    insert_coin_tile_upload_pending = frontend_demo_active ? 1 : 0;
     secret_level_palette_dirty = 0;
     secret_level_music_active = 0;
     clear_entities();
@@ -133,8 +278,8 @@ static u8 enter_level(u16 selected_section)
     dmaCopy(obj_palette, SPRITE_PALETTE, 512);
     /*
      * source_runtime_reset() replaces only its documented time-shared banks
-     * with a projection of the PC level palette. enter_boss() restores this
-     * complete static palette before the legacy POC boss is presented.
+     * with a projection of the PC level palette. Keep the complete static
+     * palette as the authoritative backing for later UI/palette restoration.
      */
     boss_obj_palette_restore_pending = 0;
     boss_bar_flash = 0;
@@ -200,23 +345,22 @@ static u8 enter_level(u16 selected_section)
     player_source_velocity_y = 0;
     player_source_x_friction_ticks = 0;
     player_source_y_friction_ticks = 0;
-    player_invulnerable = 0;
-    /*
-     * JE_initPlayerData() + JE_main(): USP Talon armor=10 and shield item 4
-     * (Gencore High Energy Shield mpwr=5, shield_max=10).
-     */
+    player_invulnerable = 100;
     player_alive = 1;
     player_exploding_ticks = 0;
     player_death_fx_wait = 0;
     player_death_music_volume = 255;
     player_death_music_fade_active = 0;
-    player_armor = 10;
-    player_shield = 5;
-    player_shield_max = 10;
+    player_armor = 0;
+    player_shield = 0;
+    player_shield_max = 0;
     player_lives = 1;
     player_end_warp = -4;
     fire_cooldown = 0;
     player_bank = 0;
+    player_ship_graphic = 0;
+    player_ship_animation = 0;
+    player_generator_power = 0;
     player_cash = 0;
     game_paused = 0;
 #ifdef AUTOTEST_CASH_VISUAL_TEST
@@ -246,7 +390,49 @@ static u8 enter_level(u16 selected_section)
         frontend_play_mode == FRONTEND_PLAY_ARCADE,
         false
     );
+#ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
+    telemetry_arcade_equipment_collision_pass =
+        autotest_arcade_equipment_collision();
+    ot_level_port_init(
+        &source_parity_level,
+        frontend_difficulty,
+        true,
+        false
+    );
 #endif
+#endif
+    if (frontend_demo_active) {
+        source_parity_level.player_front_weapon_id =
+            frontend_demo_header.front_weapon;
+        source_parity_level.player_front_weapon_power =
+            frontend_demo_header.front_power;
+        source_parity_level.player_rear_weapon_id =
+            frontend_demo_header.rear_weapon;
+        source_parity_level.player_rear_weapon_power =
+            frontend_demo_header.rear_power;
+        source_parity_level.player_special =
+            frontend_demo_header.special;
+        source_parity_level.player_sidekick[0] =
+            frontend_demo_header.sidekick[0];
+        source_parity_level.player_sidekick[1] =
+            frontend_demo_header.sidekick[1];
+        source_parity_level.player_generator =
+            frontend_demo_header.generator;
+        source_parity_level.player_shield_item =
+            frontend_demo_header.shield;
+        source_parity_level.player_ship =
+            frontend_demo_header.ship;
+        source_parity_level.player_super_arcade_mode =
+            frontend_demo_header.super_arcade_mode;
+        source_parity_level.player_sidekick_level =
+            frontend_demo_header.sidekick_level;
+        source_parity_level.player_sidekick_series =
+            frontend_demo_header.sidekick_series;
+    }
+    if (!source_player_equipment_apply()) {
+        frontend_level_ready = 0;
+        return 0;
+    }
 #if TYRIAN_GBA_STRESS_LOADOUT
     stress_loadout_init();
 #else
@@ -387,6 +573,7 @@ static u8 enter_level(u16 selected_section)
     telemetry_pickup_explosion_drops = 0;
     telemetry_pickup_explosion_max_active = 0;
     telemetry_end_level_music_starts = 0;
+    telemetry_end_level_music_natural_stops = 0;
     telemetry_end_level_initial_warp = 0;
     telemetry_end_level_trail_max = 0;
     telemetry_level_complete_voice_starts = 0;
@@ -402,6 +589,7 @@ static u8 enter_level(u16 selected_section)
     telemetry_player_death_sfx_22 = 0;
     telemetry_player_death_music_fade_steps = 0;
     telemetry_game_over_music_starts = 0;
+    telemetry_game_over_music_natural_stops = 0;
     telemetry_game_over_overlay_frames = 0;
     telemetry_game_over_exits = 0;
     last_vblank_seen = telemetry_vblank_irqs;
@@ -434,4 +622,25 @@ static u8 enter_level(u16 selected_section)
     game_state = STATE_PLAY;
     telemetry_state_transitions++;
     return 1;
+}
+
+static u8 enter_level(u16 selected_section)
+{
+    OtEpisodeLevel selected_level;
+
+    if (
+        selected_section == 0 ||
+        !ot_data_episode_level_resolve(
+            (u8)(frontend_episode + 1u),
+            selected_section,
+            frontend_play_mode,
+            frontend_difficulty,
+            &selected_level
+        ) ||
+        selected_level.episode_complete
+    ) {
+        frontend_level_ready = 0;
+        return 0;
+    }
+    return enter_selected_level(&selected_level);
 }

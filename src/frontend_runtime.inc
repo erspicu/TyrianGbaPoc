@@ -20,7 +20,9 @@ enum {
     FRONTEND_STATS_STAGE_TICKS = 30,
     FRONTEND_STATS_CUBE_TICKS = 18,
     FRONTEND_STATS_MAX_CUBES = 4,
-    FRONTEND_STATS_SOURCE_FONT_TABLE = 1,
+    FRONTEND_STATS_SOURCE_FONT_TABLE = 2,
+    FRONTEND_DEMO_COUNT = 5,
+    FRONTEND_DEMO_IDLE_VBLANKS = 1800,
     FRONTEND_NEXT_PANEL_X = 126,
     FRONTEND_NEXT_PANEL_Y = 29,
     FRONTEND_NEXT_PANEL_WIDTH = 108,
@@ -46,7 +48,7 @@ _Static_assert(
     "Mode 4 frame must be exactly 240x160 bytes"
 );
 _Static_assert(
-    FRONTEND_FRAME_COUNT == 30,
+    FRONTEND_FRAME_COUNT == 31,
     "generated front-end state atlas changed"
 );
 _Static_assert(
@@ -260,7 +262,7 @@ static void frontend_selection_rect(
     *height = 12;
     switch (state) {
     case STATE_TITLE:
-        source_y = (s16)(108 + selection * 24);
+        source_y = (s16)(108 + selection * 12);
         break;
     case STATE_PLAY_MODE_MENU:
     case STATE_DIFFICULTY_MENU:
@@ -873,12 +875,32 @@ static void frontend_stats_fill_palette(u16 *target, s8 brightness)
 
 static void frontend_stats_refresh_palettes(void)
 {
+    OtDataView palette;
+    u8 value;
+
+    memset(frontend_stats_obj_palette, 0, 16u * sizeof(u16));
+    if (ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)) {
+        /*
+         * JE_drawCube uses hue 9.  OBJ colour zero remains transparent;
+         * entry 1 doubles as the two dark shadow passes and the visually
+         * indistinguishable lowest foreground value in the 4bpp adapter.
+         */
+        frontend_stats_obj_palette[1] =
+            title_palette_colour(&palette, 0);
+        for (value = 2; value <= 15; value++) {
+            frontend_stats_obj_palette[value] =
+                title_palette_colour(
+                    &palette,
+                    (u8)(0x90u | value)
+                );
+        }
+    }
     frontend_stats_fill_palette(
-        frontend_stats_obj_palette,
+        frontend_stats_obj_palette + 16,
         frontend_stats_glow_brightness
     );
     frontend_stats_fill_palette(
-        frontend_stats_obj_palette + 16,
+        frontend_stats_obj_palette + 32,
         -4
     );
     frontend_stats_palette_dirty = 1;
@@ -1162,7 +1184,7 @@ static void frontend_render_stats(void)
                 (s16)(50 + (u16)cube_index * 30u),
                 source_world_to_screen_y(135),
                 FRONTEND_STATS_CUBE_TILE_BASE,
-                9,
+                13,
                 ATTR1_SIZE_32,
                 32
             );
@@ -1291,10 +1313,262 @@ static void frontend_enter_state(u8 state, u8 selection)
     telemetry_state_transitions++;
 }
 
+static void frontend_demo_close(void)
+{
+    if (frontend_demo_file != 0) {
+        ot_fclose(frontend_demo_file);
+        frontend_demo_file = 0;
+    }
+    frontend_demo_active = 0;
+    frontend_demo_eof = 0;
+    frontend_demo_keys = 0;
+    frontend_demo_keys_wait = 0;
+    frontend_demo_input_guard = 0;
+    insert_coin_tile_upload_pending = 0;
+}
+
 static void enter_title(void)
 {
+    frontend_demo_close();
+    frontend_title_idle_frames = 0;
     frontend_enter_state(STATE_TITLE, 0);
     audio_load_source_song(29);
+}
+
+static void frontend_demo_finish(u8 aborted)
+{
+    if (!frontend_demo_active) return;
+    if (aborted) {
+        telemetry_demo_aborts++;
+    } else {
+        telemetry_demo_finishes++;
+    }
+    frontend_demo_close();
+    enter_title();
+}
+
+static u8 frontend_demo_read_header(void)
+{
+    u8 wait_bytes[2];
+    u8 unused[3];
+    char filename[7] = "demo.1";
+
+    if (++frontend_demo_number > FRONTEND_DEMO_COUNT) {
+        frontend_demo_number = 1;
+    }
+    filename[5] = (char)('0' + frontend_demo_number);
+    frontend_demo_file = ot_dir_fopen(
+        ot_data_dir(),
+        filename,
+        "rb"
+    );
+    if (frontend_demo_file == 0) return 0;
+    memset(&frontend_demo_header, 0, sizeof(frontend_demo_header));
+    if (
+        !ot_fread_u8_exact(
+            &frontend_demo_header.episode,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            (u8 *)frontend_demo_header.level_name,
+            10,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.lvl_file_number,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.front_weapon,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.rear_weapon,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.super_arcade_mode,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            frontend_demo_header.sidekick,
+            2,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.generator,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.sidekick_level,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.sidekick_series,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.initial_episode,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.shield,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.special,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.ship,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.front_power,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.rear_power,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(unused, 3, frontend_demo_file) ||
+        !ot_fread_u8_exact(
+            &frontend_demo_header.source_song,
+            1,
+            frontend_demo_file
+        ) ||
+        !ot_fread_u8_exact(wait_bytes, 2, frontend_demo_file)
+    ) {
+        return 0;
+    }
+    frontend_demo_header.level_name[10] = '\0';
+    if (
+        frontend_demo_header.episode == 0 ||
+        frontend_demo_header.episode > OT_EPISODE_COUNT ||
+        frontend_demo_header.lvl_file_number == 0 ||
+        frontend_demo_header.source_song >= JUKEBOX_MUSIC_COUNT ||
+        frontend_demo_header.front_weapon >= OT_HDT_PORT_COUNT ||
+        frontend_demo_header.rear_weapon >= OT_HDT_PORT_COUNT ||
+        frontend_demo_header.generator >= OT_HDT_POWER_COUNT ||
+        frontend_demo_header.sidekick[0] >= OT_HDT_OPTION_COUNT ||
+        frontend_demo_header.sidekick[1] >= OT_HDT_OPTION_COUNT ||
+        frontend_demo_header.shield >= OT_HDT_SHIELD_COUNT ||
+        frontend_demo_header.special >= OT_HDT_SPECIAL_COUNT ||
+        frontend_demo_header.ship >= OT_HDT_SHIP_COUNT ||
+        frontend_demo_header.front_power == 0 ||
+        frontend_demo_header.front_power > 11 ||
+        frontend_demo_header.rear_power == 0 ||
+        frontend_demo_header.rear_power > 11
+    ) {
+        return 0;
+    }
+    frontend_demo_keys = 0;
+    frontend_demo_keys_wait =
+        (u16)(((u16)wait_bytes[0] << 8) | wait_bytes[1]);
+    return 1;
+}
+
+static u8 frontend_demo_start(u8 idle_start)
+{
+    OtEpisodeLevel demo_level;
+
+    frontend_demo_close();
+    if (!frontend_demo_read_header()) {
+        telemetry_demo_parse_failures++;
+        frontend_demo_close();
+        enter_title();
+        return 0;
+    }
+    memset(&demo_level, 0, sizeof(demo_level));
+    demo_level.episode = frontend_demo_header.episode;
+    demo_level.lvl_file_number =
+        frontend_demo_header.lvl_file_number;
+    demo_level.source_song = frontend_demo_header.source_song;
+    memcpy(
+        demo_level.level_name,
+        frontend_demo_header.level_name,
+        sizeof(demo_level.level_name)
+    );
+    demo_level.level_name[
+        sizeof(demo_level.level_name) - 1u
+    ] = '\0';
+    frontend_play_mode = FRONTEND_PLAY_FULL_GAME;
+    frontend_episode = (u8)(demo_level.episode - 1u);
+    frontend_difficulty = FRONTEND_DIFFICULTY_NORMAL;
+    frontend_main_section = 0;
+    frontend_map = (OtEpisodeMap){0};
+    frontend_level = (OtEpisodeLevel){0};
+    frontend_map_ready = 0;
+    frontend_level_ready = 0;
+    frontend_demo_active = 1;
+    frontend_demo_eof = 0;
+    frontend_demo_input_guard = 12;
+    if (!enter_selected_level(&demo_level)) {
+        telemetry_demo_parse_failures++;
+        frontend_demo_close();
+        enter_title();
+        return 0;
+    }
+    telemetry_demo_starts++;
+    if (idle_start) telemetry_demo_idle_starts++;
+    return 1;
+}
+
+static u8 frontend_demo_apply_input(void)
+{
+    u8 wait_bytes[2];
+
+    if (!frontend_demo_active || frontend_demo_file == 0) return 1;
+    while (frontend_demo_keys_wait == 0) {
+        if (
+            !ot_fread_u8_exact(
+                &frontend_demo_keys,
+                1,
+                frontend_demo_file
+            ) ||
+            !ot_fread_u8_exact(
+                wait_bytes,
+                2,
+                frontend_demo_file
+            )
+        ) {
+            frontend_demo_eof = 1;
+            frontend_demo_keys = 0;
+            source_parity_level.end_level = true;
+            source_parity_level.level_end = 40;
+            source_begin_end_level_audio();
+            break;
+        }
+        frontend_demo_keys_wait =
+            (u16)(((u16)wait_bytes[0] << 8) | wait_bytes[1]);
+    }
+    if (frontend_demo_keys_wait > 0) {
+        frontend_demo_keys_wait--;
+    }
+    pad_now = 0;
+    if (frontend_demo_keys & (1u << 0)) pad_now |= KEY_UP;
+    if (frontend_demo_keys & (1u << 1)) pad_now |= KEY_DOWN;
+    if (frontend_demo_keys & (1u << 2)) pad_now |= KEY_LEFT;
+    if (frontend_demo_keys & (1u << 3)) pad_now |= KEY_RIGHT;
+    if (frontend_demo_keys & (1u << 4)) pad_now |= KEY_A;
+    if (frontend_demo_keys & (1u << 5)) pad_now |= KEY_L;
+    if (frontend_demo_keys & (1u << 6)) pad_now |= KEY_B;
+    if (frontend_demo_keys & (1u << 7)) pad_now |= KEY_R;
+    return 1;
 }
 
 static void frontend_advance_episode(void)
@@ -1335,6 +1609,14 @@ static void frontend_begin(void)
     frontend_map_ready = 0;
     frontend_level_ready = 0;
     frontend_level_completed = 0;
+    frontend_demo_file = 0;
+    frontend_demo_keys_wait = 0;
+    frontend_title_idle_frames = 0;
+    frontend_demo_keys = 0;
+    frontend_demo_number = 0;
+    frontend_demo_active = 0;
+    frontend_demo_eof = 0;
+    frontend_demo_input_guard = 0;
     frontend_timer = 200;
     frontend_stats_stage = FRONTEND_STATS_STAGE_COMPLETED;
     frontend_stats_cube_visible_count = 0;
@@ -1409,7 +1691,27 @@ static void frontend_update(void)
         return;
     }
 
+    if (game_state == STATE_TITLE) {
+        if (pad_now != 0 || pad_pressed != 0) {
+            frontend_title_idle_frames = 0;
+        } else if (
+            ++frontend_title_idle_frames >=
+                FRONTEND_DEMO_IDLE_VBLANKS
+        ) {
+            frontend_title_idle_frames = 0;
+            (void)frontend_demo_start(1);
+            return;
+        }
+    }
+
     if (game_state == STATE_LEVEL_STATS) {
+        if (
+            level_exit_music_started &&
+            telemetry_end_level_music_natural_stops == 0 &&
+            !mmActive()
+        ) {
+            telemetry_end_level_music_natural_stops = 1;
+        }
         if (pad_pressed != 0) {
             if (frontend_stats_stage < FRONTEND_STATS_STAGE_FINAL) {
                 telemetry_stats_stage_advances +=
@@ -1511,6 +1813,8 @@ static void frontend_update(void)
     if (pad_pressed & KEY_UP) {
         switch (game_state) {
         case STATE_TITLE:
+            frontend_move_selection(3, -1);
+            break;
         case STATE_PLAY_MODE_MENU:
             frontend_move_selection(2, -1);
             break;
@@ -1537,6 +1841,8 @@ static void frontend_update(void)
     if (pad_pressed & KEY_DOWN) {
         switch (game_state) {
         case STATE_TITLE:
+            frontend_move_selection(3, 1);
+            break;
         case STATE_PLAY_MODE_MENU:
             frontend_move_selection(2, 1);
             break;
@@ -1589,6 +1895,8 @@ static void frontend_update(void)
     case STATE_TITLE:
         if (frontend_selection == 0) {
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
+        } else if (frontend_selection == 1) {
+            (void)frontend_demo_start(0);
         } else {
             jukebox_enter();
         }
@@ -1792,6 +2100,10 @@ static void frontend_enter_level_stats(u8 completed)
 {
     u16 index;
 
+    if (frontend_demo_active) {
+        frontend_demo_finish(0);
+        return;
+    }
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     frontend_autotest_record_campaign_level(completed);
 #endif
@@ -1830,6 +2142,10 @@ static void frontend_enter_level_stats(u8 completed)
 
 static void frontend_enter_game_over(void)
 {
+    if (frontend_demo_active) {
+        frontend_demo_finish(0);
+        return;
+    }
     /*
      * tyrian2.c leaves VGAScreen on the live gameplay frame and overlays
      * miscText[21].  Stay in Mode 0, request the OBJ glyph upload, and select
@@ -1851,6 +2167,13 @@ static void frontend_enter_game_over(void)
 
 static void game_over_update(void)
 {
+    if (
+        telemetry_game_over_music_starts != 0 &&
+        telemetry_game_over_music_natural_stops == 0 &&
+        !mmActive()
+    ) {
+        telemetry_game_over_music_natural_stops = 1;
+    }
     if (pad_pressed == 0) return;
 
     frontend_enter_state(STATE_GAME_MENU, 4);

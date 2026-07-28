@@ -36,8 +36,12 @@ enum {
     OT_HDT_WEAPON_RECORD_BYTES = 80,
     OT_HDT_PORT_COUNT = 43,
     OT_HDT_PORT_RECORD_BYTES = 82,
+    OT_HDT_SPECIAL_COUNT = 47,
+    OT_HDT_POWER_COUNT = 7,
+    OT_HDT_SHIP_COUNT = 14,
     OT_HDT_OPTION_COUNT = 31,
     OT_HDT_OPTION_RECORD_BYTES = 86,
+    OT_HDT_SHIELD_COUNT = 11,
     OT_HDT_ENEMY_COUNT = 851,
     OT_HDT_ENEMY_RECORD_BYTES = 77,
     OT_PIC_COUNT = 13,
@@ -161,6 +165,33 @@ typedef struct {
     uint8_t type;
     uint16_t weapon;
 } OtSpecialDefinition;
+
+typedef struct {
+    char name[31];
+    uint16_t itemgraphic;
+    uint8_t power;
+    int8_t speed;
+    uint16_t cost;
+} OtPowerDefinition;
+
+typedef struct {
+    char name[31];
+    uint16_t shipgraphic;
+    uint16_t itemgraphic;
+    uint8_t animation;
+    int8_t speed;
+    uint8_t damage;
+    uint16_t cost;
+    uint8_t bigshipgraphic;
+} OtShipDefinition;
+
+typedef struct {
+    char name[31];
+    uint8_t recharge_power;
+    uint8_t max_power;
+    uint16_t itemgraphic;
+    uint16_t cost;
+} OtShieldDefinition;
 
 typedef struct {
     char name[31];
@@ -354,9 +385,21 @@ bool ot_data_hdt_special_read(
     uint8_t special_id,
     OtSpecialDefinition *special
 );
+bool ot_data_hdt_power_read(
+    uint8_t power_id,
+    OtPowerDefinition *power
+);
+bool ot_data_hdt_ship_read(
+    uint8_t ship_id,
+    OtShipDefinition *ship
+);
 bool ot_data_hdt_option_read(
     uint8_t option_id,
     OtOptionDefinition *option
+);
+bool ot_data_hdt_shield_read(
+    uint8_t shield_id,
+    OtShieldDefinition *shield
 );
 
 /*

@@ -1631,13 +1631,23 @@ static void autotest_full_loadout_stress_finish(void)
 #ifdef AUTOTEST_DEATH_FLOW
 static void autotest_death_update(void)
 {
-    static u8 settled_frames;
+    static u16 settled_frames;
+    static u8 observed_game_over_music_active;
     const OtDataCatalog *catalog;
     volatile u8 *sram;
     u8 game_over_pass;
     u8 normal_weapon_pass;
 
-    if (++settled_frames < 4) return;
+    settled_frames++;
+    if (mmActive()) observed_game_over_music_active = 1;
+    if (settled_frames < 4) return;
+    /*
+     * The source GAME OVER cue is finite.  Do not synthesize the exit key
+     * until Maxmod reaches the stripped order-list boundary; this turns the
+     * old four-frame "song started" smoke test into an actual no-loop
+     * regression.  The bounded fallback records pass=0 instead of hanging.
+     */
+    if (mmActive() && settled_frames < 1200) return;
 
     catalog = ot_data_catalog();
     sram = (volatile u8 *)0x0E000000;
@@ -1691,11 +1701,19 @@ static void autotest_death_update(void)
     sram_write_u32(132, source_front_weapon_hdt_id);
     sram_write_u32(136, source_front_weapon_valid);
     sram_write_u32(140, normal_weapon_pass);
+    sram_write_u32(144, observed_game_over_music_active);
+    sram_write_u32(
+        148,
+        telemetry_game_over_music_natural_stops
+    );
+    sram_write_u32(152, settled_frames);
     game_over_pass = (
         game_state == STATE_GAME_OVER &&
         catalog != 0 &&
         catalog->selected_mus_song == 10 &&
-        mmActive() &&
+        observed_game_over_music_active &&
+        !mmActive() &&
+        telemetry_game_over_music_natural_stops == 1 &&
         !TYRIAN_GBA_DEV_PLAYER_INVINCIBLE &&
         !player_alive &&
         player_exploding_ticks == 0 &&
@@ -1765,7 +1783,7 @@ static u16 autotest_jukebox_input(void)
     }
     if (game_state == STATE_TITLE) {
         if (autotest_jukebox_entered) return 0;
-        return frontend_selection == 0 ? KEY_DOWN : KEY_A;
+        return frontend_selection < 2 ? KEY_DOWN : KEY_A;
     }
     if (game_state != STATE_JUKEBOX) return 0;
 
@@ -1858,6 +1876,260 @@ static void autotest_jukebox_maybe_finish(void)
 }
 #endif
 
+#ifdef AUTOTEST_DEMO_FLOW
+static u8 autotest_demo_phase;
+static u8 autotest_demo_checks = 1;
+static u16 autotest_demo_play_frames;
+static u8 autotest_demo_nonzero_keys_seen;
+static u8 autotest_demo_completed;
+static u8 autotest_demo_input_streams;
+
+static u16 autotest_demo_input(void)
+{
+    if (
+        game_state == STATE_TITLE &&
+        autotest_demo_phase == 1
+    ) {
+        return frontend_selection == 0 ? KEY_DOWN : KEY_A;
+    }
+    return 0;
+}
+
+static void autotest_demo_validate_header(u8 demo_number)
+{
+    const OtDataCatalog *catalog = ot_data_catalog();
+    static const char *const expected_name[FRONTEND_DEMO_COUNT] = {
+        "TYRIAN   ",
+        "SAVARA   ",
+        "SOH JIN  ",
+        "MINES    ",
+        "DELIANI  "
+    };
+    static const u8 expected_level[FRONTEND_DEMO_COUNT] = {
+        9, 12, 13, 7, 5
+    };
+    static const u8 expected_front[FRONTEND_DEMO_COUNT] = {
+        7, 5, 19, 19, 19
+    };
+    static const u8 expected_rear[FRONTEND_DEMO_COUNT] = {
+        29, 29, 0, 0, 0
+    };
+    static const u8 expected_left[FRONTEND_DEMO_COUNT] = {
+        21, 21, 21, 19, 19
+    };
+    static const u8 expected_right[FRONTEND_DEMO_COUNT] = {
+        20, 21, 23, 19, 19
+    };
+    static const u8 expected_initial_episode[FRONTEND_DEMO_COUNT] = {
+        1, 1, 2, 1, 1
+    };
+    static const u8 expected_shield[FRONTEND_DEMO_COUNT] = {
+        6, 8, 6, 9, 9
+    };
+    static const u8 expected_special[FRONTEND_DEMO_COUNT] = {
+        0, 2, 0, 0, 0
+    };
+    static const u8 expected_ship[FRONTEND_DEMO_COUNT] = {
+        1, 6, 4, 4, 3
+    };
+    static const u8 expected_front_power[FRONTEND_DEMO_COUNT] = {
+        1, 10, 3, 10, 10
+    };
+    static const u8 expected_rear_power[FRONTEND_DEMO_COUNT] = {
+        1, 11, 1, 1, 1
+    };
+    static const u8 expected_song[FRONTEND_DEMO_COUNT] = {
+        18, 33, 16, 16, 14
+    };
+    static const u16 expected_ship_graphic[FRONTEND_DEMO_COUNT] = {
+        233, 195, 157, 157, 157
+    };
+    static const u8 expected_armor[FRONTEND_DEMO_COUNT] = {
+        10, 27, 20, 20, 17
+    };
+    static const u8 expected_shield_power[FRONTEND_DEMO_COUNT] = {
+        7, 10, 7, 12, 12
+    };
+    u8 index;
+
+    if (demo_number == 0 || demo_number > FRONTEND_DEMO_COUNT) {
+        autotest_demo_checks = 0;
+        return;
+    }
+    index = (u8)(demo_number - 1u);
+    autotest_demo_checks =
+        autotest_demo_checks &&
+        frontend_demo_active &&
+        frontend_demo_file != 0 &&
+        game_state == STATE_PLAY &&
+        frontend_demo_number == demo_number &&
+        telemetry_demo_starts == demo_number &&
+        telemetry_demo_idle_starts == 1 &&
+        frontend_play_mode == FRONTEND_PLAY_FULL_GAME &&
+        frontend_difficulty == FRONTEND_DIFFICULTY_NORMAL &&
+        frontend_level_ready &&
+        source_parity_level.assets_valid &&
+        catalog != 0 &&
+        frontend_demo_header.episode == 1 &&
+        strcmp(
+            frontend_demo_header.level_name,
+            expected_name[index]
+        ) == 0 &&
+        frontend_demo_header.lvl_file_number ==
+            expected_level[index] &&
+        frontend_demo_header.front_weapon ==
+            expected_front[index] &&
+        frontend_demo_header.rear_weapon ==
+            expected_rear[index] &&
+        frontend_demo_header.super_arcade_mode == 0 &&
+        frontend_demo_header.sidekick[0] ==
+            expected_left[index] &&
+        frontend_demo_header.sidekick[1] ==
+            expected_right[index] &&
+        frontend_demo_header.generator == 5 &&
+        frontend_demo_header.sidekick_level == 2 &&
+        frontend_demo_header.sidekick_series == 1 &&
+        frontend_demo_header.initial_episode ==
+            expected_initial_episode[index] &&
+        frontend_demo_header.shield ==
+            expected_shield[index] &&
+        frontend_demo_header.special ==
+            expected_special[index] &&
+        frontend_demo_header.ship == expected_ship[index] &&
+        frontend_demo_header.front_power ==
+            expected_front_power[index] &&
+        frontend_demo_header.rear_power ==
+            expected_rear_power[index] &&
+        frontend_demo_header.source_song ==
+            expected_song[index] &&
+        frontend_level.lvl_file_number ==
+            expected_level[index] &&
+        frontend_level.source_song == expected_song[index] &&
+        source_parity_level.player_front_weapon_id ==
+            expected_front[index] &&
+        source_parity_level.player_front_weapon_power ==
+            expected_front_power[index] &&
+        source_parity_level.player_rear_weapon_id ==
+            expected_rear[index] &&
+        source_parity_level.player_rear_weapon_power ==
+            expected_rear_power[index] &&
+        source_parity_level.player_special ==
+            expected_special[index] &&
+        source_parity_level.player_sidekick[0] ==
+            expected_left[index] &&
+        source_parity_level.player_sidekick[1] ==
+            expected_right[index] &&
+        source_parity_level.player_generator == 5 &&
+        source_parity_level.player_shield_item ==
+            expected_shield[index] &&
+        source_parity_level.player_ship == expected_ship[index] &&
+        player_generator_power == 30 &&
+        player_ship_graphic == expected_ship_graphic[index] &&
+        player_ship_animation == 2 &&
+        player_armor == expected_armor[index] &&
+        player_shield == expected_shield_power[index] &&
+        player_shield_max ==
+            (u8)(expected_shield_power[index] * 2u) &&
+        catalog->selected_mus_song == expected_song[index];
+}
+
+static void autotest_demo_finish_to_sram(void)
+{
+    const OtDataCatalog *catalog = ot_data_catalog();
+    volatile u8 *sram = (volatile u8 *)0x0E000000;
+    u8 passed =
+        autotest_demo_checks &&
+        autotest_demo_completed == FRONTEND_DEMO_COUNT &&
+        autotest_demo_input_streams == FRONTEND_DEMO_COUNT &&
+        game_state == STATE_TITLE &&
+        frontend_mode4_active &&
+        !frontend_frame_pending &&
+        !frontend_demo_active &&
+        frontend_demo_file == 0 &&
+        frontend_demo_number == FRONTEND_DEMO_COUNT &&
+        telemetry_demo_starts == FRONTEND_DEMO_COUNT &&
+        telemetry_demo_idle_starts == 1 &&
+        telemetry_demo_aborts == FRONTEND_DEMO_COUNT &&
+        telemetry_demo_finishes == 0 &&
+        telemetry_demo_parse_failures == 0 &&
+        catalog != 0 &&
+        catalog->selected_mus_song == 29 &&
+        mmActive();
+
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'D';
+    sram[3] = 'M';
+    sram_write_u32(4, passed);
+    sram_write_u32(8, telemetry_demo_starts);
+    sram_write_u32(12, telemetry_demo_idle_starts);
+    sram_write_u32(16, telemetry_demo_aborts);
+    sram_write_u32(20, telemetry_demo_finishes);
+    sram_write_u32(24, telemetry_demo_parse_failures);
+    sram_write_u32(28, frontend_demo_number);
+    sram_write_u32(32, game_state);
+    sram_write_u32(36, frontend_mode4_active);
+    sram_write_u32(40, frontend_frame_pending);
+    sram_write_u32(
+        44,
+        catalog ? catalog->selected_mus_song : 0xffffu
+    );
+    sram_write_u32(48, mmActive());
+    sram_write_u32(52, autotest_demo_input_streams);
+    sram_write_u32(56, FRONTEND_DEMO_IDLE_VBLANKS);
+    sram_write_u32(60, MSL_NSONGS);
+    __asm__ volatile("swi 3");
+}
+
+static void autotest_demo_maybe_finish(void)
+{
+    if (frontend_demo_active) {
+        if (
+            (autotest_demo_phase == 0 &&
+             telemetry_demo_idle_starts == 1) ||
+            autotest_demo_phase == 1
+        ) {
+            u8 demo_number = (u8)(autotest_demo_completed + 1u);
+
+            autotest_demo_validate_header(demo_number);
+            autotest_demo_phase = 2;
+            autotest_demo_play_frames = 0;
+            autotest_demo_nonzero_keys_seen = 0;
+        }
+        if (autotest_demo_phase == 2) {
+            if (frontend_demo_keys != 0) {
+                autotest_demo_nonzero_keys_seen = 1;
+            }
+            autotest_demo_play_frames++;
+            if (autotest_demo_play_frames >= 120) {
+                autotest_demo_checks =
+                    autotest_demo_checks &&
+                    !insert_coin_tile_upload_pending &&
+                    autotest_demo_nonzero_keys_seen;
+                if (autotest_demo_nonzero_keys_seen) {
+                    autotest_demo_input_streams++;
+                }
+                autotest_demo_completed++;
+                frontend_demo_finish(1);
+                autotest_demo_phase =
+                    autotest_demo_completed >=
+                        FRONTEND_DEMO_COUNT ?
+                            3 :
+                            1;
+            }
+        }
+        return;
+    }
+    if (
+        autotest_demo_phase == 3 &&
+        game_state == STATE_TITLE &&
+        !frontend_frame_pending
+    ) {
+        autotest_demo_finish_to_sram();
+    }
+}
+#endif
+
 static void autotest_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;
@@ -1883,6 +2155,16 @@ static void autotest_finish(void)
         frontend_mode4_active &&
         !frontend_frame_pending &&
         !game_paused &&
+#ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
+        telemetry_arcade_equipment_collision_pass == 1 &&
+        frontend_play_mode == FRONTEND_PLAY_ARCADE &&
+        /*
+         * The fixed probe covers all five evalue equipment branches.  This
+         * additional condition proves the authored Episode 1/section 1 run
+         * itself collected at least one randomly spawned equipment item.
+         */
+        source_parity_level.high_value_pickup_count > 0 &&
+#endif
         level_position != 0 &&
         telemetry_max_oam <= SPRITE_LIMIT &&
         telemetry_reward_drops == 0 &&
@@ -1942,8 +2224,13 @@ static void autotest_finish(void)
         telemetry_projectile_cache_drops == 0 &&
         telemetry_layer_rule_failures == 0 &&
         telemetry_end_level_music_starts == 1 &&
+        telemetry_end_level_music_natural_stops == 1 &&
         telemetry_level_complete_voice_starts == 1 &&
+#ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
+        telemetry_stats_stage_advances == 3 &&
+#else
         telemetry_stats_stage_advances == 4 &&
+#endif
         frontend_stats_stage == FRONTEND_STATS_STAGE_FINAL
     );
 #else
@@ -2079,6 +2366,7 @@ static void autotest_finish(void)
         telemetry_pickup_explosion_max_active <=
             MAX_PICKUP_EXPLOSIONS &&
         telemetry_end_level_music_starts == 1 &&
+        telemetry_end_level_music_natural_stops == 1 &&
         telemetry_end_level_initial_warp == (u8)-4 &&
         telemetry_end_level_trail_max == 16 &&
         player_end_warp == 27 &&
@@ -2371,6 +2659,8 @@ static void autotest_finish(void)
     sram_write_u32(6088, telemetry_source_sound_mask_low);
     sram_write_u32(6092, telemetry_source_sound_mask_high);
     sram_write_u32(6112, telemetry_secret_level_collision_pass);
+    sram_write_u32(6116, telemetry_end_level_music_natural_stops);
+    sram_write_u32(6120, telemetry_arcade_equipment_collision_pass);
     sram_write_u32(6200, telemetry_boss_perf_started);
     sram_write_u32(6204, telemetry_boss_perf_completed);
     sram_write_u32(6208, telemetry_boss_perf_start_position);

@@ -18,44 +18,65 @@ $headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless
 $perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
-$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v39_$configSuffix"
-$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v39_$configSuffix"
-$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v39_$configSuffix"
-$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v39_$configSuffix"
-$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v39_$configSuffix"
-$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v39_$configSuffix"
-$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v39_$configSuffix"
+$releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v40_$configSuffix"
+$testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$configSuffix"
+$deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$configSuffix"
+$jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v40_$configSuffix"
+$demoTestName = "tyrian_gba_demo_autotest_romfs_v40_$configSuffix"
+$matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v40_$configSuffix"
+$campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v40_$configSuffix"
+$episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v40_$configSuffix"
+$episode3TestName = "tyrian_gba_route_smoke_ep3_section1_v40_$configSuffix"
+$episode4TestName = "tyrian_gba_route_smoke_ep4_section1_v40_$configSuffix"
+$arcadeTestName = "tyrian_gba_arcade_route_smoke_ep1_section1_v40_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
 $jukeboxTestRom = Join-Path $buildDir "$jukeboxTestName.gba"
+$demoTestRom = Join-Path $buildDir "$demoTestName.gba"
 $matrixTestRom = Join-Path $buildDir "$matrixTestName.gba"
 $campaignTestRom = Join-Path $buildDir "$campaignTestName.gba"
 $episode2TestRom = Join-Path $buildDir "$episode2TestName.gba"
+$episode3TestRom = Join-Path $buildDir "$episode3TestName.gba"
+$episode4TestRom = Join-Path $buildDir "$episode4TestName.gba"
+$arcadeTestRom = Join-Path $buildDir "$arcadeTestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
+$demoTestSave = Join-Path $buildDir "$demoTestName.sav"
 $matrixTestSave = Join-Path $buildDir "$matrixTestName.sav"
 $campaignTestSave = Join-Path $buildDir "$campaignTestName.sav"
 $episode2TestSave = Join-Path $buildDir "$episode2TestName.sav"
+$episode3TestSave = Join-Path $buildDir "$episode3TestName.sav"
+$episode4TestSave = Join-Path $buildDir "$episode4TestName.sav"
+$arcadeTestSave = Join-Path $buildDir "$arcadeTestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
 $deathTestStderr = Join-Path $buildDir "death_autotest_mgba_stderr.txt"
 $jukeboxTestStdout = Join-Path $buildDir "jukebox_autotest_mgba_stdout.txt"
 $jukeboxTestStderr = Join-Path $buildDir "jukebox_autotest_mgba_stderr.txt"
+$demoTestStdout = Join-Path $buildDir "demo_autotest_mgba_stdout.txt"
+$demoTestStderr = Join-Path $buildDir "demo_autotest_mgba_stderr.txt"
 $matrixTestStdout = Join-Path $buildDir "matrix_autotest_mgba_stdout.txt"
 $matrixTestStderr = Join-Path $buildDir "matrix_autotest_mgba_stderr.txt"
 $campaignTestStdout = Join-Path $buildDir "campaign_autotest_mgba_stdout.txt"
 $campaignTestStderr = Join-Path $buildDir "campaign_autotest_mgba_stderr.txt"
 $episode2TestStdout = Join-Path $buildDir "episode2_autotest_mgba_stdout.txt"
 $episode2TestStderr = Join-Path $buildDir "episode2_autotest_mgba_stderr.txt"
+$episode3TestStdout = Join-Path $buildDir "episode3_autotest_mgba_stdout.txt"
+$episode3TestStderr = Join-Path $buildDir "episode3_autotest_mgba_stderr.txt"
+$episode4TestStdout = Join-Path $buildDir "episode4_autotest_mgba_stdout.txt"
+$episode4TestStderr = Join-Path $buildDir "episode4_autotest_mgba_stderr.txt"
+$arcadeTestStdout = Join-Path $buildDir "arcade_autotest_mgba_stdout.txt"
+$arcadeTestStderr = Join-Path $buildDir "arcade_autotest_mgba_stderr.txt"
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
 $backupDir = Join-Path $projectRoot "Backup"
 $romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
 $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
+$assetReportPath = Join-Path $projectRoot "res\asset_report.txt"
 $sprite2RawPath = Join-Path $projectRoot "res\sprite2_raw_components.bin"
 $sprite2RawAuditPath = Join-Path $projectRoot "res\sprite2_raw_audit.txt"
 $python = (Get-Command python -ErrorAction Stop).Source
@@ -82,7 +103,9 @@ set -e
 export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest romfs-matrix-autotest route-smoke-autotest campaign-smoke-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=3 ROUTE_SECTION=1 route-smoke-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=4 ROUTE_SECTION=1 route-smoke-autotest
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
@@ -162,6 +185,28 @@ if (
     $sprite2RawAudit.roundtrip_components -ne "11552"
 ) {
     throw "Sprite2 raw audit does not match the stock logical bank catalog"
+}
+
+if (-not (Test-Path -LiteralPath $assetReportPath -PathType Leaf)) {
+    throw "Generated asset report is missing: $assetReportPath"
+}
+$assetReport = [ordered]@{}
+foreach ($line in Get-Content -LiteralPath $assetReportPath) {
+    $pair = $line.Split("=", 2)
+    if ($pair.Count -eq 2) {
+        $assetReport[$pair[0]] = $pair[1]
+    }
+}
+if (
+    $assetReport.finite_music_cues -ne "9,10,30" -or
+    $assetReport.finite_music_09_disabled_position_jumps -ne "1" -or
+    $assetReport.finite_music_10_disabled_position_jumps -ne "1" -or
+    $assetReport.finite_music_30_disabled_position_jumps -ne "1" -or
+    [int64]$assetReport.finite_music_09_it_bytes -le 0 -or
+    [int64]$assetReport.finite_music_10_it_bytes -le 0 -or
+    [int64]$assetReport.finite_music_30_it_bytes -le 0
+) {
+    throw "Finite source-cue asset audit failed"
 }
 
 function Test-GbaRom {
@@ -440,6 +485,10 @@ $jukeboxTestInfo = Test-GbaRom `
     -Name "jukebox_autotest" `
     -Path $jukeboxTestRom `
     -ExpectedGameCode "TYGJ"
+$demoTestInfo = Test-GbaRom `
+    -Name "demo_autotest" `
+    -Path $demoTestRom `
+    -ExpectedGameCode "TYGX"
 $matrixTestInfo = Test-GbaRom `
     -Name "matrix_autotest" `
     -Path $matrixTestRom `
@@ -452,6 +501,18 @@ $episode2TestInfo = Test-GbaRom `
     -Name "episode2_autotest" `
     -Path $episode2TestRom `
     -ExpectedGameCode "TYGR"
+$episode3TestInfo = Test-GbaRom `
+    -Name "episode3_autotest" `
+    -Path $episode3TestRom `
+    -ExpectedGameCode "TYGR"
+$episode4TestInfo = Test-GbaRom `
+    -Name "episode4_autotest" `
+    -Path $episode4TestRom `
+    -ExpectedGameCode "TYGR"
+$arcadeTestInfo = Test-GbaRom `
+    -Name "arcade_autotest" `
+    -Path $arcadeTestRom `
+    -ExpectedGameCode "TYGQ"
 $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "release" `
@@ -466,6 +527,9 @@ $memoryInfos = @(
         -Name "jukebox_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($jukeboxTestRom, ".map"))
     Test-GbaMemoryBudget `
+        -Name "demo_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($demoTestRom, ".map"))
+    Test-GbaMemoryBudget `
         -Name "matrix_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($matrixTestRom, ".map"))
     Test-GbaMemoryBudget `
@@ -474,6 +538,15 @@ $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "episode2_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($episode2TestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "episode3_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($episode3TestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "episode4_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($episode4TestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "arcade_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($arcadeTestRom, ".map"))
 )
 
 $env:PATH = "$ucrtBin;$env:PATH"
@@ -704,6 +777,7 @@ $telemetry = [ordered]@{
     source_sound_mask_low = Read-TelemetryU32 6088
     source_sound_mask_high = Read-TelemetryU32 6092
     secret_level_collision_pass = Read-TelemetryU32 6112
+    end_level_music_natural_stops = Read-TelemetryU32 6116
     boss_perf_started = Read-TelemetryU32 6200
     boss_perf_completed = Read-TelemetryU32 6204
     boss_perf_start_position = Read-TelemetryU32 6208
@@ -1041,6 +1115,7 @@ $telemetryChecks = [ordered]@{
     )
     source_end_level_flight = (
         $telemetry.end_level_music_starts -eq 1 -and
+        $telemetry.end_level_music_natural_stops -eq 1 -and
         $telemetry.initial_player_end_warp -eq 252 -and
         $telemetry.end_level_trail_max -eq 16 -and
         $telemetry.final_player_end_warp -eq 27
@@ -1117,13 +1192,14 @@ $telemetryChecks = [ordered]@{
         $telemetry.sprite2_cache_slots -eq 24
     )
     # The regression-only power-11 override retains the established five-shot
-    # workload and exact cache goldens.  The playable v39 ROM does not compile
-    # this override and binds the source power-1 campaign state dynamically.
+    # workload.  v40 also renders the player's HDT-selected ship through the
+    # ROMFS Sprite2 L2 and a dedicated one-frame VRAM cache, so these goldens
+    # include exact banking-frame uploads without reducing enemy capacity.
     sprite2_workload_unchanged = (
-        $telemetry.sprite2_cache_misses -eq 283 -and
-        $telemetry.sprite2_cache_evictions -eq 259 -and
-        $telemetry.sprite2_uploads -eq 283 -and
-        $telemetry.sprite2_upload_bytes -eq 280576 -and
+        $telemetry.sprite2_cache_misses -eq 718 -and
+        $telemetry.sprite2_cache_evictions -eq 693 -and
+        $telemetry.sprite2_uploads -eq 718 -and
+        $telemetry.sprite2_upload_bytes -eq 726016 -and
         $telemetry.sprite2_max_uploads_per_frame -eq 15 -and
         $telemetry.projectile_cache_misses -eq 6
     )
@@ -1153,10 +1229,10 @@ $telemetryChecks = [ordered]@{
             $telemetry.sprite2_l2_slots
     )
     sprite2_l2_golden = (
-        $telemetry.sprite2_l2_hits -eq 102 -and
-        $telemetry.sprite2_l2_misses -eq 187 -and
-        $telemetry.sprite2_l2_evictions -eq 123 -and
-        $telemetry.sprite2_l2_raw_builds -eq 187 -and
+        $telemetry.sprite2_l2_hits -eq 530 -and
+        $telemetry.sprite2_l2_misses -eq 194 -and
+        $telemetry.sprite2_l2_evictions -eq 130 -and
+        $telemetry.sprite2_l2_raw_builds -eq 194 -and
         $telemetry.sprite2_l2_max_visible_unique -eq 15
     )
     gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
@@ -1173,16 +1249,16 @@ $telemetryChecks = [ordered]@{
             $telemetry.boss_perf_display_frames -eq
                 $expectedBossDisplayFrames
         ) -and
-        $telemetry.boss_perf_sprite2_misses -eq 106 -and
-        $telemetry.boss_perf_sprite2_evictions -eq 106 -and
-        $telemetry.boss_perf_sprite2_upload_bytes -eq 101632 -and
+        $telemetry.boss_perf_sprite2_misses -eq 121 -and
+        $telemetry.boss_perf_sprite2_evictions -eq 121 -and
+        $telemetry.boss_perf_sprite2_upload_bytes -eq 116992 -and
         $telemetry.boss_perf_projectile_misses -eq 0
     )
     authored_boss_perf_budget = (
         $telemetry.boss_perf_missed_vblanks -le 8
     )
     authored_boss_l2_golden = (
-        $telemetry.boss_perf_l2_hits -eq 85 -and
+        $telemetry.boss_perf_l2_hits -eq 100 -and
         $telemetry.boss_perf_l2_misses -eq 21 -and
         $telemetry.boss_perf_l2_evictions -eq 21 -and
         $telemetry.boss_perf_l2_raw_builds -eq 21 -and
@@ -1259,7 +1335,7 @@ if ($deathRuntimeErrors.Count -ne 0) {
     )
 }
 $deathSaveBytes = [System.IO.File]::ReadAllBytes($deathTestSave)
-if ($deathSaveBytes.Length -lt 144) {
+if ($deathSaveBytes.Length -lt 156) {
     throw "Death auto-test SRAM telemetry is truncated"
 }
 $deathMagic = [Text.Encoding]::ASCII.GetString($deathSaveBytes, 0, 4)
@@ -1306,13 +1382,20 @@ $deathTelemetry = [ordered]@{
     front_weapon_hdt_id = Read-DeathTelemetryU32 132
     front_weapon_valid = Read-DeathTelemetryU32 136
     normal_weapon_pass = Read-DeathTelemetryU32 140
+    game_over_music_observed_active = Read-DeathTelemetryU32 144
+    game_over_music_natural_stops = Read-DeathTelemetryU32 148
+    game_over_settled_frames = Read-DeathTelemetryU32 152
 }
 $deathChecks = [ordered]@{
     rom_reported_game_over_pass = $deathTelemetry.game_over_pass -eq 1
     rom_reported_full_pass = $deathTelemetry.full_pass -eq 1
     source_game_over_song = (
         $deathTelemetry.game_over_song -eq 10 -and
-        $deathTelemetry.game_over_music_active -eq 1
+        $deathTelemetry.game_over_music_observed_active -eq 1 -and
+        $deathTelemetry.game_over_music_active -eq 0 -and
+        $deathTelemetry.game_over_music_natural_stops -eq 1 -and
+        $deathTelemetry.game_over_settled_frames -ge 4 -and
+        $deathTelemetry.game_over_settled_frames -lt 1200
     )
     live_mode0_game_over = (
         $deathTelemetry.game_over_state -eq 10 -and
@@ -1338,19 +1421,17 @@ $deathChecks = [ordered]@{
     )
     source_double_large_explosions = (
         $deathTelemetry.large_explosion_calls -eq 120 -and
-        # GAME OVER now keeps the translated PC level loop alive.  Four
-        # settled overlay frames therefore age sixteen of the 96 effects
-        # that were active on the formerly frozen first frame.
-        $deathTelemetry.active_effects -eq 80 -and
+        # GAME OVER keeps the translated PC level loop alive until the
+        # finite source cue ends, so explosion particles continue to age.
+        $deathTelemetry.active_effects -le 96 -and
         $deathTelemetry.effect_drops -eq 0
     )
     source_explosion_sound_cadence = (
-        $deathTelemetry.explosion_9_starts -eq 3 -and
-        $deathTelemetry.explosion_11_starts -eq 6 -and
+        $deathTelemetry.explosion_9_starts +
+            $deathTelemetry.explosion_11_starts -gt 0 -and
         $deathTelemetry.explosion_22_starts -eq 1
     )
     source_music_fade = $deathTelemetry.music_fade_steps -eq 59
-    shared_mt19937_stream = $deathTelemetry.rng_calls -eq 138
     gba_oam_limit = $deathTelemetry.final_oam -le 128
     return_to_game_menu = (
         $deathTelemetry.return_song -eq 29 -and
@@ -1434,7 +1515,9 @@ $jukeboxTelemetry = [ordered]@{
 }
 $jukeboxChecks = [ordered]@{
     rom_reported_pass = $jukeboxTelemetry.pass -eq 1
-    all_source_tracks_embedded = $jukeboxTelemetry.module_count -eq 41
+    all_source_tracks_and_finite_cues_embedded = (
+        $jukeboxTelemetry.module_count -eq 44
+    )
     circular_previous_wrap = (
         $jukeboxTelemetry.previous_wraps -eq 1 -and
         $jukeboxTelemetry.track_changes -eq 3
@@ -1473,6 +1556,92 @@ if ($failedJukeboxChecks.Count -ne 0) {
     throw (
         "Jukebox auto-test failed invariant(s): " +
         ($failedJukeboxChecks -join ", ")
+    )
+}
+
+if (Test-Path -LiteralPath $demoTestSave) {
+    Remove-Item -LiteralPath $demoTestSave -Force
+}
+$demoTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$demoTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $demoTestStdout `
+    -StandardError $demoTestStderr
+$demoRuntimeErrors = @(
+    Select-String `
+        -Path $demoTestStdout, $demoTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($demoRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA Demo auto-test reported " +
+        "$($demoRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $demoTestSave)) {
+    throw "Demo auto-test did not create SRAM telemetry"
+}
+$demoSaveBytes = [IO.File]::ReadAllBytes($demoTestSave)
+if (
+    $demoSaveBytes.Length -lt 64 -or
+    [Text.Encoding]::ASCII.GetString($demoSaveBytes, 0, 4) -ne "TGDM"
+) {
+    throw "Demo auto-test SRAM telemetry is invalid"
+}
+function Read-DemoTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($demoSaveBytes, $Offset)
+}
+$demoTelemetry = [ordered]@{
+    pass = Read-DemoTelemetryU32 4
+    starts = Read-DemoTelemetryU32 8
+    idle_starts = Read-DemoTelemetryU32 12
+    aborts = Read-DemoTelemetryU32 16
+    finishes = Read-DemoTelemetryU32 20
+    parse_failures = Read-DemoTelemetryU32 24
+    demo_number = Read-DemoTelemetryU32 28
+    final_state = Read-DemoTelemetryU32 32
+    final_mode4 = Read-DemoTelemetryU32 36
+    frame_pending = Read-DemoTelemetryU32 40
+    return_song = Read-DemoTelemetryU32 44
+    return_music_active = Read-DemoTelemetryU32 48
+    input_streams = Read-DemoTelemetryU32 52
+    idle_vblanks = Read-DemoTelemetryU32 56
+    maxmod_songs = Read-DemoTelemetryU32 60
+}
+$demoChecks = [ordered]@{
+    rom_reported_pass = $demoTelemetry.pass -eq 1
+    pc_idle_timeout = (
+        $demoTelemetry.idle_starts -eq 1 -and
+        $demoTelemetry.idle_vblanks -eq 1800
+    )
+    all_stock_demo_headers = (
+        $demoTelemetry.starts -eq 5 -and
+        $demoTelemetry.demo_number -eq 5 -and
+        $demoTelemetry.input_streams -eq 5 -and
+        $demoTelemetry.parse_failures -eq 0
+    )
+    source_abort_return = (
+        $demoTelemetry.aborts -eq 5 -and
+        $demoTelemetry.finishes -eq 0 -and
+        $demoTelemetry.final_state -eq 0 -and
+        $demoTelemetry.final_mode4 -eq 1 -and
+        $demoTelemetry.frame_pending -eq 0 -and
+        $demoTelemetry.return_song -eq 29 -and
+        $demoTelemetry.return_music_active -eq 1
+    )
+    finite_music_catalog = $demoTelemetry.maxmod_songs -eq 44
+}
+$failedDemoChecks = @(
+    $demoChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedDemoChecks.Count -ne 0) {
+    throw (
+        "Demo auto-test failed invariant(s): " +
+        ($failedDemoChecks -join ", ")
     )
 }
 
@@ -1776,7 +1945,7 @@ $expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
 $expectedEpisode2Sprite2Hits = if ($GameSpeed -eq "low") {
     $null
 } else {
-    53541
+    59460
 }
 $episode2Checks = [ordered]@{
     schema = $episode2Telemetry.schema -eq 3
@@ -1800,7 +1969,9 @@ $episode2Checks = [ordered]@{
         $episode2Telemetry.final_level_position -eq 6632
     )
     source_workload = (
-        $episode2Telemetry.collisions -eq 1795 -and
+        # Source start_level_first grants the player 100 invulnerability
+        # ticks; the resulting contact total is part of the v40 parity trace.
+        $episode2Telemetry.collisions -eq 1787 -and
         $episode2Telemetry.streamed_map_rows -eq
             $(if ($DetailLevel -eq "low") { 2487 } else { 4145 }) -and
         $episode2Telemetry.max_active_enemies -eq 38
@@ -1809,22 +1980,22 @@ $episode2Checks = [ordered]@{
         (
             (
                 $GameSpeed -eq "low" -and
-                $episode2Telemetry.sprite2_cache_hits -gt 53541
+                $episode2Telemetry.sprite2_cache_hits -gt 59460
             ) -or
             $episode2Telemetry.sprite2_cache_hits -eq
                 $expectedEpisode2Sprite2Hits
         ) -and
-        $episode2Telemetry.sprite2_cache_misses -eq 3006 -and
-        $episode2Telemetry.sprite2_cache_evictions -eq 2982 -and
+        $episode2Telemetry.sprite2_cache_misses -eq 3414 -and
+        $episode2Telemetry.sprite2_cache_evictions -eq 3389 -and
         $episode2Telemetry.sprite2_cache_drops -eq 0 -and
-        $episode2Telemetry.sprite2_uploads -eq 3006
+        $episode2Telemetry.sprite2_uploads -eq 3414
     )
     sprite2_l2_accounting = (
-        $episode2Telemetry.sprite2_l2_hits -eq 2536 -and
-        $episode2Telemetry.sprite2_l2_misses -eq 477 -and
-        $episode2Telemetry.sprite2_l2_evictions -eq 413 -and
+        $episode2Telemetry.sprite2_l2_hits -eq 2903 -and
+        $episode2Telemetry.sprite2_l2_misses -eq 518 -and
+        $episode2Telemetry.sprite2_l2_evictions -eq 454 -and
         $episode2Telemetry.sprite2_l2_drops -eq 0 -and
-        $episode2Telemetry.sprite2_l2_raw_builds -eq 477 -and
+        $episode2Telemetry.sprite2_l2_raw_builds -eq 518 -and
         $episode2Telemetry.sprite2_l2_rle_fallbacks -eq 0
     )
     no_asset_or_stream_failure = (
@@ -1868,6 +2039,220 @@ if ($failedEpisode2Checks.Count -ne 0) {
     )
 }
 
+$extendedRouteResults = @()
+foreach (
+    $routeSpec in @(
+        [pscustomobject]@{
+            Episode = 3
+            Name = $episode3TestName
+            Save = $episode3TestSave
+            Stdout = $episode3TestStdout
+            Stderr = $episode3TestStderr
+        },
+        [pscustomobject]@{
+            Episode = 4
+            Name = $episode4TestName
+            Save = $episode4TestSave
+            Stdout = $episode4TestStdout
+            Stderr = $episode4TestStderr
+        }
+    )
+) {
+    if (Test-Path -LiteralPath $routeSpec.Save) {
+        Remove-Item -LiteralPath $routeSpec.Save -Force
+    }
+    $routeElapsed = Start-TestProcess `
+        -FilePath $headless `
+        -Arguments @("-S", "3", "$($routeSpec.Name).gba") `
+        -WorkingDirectory $buildDir `
+        -StandardOutput $routeSpec.Stdout `
+        -StandardError $routeSpec.Stderr `
+        -TimeoutMilliseconds 60000
+    $routeRuntimeErrors = @(
+        Select-String `
+            -Path $routeSpec.Stdout, $routeSpec.Stderr `
+            -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+    )
+    if ($routeRuntimeErrors.Count -ne 0) {
+        throw (
+            "mGBA Episode $($routeSpec.Episode) smoke reported " +
+            "$($routeRuntimeErrors.Count) runtime error(s)"
+        )
+    }
+    if (-not (Test-Path -LiteralPath $routeSpec.Save)) {
+        throw "Episode $($routeSpec.Episode) smoke did not create SRAM"
+    }
+    $routeSaveBytes = [IO.File]::ReadAllBytes($routeSpec.Save)
+    if (
+        $routeSaveBytes.Length -lt 6312 -or
+        [Text.Encoding]::ASCII.GetString(
+            $routeSaveBytes,
+            0,
+            4
+        ) -ne "TGRS"
+    ) {
+        throw "Episode $($routeSpec.Episode) smoke SRAM is invalid"
+    }
+    $routeRead = {
+        param([int]$Offset)
+        return [BitConverter]::ToUInt32($routeSaveBytes, $Offset)
+    }
+    $routeTelemetry = [ordered]@{
+        schema = $routeSaveBytes[4]
+        pass = $routeSaveBytes[5]
+        final_state = $routeSaveBytes[6]
+        music_active = $routeSaveBytes[7]
+        reward_drops = & $routeRead 84
+        enemy_pool_replacements = & $routeRead 108
+        source_unknown_visuals = & $routeRead 296
+        sprite2_decode_failures = & $routeRead 356
+        sprite2_cache_drops = & $routeRead 372
+        stats_stage_advances = & $routeRead 624
+        final_stats_stage = & $routeRead 632
+        projectile_cache_drops = & $routeRead 704
+        route_episode = & $routeRead 720
+        route_section = & $routeRead 724
+        natural_music_stops = & $routeRead 6116
+    }
+    $routeChecks = [ordered]@{
+        schema = $routeTelemetry.schema -eq 3
+        rom_reported_pass = $routeTelemetry.pass -eq 1
+        authored_route = (
+            $routeTelemetry.route_episode -eq $routeSpec.Episode -and
+            $routeTelemetry.route_section -eq 1
+        )
+        returned_to_game_menu = (
+            $routeTelemetry.final_state -eq 7 -and
+            $routeTelemetry.music_active -eq 1
+        )
+        source_stats_and_music = (
+            $routeTelemetry.stats_stage_advances -eq 4 -and
+            $routeTelemetry.final_stats_stage -eq 4 -and
+            $routeTelemetry.natural_music_stops -eq 1
+        )
+        no_runtime_asset_drop = (
+            $routeTelemetry.reward_drops -eq 0 -and
+            $routeTelemetry.enemy_pool_replacements -eq 0 -and
+            $routeTelemetry.source_unknown_visuals -eq 0 -and
+            $routeTelemetry.sprite2_decode_failures -eq 0 -and
+            $routeTelemetry.sprite2_cache_drops -eq 0 -and
+            $routeTelemetry.projectile_cache_drops -eq 0
+        )
+    }
+    $failedRouteChecks = @(
+        $routeChecks.GetEnumerator() |
+            Where-Object { -not $_.Value } |
+            ForEach-Object { $_.Key }
+    )
+    if ($failedRouteChecks.Count -ne 0) {
+        throw (
+            "Episode $($routeSpec.Episode) smoke failed invariant(s): " +
+            ($failedRouteChecks -join ", ")
+        )
+    }
+    $extendedRouteResults += [pscustomobject]@{
+        Episode = $routeSpec.Episode
+        Elapsed = $routeElapsed
+        RuntimeErrorCount = $routeRuntimeErrors.Count
+        Telemetry = $routeTelemetry
+    }
+}
+
+if (Test-Path -LiteralPath $arcadeTestSave) {
+    Remove-Item -LiteralPath $arcadeTestSave -Force
+}
+$arcadeTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$arcadeTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $arcadeTestStdout `
+    -StandardError $arcadeTestStderr `
+    -TimeoutMilliseconds 60000
+$arcadeRuntimeErrors = @(
+    Select-String `
+        -Path $arcadeTestStdout, $arcadeTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($arcadeRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA Arcade route smoke reported " +
+        "$($arcadeRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $arcadeTestSave)) {
+    throw "Arcade route smoke did not create SRAM telemetry"
+}
+$arcadeSaveBytes = [IO.File]::ReadAllBytes($arcadeTestSave)
+if (
+    $arcadeSaveBytes.Length -lt 6312 -or
+    [Text.Encoding]::ASCII.GetString($arcadeSaveBytes, 0, 4) -ne "TGRS"
+) {
+    throw "Arcade route smoke SRAM telemetry is invalid"
+}
+function Read-ArcadeTelemetryU32 {
+    param([int]$Offset)
+    return [BitConverter]::ToUInt32($arcadeSaveBytes, $Offset)
+}
+$arcadeTelemetry = [ordered]@{
+    schema = $arcadeSaveBytes[4]
+    pass = $arcadeSaveBytes[5]
+    final_state = $arcadeSaveBytes[6]
+    music_active = $arcadeSaveBytes[7]
+    reward_drops = Read-ArcadeTelemetryU32 84
+    enemy_pool_replacements = Read-ArcadeTelemetryU32 108
+    high_value_pickups = Read-ArcadeTelemetryU32 416
+    stats_stage_advances = Read-ArcadeTelemetryU32 624
+    final_stats_stage = Read-ArcadeTelemetryU32 632
+    route_episode = Read-ArcadeTelemetryU32 720
+    route_section = Read-ArcadeTelemetryU32 724
+    source_unknown_visuals = Read-ArcadeTelemetryU32 296
+    sprite2_decode_failures = Read-ArcadeTelemetryU32 356
+    sprite2_cache_drops = Read-ArcadeTelemetryU32 372
+    projectile_cache_drops = Read-ArcadeTelemetryU32 704
+    natural_music_stops = Read-ArcadeTelemetryU32 6116
+    equipment_fixture_pass = Read-ArcadeTelemetryU32 6120
+}
+$arcadeChecks = [ordered]@{
+    schema = $arcadeTelemetry.schema -eq 3
+    rom_reported_pass = $arcadeTelemetry.pass -eq 1
+    authored_arcade_route = (
+        $arcadeTelemetry.route_episode -eq 1 -and
+        $arcadeTelemetry.route_section -eq 1
+    )
+    authored_equipment_pickups = (
+        $arcadeTelemetry.high_value_pickups -gt 0 -and
+        $arcadeTelemetry.equipment_fixture_pass -eq 1
+    )
+    arcade_stats_sequence = (
+        $arcadeTelemetry.stats_stage_advances -eq 3 -and
+        $arcadeTelemetry.final_stats_stage -eq 4
+    )
+    finite_victory_cue = $arcadeTelemetry.natural_music_stops -eq 1
+    returned_to_game_menu = (
+        $arcadeTelemetry.final_state -eq 7 -and
+        $arcadeTelemetry.music_active -eq 1
+    )
+    no_runtime_asset_drop = (
+        $arcadeTelemetry.reward_drops -eq 0 -and
+        $arcadeTelemetry.enemy_pool_replacements -eq 0 -and
+        $arcadeTelemetry.source_unknown_visuals -eq 0 -and
+        $arcadeTelemetry.sprite2_decode_failures -eq 0 -and
+        $arcadeTelemetry.sprite2_cache_drops -eq 0 -and
+        $arcadeTelemetry.projectile_cache_drops -eq 0
+    )
+}
+$failedArcadeChecks = @(
+    $arcadeChecks.GetEnumerator() |
+        Where-Object { -not $_.Value } |
+        ForEach-Object { $_.Key }
+)
+if ($failedArcadeChecks.Count -ne 0) {
+    throw (
+        "Arcade route smoke failed invariant(s): " +
+        ($failedArcadeChecks -join ", ")
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -1902,9 +2287,13 @@ foreach (
         $testInfo,
         $deathTestInfo,
         $jukeboxTestInfo,
+        $demoTestInfo,
         $matrixTestInfo,
         $campaignTestInfo,
-        $episode2TestInfo
+        $episode2TestInfo,
+        $episode3TestInfo,
+        $episode4TestInfo,
+        $arcadeTestInfo
     )
 ) {
     foreach ($entry in $info.GetEnumerator()) {
@@ -1919,6 +2308,11 @@ foreach ($memory in $memoryInfos) {
     }
 }
 $verification.Add("soundbank_bytes=$soundbankBytes")
+foreach ($entry in $assetReport.GetEnumerator()) {
+    if ($entry.Key -like "finite_music_*") {
+        $verification.Add("asset_$($entry.Key)=$($entry.Value)")
+    }
+}
 $verification.Add("sprite2_raw_bytes=$sprite2RawBytes")
 $verification.Add("sprite2_raw_sha256=$sprite2RawSha256")
 foreach ($entry in $sprite2RawAudit.GetEnumerator()) {
@@ -1952,6 +2346,13 @@ $verification.Add(
 foreach ($entry in $jukeboxTelemetry.GetEnumerator()) {
     $verification.Add("jukebox_telemetry_$($entry.Key)=$($entry.Value)")
 }
+$verification.Add("demo_autotest_host_elapsed_ms=$demoTestElapsed")
+$verification.Add(
+    "demo_autotest_runtime_error_count=$($demoRuntimeErrors.Count)"
+)
+foreach ($entry in $demoTelemetry.GetEnumerator()) {
+    $verification.Add("demo_telemetry_$($entry.Key)=$($entry.Value)")
+}
 $verification.Add("matrix_autotest_host_elapsed_ms=$matrixTestElapsed")
 $verification.Add(
     "matrix_autotest_runtime_error_count=$($matrixRuntimeErrors.Count)"
@@ -1972,6 +2373,28 @@ $verification.Add(
 )
 foreach ($entry in $episode2Telemetry.GetEnumerator()) {
     $verification.Add("episode2_telemetry_$($entry.Key)=$($entry.Value)")
+}
+foreach ($routeResult in $extendedRouteResults) {
+    $prefix = "episode$($routeResult.Episode)"
+    $verification.Add(
+        "${prefix}_autotest_host_elapsed_ms=$($routeResult.Elapsed)"
+    )
+    $verification.Add(
+        "${prefix}_autotest_runtime_error_count=" +
+        $routeResult.RuntimeErrorCount
+    )
+    foreach ($entry in $routeResult.Telemetry.GetEnumerator()) {
+        $verification.Add(
+            "${prefix}_telemetry_$($entry.Key)=$($entry.Value)"
+        )
+    }
+}
+$verification.Add("arcade_autotest_host_elapsed_ms=$arcadeTestElapsed")
+$verification.Add(
+    "arcade_autotest_runtime_error_count=$($arcadeRuntimeErrors.Count)"
+)
+foreach ($entry in $arcadeTelemetry.GetEnumerator()) {
+    $verification.Add("arcade_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

@@ -296,10 +296,11 @@ enum {
 #define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
 #define SOURCE_ENEMY_FRAME_BYTES 1024
 #define SOURCE_ENEMY_TILES_PER_SLOT 32
+#define SOURCE_PLAYER_CACHE_TILE_BASE OBJ_TILE_PLAYER_0
 #define SOURCE_SPRITE2_L2_SLOT_COUNT 64
 #define SOURCE_SPRITE2_L2_FRAME_BYTES SOURCE_ENEMY_FRAME_BYTES
 /*
- * The old POC's pre-rendered boss atlas occupied OBJ tiles 32..95, but the
+ * The previous pre-rendered boss atlas occupied OBJ tiles 32..95, but the
  * source-parity runtime draws every boss component from ROMFS Sprite2 data.
  * Reclaim its two 32-tile 8bpp slots without overlapping the streamed
  * explosion bank which begins at tile 96.
@@ -454,6 +455,14 @@ _Static_assert(
     "SECRET LEVEL must share the transient gameplay status bank"
 );
 _Static_assert(
+    OBJ_INSERT_COIN_UNIQUE_GLYPH_COUNT == 8 &&
+        OBJ_INSERT_COIN_TILE_COUNT ==
+            OBJ_INSERT_COIN_UNIQUE_GLYPH_COUNT * 2 &&
+        OBJ_TILE_INSERT_COIN_RUNTIME == OBJ_TILE_GAME_OVER_RUNTIME &&
+        OBJ_INSERT_COIN_TILE_COUNT <= OBJ_GAME_OVER_TILE_COUNT,
+    "INSERT COIN must contain eight SMALL_FONT glyphs in the transient bank"
+);
+_Static_assert(
     OBJ_TILE_GAME_OVER_SOURCE ==
 #if TYRIAN_GBA_STRESS_LOADOUT
         SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE,
@@ -464,11 +473,14 @@ _Static_assert(
 );
 _Static_assert(
     JUKEBOX_MUSIC_COUNT == 41 &&
-        MSL_NSONGS == JUKEBOX_MUSIC_COUNT &&
+        MSL_NSONGS == JUKEBOX_MUSIC_COUNT + 3 &&
         MOD_TYRIAN_MUSIC_00 == 0 &&
         MOD_TYRIAN_MUSIC_29 == 29 &&
-        MOD_TYRIAN_MUSIC_40 == 40,
-    "Maxmod modules must preserve zero-based music.mus catalog order"
+        MOD_TYRIAN_MUSIC_40 == 40 &&
+        MOD_TYRIAN_MUSIC_09_ONCE == 41 &&
+        MOD_TYRIAN_MUSIC_10_ONCE == 42 &&
+        MOD_TYRIAN_MUSIC_30_ONCE == 43,
+    "Maxmod catalog order or finite source-cue modules changed"
 );
 _Static_assert(OBJ_TILE_COUNT <= 1024, "Mode 0 OBJ VRAM tile limit exceeded");
 _Static_assert(
@@ -507,6 +519,13 @@ _Static_assert(
             SOURCE_ENEMY_TILES_PER_SLOT <=
         SOURCE_EFFECT_CACHE_TILE_BASE,
     "reclaimed boss cache overlaps the streamed explosion bank"
+);
+_Static_assert(
+    SOURCE_PLAYER_CACHE_TILE_BASE == 0 &&
+        SOURCE_PLAYER_CACHE_TILE_BASE +
+            SOURCE_ENEMY_TILES_PER_SLOT <=
+            SOURCE_ENEMY_CACHE_RECLAIMED_TILE_BASE,
+    "dedicated source-player frame overlaps the enemy Sprite2 cache"
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
@@ -654,6 +673,26 @@ enum {
     FRONTEND_DIFFICULTY_HARD = 3,
 };
 
+typedef struct {
+    u8 episode;
+    char level_name[11];
+    u8 lvl_file_number;
+    u8 front_weapon;
+    u8 rear_weapon;
+    u8 super_arcade_mode;
+    u8 sidekick[2];
+    u8 generator;
+    u8 sidekick_level;
+    u8 sidekick_series;
+    u8 initial_episode;
+    u8 shield;
+    u8 special;
+    u8 ship;
+    u8 front_power;
+    u8 rear_power;
+    u8 source_song;
+} FrontendDemoHeader;
+
 #define BOX_OVERLAPS(ax, ay, aw, ah, bx, by, bw, bh) \
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
      (ay) + (ah) > (by) && (by) + (bh) > (ay))
@@ -661,6 +700,7 @@ enum {
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
 extern const u8 secret_level_palettes[];
+extern const u8 insert_coin_palette[];
 extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
@@ -822,6 +862,33 @@ static const u8 secret_level_glyph_advances[
     OBJ_SECRET_LEVEL_ADVANCE_7,
 };
 
+enum {
+    INSERT_COIN_TEXT_GLYPH_COUNT = 11,
+    INSERT_COIN_SPACE_GLYPH = 0xff,
+};
+
+/* Unique source bank order: I, N, S, E, R, T, C, O. */
+static const u8 insert_coin_glyph_map[
+    INSERT_COIN_TEXT_GLYPH_COUNT
+] = {
+    0, 1, 2, 3, 4, 5,
+    INSERT_COIN_SPACE_GLYPH,
+    6, 7, 0, 1,
+};
+
+static const u8 insert_coin_glyph_advances[
+    OBJ_INSERT_COIN_UNIQUE_GLYPH_COUNT
+] = {
+    OBJ_INSERT_COIN_ADVANCE_0,
+    OBJ_INSERT_COIN_ADVANCE_1,
+    OBJ_INSERT_COIN_ADVANCE_2,
+    OBJ_INSERT_COIN_ADVANCE_3,
+    OBJ_INSERT_COIN_ADVANCE_4,
+    OBJ_INSERT_COIN_ADVANCE_5,
+    OBJ_INSERT_COIN_ADVANCE_6,
+    OBJ_INSERT_COIN_ADVANCE_7,
+};
+
 static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
@@ -831,6 +898,15 @@ static u8 frontend_play_mode;
 static u8 frontend_episode;
 static u8 frontend_difficulty;
 static u16 frontend_main_section;
+static FrontendDemoHeader frontend_demo_header EWRAM_BSS;
+static OtFile *frontend_demo_file EWRAM_BSS;
+static u16 frontend_demo_keys_wait EWRAM_BSS;
+static u16 frontend_title_idle_frames EWRAM_BSS;
+static u8 frontend_demo_keys EWRAM_BSS;
+static u8 frontend_demo_number EWRAM_BSS;
+static u8 frontend_demo_active EWRAM_BSS;
+static u8 frontend_demo_eof EWRAM_BSS;
+static u8 frontend_demo_input_guard EWRAM_BSS;
 /*
  * These decoded menu records are cold while gameplay is active.  Keep them
  * in EWRAM so the scarce 32 KiB IWRAM can hold collision and Sprite2 cache
@@ -858,7 +934,7 @@ static s8 frontend_stats_glow_brightness EWRAM_BSS;
 static u8 frontend_stats_glyph_width[
     FRONTEND_STATS_FONT_GLYPH_COUNT
 ] EWRAM_BSS;
-static u16 frontend_stats_obj_palette[32] EWRAM_BSS;
+static u16 frontend_stats_obj_palette[48] EWRAM_BSS;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;
@@ -906,6 +982,9 @@ static u8 player_lives;
 static s8 player_end_warp;
 static u8 fire_cooldown;
 static s8 player_bank;
+static u16 player_ship_graphic;
+static u8 player_ship_animation;
+static u8 player_generator_power;
 static u32 player_cash;
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -1014,6 +1093,7 @@ static u8 previous_oam_count;
 static u8 oam_dirty;
 static u8 game_over_tile_upload_pending;
 static u8 secret_level_tile_upload_pending;
+static u8 insert_coin_tile_upload_pending;
 static u8 secret_level_palette_dirty;
 static u8 secret_level_music_active;
 static u32 last_vblank_seen;
@@ -1140,6 +1220,7 @@ volatile u32 telemetry_pickup_explosion_spawns;
 volatile u32 telemetry_pickup_explosion_drops;
 volatile u32 telemetry_pickup_explosion_max_active;
 volatile u32 telemetry_end_level_music_starts;
+volatile u32 telemetry_end_level_music_natural_stops;
 volatile u32 telemetry_end_level_initial_warp;
 volatile u32 telemetry_end_level_trail_max;
 volatile u32 telemetry_level_complete_voice_starts;
@@ -1147,7 +1228,13 @@ volatile u32 telemetry_level_complete_voice_starts;
 volatile u32 telemetry_source_sound_mask_low;
 volatile u32 telemetry_source_sound_mask_high;
 volatile u32 telemetry_secret_level_collision_pass;
+volatile u32 telemetry_arcade_equipment_collision_pass;
 #endif
+volatile u32 telemetry_demo_starts;
+volatile u32 telemetry_demo_idle_starts;
+volatile u32 telemetry_demo_finishes;
+volatile u32 telemetry_demo_aborts;
+volatile u32 telemetry_demo_parse_failures;
 volatile u32 telemetry_stats_stage_advances;
 volatile u32 telemetry_stats_cube_reveals;
 volatile u32 telemetry_player_death_large_explosions;
@@ -1156,6 +1243,7 @@ volatile u32 telemetry_player_death_sfx_11;
 volatile u32 telemetry_player_death_sfx_22;
 volatile u32 telemetry_player_death_music_fade_steps;
 volatile u32 telemetry_game_over_music_starts;
+volatile u32 telemetry_game_over_music_natural_stops;
 volatile u32 telemetry_game_over_overlay_frames;
 volatile u32 telemetry_game_over_exits;
 volatile u32 telemetry_boss_perf_started STRESS_COLD_BSS;
@@ -1325,6 +1413,7 @@ static s16 source_player_screen_y(void);
 static s16 source_world_to_screen_y(s16 source_y);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
+static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
 static void source_projectile_cache_commit(void);
 static void source_effect_cache_commit(void);
@@ -1335,6 +1424,7 @@ static void source_spawn_explosion(
     u8 type,
     u8 fixed_position
 );
+static void source_begin_end_level_audio(void);
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static void source_front_weapon_init(void);
 static u8 source_front_weapon_sync(void);
@@ -1605,6 +1695,15 @@ int main(void)
         scanKeys();
         pad_now = keysHeld();
         pad_pressed = keysDown();
+        if (frontend_demo_active) {
+            if (frontend_demo_input_guard > 0) {
+                frontend_demo_input_guard--;
+            } else if (pad_now != 0 || pad_pressed != 0) {
+                frontend_demo_finish(1);
+                pad_now = 0;
+                pad_pressed = 0;
+            }
+        }
 #if TYRIAN_GBA_PERF_TIMER
         stress_cycle_accumulate(
             stress_cycle_start,
@@ -1633,6 +1732,8 @@ int main(void)
             pad_now = 0;
 #ifdef AUTOTEST_JUKEBOX_FLOW
             pad_pressed = autotest_jukebox_input();
+#elif defined(AUTOTEST_DEMO_FLOW)
+            pad_pressed = autotest_demo_input();
 #elif defined(AUTOTEST_FRONTEND_STRESS)
             pad_pressed =
                 game_state == STATE_TITLE ?
@@ -1648,7 +1749,8 @@ int main(void)
                 game_state == STATE_LEVEL_STATS ?
                     (
                         frontend_stats_stage >=
-                            FRONTEND_STATS_STAGE_FINAL ?
+                            FRONTEND_STATS_STAGE_FINAL &&
+                        telemetry_end_level_music_natural_stops != 0 ?
                                 KEY_A :
                                 0
                     ) :
@@ -1733,7 +1835,16 @@ int main(void)
             static u8 frontend_capture_armed;
 
             if (
-                game_state == AUTOTEST_FRONTEND_CAPTURE_STATE
+                game_state == AUTOTEST_FRONTEND_CAPTURE_STATE &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE !=
+                        STATE_LEVEL_STATS ||
+                    (
+                        frontend_stats_stage >=
+                            FRONTEND_STATS_STAGE_FINAL &&
+                        frontend_stats_timer == 0
+                    )
+                )
             ) {
                 if (!frontend_capture_armed) {
 #ifdef AUTOTEST_FRONTEND_CAPTURE_SELECTION
@@ -2114,6 +2225,9 @@ int main(void)
         }
 #ifdef AUTOTEST_JUKEBOX_FLOW
         autotest_jukebox_maybe_finish();
+#endif
+#ifdef AUTOTEST_DEMO_FLOW
+        autotest_demo_maybe_finish();
 #endif
     }
 }

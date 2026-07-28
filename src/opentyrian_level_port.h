@@ -254,9 +254,8 @@ typedef struct {
 } OtMt19937;
 
 /*
- * This state intentionally keeps OpenTyrian field names and integer widths.
- * It runs beside the legacy v11 loop until each deferred event/gameplay
- * function has been translated and can become authoritative.
+ * This authoritative selected-level state intentionally keeps OpenTyrian
+ * field names and integer widths so source-flow comparisons remain direct.
  */
 typedef struct {
     uint16_t event_index;
@@ -383,6 +382,13 @@ typedef struct {
     uint8_t player_armor;
     uint8_t player_weapon_mode;
     uint8_t player_special;
+    uint8_t player_sidekick[2];
+    uint8_t player_generator;
+    uint8_t player_shield_item;
+    uint8_t player_ship;
+    uint8_t player_super_arcade_mode;
+    uint8_t player_sidekick_level;
+    uint8_t player_sidekick_series;
     uint8_t player_purple_balls_needed;
     bool bonus_level;
     uint16_t next_level;

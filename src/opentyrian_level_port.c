@@ -746,8 +746,8 @@ void ot_level_port_init(
     }
 
     /*
-     * JE_main(), start_level_first initialization.  UI, SDL, demo, network
-     * and save-game calls are outside this GBA proof's agreed scope.
+     * JE_main(), start_level_first initialization. UI, audio, demo, storage
+     * and presentation are supplied by the surrounding GBA platform adapter.
      */
     state->map1_y_delay = 1;
     state->map1_y_delay_max = 1;
@@ -790,6 +790,9 @@ void ot_level_port_init(
     state->player_front_weapon_power = 1;
     state->player_rear_weapon_id = 0;
     state->player_rear_weapon_power = 1;
+    state->player_generator = 2;
+    state->player_shield_item = 4;
+    state->player_ship = 1;
     state->player_armor = 10;
     state->player_weapon_mode = 1;
     state->player_purple_balls_needed = 1;
@@ -3241,7 +3244,7 @@ static bool ot_power_up_weapon(
 
     /*
      * player.c:power_up_weapon(), specialized only by replacing the PC
-     * shotMultiPos reset with source-state ownership in this GBA proof.
+     * shotMultiPos reset with source-state ownership in this GBA port.
      */
     if (*weapon_id != 0 && *weapon_power < 11) {
         (*weapon_power)++;
@@ -3264,6 +3267,17 @@ static void ot_handle_purple_ball(
         (void)ot_power_up_weapon(state, true, result);
     }
 }
+
+/*
+ * varz.c specialArcadeWeapon[PORT_NUM], indexed by the one-based front-port
+ * pickup ID minus one.  This is source gameplay data, kept here only because
+ * the table is compiled into OpenTyrian rather than stored in tyrian.hdt.
+ */
+static const uint8_t ot_special_arcade_weapon[OT_HDT_PORT_COUNT - 1] = {
+    17, 17, 18, 0, 0, 0, 10, 0, 0, 0, 0, 0, 44, 0,
+    10, 0, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
 
 void ot_level_port_collide_player(
     OtLevelPortState *state,
@@ -3342,22 +3356,56 @@ void ot_level_port_collide_player(
                 state->frame_sound_queue[7] = 29;
                 consumed = true;
             } else if (value > 32000) {
-                /*
-                 * Standard one-player mode does not own player-2 sidekicks;
-                 * OpenTyrian deliberately leaves this object in the world.
-                 */
+                if (state->arcade_mode) {
+                    uint8_t option_id = (uint8_t)(value - 32000);
+
+                    /*
+                     * mainint.c onePlayerAction branch assigns the same
+                     * option to LEFT_SIDEKICK and RIGHT_SIDEKICK.
+                     */
+                    state->player_sidekick[0] = option_id;
+                    state->player_sidekick[1] = option_id;
+                    result->cash_awarded += 250;
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
             } else if (value > 31000) {
                 /*
                  * Preserve the source's unconditional 250-credit award
                  * before its player-2/onePlayerAction ownership checks.
                  */
                 result->cash_awarded += 250;
+                if (state->arcade_mode) {
+                    state->player_rear_weapon_id =
+                        (uint8_t)(value - 31000);
+                    if (state->player_rear_weapon_power == 0) {
+                        state->player_rear_weapon_power = 1;
+                    }
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
             } else {
-                /*
-                 * Front-weapon items above 30000 are only consumed by
-                 * two-player or onePlayerAction modes, both outside this
-                 * fixed single-player first-level translation.
-                 */
+                if (state->arcade_mode) {
+                    uint8_t port_id = (uint8_t)(value - 30000);
+
+                    state->player_front_weapon_id = port_id;
+                    if (
+                        port_id > 0 &&
+                        port_id <=
+                            sizeof(ot_special_arcade_weapon)
+                    ) {
+                        state->player_special =
+                            ot_special_arcade_weapon[port_id - 1u];
+                    } else {
+                        state->player_special = 0;
+                    }
+                    result->cash_awarded += 250;
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
             }
         } else if (value > 20000) {
             suppress_contact = true;

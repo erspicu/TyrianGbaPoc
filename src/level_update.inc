@@ -267,6 +267,9 @@ static void source_update_secret_level_display(void)
                 frontend_level.source_song
             );
         }
+        if (frontend_demo_active) {
+            insert_coin_tile_upload_pending = 1;
+        }
     }
     flash = (int16_t)(
         source_parity_level.display_flash +
@@ -289,6 +292,12 @@ static void update_logic(void)
 
     level_tick++;
     telemetry_logic_updates++;
+    if (
+        frontend_demo_active &&
+        !source_parity_level.end_level
+    ) {
+        (void)frontend_demo_apply_input();
+    }
     /*
      * Stage 4 makes the direct OpenTyrian event/enemy runtime authoritative
      * for the first-level body.  The keypad adapter also stores the player in

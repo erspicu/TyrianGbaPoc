@@ -1,6 +1,6 @@
 /*
  * GBA presentation/input adapter for the directly translated OpenTyrian
- * first-level runtime.  Source gameplay stays in its original coordinate
+ * selected-level runtime. Source gameplay stays in its original coordinate
  * system.  These helpers reproduce JE_starShowVGA's x=24 extraction, then
  * centre-crop its 264x184 gameplay viewport to the GBA's native 240x160.
  * No source coordinate or sprite is rescaled.
@@ -48,6 +48,11 @@ static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
     EWRAM_BSS;
 static u32 source_enemy_cache_epoch;
 static u8 source_enemy_upload_count;
+static u16 source_player_cache_graphic;
+static u8 source_player_cache_valid;
+static u8 source_player_cache_visible;
+static u8 source_player_upload_pending;
+static u8 source_player_upload_l2_slot;
 static u8 source_enemy_palette_valid;
 static u8 source_enemy_first_decode_failure_valid;
 static u8 source_enemy_first_decode_failure_shape_table;
@@ -642,6 +647,76 @@ static u8 source_sprite2_l2_acquire(
     return selected;
 }
 
+/*
+ * Ordinary player ships are spriteSheet9 Sprite2 frames in the PC renderer,
+ * but they must not consume an enemy-cache slot.  Episode 1's third routed
+ * level reaches the complete 24-frame enemy working set; sharing that cache
+ * made one authored object disappear.  OBJ tiles 0..31 already back the
+ * legacy 32x32 player atlas, so time-share that exact 1 KiB region as a
+ * dedicated source-player frame.
+ */
+static u16 source_player_cache_acquire(u16 graphic)
+{
+    u8 l2_slot;
+
+    source_player_cache_visible = 1;
+    if (
+        source_player_cache_valid &&
+        source_player_cache_graphic == graphic
+    ) {
+        telemetry_sprite2_cache_hits++;
+        return SOURCE_PLAYER_CACHE_TILE_BASE;
+    }
+    if (!source_enemy_palette_valid || graphic == 0) {
+        telemetry_source_unknown_visuals++;
+        telemetry_sprite2_decode_failures++;
+        return 0xffff;
+    }
+
+    telemetry_sprite2_cache_misses++;
+    l2_slot = source_sprite2_l2_acquire(
+        OT_COMP_SHAPE_TABLE_OPTIONS_SMALL,
+        graphic,
+        1,
+        0
+    );
+    if (l2_slot == 0xff) {
+        telemetry_source_unknown_visuals++;
+        telemetry_sprite2_decode_failures++;
+        source_player_cache_valid = 0;
+        return 0xffff;
+    }
+    if (source_player_cache_valid) {
+        telemetry_sprite2_cache_evictions++;
+    }
+    source_player_cache_graphic = graphic;
+    source_player_cache_valid = 1;
+    source_player_upload_l2_slot = l2_slot;
+    source_player_upload_pending = 1;
+    if (
+        source_enemy_upload_count + 1u >
+        telemetry_sprite2_max_uploads
+    ) {
+        telemetry_sprite2_max_uploads =
+            source_enemy_upload_count + 1u;
+    }
+    return SOURCE_PLAYER_CACHE_TILE_BASE;
+}
+
+static void source_player_cache_commit(void)
+{
+    if (!source_player_upload_pending) return;
+
+    dmaCopy(
+        source_sprite2_l2_tiles[source_player_upload_l2_slot],
+        (u8 *)OBJ_BASE_ADR + SOURCE_PLAYER_CACHE_TILE_BASE * 32u,
+        SOURCE_ENEMY_FRAME_BYTES
+    );
+    telemetry_sprite2_uploads++;
+    telemetry_sprite2_upload_bytes += SOURCE_ENEMY_FRAME_BYTES;
+    source_player_upload_pending = 0;
+}
+
 static u16 source_enemy_cache_tile(u8 slot)
 {
     if (slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) {
@@ -689,6 +764,7 @@ static u8 source_enemy_cache_tile_is_compact(u16 tile)
 static void source_enemy_cache_begin_frame(void)
 {
     source_enemy_cache_epoch++;
+    source_player_cache_visible = 0;
     if (source_enemy_cache_epoch == 0) {
         u8 index;
 
@@ -722,6 +798,7 @@ static void source_enemy_cache_end_frame(void)
             visible_unique++;
         }
     }
+    if (source_player_cache_visible) visible_unique++;
     if (
         visible_unique >
         telemetry_sprite2_max_visible_unique
@@ -869,10 +946,13 @@ source_enemy_cache_acquire(
     source_enemy_uploads[source_enemy_upload_count].l2_slot = l2_slot;
     source_enemy_upload_count++;
     if (
-        source_enemy_upload_count >
+        source_enemy_upload_count +
+            (source_player_upload_pending ? 1u : 0u) >
         telemetry_sprite2_max_uploads
     ) {
-        telemetry_sprite2_max_uploads = source_enemy_upload_count;
+        telemetry_sprite2_max_uploads =
+            source_enemy_upload_count +
+                (source_player_upload_pending ? 1u : 0u);
     }
     return source_enemy_cache_tile(selected);
 }
@@ -2039,6 +2119,7 @@ source_process_player_collisions(void)
          */
         audio_load_source_song_once_preserve_effects(30);
         secret_level_music_active = 1;
+        insert_coin_tile_upload_pending = 0;
         secret_level_tile_upload_pending = 1;
         secret_level_palette_dirty = 1;
     }
@@ -2080,6 +2161,11 @@ static void source_runtime_reset(void)
 
     memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
     memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
+    source_player_cache_graphic = 0;
+    source_player_cache_valid = 0;
+    source_player_cache_visible = 0;
+    source_player_upload_pending = 0;
+    source_player_upload_l2_slot = 0;
     memset(
         source_projectile_cache,
         0,

@@ -103,6 +103,11 @@ SECRET_LEVEL_SOURCE_IDS = (18, 4, 2, 17, 19, 11, 21, 26)
 SECRET_LEVEL_WORD_GAP = (6 * 3 + 2) // 4
 SECRET_LEVEL_SOURCE_TILE = 672
 SECRET_LEVEL_RUNTIME_TILE = GAME_OVER_RUNTIME_TILE
+INSERT_COIN_TEXT = "INSERT COIN"
+INSERT_COIN_UNIQUE_TEXT = "INSERTCO"
+INSERT_COIN_SOURCE_IDS = (8, 13, 18, 4, 17, 19, 2, 14)
+INSERT_COIN_SOURCE_TILE = 704
+INSERT_COIN_RUNTIME_TILE = GAME_OVER_RUNTIME_TILE
 ENEMY_PROJECTILE_SOURCE_IDS = (58, 112, 113, 145, 146, 147, 201, 202)
 ENEMY_PROJECTILE_WEAPON_IDS = (2, 3, 4, 59, 62, 78, 115, 116, 125, 126)
 BOSS_PROJECTILE_WEAPON_IDS = (59, 127)
@@ -984,8 +989,12 @@ def build_frontend_mode4_assets(
             15, -1 if selection == 0 else -4, 2,
         )
         source.draw_text(
+            frame, "Demo", 160, 120, 1, "center",
+            15, -2 if selection == 1 else -5, 2,
+        )
+        source.draw_text(
             frame, "JukeBox", 160, 132, 1, "center",
-            15, -6 if selection == 1 else -8, 2,
+            15, -6 if selection == 2 else -8, 2,
         )
         return frame
 
@@ -1131,7 +1140,7 @@ def build_frontend_mode4_assets(
     add("intro_logo_1", source.picture_frame(10), 10)
     add("intro_logo_2", source.picture_frame(12), 12)
     metadata["FRONTEND_FRAME_TITLE_BASE"] = len(frames)
-    for selection in range(2):
+    for selection in range(3):
         add(f"title_{selection}", render_title(selection), 4)
 
     metadata["FRONTEND_FRAME_PLAY_MODE_BASE"] = len(frames)
@@ -1301,9 +1310,9 @@ def build_frontend_mode4_assets(
 
     selection_groups = (
         (
-            "title", metadata["FRONTEND_FRAME_TITLE_BASE"], 2,
+            "title", metadata["FRONTEND_FRAME_TITLE_BASE"], 3,
             lambda selection: (
-                0, (108 + selection * 24) * 160 // 200, 240, 12
+                0, (108 + selection * 12) * 160 // 200, 240, 12
             ),
         ),
         (
@@ -2070,9 +2079,11 @@ def build_gameplay_status_text(
     text: str,
     source_ids: tuple[int, ...],
     brightness: int = -3,
+    source_sheet: str = "00_font",
+    native_size: bool = False,
 ) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
-    """Recreate a JE_dString FONT_SHAPES label at GBA display scale."""
-    source_dir = image_root / "sprites" / "00_font"
+    """Recreate a JE_dString label from one stock Tyrian font sheet."""
+    source_dir = image_root / "sprites" / source_sheet
     tyrian_palette = load_tyrian_palette(palette_file)
     font_colour_indices = {
         tyrian_palette[index]: index
@@ -2097,7 +2108,11 @@ def build_gameplay_status_text(
                 "unexpected Tyrian FONT_SHAPES status glyph canvas: "
                 f"{character}/{source_id} is {source.size}"
             )
-        advances.append(((source.width + 1) * 3 + 2) // 4)
+        advances.append(
+            source.width + 1
+            if native_size
+            else ((source.width + 1) * 3 + 2) // 4
+        )
         rgba = np.asarray(source, dtype=np.uint8)
         transformed = np.zeros_like(rgba)
         for y, x in np.argwhere(rgba[:, :, 3] >= 80):
@@ -2115,15 +2130,23 @@ def build_gameplay_status_text(
             transformed[y, x, :3] = tyrian_palette[output_index]
             transformed[y, x, 3] = 255
 
-        # PC 320x200 -> GBA 240x160.  The 11/12x15 FONT_SHAPES glyphs
-        # therefore become 8x12 and fit one 8x16 tall OBJ each.
-        foreground = Image.fromarray(transformed, "RGBA").resize(
-            (
-                min(8, max(1, (source.width * 3 + 2) // 4)),
-                max(1, (source.height * 4 + 2) // 5),
-            ),
-            Image.Resampling.NEAREST,
-        )
+        if native_size:
+            if source.width > 8 or source.height > 13:
+                raise ValueError(
+                    "native gameplay status glyph exceeds 8x13 OBJ: "
+                    f"{character}/{source_id} is {source.size}"
+                )
+            foreground = Image.fromarray(transformed, "RGBA")
+        else:
+            # PC 320x200 -> GBA 240x160.  The 11/12x15 FONT_SHAPES glyphs
+            # therefore become 8x12 and fit one 8x16 tall OBJ each.
+            foreground = Image.fromarray(transformed, "RGBA").resize(
+                (
+                    min(8, max(1, (source.width * 3 + 2) // 4)),
+                    max(1, (source.height * 4 + 2) // 5),
+                ),
+                Image.Resampling.NEAREST,
+            )
         shadow = Image.new("RGBA", (8, 16), (0, 0, 0, 0))
         shadow_mask = foreground.getchannel("A")
         shadow_shape = Image.new("RGBA", foreground.size, (8, 8, 8, 255))
@@ -2438,6 +2461,8 @@ def repack_obj_tiles(
     game_over_advances: tuple[int, ...],
     secret_level_tiles: bytes,
     secret_level_advances: tuple[int, ...],
+    insert_coin_tiles: bytes,
+    insert_coin_advances: tuple[int, ...],
     boss_bar_tiles: bytes,
 ) -> tuple[bytes, dict[str, int]]:
     source_count = len(snes_tiles) // 32
@@ -2632,6 +2657,29 @@ def repack_obj_tiles(
     metadata["OBJ_SECRET_LEVEL_WORD_GAP"] = SECRET_LEVEL_WORD_GAP
     for index, advance in enumerate(secret_level_advances):
         metadata[f"OBJ_SECRET_LEVEL_ADVANCE_{index}"] = advance
+    expected_insert_coin_bytes = (
+        len(INSERT_COIN_UNIQUE_TEXT) * 2 * 32
+    )
+    if len(insert_coin_tiles) != expected_insert_coin_bytes:
+        raise ValueError(
+            "GBA INSERT COIN text must contain eight unique 8x16 glyphs"
+        )
+    if len(insert_coin_advances) != len(INSERT_COIN_UNIQUE_TEXT):
+        raise ValueError("GBA INSERT COIN advance count changed")
+    insert_coin_start = INSERT_COIN_SOURCE_TILE * 32
+    insert_coin_end = insert_coin_start + len(insert_coin_tiles)
+    if insert_coin_end > len(output):
+        raise ValueError("GBA INSERT COIN source bank exceeds OBJ backing")
+    output[insert_coin_start:insert_coin_end] = insert_coin_tiles
+    metadata["OBJ_TILE_INSERT_COIN_SOURCE"] = INSERT_COIN_SOURCE_TILE
+    metadata["OBJ_TILE_INSERT_COIN_RUNTIME"] = INSERT_COIN_RUNTIME_TILE
+    metadata["OBJ_PAL_INSERT_COIN"] = 14
+    metadata["OBJ_INSERT_COIN_UNIQUE_GLYPH_COUNT"] = len(
+        INSERT_COIN_UNIQUE_TEXT
+    )
+    metadata["OBJ_INSERT_COIN_TILE_COUNT"] = len(insert_coin_tiles) // 32
+    for index, advance in enumerate(insert_coin_advances):
+        metadata[f"OBJ_INSERT_COIN_ADVANCE_{index}"] = advance
     tile_count = len(output) // 32
     if tile_count > 1024:
         raise ValueError(f"GBA OBJ atlas exceeds 1024 tiles: {tile_count}")
@@ -2849,6 +2897,46 @@ def remap_it_position_jumps(
     return bytes(output)
 
 
+def disable_it_position_jumps(packed: bytes) -> tuple[bytes, int]:
+    """Neutralize source-loop Bxx commands for finite Maxmod cue modules.
+
+    ``MM_PLAY_ONCE`` only controls what Maxmod does after the IT order list
+    ends.  A Bxx command inside the module jumps before that boundary and
+    therefore loops forever.  Keep the ordinary catalog module untouched for
+    Jukebox/level use and build a second, finite module for source cues that
+    OpenTyrian lets end naturally.
+    """
+    output = bytearray(packed)
+    offset = 0
+    disabled = 0
+    while offset < len(output):
+        channel = output[offset]
+        offset += 1
+        if channel == 0:
+            continue
+        if not channel & 0x80 or offset >= len(output):
+            raise ValueError("unsupported packed IT channel reuse")
+        mask = output[offset]
+        offset += 1
+        if mask & 0x01:
+            offset += 1
+        if mask & 0x02:
+            offset += 1
+        if mask & 0x04:
+            offset += 1
+        if mask & 0x08:
+            if offset + 1 >= len(output):
+                raise ValueError("truncated packed IT effect")
+            if output[offset] == 2:
+                output[offset] = 0
+                output[offset + 1] = 0
+                disabled += 1
+            offset += 2
+        if offset > len(output):
+            raise ValueError("truncated packed IT cell")
+    return bytes(output), disabled
+
+
 def build_it_module_with_segmented_patterns(
     original_builder: object,
     workspace: Path,
@@ -2928,6 +3016,8 @@ def build_sparse_tym_tracker_it(
     snes: ModuleType,
     workspace: Path,
     tym_path: Path,
+    *,
+    finite: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
     """Use the SNES tracker writer with fewer than eight audible channels.
 
@@ -2939,6 +3029,7 @@ def build_sparse_tym_tracker_it(
     """
     original_loader = snes.load_snes_calibration
     original_it_builder = snes.build_it_module
+    disabled_position_jumps = 0
 
     def load_sparse_calibration(
         inner_workspace: Path,
@@ -2994,6 +3085,15 @@ def build_sparse_tym_tracker_it(
         tempo: int = 125,
         channel_pans: list[int] | None = None,
     ) -> bytes:
+        nonlocal disabled_position_jumps
+
+        if finite:
+            finite_patterns: list[tuple[int, bytes]] = []
+            for rows, packed in patterns:
+                packed, disabled = disable_it_position_jumps(packed)
+                disabled_position_jumps += disabled
+                finite_patterns.append((rows, packed))
+            patterns = finite_patterns
         return build_it_module_with_segmented_patterns(
             original_it_builder,
             inner_workspace,
@@ -3009,7 +3109,15 @@ def build_sparse_tym_tracker_it(
     snes.load_snes_calibration = load_sparse_calibration
     snes.build_it_module = build_segmented_it
     try:
-        return snes.build_tym_tracker_it(workspace, tym_path)
+        module, report = snes.build_tym_tracker_it(workspace, tym_path)
+        report = dict(report)
+        report["finite"] = finite
+        report["disabled_position_jumps"] = disabled_position_jumps
+        if finite and disabled_position_jumps == 0:
+            raise ValueError(
+                f"finite cue has no IT Bxx loop to remove: {tym_path.name}"
+            )
+        return module, report
     finally:
         snes.load_snes_calibration = original_loader
         snes.build_it_module = original_it_builder
@@ -4290,6 +4398,20 @@ def main() -> None:
         data_root / "palette.dat",
     )
     (
+        insert_coin_tiles,
+        insert_coin_palette,
+        insert_coin_preview,
+        insert_coin_advances,
+    ) = build_gameplay_status_text(
+        snes,
+        image_root,
+        data_root / "palette.dat",
+        INSERT_COIN_UNIQUE_TEXT,
+        INSERT_COIN_SOURCE_IDS,
+        source_sheet="01_smallfont",
+        native_size=True,
+    )
+    (
         boss_bar_tiles,
         boss_bar_palette,
         boss_bar_preview,
@@ -4314,6 +4436,8 @@ def main() -> None:
         game_over_advances,
         secret_level_tiles,
         secret_level_advances,
+        insert_coin_tiles,
+        insert_coin_advances,
         boss_bar_tiles,
     )
     obj_metadata.update(frontend_metadata)
@@ -4339,6 +4463,9 @@ def main() -> None:
     (output / "obj_palette.bin").write_bytes(obj_palette)
     (output / "secret_level_palettes.bin").write_bytes(
         secret_level_palettes
+    )
+    (output / "insert_coin_palette.bin").write_bytes(
+        insert_coin_palette
     )
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
         preview / "obj_gba_source_atlas.png"
@@ -4376,6 +4503,13 @@ def main() -> None:
         ),
         Image.Resampling.NEAREST,
     ).save(preview / "secret_level_font_shapes.png")
+    insert_coin_preview.resize(
+        (
+            insert_coin_preview.width * 8,
+            insert_coin_preview.height * 8,
+        ),
+        Image.Resampling.NEAREST,
+    ).save(preview / "insert_coin_small_font_shapes.png")
     (preview / "enemy_projectiles_pc_source.png").unlink(missing_ok=True)
     boss_bar_preview.resize(
         (boss_bar_preview.width * 6, boss_bar_preview.height * 6),
@@ -4413,6 +4547,18 @@ def main() -> None:
         )
         music_modules.append(module)
         music_reports.append(module_report)
+    finite_cue_reports: dict[int, dict[str, object]] = {}
+    for source_index in (9, 10, 30):
+        module, module_report = build_sparse_tym_tracker_it(
+            snes,
+            workspace,
+            music_paths[source_index],
+            finite=True,
+        )
+        (output / f"tyrian_music_{source_index:02d}_once.it").write_bytes(
+            module
+        )
+        finite_cue_reports[source_index] = module_report
     for obsolete in (
         "tyrian_title_full.it",
         "tyrian_level_full.it",
@@ -4585,6 +4731,21 @@ def main() -> None:
             "game_over_music_seconds="
             f"{game_over_report['tracker_duration_seconds']:.6f}"
         ),
+        "finite_music_cues=9,10,30",
+        *[
+            (
+                f"finite_music_{source_index:02d}_disabled_position_jumps="
+                f"{finite_cue_reports[source_index]['disabled_position_jumps']}"
+            )
+            for source_index in (9, 10, 30)
+        ],
+        *[
+            (
+                f"finite_music_{source_index:02d}_it_bytes="
+                f"{(output / f'tyrian_music_{source_index:02d}_once.it').stat().st_size}"
+            )
+            for source_index in (9, 10, 30)
+        ],
         (
             "level_complete_voice_pcm_bytes="
             f"{len(extract_tyrian_sfx_entry(voice_file, 4)) - 100}"

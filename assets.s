@@ -16,6 +16,11 @@ secret_level_palettes:
 	.incbin "res/secret_level_palettes.bin"
 
 	.balign 4
+	.global insert_coin_palette
+insert_coin_palette:
+	.incbin "res/insert_coin_palette.bin"
+
+	.balign 4
 	.global frontend_frames
 frontend_frames:
 	.incbin "res/frontend_frames.bin"

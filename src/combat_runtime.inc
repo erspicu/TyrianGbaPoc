@@ -629,7 +629,7 @@ static void update_player(void)
             /*
              * onePlayerAction aliases lives to front-weapon power.  A fresh
              * Pulse-Cannon starts at power/lives 1, so neither requested mode
-             * has an extra life in the first-level proof.
+             * has an extra life in the selected-level source port.
              */
             frontend_enter_game_over();
         }
@@ -723,7 +723,7 @@ static void update_player(void)
     );
     if (ship_banking < -2) ship_banking = -2;
     if (ship_banking > 2) ship_banking = 2;
-    player_bank = ship_banking < 0 ? -1 : ship_banking > 0 ? 1 : 0;
+    player_bank = (s8)ship_banking;
 
 #if TYRIAN_GBA_STRESS_LOADOUT
     stress_player_delta_x = (s16)(player_source_x - old_x);

@@ -459,7 +459,7 @@ static void commit_vblank_work(void)
         if (frontend_stats_palette_dirty) {
             dmaCopy(
                 frontend_stats_obj_palette,
-                SPRITE_PALETTE + 14u * 16u,
+                SPRITE_PALETTE + 13u * 16u,
                 sizeof(frontend_stats_obj_palette)
             );
             frontend_stats_palette_dirty = 0;
@@ -505,6 +505,19 @@ static void commit_vblank_work(void)
         );
         game_over_tile_upload_pending = 0;
     }
+    if (insert_coin_tile_upload_pending) {
+        dmaCopy(
+            obj_tiles + OBJ_TILE_INSERT_COIN_SOURCE * 32,
+            (u8 *)OBJ_BASE_ADR + OBJ_TILE_INSERT_COIN_RUNTIME * 32,
+            OBJ_INSERT_COIN_TILE_COUNT * 32
+        );
+        dmaCopy(
+            insert_coin_palette,
+            SPRITE_PALETTE + OBJ_PAL_INSERT_COIN * 16,
+            32
+        );
+        insert_coin_tile_upload_pending = 0;
+    }
     /*
      * Source Sprite2 frames are copied into the reserved OBJ tile cache only
      * during VBlank.  The shadow OAM written below may then safely point at
@@ -515,6 +528,7 @@ static void commit_vblank_work(void)
         game_state == STATE_PLAY ||
         game_state == STATE_GAME_OVER
     ) {
+        source_player_cache_commit();
         source_enemy_cache_commit();
         source_projectile_cache_commit();
         source_effect_cache_commit();
@@ -537,6 +551,8 @@ static void audio_load_source_song_internal(
     mm_pmode mode
 )
 {
+    u16 module = source_song;
+
     mmStop();
     if (cancel_effects) mmEffectCancelAll();
     /*
@@ -552,11 +568,27 @@ static void audio_load_source_song_internal(
         return;
     }
     /*
-     * v27 builds all 41 modules in music.mus order.  The generated soundbank
-     * asserts source song N == Maxmod module N, so Jukebox and game flow use
-     * one authoritative zero-based index without a four-song switch table.
+     * The first 41 modules preserve music.mus order.  OpenTyrian's finite
+     * victory, GAME OVER and Secret Level cues have separate modules with
+     * their terminal Bxx source loop removed.  MM_PLAY_ONCE can then reach
+     * the real order-list boundary and stop naturally.
      */
-    mmStart(source_song, mode);
+    if (mode == MM_PLAY_ONCE) {
+        switch (source_song) {
+        case 9:
+            module = MOD_TYRIAN_MUSIC_09_ONCE;
+            break;
+        case 10:
+            module = MOD_TYRIAN_MUSIC_10_ONCE;
+            break;
+        case 30:
+            module = MOD_TYRIAN_MUSIC_30_ONCE;
+            break;
+        default:
+            break;
+        }
+    }
+    mmStart(module, mode);
     mmSetModuleVolume(896);
     mmSetEffectsVolume(896);
 }

@@ -6,6 +6,44 @@ static void render_player_at_source_y(
     u8 exit_flight
 )
 {
+    if (player_ship_graphic > 1) {
+        u16 tile = source_player_cache_acquire(
+            (u16)(
+                player_ship_graphic +
+                (exit_flight ? 0 : (s16)player_bank * 2)
+            )
+        );
+
+        if (tile != 0xffff) {
+            /*
+             * JE_playerMovement() ordinary ship path is
+             * blit_sprite2x2(x - 5, y - 7, spriteSheet9, ship_sprite).
+             * The raw Sprite2 frame retains its native (4,2) component
+             * placement, matching the established 32x32 player container.
+             */
+            put_sprite_8bpp_32(
+                source_player_screen_x(),
+                (s16)(
+                    source_world_to_screen_y(
+                        (s16)(
+                            source_y +
+                            SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+                        )
+                    ) - 16
+                ),
+                tile,
+                priority
+            );
+            return;
+        }
+    }
+
+    /*
+     * Source ship graphics 0 and 1 are special two-body cases.  The current
+     * stock title demos use ordinary graphics; retain the validated USP
+     * Talon presentation as a fail-closed fallback for those rare cases or
+     * a corrupt/missing Sprite2 frame.
+     */
     put_sprite_with_attr1(
         source_player_screen_x(),
         (s16)(
@@ -16,7 +54,7 @@ static void render_player_at_source_y(
                 )
             ) - 16
         ),
-        exit_flight || !player_bank ?
+        exit_flight || player_bank == 0 ?
             OBJ_TILE_PLAYER_0 :
             OBJ_TILE_PLAYER_1,
         OBJ_PAL_PLAYER_0, ATTR1_SIZE_32, priority,
@@ -591,6 +629,13 @@ static void render_game(void)
         source_parity_level.display_time > 0
     ) {
         render_secret_level_text();
+    }
+    if (
+        game_state == STATE_PLAY &&
+        frontend_demo_active &&
+        source_parity_level.display_time == 0
+    ) {
+        render_insert_coin_text();
     }
     if (
         game_paused

@@ -189,13 +189,15 @@ $(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cu
 endif
 
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
-TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v39_$(CONFIG_SUFFIX)
-TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v39_$(CONFIG_SUFFIX)
-DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v39_$(CONFIG_SUFFIX)
-JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v39_$(CONFIG_SUFFIX)
-ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v39_$(CONFIG_SUFFIX)
-ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v39_$(CONFIG_SUFFIX)
-CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v39_$(CONFIG_SUFFIX)
+TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v40_$(CONFIG_SUFFIX)
+TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$(CONFIG_SUFFIX)
+DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$(CONFIG_SUFFIX)
+JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v40_$(CONFIG_SUFFIX)
+DEMO_TEST_TARGET := tyrian_gba_demo_autotest_romfs_v40_$(CONFIG_SUFFIX)
+ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v40_$(CONFIG_SUFFIX)
+ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v40_$(CONFIG_SUFFIX)
+ARCADE_ROUTE_TEST_TARGET := tyrian_gba_arcade_route_smoke_ep1_section1_v40_$(CONFIG_SUFFIX)
+CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v40_$(CONFIG_SUFFIX)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 BUILD := build
@@ -263,6 +265,7 @@ ASSET_BINARIES := \
 	$(RES)/obj_tiles.bin \
 	$(RES)/obj_palette.bin \
 	$(RES)/secret_level_palettes.bin \
+	$(RES)/insert_coin_palette.bin \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
@@ -285,6 +288,10 @@ TYRIAN_MUSIC_TRACKS := \
 	30 31 32 33 34 35 36 37 38 39 40
 TYRIAN_MUSIC_INPUTS := $(foreach track,$(TYRIAN_MUSIC_TRACKS),\
 	$(RES)/tyrian_music_$(track).it)
+TYRIAN_MUSIC_ONCE_INPUTS := \
+	$(RES)/tyrian_music_09_once.it \
+	$(RES)/tyrian_music_10_once.it \
+	$(RES)/tyrian_music_30_once.it
 
 TYRIAN_SOUND_IDS := \
 	01 02 03 04 05 06 07 08 09 10 \
@@ -296,6 +303,7 @@ TYRIAN_SOUND_INPUTS := $(foreach sound,$(TYRIAN_SOUND_IDS),\
 
 AUDIO_INPUTS := \
 	$(TYRIAN_MUSIC_INPUTS) \
+	$(TYRIAN_MUSIC_ONCE_INPUTS) \
 	$(TYRIAN_SOUND_INPUTS)
 
 COMMON_OBJECTS := \
@@ -315,8 +323,9 @@ STRESS_COMMON_OBJECTS := \
 
 MAIN_INCLUDES := $(wildcard src/*.inc)
 
-.PHONY: all autotest death-autotest jukebox-autotest \
-	romfs-matrix-autotest route-smoke-autotest campaign-smoke-autotest \
+.PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
+	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
+	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable assets clean distclean
 
 all: $(BUILD)/$(TARGET).gba
@@ -327,9 +336,13 @@ death-autotest: $(BUILD)/$(DEATH_TEST_TARGET).gba
 
 jukebox-autotest: $(BUILD)/$(JUKEBOX_TEST_TARGET).gba
 
+demo-autotest: $(BUILD)/$(DEMO_TEST_TARGET).gba
+
 romfs-matrix-autotest: $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba
 
 route-smoke-autotest: $(BUILD)/$(ROUTE_TEST_TARGET).gba
+
+arcade-route-smoke-autotest: $(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).gba
 
 campaign-smoke-autotest: $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba
 
@@ -399,6 +412,14 @@ $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_JUKEBOX_FLOW \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_DEMO_FLOW \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
@@ -416,6 +437,19 @@ $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUF
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(ROUTE_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(ROUTE_SECTION) \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-MMD -MP -c $< -o $@
+
+$(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=1 \
+		-DAUTOTEST_FRONTEND_ROUTE_SECTION=1 \
+		-DAUTOTEST_FRONTEND_ROUTE_ARCADE \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
@@ -516,6 +550,12 @@ $(BUILD)/$(JUKEBOX_TEST_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(DEMO_TEST_TARGET).elf: \
+		$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(DEMO_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf: \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).map $^ \
@@ -527,6 +567,13 @@ $(BUILD)/$(ROUTE_TEST_TARGET).elf: \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(ROUTE_TEST_TARGET).map $^ \
 	-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).elf: \
+		$(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
 	$(SIZE) $@
 
 $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf: \
@@ -566,6 +613,10 @@ $(BUILD)/$(JUKEBOX_TEST_TARGET).gba: $(BUILD)/$(JUKEBOX_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN JUKE" -cTYGJ -m00
 
+$(BUILD)/$(DEMO_TEST_TARGET).gba: $(BUILD)/$(DEMO_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYRIAN DEMO" -cTYGX -m00
+
 $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba: \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
@@ -574,6 +625,11 @@ $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba: \
 $(BUILD)/$(ROUTE_TEST_TARGET).gba: $(BUILD)/$(ROUTE_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN ROUTE" -cTYGR -m00
+
+$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).gba: \
+		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYRIAN ARCADE" -cTYGQ -m00
 
 $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba: $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
@@ -598,10 +654,14 @@ clean:
 		$(BUILD)/main_death_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
@@ -631,12 +691,18 @@ clean:
 		$(BUILD)/$(JUKEBOX_TEST_TARGET).elf \
 		$(BUILD)/$(JUKEBOX_TEST_TARGET).gba \
 		$(BUILD)/$(JUKEBOX_TEST_TARGET).map \
+		$(BUILD)/$(DEMO_TEST_TARGET).elf \
+		$(BUILD)/$(DEMO_TEST_TARGET).gba \
+		$(BUILD)/$(DEMO_TEST_TARGET).map \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).map \
 		$(BUILD)/$(ROUTE_TEST_TARGET).elf \
 		$(BUILD)/$(ROUTE_TEST_TARGET).gba \
 		$(BUILD)/$(ROUTE_TEST_TARGET).map \
+		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).elf \
+		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).gba \
+		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).map \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).elf \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).gba \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).map \
@@ -656,8 +722,10 @@ distclean: clean
 -include $(BUILD)/main_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_death_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_demo_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d
 -include $(STRESS_LEVEL_OBJECT:.o=.d)
