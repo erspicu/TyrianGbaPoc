@@ -709,6 +709,29 @@ enum {
 };
 
 enum {
+    FRONTEND_TRANSITION_JOB_NONE = 0,
+    FRONTEND_TRANSITION_JOB_NEXT_LEVEL,
+    FRONTEND_TRANSITION_JOB_UPGRADE_SUBMENU,
+    FRONTEND_TRANSITION_JOB_GAME_MENU,
+    FRONTEND_TRANSITION_JOB_UPGRADE_MENU,
+    FRONTEND_TRANSITION_JOB_QUIT,
+};
+
+enum {
+    FRONTEND_GAME_MENU_JOB_INITIALIZE_CAMPAIGN = 1u << 0,
+    FRONTEND_GAME_MENU_JOB_PREPARE_MAP = 1u << 1,
+    FRONTEND_GAME_MENU_JOB_LOAD_SONG = 1u << 2,
+};
+
+enum {
+    FRONTEND_QUIT_JOB_ENTER = 1u << 0,
+};
+
+enum {
+    FRONTEND_TRANSITION_PHASE_TELEMETRY_COUNT = 16,
+};
+
+enum {
     FRONTEND_PLAY_FULL_GAME = 0,
     FRONTEND_PLAY_ARCADE = 1,
     FRONTEND_DIFFICULTY_EASY = 1,
@@ -769,7 +792,8 @@ extern const u8 insert_coin_palette[];
 extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
-extern const u8 frontend_cube[];
+extern const u8 frontend_stats_tiles[];
+extern const u8 frontend_stats_widths[];
 extern const u8 frontend_native_font[];
 extern const u8 frontend_pregame_font[];
 extern const u8 frontend_static_menu_panels[];
@@ -781,6 +805,8 @@ extern const u8 frontend_nav_obj_tiles[];
 extern const u8 frontend_nav_obj_meta[];
 extern const u8 frontend_nav_obj_palette[];
 extern const u8 frontend_nav_bitmap_pages[];
+extern const u8 frontend_source_stamp_offsets[];
+extern const u8 frontend_source_stamp_data[];
 extern const u8 jukebox_font_tiles[];
 extern const u8 jukebox_backdrop_tiles[];
 extern const u8 jukebox_backdrop_map[];
@@ -1048,6 +1074,32 @@ static u16 frontend_dirty_width[8] EWRAM_BSS;
 static u16 frontend_dirty_height[8] EWRAM_BSS;
 static const u8 *frontend_pending_frame EWRAM_BSS;
 static const u8 *frontend_pending_palette EWRAM_BSS;
+static u8 frontend_transition_job EWRAM_BSS;
+static u8 frontend_transition_phase EWRAM_BSS;
+static u8 frontend_transition_flags EWRAM_BSS;
+static u8 frontend_transition_failed EWRAM_BSS;
+static u8 frontend_transition_work_index EWRAM_BSS;
+static u8 frontend_transition_work_mode EWRAM_BSS;
+#define FRONTEND_SHIP_PANEL_CACHE_WIDTH 120u
+#define FRONTEND_SHIP_PANEL_CACHE_HEIGHT SCREEN_HEIGHT
+#define FRONTEND_SHIP_PANEL_CACHE_BYTES \
+    ( \
+        FRONTEND_SHIP_PANEL_CACHE_WIDTH * \
+        FRONTEND_SHIP_PANEL_CACHE_HEIGHT \
+    )
+/*
+ * Next Level and Upgrade submenus overwrite the shared Mode-4 frame.  Keep
+ * the configuration-dependent left ship panel in a compact packed cache so
+ * returning to Game Menu never replays source art.  This costs 19.2 KiB of
+ * the measured EWRAM margin and remains inactive during gameplay.
+ */
+static u8 frontend_ship_panel_cache[
+    FRONTEND_SHIP_PANEL_CACHE_BYTES
+] EWRAM_BSS __attribute__((aligned(4)));
+static FrontendPlayerItems
+    frontend_ship_panel_cache_items EWRAM_BSS;
+static u32 frontend_ship_panel_cache_cash EWRAM_BSS;
+static u8 frontend_ship_panel_cache_valid EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
@@ -1429,6 +1481,18 @@ volatile u32 telemetry_frontend_dirty_commits;
 volatile u32 telemetry_frontend_dirty_bytes;
 volatile u32 telemetry_frontend_runtime_shp_decodes;
 volatile u32 telemetry_frontend_runtime_sprite2_decodes;
+volatile u32 telemetry_frontend_transition_job_cycles_max;
+volatile u32 telemetry_frontend_transition_phase_cycles_max[
+    FRONTEND_TRANSITION_PHASE_TELEMETRY_COUNT
+];
+volatile u32 telemetry_missed_vblanks_play;
+volatile u32 telemetry_missed_vblanks_frontend;
+volatile u32 telemetry_missed_vblanks_game_over;
+volatile u32 telemetry_missed_vblanks_stats;
+volatile u32 telemetry_missed_vblanks_transition;
+volatile u32 telemetry_missed_vblanks_frontend_other;
+volatile u32 telemetry_missed_vblank_transition_job_last;
+volatile u32 telemetry_missed_vblank_transition_phase_next;
 volatile u32 telemetry_frontend_nav_bitmap_redraws;
 volatile u32 telemetry_frontend_nav_obj_updates;
 volatile u32 telemetry_frontend_nav_obj_uploads;

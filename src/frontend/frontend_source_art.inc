@@ -385,6 +385,208 @@ static void frontend_source_plot(
         frontend_source_colour(pixel, mode, hue, brightness);
 }
 
+static u32 frontend_source_stamp_shp_key(
+    u8 table,
+    u16 sprite_index
+)
+{
+    if (
+        table == 5 &&
+        sprite_index >= FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST &&
+        sprite_index <
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST +
+                FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT
+    ) {
+        return
+            sprite_index -
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST;
+    }
+    if (
+        table == 6 &&
+        sprite_index <
+            FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST +
+                FRONTEND_SOURCE_STAMP_SHP_TABLE6_COUNT
+    ) {
+        return
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT +
+            sprite_index -
+            FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST;
+    }
+    return FRONTEND_SOURCE_STAMP_KEY_COUNT;
+}
+
+static u32 frontend_source_stamp_comp_key(
+    u8 shape_table,
+    u16 graphic
+)
+{
+    if (
+        shape_table <
+            FRONTEND_SOURCE_STAMP_COMP_TABLE_FIRST ||
+        shape_table >=
+            FRONTEND_SOURCE_STAMP_COMP_TABLE_FIRST +
+                FRONTEND_SOURCE_STAMP_COMP_TABLE_COUNT ||
+        graphic == 0 ||
+        graphic > FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT
+    ) {
+        return FRONTEND_SOURCE_STAMP_KEY_COUNT;
+    }
+    return
+        FRONTEND_SOURCE_STAMP_SHP_KEY_COUNT +
+        (
+            (u32)(
+                shape_table -
+                FRONTEND_SOURCE_STAMP_COMP_TABLE_FIRST
+            ) *
+                FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT
+        ) +
+        graphic - 1u;
+}
+
+/*
+ * Build-time source stamps are the static-menu equivalent of the gameplay
+ * Sprite2 raw catalog: stock indices and layering remain authoritative,
+ * while immutable RLE decode and 4/5 coordinate scaling leave the ARM7
+ * hot path.  Keep this parser in ROM; sequential Game Pak reads benefit
+ * from prefetch and the gameplay IWRAM budget remains untouched.
+ */
+static __attribute__((noinline, noclone)) u8
+frontend_blit_source_stamp(
+    u8 *frame,
+    u32 key,
+    s16 source_x,
+    s16 source_y,
+    u8 mode,
+    u8 hue,
+    s8 brightness
+)
+{
+    const u32 *offsets =
+        (const u32 *)(const void *)frontend_source_stamp_offsets;
+    u32 phase_x;
+    u32 phase_y;
+    u32 record;
+    u32 stream_offset;
+    u32 stream_end;
+    const u8 *stream;
+    const u8 *cursor;
+    const u8 *end;
+    u16 run_count;
+    u16 run;
+    s16 base_x;
+    s16 base_y;
+
+    if (
+        frame == 0 ||
+        key >= FRONTEND_SOURCE_STAMP_KEY_COUNT ||
+        source_x < (s16)FRONTEND_MENU_SOURCE_CROP_X ||
+        source_y < 0
+    ) {
+        return 0;
+    }
+    phase_x = (u32)(
+        source_x - FRONTEND_MENU_SOURCE_CROP_X
+    ) % FRONTEND_SOURCE_STAMP_SCALE_PHASES;
+    phase_y =
+        (u32)source_y % FRONTEND_SOURCE_STAMP_SCALE_PHASES;
+    record =
+        key * FRONTEND_SOURCE_STAMP_PHASE_COUNT +
+        phase_y * FRONTEND_SOURCE_STAMP_SCALE_PHASES +
+        phase_x;
+    if (record >= FRONTEND_SOURCE_STAMP_COUNT) return 0;
+    stream_offset = offsets[record];
+    stream_end =
+        record + 1u < FRONTEND_SOURCE_STAMP_COUNT ?
+            offsets[record + 1u] :
+            FRONTEND_SOURCE_STAMP_DATA_BYTES;
+    if (
+        stream_offset >= stream_end ||
+        stream_end > FRONTEND_SOURCE_STAMP_DATA_BYTES ||
+        stream_end - stream_offset < 4u
+    ) {
+        return 0;
+    }
+    stream = frontend_source_stamp_data + stream_offset;
+    run_count = (u16)(stream[0] | ((u16)stream[1] << 8));
+    cursor = stream + 4;
+    end = frontend_source_stamp_data + stream_end;
+    base_x = frontend_source_to_screen_x(source_x);
+    base_y = frontend_source_to_screen_y(source_y);
+
+    for (run = 0; run < run_count; run++) {
+        u8 relative_y;
+        u8 relative_x;
+        u16 length;
+        u32 padded_length;
+        s16 target_x;
+        s16 target_y;
+        u16 source_skip = 0;
+        u16 visible_length;
+        u16 pixel_index;
+
+        if ((u32)(end - cursor) < 4u) return 0;
+        relative_y = cursor[0];
+        relative_x = cursor[1];
+        length = (u16)(cursor[2] | ((u16)cursor[3] << 8));
+        cursor += 4;
+        padded_length = (length + 3u) & ~3u;
+        if (
+            length == 0 ||
+            (u32)(end - cursor) < padded_length
+        ) {
+            return 0;
+        }
+        target_x = (s16)(base_x + relative_x);
+        target_y = (s16)(base_y + relative_y);
+        visible_length = length;
+        if (target_x < 0) {
+            source_skip = (u16)(-target_x);
+            if (source_skip >= visible_length) {
+                cursor += padded_length;
+                continue;
+            }
+            visible_length = (u16)(visible_length - source_skip);
+            target_x = 0;
+        }
+        if (target_x >= SCREEN_WIDTH) {
+            cursor += padded_length;
+            continue;
+        }
+        if (target_x + visible_length > SCREEN_WIDTH) {
+            visible_length = (u16)(SCREEN_WIDTH - target_x);
+        }
+        if (
+            target_y >= 0 &&
+            target_y < SCREEN_HEIGHT &&
+            visible_length != 0
+        ) {
+            u8 *destination =
+                frame + (u32)target_y * SCREEN_WIDTH + target_x;
+            const u8 *source_pixels = cursor + source_skip;
+
+            if (mode == FRONTEND_SOURCE_BLIT_NORMAL) {
+                memcpy(destination, source_pixels, visible_length);
+            } else {
+                for (
+                    pixel_index = 0;
+                    pixel_index < visible_length;
+                    pixel_index++
+                ) {
+                    destination[pixel_index] =
+                        frontend_source_colour(
+                            source_pixels[pixel_index],
+                            mode,
+                            hue,
+                            brightness
+                        );
+                }
+            }
+        }
+        cursor += padded_length;
+    }
+    return cursor == end;
+}
+
 static u8 frontend_blit_shp_source(
     u8 *frame,
     u8 table,
@@ -400,6 +602,24 @@ static u8 frontend_blit_shp_source(
     u32 position = 0;
     u16 x = 0;
     u16 y = 0;
+    u32 stamp_key = frontend_source_stamp_shp_key(
+        table,
+        sprite_index
+    );
+
+    if (
+        frontend_blit_source_stamp(
+            frame,
+            stamp_key,
+            source_x,
+            source_y,
+            mode,
+            hue,
+            brightness
+        )
+    ) {
+        return 1;
+    }
 
     if (
         !ot_data_shp_sprite_read(table, sprite_index, &sprite) ||
@@ -454,6 +674,24 @@ static u8 frontend_blit_comp_source(
 )
 {
     u8 y;
+    u32 stamp_key = frontend_source_stamp_comp_key(
+        shape_table,
+        graphic
+    );
+
+    if (
+        frontend_blit_source_stamp(
+            frame,
+            stamp_key,
+            source_x,
+            source_y,
+            mode,
+            hue,
+            brightness
+        )
+    ) {
+        return 1;
+    }
 
     if (
         graphic == 0 ||
@@ -901,7 +1139,27 @@ static void frontend_draw_segment_bar_source(
     }
 }
 
-static void frontend_draw_ship_illustration(u8 *frame)
+enum {
+    FRONTEND_SHIP_DRAW_BODY = 0,
+    FRONTEND_SHIP_DRAW_GENERATOR,
+    FRONTEND_SHIP_DRAW_FRONT_WEAPON,
+    FRONTEND_SHIP_DRAW_REAR_WEAPON,
+    FRONTEND_SHIP_DRAW_LEFT_SIDEKICK,
+    FRONTEND_SHIP_DRAW_RIGHT_SIDEKICK,
+    FRONTEND_SHIP_DRAW_SHIELD,
+    FRONTEND_SHIP_DRAW_STATUS,
+    FRONTEND_SHIP_DRAW_PART_COUNT,
+};
+
+/*
+ * The stock ship panel is deliberately separable: transition jobs execute
+ * one source-equivalent layer per VBlank, while synchronous callers simply
+ * iterate every part in the original draw order.
+ */
+static void frontend_draw_ship_illustration_part(
+    u8 *frame,
+    u8 part
+)
 {
     static const s16 weapon_sprite[43] = {
         -1, 0, 1, 2, 3, 4, 5, 6, 7, 8,
@@ -937,150 +1195,309 @@ static void frontend_draw_ship_illustration(u8 *frame)
     OtShieldDefinition shield;
     u8 front = frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id;
     u8 rear = frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id;
-    char cash[11];
 
-    if (
-        ot_data_hdt_ship_read(frontend_player_items.ship, &ship) &&
-        ship.bigshipgraphic > 0
-    ) {
-        static const s16 ship_x[6] = {31, 0, 0, 0, 35, 31};
-        static const s16 ship_y[6] = {36, 0, 0, 0, 33, 35};
-        s16 sprite = (s16)ship.bigshipgraphic - 1;
+    switch (part) {
+    case FRONTEND_SHIP_DRAW_BODY:
+        if (
+            ot_data_hdt_ship_read(frontend_player_items.ship, &ship) &&
+            ship.bigshipgraphic > 0
+        ) {
+            static const s16 ship_x[6] = {31, 0, 0, 0, 35, 31};
+            static const s16 ship_y[6] = {36, 0, 0, 0, 33, 35};
+            s16 sprite = (s16)ship.bigshipgraphic - 1;
 
-        if (sprite >= 27 && sprite <= 32) {
-            (void)frontend_blit_shp_source(
-                frame,
-                5,
-                (u16)sprite,
-                ship_x[sprite - 27],
-                ship_y[sprite - 27],
-                FRONTEND_SOURCE_BLIT_NORMAL,
-                0,
-                0
-            );
+            if (sprite >= 27 && sprite <= 32) {
+                (void)frontend_blit_shp_source(
+                    frame,
+                    5,
+                    (u16)sprite,
+                    ship_x[sprite - 27],
+                    ship_y[sprite - 27],
+                    FRONTEND_SOURCE_BLIT_NORMAL,
+                    0,
+                    0
+                );
+            }
         }
-    }
-    if (
-        frontend_player_items.generator > 0 &&
-        frontend_player_items.generator < 7 &&
-        ot_data_hdt_power_read(
-            frontend_player_items.generator,
-            &generator
-        )
-    ) {
-        static const s16 generator_x[5] = {62, 64, 67, 66, 63};
-        static const s16 generator_y[5] = {84, 85, 86, 84, 97};
-        s16 sprite =
-            frontend_player_items.generator == 1 ?
-                frontend_player_items.generator + 15 :
-                frontend_player_items.generator + 14;
+        break;
 
-        if (sprite >= 16 && sprite <= 20) {
+    case FRONTEND_SHIP_DRAW_GENERATOR:
+        if (
+            frontend_player_items.generator > 0 &&
+            frontend_player_items.generator < 7 &&
+            ot_data_hdt_power_read(
+                frontend_player_items.generator,
+                &generator
+            )
+        ) {
+            static const s16 generator_x[5] = {
+                62, 64, 67, 66, 63
+            };
+            static const s16 generator_y[5] = {
+                84, 85, 86, 84, 97
+            };
+            s16 sprite =
+                frontend_player_items.generator == 1 ?
+                    frontend_player_items.generator + 15 :
+                    frontend_player_items.generator + 14;
+
+            if (sprite >= 16 && sprite <= 20) {
+                (void)frontend_blit_shp_source(
+                    frame,
+                    6,
+                    (u16)sprite,
+                    generator_x[sprite - 16],
+                    generator_y[sprite - 16],
+                    FRONTEND_SOURCE_BLIT_NORMAL,
+                    0,
+                    0
+                );
+            }
+        }
+        break;
+
+    case FRONTEND_SHIP_DRAW_FRONT_WEAPON:
+        if (
+            front < 43 &&
+            weapon_sprite[front] >= 0 &&
+            front_xy[front] >= 0
+        ) {
             (void)frontend_blit_shp_source(
                 frame,
                 6,
-                (u16)sprite,
-                generator_x[sprite - 16],
-                generator_y[sprite - 16],
+                (u16)weapon_sprite[front],
+                front_x[(u8)front_xy[front]],
+                front_y[(u8)front_xy[front]],
                 FRONTEND_SOURCE_BLIT_NORMAL,
                 0,
                 0
             );
         }
-    }
-    if (
-        front < 43 &&
-        weapon_sprite[front] >= 0 &&
-        front_xy[front] >= 0
-    ) {
-        (void)frontend_blit_shp_source(
-            frame,
-            6,
-            (u16)weapon_sprite[front],
-            front_x[(u8)front_xy[front]],
-            front_y[(u8)front_xy[front]],
-            FRONTEND_SOURCE_BLIT_NORMAL,
-            0,
-            0
-        );
-    }
-    if (
-        rear < 43 &&
-        weapon_sprite[rear] >= 0 &&
-        rear_xy[rear] >= 0
-    ) {
-        (void)frontend_blit_shp_source(
-            frame,
-            6,
-            (u16)weapon_sprite[rear],
-            rear_x[(u8)rear_xy[rear]],
-            rear_y[(u8)rear_xy[rear]],
-            FRONTEND_SOURCE_BLIT_NORMAL,
-            0,
-            0
-        );
-    }
-    frontend_draw_item_source(
-        frame,
-        FRONTEND_UPGRADE_LEFT_SIDEKICK,
-        frontend_player_items.sidekick[0],
-        3,
-        84
-    );
-    frontend_draw_item_source(
-        frame,
-        FRONTEND_UPGRADE_RIGHT_SIDEKICK,
-        frontend_player_items.sidekick[1],
-        129,
-        84
-    );
-    if (
-        ot_data_hdt_shield_read(
-            frontend_player_items.shield,
-            &shield
-        )
-    ) {
-        (void)frontend_blit_shp_source(
-            frame,
-            5,
-            26,
-            28,
-            23,
-            FRONTEND_SOURCE_BLIT_HUE,
-            15,
-            (s8)shield.max_power - 10
-        );
-    }
+        break;
 
-    frontend_u32_string(player_cash, cash);
-    frontend_draw_runtime_text_clipped(
-        frame,
-        cash,
-        49,
-        138,
-        116,
-        0xfbu
-    );
-    if (ot_data_hdt_ship_read(frontend_player_items.ship, &ship)) {
-        frontend_draw_segment_bar_source(
-            frame, 42, 152, 3, 14, ship.damage, 2, 13
-        );
-    }
-    if (
-        ot_data_hdt_shield_read(
-            frontend_player_items.shield,
-            &shield
-        )
-    ) {
-        frontend_draw_segment_bar_source(
+    case FRONTEND_SHIP_DRAW_REAR_WEAPON:
+        if (
+            rear < 43 &&
+            weapon_sprite[rear] >= 0 &&
+            rear_xy[rear] >= 0
+        ) {
+            (void)frontend_blit_shp_source(
+                frame,
+                6,
+                (u16)weapon_sprite[rear],
+                rear_x[(u8)rear_xy[rear]],
+                rear_y[(u8)rear_xy[rear]],
+                FRONTEND_SOURCE_BLIT_NORMAL,
+                0,
+                0
+            );
+        }
+        break;
+
+    case FRONTEND_SHIP_DRAW_LEFT_SIDEKICK:
+        frontend_draw_item_source(
             frame,
-            104,
-            152,
-            2,
-            14,
-            (u8)(shield.max_power * 2u),
-            2,
-            13
+            FRONTEND_UPGRADE_LEFT_SIDEKICK,
+            frontend_player_items.sidekick[0],
+            3,
+            84
+        );
+        break;
+
+    case FRONTEND_SHIP_DRAW_RIGHT_SIDEKICK:
+        frontend_draw_item_source(
+            frame,
+            FRONTEND_UPGRADE_RIGHT_SIDEKICK,
+            frontend_player_items.sidekick[1],
+            129,
+            84
+        );
+        break;
+
+    case FRONTEND_SHIP_DRAW_SHIELD:
+        if (
+            ot_data_hdt_shield_read(
+                frontend_player_items.shield,
+                &shield
+            )
+        ) {
+            (void)frontend_blit_shp_source(
+                frame,
+                5,
+                26,
+                28,
+                23,
+                FRONTEND_SOURCE_BLIT_HUE,
+                15,
+                (s8)shield.max_power - 10
+            );
+        }
+        break;
+
+    case FRONTEND_SHIP_DRAW_STATUS:
+        {
+            char cash[11];
+
+            frontend_u32_string(player_cash, cash);
+            frontend_draw_runtime_text_clipped(
+                frame,
+                cash,
+                49,
+                138,
+                116,
+                0xfbu
+            );
+        }
+        if (
+            ot_data_hdt_ship_read(
+                frontend_player_items.ship,
+                &ship
+            )
+        ) {
+            frontend_draw_segment_bar_source(
+                frame, 42, 152, 3, 14, ship.damage, 2, 13
+            );
+        }
+        if (
+            ot_data_hdt_shield_read(
+                frontend_player_items.shield,
+                &shield
+            )
+        ) {
+            frontend_draw_segment_bar_source(
+                frame,
+                104,
+                152,
+                2,
+                14,
+                (u8)(shield.max_power * 2u),
+                2,
+                13
+            );
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void frontend_draw_ship_illustration(u8 *frame)
+{
+    u8 part;
+
+    for (part = 0; part < FRONTEND_SHIP_DRAW_PART_COUNT; part++) {
+        frontend_draw_ship_illustration_part(frame, part);
+    }
+}
+
+static u8 frontend_ship_panel_cache_matches(void)
+{
+    return
+        frontend_ship_panel_cache_valid &&
+        frontend_player_items_valid &&
+        frontend_ship_panel_cache_cash == player_cash &&
+        memcmp(
+            &frontend_ship_panel_cache_items,
+            &frontend_player_items,
+            sizeof(frontend_player_items)
+        ) == 0;
+}
+
+static void frontend_ship_panel_cache_capture_rows(
+    const u8 *frame,
+    u8 first_row,
+    u8 row_count
+)
+{
+    u8 row;
+
+    if (frame == 0 || !frontend_player_items_valid) {
+        frontend_ship_panel_cache_valid = 0;
+        return;
+    }
+    if (first_row >= FRONTEND_SHIP_PANEL_CACHE_HEIGHT) return;
+    if (
+        first_row + row_count >
+        FRONTEND_SHIP_PANEL_CACHE_HEIGHT
+    ) {
+        row_count = (u8)(
+            FRONTEND_SHIP_PANEL_CACHE_HEIGHT - first_row
         );
     }
+    for (row = 0; row < row_count; row++) {
+        u8 source_row = (u8)(first_row + row);
+
+        memcpy(
+            frontend_ship_panel_cache +
+                (u16)source_row * FRONTEND_SHIP_PANEL_CACHE_WIDTH,
+            frame + (u32)source_row * SCREEN_WIDTH,
+            FRONTEND_SHIP_PANEL_CACHE_WIDTH
+        );
+    }
+}
+
+static void frontend_ship_panel_cache_finalize(void)
+{
+    if (!frontend_player_items_valid) {
+        frontend_ship_panel_cache_valid = 0;
+        return;
+    }
+    frontend_ship_panel_cache_items = frontend_player_items;
+    frontend_ship_panel_cache_cash = player_cash;
+    frontend_ship_panel_cache_valid = 1;
+}
+
+static void frontend_ship_panel_cache_capture(const u8 *frame)
+{
+    frontend_ship_panel_cache_capture_rows(
+        frame,
+        0,
+        FRONTEND_SHIP_PANEL_CACHE_HEIGHT
+    );
+    if (frame == 0 || !frontend_player_items_valid) return;
+    frontend_ship_panel_cache_finalize();
+}
+
+static u8 frontend_ship_panel_cache_apply_rows(
+    u8 *frame,
+    u8 first_row,
+    u8 row_count
+)
+{
+    u8 row;
+
+    if (frame == 0 || !frontend_ship_panel_cache_matches()) {
+        return 0;
+    }
+    if (first_row >= FRONTEND_SHIP_PANEL_CACHE_HEIGHT) return 0;
+    if (
+        first_row + row_count >
+        FRONTEND_SHIP_PANEL_CACHE_HEIGHT
+    ) {
+        row_count = (u8)(
+            FRONTEND_SHIP_PANEL_CACHE_HEIGHT - first_row
+        );
+    }
+    for (row = 0; row < row_count; row++) {
+        u8 destination_row = (u8)(first_row + row);
+
+        memcpy(
+            frame + (u32)destination_row * SCREEN_WIDTH,
+            frontend_ship_panel_cache +
+                (u16)destination_row *
+                    FRONTEND_SHIP_PANEL_CACHE_WIDTH,
+            FRONTEND_SHIP_PANEL_CACHE_WIDTH
+        );
+    }
+    return 1;
+}
+
+static u8 frontend_ship_panel_cache_apply(u8 *frame)
+{
+    return frontend_ship_panel_cache_apply_rows(
+        frame,
+        0,
+        FRONTEND_SHIP_PANEL_CACHE_HEIGHT
+    );
 }

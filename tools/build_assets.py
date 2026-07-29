@@ -172,6 +172,22 @@ FRONTEND_PREGAME_FONT_HEIGHT = 8
 FRONTEND_PREGAME_FONT_WIDTH = 7
 FRONTEND_PREGAME_FONT_SPACE = 4
 FRONTEND_PREGAME_FONT_SHADOW = 240
+FRONTEND_STATS_FONT_GLYPH_COUNT = len(FRONTEND_NATIVE_FONT_CHARACTERS)
+FRONTEND_STATS_FONT_TILES_PER_GLYPH = 4
+FRONTEND_STATS_FONT_BRIGHTNESS_BIAS = 6
+FRONTEND_STATS_GLYPH_TILE_COUNT = (
+    FRONTEND_STATS_FONT_GLYPH_COUNT *
+    FRONTEND_STATS_FONT_TILES_PER_GLYPH
+)
+FRONTEND_STATS_CUBE_TILE_OFFSET = (
+    (FRONTEND_STATS_GLYPH_TILE_COUNT + 15) & ~15
+)
+FRONTEND_STATS_CUBE_TILE_COUNT = 16
+FRONTEND_STATS_TILE_COUNT = (
+    FRONTEND_STATS_CUBE_TILE_OFFSET +
+    FRONTEND_STATS_CUBE_TILE_COUNT
+)
+FRONTEND_STATS_TILE_BYTES = FRONTEND_STATS_TILE_COUNT * 32
 FRONTEND_STATIC_MENU_PANEL_X = 120
 FRONTEND_STATIC_MENU_PANEL_Y = 0
 FRONTEND_STATIC_MENU_PANEL_WIDTH = 120
@@ -182,6 +198,17 @@ FRONTEND_STATIC_MENU_PANEL_BYTES = (
 )
 FRONTEND_STATIC_GAME_MENU_COUNT = 6
 FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
+FRONTEND_SOURCE_STAMP_SCALE_PHASES = 5
+FRONTEND_SOURCE_STAMP_PHASE_COUNT = (
+    FRONTEND_SOURCE_STAMP_SCALE_PHASES *
+    FRONTEND_SOURCE_STAMP_SCALE_PHASES
+)
+FRONTEND_SOURCE_STAMP_SHP_RANGES = (
+    (5, 26, 7),
+    (6, 0, 22),
+)
+FRONTEND_SOURCE_STAMP_COMP_TABLES = (38, 39)
+FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT = 284
 
 assert GBA_VIEW_CROP_X == 12
 assert GBA_VIEW_CROP_Y == 12
@@ -1174,6 +1201,446 @@ class FrontendSourceRenderer:
                 pixel = int(logo[source_y, x * logo.shape[1] // 228])
                 if pixel != 0xFF:
                     frame[6 + y, 6 + x] = pixel
+
+
+def build_frontend_stats_assets(
+    data_root: Path,
+    cube_pixels: bytes,
+) -> tuple[bytes, bytes, dict[str, int], list[str]]:
+    """Bake the source TINY_FONT summary glyphs into native OBJ tiles.
+
+    JE_endLevelAni's text palette still glows at runtime, but neither the
+    glyph RLE nor the 16x16 outline/tile conversion changes between levels.
+    Moving that immutable work to the build removes the only remaining
+    multi-VBlank spike in the post-level summary.
+    """
+
+    source = FrontendSourceRenderer(data_root)
+    tiles = bytearray(FRONTEND_STATS_TILE_BYTES)
+    widths = bytearray()
+
+    def source_glyph(character: str) -> int:
+        if "a" <= character <= "z":
+            character = character.upper()
+        if "A" <= character <= "Z":
+            return ord(character) - ord("A")
+        if "1" <= character <= "9":
+            return 69 + ord(character) - ord("0")
+        return {
+            "0": 79,
+            "!": 26,
+            "?": 27,
+            ".": 28,
+            ",": 29,
+            ":": 31,
+            "'": 32,
+            "%": 62,
+            "-": 83,
+            "/": 80,
+        }.get(character, 27)
+
+    def write_4bpp(
+        target: bytearray,
+        base: int,
+        tile_columns: int,
+        x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        offset = (
+            base +
+            ((y >> 3) * tile_columns + (x >> 3)) * 32 +
+            (y & 7) * 4 +
+            (x & 7) // 2
+        )
+        shift = 4 if x & 1 else 0
+        mask = 0x0F if shift else 0xF0
+        target[offset] = (
+            (target[offset] & mask) |
+            ((colour & 0x0F) << shift)
+        )
+
+    for slot, character in enumerate(FRONTEND_NATIVE_FONT_CHARACTERS):
+        sprite = source.sprite(2, source_glyph(character))
+        if (
+            sprite is None or
+            sprite.shape[0] == 0 or
+            sprite.shape[1] == 0 or
+            sprite.shape[0] > 14 or
+            sprite.shape[1] > 14
+        ):
+            raise ValueError(
+                "front-end stats glyph source changed: "
+                f"{character!r}, "
+                f"{None if sprite is None else sprite.shape}"
+            )
+        height, width = sprite.shape
+        pixels = np.zeros((16, 16), dtype=np.uint8)
+        for y in range(height):
+            for x in range(width):
+                raw = int(sprite[y, x]) & 0x0F
+                if int(sprite[y, x]) != 0xFF and raw >= 2:
+                    pixels[y + 1, x + 1] = min(
+                        raw + FRONTEND_STATS_FONT_BRIGHTNESS_BIAS,
+                        15,
+                    ) - 2
+        for y in range(1, height + 1):
+            for x in range(1, width + 1):
+                if pixels[y, x] in (0, 14):
+                    continue
+                if pixels[y, x - 1] == 0:
+                    pixels[y, x - 1] = 14
+                if pixels[y, x + 1] == 0:
+                    pixels[y, x + 1] = 14
+                if pixels[y - 1, x] == 0:
+                    pixels[y - 1, x] = 14
+                if pixels[y + 1, x] == 0:
+                    pixels[y + 1, x] = 14
+        glyph_base = (
+            slot * FRONTEND_STATS_FONT_TILES_PER_GLYPH * 32
+        )
+        for y in range(16):
+            for x in range(16):
+                colour = int(pixels[y, x])
+                if colour:
+                    write_4bpp(tiles, glyph_base, 2, x, y, colour)
+        widths.append(width)
+
+    cube = np.frombuffer(cube_pixels, dtype=np.uint8).reshape(22, 19)
+    cube_base = FRONTEND_STATS_CUBE_TILE_OFFSET * 32
+    for y in range(cube.shape[0]):
+        for x in range(cube.shape[1]):
+            pixel = int(cube[y, x])
+            if pixel == 0xFF:
+                continue
+            colour = pixel & 0x0F
+            write_4bpp(
+                tiles,
+                cube_base,
+                4,
+                x,
+                y,
+                colour if colour else 1,
+            )
+
+    metadata = {
+        "FRONTEND_STATS_PREBAKED_GLYPH_COUNT":
+            FRONTEND_STATS_FONT_GLYPH_COUNT,
+        "FRONTEND_STATS_PREBAKED_WIDTH_BYTES": len(widths),
+        "FRONTEND_STATS_PREBAKED_TILE_COUNT":
+            FRONTEND_STATS_TILE_COUNT,
+        "FRONTEND_STATS_PREBAKED_TILE_BYTES": len(tiles),
+        "FRONTEND_STATS_PREBAKED_CUBE_TILE_OFFSET":
+            FRONTEND_STATS_CUBE_TILE_OFFSET,
+    }
+    report = [
+        "frontend_stats_tiles_source=stock TINY_FONT + data cube",
+        (
+            "frontend_stats_tiles_strategy="
+            "build-time lossless RLE decode + outline + native 4bpp OBJ"
+        ),
+        f"frontend_stats_tiles_bytes={len(tiles)}",
+        f"frontend_stats_width_bytes={len(widths)}",
+        f"frontend_stats_tiles_crc32={zlib.crc32(tiles):08x}",
+        f"frontend_stats_widths_crc32={zlib.crc32(widths):08x}",
+        "frontend_stats_runtime_shp_decode=0",
+    ]
+    return bytes(tiles), bytes(widths), metadata, report
+
+
+def build_frontend_source_stamp_assets(
+    data_root: Path,
+) -> tuple[bytes, bytes, dict[str, int], list[str]]:
+    """Predecode the complete stock-derived static-menu art catalog.
+
+    OpenTyrian's front end positions source SHP and Sprite2 art on a
+    300x200 crop which the GBA presents at 240x160.  The old runtime path
+    replayed RLE and divided once per opaque pixel every time a static menu
+    was entered.  Here the immutable decode and scale work is moved to the
+    build, while runtime still selects and layers graphics from the stock
+    HDT item definitions.
+
+    Five horizontal and five vertical source-coordinate phases are enough
+    to reproduce floor(source * 4 / 5) for every possible placement.  Each
+    phase is stored as word-aligned opaque scanline runs with raw palette
+    indices.  This preserves runtime hue/brightness filters while avoiding
+    roughly two MiB of transparent dense-rectangle padding.
+    """
+
+    source = FrontendSourceRenderer(data_root)
+    offsets = bytearray()
+    streams = bytearray()
+    source_stream_crc = 0
+    stamp_count = 0
+    opaque_pixel_total = 0
+    run_count_total = 0
+    padded_pixel_total = 0
+    max_stream_bytes = 0
+
+    def encode_stamp(
+        pixels: np.ndarray,
+        transparent: int,
+        phase_x: int,
+        phase_y: int,
+    ) -> bytes:
+        # Row-major assignment intentionally matches the old per-pixel
+        # renderer when several source pixels collapse onto one GBA pixel.
+        mapped: dict[tuple[int, int], int] = {}
+        source_y_values, source_x_values = np.where(pixels != transparent)
+        base_x = phase_x * 4 // 5
+        base_y = phase_y * 4 // 5
+
+        for source_y, source_x in zip(
+            source_y_values,
+            source_x_values,
+            strict=True,
+        ):
+            target_x = (
+                (phase_x + int(source_x)) * 4 // 5 - base_x
+            )
+            target_y = (
+                (phase_y + int(source_y)) * 4 // 5 - base_y
+            )
+            mapped[(target_y, target_x)] = int(
+                pixels[source_y, source_x]
+            )
+
+        if not mapped:
+            raise ValueError("front-end source stamp unexpectedly has no art")
+        runs: list[tuple[int, int, bytes]] = []
+        for target_y in sorted({position[0] for position in mapped}):
+            columns = sorted(
+                position[1]
+                for position in mapped
+                if position[0] == target_y
+            )
+            start = columns[0]
+            prior = start
+            pixels = bytearray([mapped[(target_y, start)]])
+            for target_x in columns[1:]:
+                if target_x != prior + 1:
+                    runs.append((target_y, start, bytes(pixels)))
+                    start = target_x
+                    pixels = bytearray()
+                pixels.append(mapped[(target_y, target_x)])
+                prior = target_x
+            runs.append((target_y, start, bytes(pixels)))
+
+        if len(runs) > 0xFFFF:
+            raise ValueError("frontend source stamp has too many runs")
+        stream = bytearray(struct.pack("<HH", len(runs), 0))
+        for target_y, target_x, pixels in runs:
+            if (
+                target_y > 0xFF or
+                target_x > 0xFF or
+                len(pixels) > 0xFFFF
+            ):
+                raise ValueError(
+                    "frontend source stamp exceeds sparse-run bounds"
+                )
+            stream.extend(
+                struct.pack("<BBH", target_y, target_x, len(pixels))
+            )
+            stream.extend(pixels)
+            stream.extend(b"\0" * ((-len(pixels)) & 3))
+
+        # Independent replay verifies that run packing preserves every
+        # final scaled opaque pixel and never invents transparency.
+        replay: dict[tuple[int, int], int] = {}
+        cursor = 4
+        for _ in range(len(runs)):
+            target_y, target_x, length = struct.unpack_from(
+                "<BBH",
+                stream,
+                cursor,
+            )
+            cursor += 4
+            for pixel_index in range(length):
+                replay[(target_y, target_x + pixel_index)] = stream[
+                    cursor + pixel_index
+                ]
+            cursor += (length + 3) & ~3
+        if replay != mapped or cursor != len(stream):
+            raise ValueError(
+                "frontend source stamp sparse round-trip changed pixels"
+            )
+        return bytes(stream)
+
+    def append_phases(pixels: np.ndarray, transparent: int) -> None:
+        nonlocal stamp_count
+        nonlocal opaque_pixel_total
+        nonlocal run_count_total
+        nonlocal padded_pixel_total
+        nonlocal max_stream_bytes
+
+        for phase_y in range(FRONTEND_SOURCE_STAMP_SCALE_PHASES):
+            for phase_x in range(FRONTEND_SOURCE_STAMP_SCALE_PHASES):
+                stream = encode_stamp(
+                    pixels,
+                    transparent,
+                    phase_x,
+                    phase_y,
+                )
+                offsets.extend(struct.pack("<I", len(streams)))
+                streams.extend(stream)
+                stamp_count += 1
+                run_count = struct.unpack_from("<H", stream, 0)[0]
+                cursor = 4
+                for _ in range(run_count):
+                    length = struct.unpack_from(
+                        "<H",
+                        stream,
+                        cursor + 2,
+                    )[0]
+                    opaque_pixel_total += length
+                    padded_pixel_total += (length + 3) & ~3
+                    cursor += 4 + ((length + 3) & ~3)
+                if cursor != len(stream):
+                    raise AssertionError(
+                        "frontend source stamp run accounting changed"
+                    )
+                run_count_total += run_count
+                max_stream_bytes = max(max_stream_bytes, len(stream))
+
+    shp_key_count = 0
+    for table, first_sprite, sprite_count in (
+        FRONTEND_SOURCE_STAMP_SHP_RANGES
+    ):
+        for sprite_index in range(
+            first_sprite,
+            first_sprite + sprite_count,
+        ):
+            sprite = source.sprite(table, sprite_index)
+            if sprite is None:
+                raise ValueError(
+                    "front-end SHP stamp source is empty: "
+                    f"{table=}, {sprite_index=}"
+                )
+            append_phases(sprite, 0xFF)
+            shp_key_count += 1
+
+    tyrian_shp = (data_root / "tyrian.shp").read_bytes()
+    comp_key_count = 0
+    for shape_table in FRONTEND_SOURCE_STAMP_COMP_TABLES:
+        bank = (
+            sprite2_logical_bank(data_root, tyrian_shp, shape_table)
+            if shape_table != 39 else
+            (data_root / "newsh1.shp").read_bytes()
+        )
+        component_count = struct.unpack_from("<H", bank, 0)[0] // 2
+        if component_count != SPRITE2_RAW_COMPONENTS_PER_TABLE:
+            raise ValueError(
+                "front-end Sprite2 bank component count changed: "
+                f"{shape_table=}, {component_count=}"
+            )
+        components = [
+            np.frombuffer(
+                decode_sprite2_raw_component(
+                    sprite2_component_stream(bank, component)
+                ),
+                dtype=np.uint8,
+            ).reshape(
+                SPRITE2_RAW_COMPONENT_HEIGHT,
+                SPRITE2_RAW_COMPONENT_WIDTH,
+            )
+            for component in range(1, component_count + 1)
+        ]
+        source_stream_crc = zlib.crc32(bank, source_stream_crc)
+        for graphic in range(
+            1,
+            FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT + 1,
+        ):
+            frame = np.zeros((28, 24), dtype=np.uint8)
+            for component, (origin_x, origin_y) in zip(
+                (
+                    graphic,
+                    graphic + 1,
+                    graphic + 19,
+                    graphic + 20,
+                ),
+                ((0, 0), (12, 0), (0, 14), (12, 14)),
+                strict=True,
+            ):
+                raw = components[component - 1]
+                destination = frame[
+                    origin_y : origin_y + 14,
+                    origin_x : origin_x + 12,
+                ]
+                opaque = raw != 0
+                destination[opaque] = raw[opaque]
+            append_phases(frame, 0)
+            comp_key_count += 1
+
+    key_count = shp_key_count + comp_key_count
+    expected_stamp_count = (
+        key_count * FRONTEND_SOURCE_STAMP_PHASE_COUNT
+    )
+    if stamp_count != expected_stamp_count:
+        raise AssertionError(
+            "frontend source stamp catalog count changed: "
+            f"{stamp_count} != {expected_stamp_count}"
+        )
+    if len(offsets) != stamp_count * 4:
+        raise AssertionError("frontend source stamp offset packing changed")
+
+    metadata = {
+        "FRONTEND_SOURCE_STAMP_VERSION": 1,
+        "FRONTEND_SOURCE_STAMP_SCALE_PHASES":
+            FRONTEND_SOURCE_STAMP_SCALE_PHASES,
+        "FRONTEND_SOURCE_STAMP_PHASE_COUNT":
+            FRONTEND_SOURCE_STAMP_PHASE_COUNT,
+        "FRONTEND_SOURCE_STAMP_SHP_KEY_COUNT": shp_key_count,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST": 26,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT": 7,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST": 0,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE6_COUNT": 22,
+        "FRONTEND_SOURCE_STAMP_COMP_TABLE_FIRST":
+            FRONTEND_SOURCE_STAMP_COMP_TABLES[0],
+        "FRONTEND_SOURCE_STAMP_COMP_TABLE_COUNT":
+            len(FRONTEND_SOURCE_STAMP_COMP_TABLES),
+        "FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT":
+            FRONTEND_SOURCE_STAMP_COMP_GRAPHIC_COUNT,
+        "FRONTEND_SOURCE_STAMP_COMP_KEY_COUNT": comp_key_count,
+        "FRONTEND_SOURCE_STAMP_KEY_COUNT": key_count,
+        "FRONTEND_SOURCE_STAMP_COUNT": stamp_count,
+        "FRONTEND_SOURCE_STAMP_OFFSET_BYTES": len(offsets),
+        "FRONTEND_SOURCE_STAMP_DATA_BYTES": len(streams),
+        "FRONTEND_SOURCE_STAMP_MAX_STREAM_BYTES": max_stream_bytes,
+    }
+    report = [
+        (
+            "frontend_source_stamp_source="
+            "stock tyrian.shp tables5/6 + complete options/shop Sprite2"
+        ),
+        (
+            "frontend_source_stamp_strategy="
+            "build-time lossless decode + 25 scale phases + aligned sparse runs"
+        ),
+        f"frontend_source_stamp_shp_keys={shp_key_count}",
+        f"frontend_source_stamp_comp_keys={comp_key_count}",
+        f"frontend_source_stamp_count={stamp_count}",
+        f"frontend_source_stamp_opaque_pixels={opaque_pixel_total}",
+        f"frontend_source_stamp_run_count={run_count_total}",
+        f"frontend_source_stamp_padded_pixels={padded_pixel_total}",
+        f"frontend_source_stamp_offset_bytes={len(offsets)}",
+        f"frontend_source_stamp_data_bytes={len(streams)}",
+        f"frontend_source_stamp_max_stream_bytes={max_stream_bytes}",
+        (
+            "frontend_source_stamp_offsets_crc32="
+            f"{zlib.crc32(offsets):08x}"
+        ),
+        (
+            "frontend_source_stamp_data_crc32="
+            f"{zlib.crc32(streams):08x}"
+        ),
+        (
+            "frontend_source_stamp_comp_source_crc32="
+            f"{source_stream_crc:08x}"
+        ),
+        "frontend_source_stamp_runtime_rle_decode=0",
+        "frontend_source_stamp_runtime_coordinate_division=2_per_stamp",
+    ]
+    return bytes(offsets), bytes(streams), metadata, report
 
 
 def build_frontend_nav_obj_assets(
@@ -5946,6 +6413,20 @@ def main() -> None:
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
     (output / "frontend_cube.bin").write_bytes(frontend_cube)
+    (
+        frontend_stats_tiles,
+        frontend_stats_widths,
+        frontend_stats_metadata,
+        frontend_stats_report,
+    ) = build_frontend_stats_assets(data_root, frontend_cube)
+    (output / "frontend_stats_tiles.bin").write_bytes(
+        frontend_stats_tiles
+    )
+    (output / "frontend_stats_widths.bin").write_bytes(
+        frontend_stats_widths
+    )
+    frontend_metadata.update(frontend_stats_metadata)
+    frontend_report.extend(frontend_stats_report)
     (output / "frontend_native_font.bin").write_bytes(
         frontend_native_font
     )
@@ -5979,6 +6460,20 @@ def main() -> None:
     (output / "frontend_nav_bitmap_pages.bin").write_bytes(
         frontend_nav_bitmap_pages
     )
+    (
+        frontend_source_stamp_offsets,
+        frontend_source_stamp_data,
+        frontend_source_stamp_metadata,
+        frontend_source_stamp_report,
+    ) = build_frontend_source_stamp_assets(data_root)
+    (output / "frontend_source_stamp_offsets.bin").write_bytes(
+        frontend_source_stamp_offsets
+    )
+    (output / "frontend_source_stamp_data.bin").write_bytes(
+        frontend_source_stamp_data
+    )
+    frontend_metadata.update(frontend_source_stamp_metadata)
+    frontend_report.extend(frontend_source_stamp_report)
     (output / "frontend_mode4_audit.txt").write_text(
         "\n".join(frontend_report) + "\n",
         encoding="utf-8",

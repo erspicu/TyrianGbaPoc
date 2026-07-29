@@ -8,6 +8,24 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $vendorRoot = Join-Path $projectRoot "vendor"
 $msysRoot = Join-Path $projectRoot "tools\portable-msys2"
@@ -31,6 +49,7 @@ $episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v40_$configSuffix"
 $episode3TestName = "tyrian_gba_route_smoke_ep3_section1_v40_$configSuffix"
 $episode4TestName = "tyrian_gba_route_smoke_ep4_section1_v40_$configSuffix"
 $arcadeTestName = "tyrian_gba_arcade_route_smoke_ep1_section1_v40_$configSuffix"
+$transitionTestName = "tyrian_gba_frontend_transition_stress_v48_$configSuffix"
 $releaseRom = Join-Path $buildDir "$releaseName.gba"
 $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
@@ -42,6 +61,7 @@ $episode2TestRom = Join-Path $buildDir "$episode2TestName.gba"
 $episode3TestRom = Join-Path $buildDir "$episode3TestName.gba"
 $episode4TestRom = Join-Path $buildDir "$episode4TestName.gba"
 $arcadeTestRom = Join-Path $buildDir "$arcadeTestName.gba"
+$transitionTestRom = Join-Path $buildDir "$transitionTestName.gba"
 $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
@@ -52,6 +72,7 @@ $episode2TestSave = Join-Path $buildDir "$episode2TestName.sav"
 $episode3TestSave = Join-Path $buildDir "$episode3TestName.sav"
 $episode4TestSave = Join-Path $buildDir "$episode4TestName.sav"
 $arcadeTestSave = Join-Path $buildDir "$arcadeTestName.sav"
+$transitionTestSave = Join-Path $buildDir "$transitionTestName.sav"
 $testStdout = Join-Path $buildDir "autotest_mgba_stdout.txt"
 $testStderr = Join-Path $buildDir "autotest_mgba_stderr.txt"
 $deathTestStdout = Join-Path $buildDir "death_autotest_mgba_stdout.txt"
@@ -72,6 +93,12 @@ $episode4TestStdout = Join-Path $buildDir "episode4_autotest_mgba_stdout.txt"
 $episode4TestStderr = Join-Path $buildDir "episode4_autotest_mgba_stderr.txt"
 $arcadeTestStdout = Join-Path $buildDir "arcade_autotest_mgba_stdout.txt"
 $arcadeTestStderr = Join-Path $buildDir "arcade_autotest_mgba_stderr.txt"
+$transitionTestStdout = Join-Path $buildDir (
+    "frontend_transition_stress_mgba_stdout.txt"
+)
+$transitionTestStderr = Join-Path $buildDir (
+    "frontend_transition_stress_mgba_stderr.txt"
+)
 $perfStdout = Join-Path $buildDir "release_boot_perf.csv"
 $perfStderr = Join-Path $buildDir "release_boot_perf.stderr.txt"
 $verificationPath = Join-Path $buildDir "verification.txt"
@@ -130,7 +157,7 @@ set -e
 export PATH="/usr/bin:__ARM_BIN__:__SDK_TOOLS__:$PATH"
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest frontend-transition-stress
 make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=3 ROUTE_SECTION=1 route-smoke-autotest
 make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=4 ROUTE_SECTION=1 route-smoke-autotest
 '@
@@ -154,9 +181,7 @@ foreach ($romfsOutput in @($romfsImagePath, $romfsAuditPath)) {
 $romfsAudit = Get-Content -LiteralPath $romfsAuditPath -Raw |
     ConvertFrom-Json
 $romfsImageBytes = (Get-Item -LiteralPath $romfsImagePath).Length
-$romfsImageSha256 = (
-    Get-FileHash -LiteralPath $romfsImagePath -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$romfsImageSha256 = Get-Sha256Hex $romfsImagePath
 $romfsManifestCrc32 = [Convert]::ToUInt32(
     $romfsAudit.manifest_crc32,
     16
@@ -191,9 +216,7 @@ foreach (
     }
 }
 $sprite2RawBytes = (Get-Item -LiteralPath $sprite2RawPath).Length
-$sprite2RawSha256 = (
-    Get-FileHash -LiteralPath $sprite2RawPath -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$sprite2RawSha256 = Get-Sha256Hex $sprite2RawPath
 $sprite2RawCrc32 = [Convert]::ToUInt32("38f795b9", 16)
 if (
     $sprite2RawAudit.version -ne "1" -or
@@ -233,9 +256,19 @@ if (
     $assetReport.finite_music_30_disabled_position_jumps -ne "1" -or
     [int64]$assetReport.finite_music_09_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_10_it_bytes -le 0 -or
-    [int64]$assetReport.finite_music_30_it_bytes -le 0
+    [int64]$assetReport.finite_music_30_it_bytes -le 0 -or
+    $assetReport.frontend_source_stamp_count -ne "14925" -or
+    $assetReport.frontend_source_stamp_data_bytes -ne "6751580" -or
+    $assetReport.frontend_source_stamp_runtime_rle_decode -ne "0" -or
+    $assetReport.frontend_source_stamp_strategy -ne
+        "build-time lossless decode + 25 scale phases + aligned sparse runs" -or
+    $assetReport.frontend_stats_tiles_bytes -ne "6656" -or
+    $assetReport.frontend_stats_width_bytes -ne "45" -or
+    $assetReport.frontend_stats_tiles_crc32 -ne "0f04dee4" -or
+    $assetReport.frontend_stats_widths_crc32 -ne "2c3c469a" -or
+    $assetReport.frontend_stats_runtime_shp_decode -ne "0"
 ) {
-    throw "Finite source-cue asset audit failed"
+    throw "Finite source-cue or front-end pre-baked asset audit failed"
 }
 
 function Test-GbaRom {
@@ -281,8 +314,7 @@ function Test-GbaRom {
         title = $title
         game_code = $gameCode
         header_complement = "0x$($bytes[0xBD].ToString('X2'))"
-        sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).
-            Hash.ToLowerInvariant()
+        sha256 = Get-Sha256Hex $Path
     }
 }
 
@@ -317,9 +349,15 @@ function Test-GbaMemoryBudget {
     )
     $ewramFree = 0x02040000L - $ewramStart
     $iwramFree = 0x03008000L - $iwramStart
+    # Static front-end transitions keep a 19.2 KiB packed ship-panel cache
+    # in EWRAM. Gameplay reuses the separate Mode-4/Sprite2 union, so the
+    # measured 30 KiB release heap/stack headroom remains real. Retain a
+    # 24 KiB hard floor to catch future growth without rejecting that cache.
+    # The instrumented transition ROM consumes about 1 KiB more IWRAM than
+    # release; keep a 5 KiB floor while release remains independently audited.
     if (
-        $ewramFree -lt 48KB -or
-        $iwramFree -lt 6KB
+        $ewramFree -lt 24KB -or
+        $iwramFree -lt 5KB
     ) {
         throw (
             "GBA memory safety margin regressed for ${Name}: " +
@@ -360,11 +398,19 @@ function Start-TestProcess {
         -PassThru `
         -RedirectStandardOutput $StandardOutput `
         -RedirectStandardError $StandardError
+    # Force Windows PowerShell 5.1 to retain the native process handle.
+    # Without this read, ExitCode remains $null after a redirected process.
+    $null = $process.Handle
     if (-not $process.WaitForExit($TimeoutMilliseconds)) {
         Stop-Process -Id $process.Id -Force
         throw "Runtime verification timed out after $TimeoutMilliseconds ms"
     }
     $process.WaitForExit()
+    # Windows PowerShell 5.1 can leave ExitCode unpopulated on the first
+    # redirected-process snapshot even after WaitForExit().  Refresh the
+    # Diagnostics.Process object so the one-click BAT and PowerShell 7
+    # report the same deterministic value.
+    $process.Refresh()
     $watch.Stop()
     if ($process.ExitCode -ne 0) {
         throw "Runtime verification exited with code $($process.ExitCode)"
@@ -425,14 +471,10 @@ function Invoke-BuildArtifactPolicy {
             throw "Refusing to archive a ROM outside build: $sourceFull"
         }
 
-        $sourceHash = (
-            Get-FileHash -LiteralPath $sourceFull -Algorithm SHA256
-        ).Hash.ToLowerInvariant()
+        $sourceHash = Get-Sha256Hex $sourceFull
         $destination = Join-Path $backupFull $rom.Name
         if (Test-Path -LiteralPath $destination -PathType Leaf) {
-            $destinationHash = (
-                Get-FileHash -LiteralPath $destination -Algorithm SHA256
-            ).Hash.ToLowerInvariant()
+            $destinationHash = Get-Sha256Hex $destination
             if ($sourceHash -eq $destinationHash) {
                 Remove-Item -LiteralPath $sourceFull -Force
                 $deduplicated++
@@ -542,6 +584,10 @@ $arcadeTestInfo = Test-GbaRom `
     -Name "arcade_autotest" `
     -Path $arcadeTestRom `
     -ExpectedGameCode "TYGQ"
+$transitionTestInfo = Test-GbaRom `
+    -Name "frontend_transition_stress" `
+    -Path $transitionTestRom `
+    -ExpectedGameCode "TYGW"
 $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "release" `
@@ -576,6 +622,12 @@ $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "arcade_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($arcadeTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "frontend_transition_stress" `
+        -MapPath ([IO.Path]::ChangeExtension(
+            $transitionTestRom,
+            ".map"
+        ))
 )
 
 $env:PATH = "$mgbaRoot;$armBin;$env:PATH"
@@ -606,7 +658,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 6316) {
+if ($saveBytes.Length -lt 6416) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -836,6 +888,21 @@ $telemetry = [ordered]@{
     sprite2_raw_crc32 = Read-TelemetryU32 6304
     sprite2_l2_slots = Read-TelemetryU32 6308
     upgrade_loadout_runtime = Read-TelemetryU32 6312
+    missed_vblanks_play = Read-TelemetryU32 6316
+    missed_vblanks_frontend = Read-TelemetryU32 6320
+    missed_vblanks_game_over = Read-TelemetryU32 6324
+    missed_vblanks_stats = Read-TelemetryU32 6328
+    missed_vblanks_transition = Read-TelemetryU32 6332
+    missed_vblanks_frontend_other = Read-TelemetryU32 6336
+    frontend_transition_job_cycles_max = Read-TelemetryU32 6340
+    frontend_transition_phase_cycles_max = (
+        0..15 |
+            ForEach-Object {
+                Read-TelemetryU32 (6344 + $_ * 4)
+            }
+    ) -join ","
+    missed_vblank_transition_job_last = Read-TelemetryU32 6408
+    missed_vblank_transition_phase_next = Read-TelemetryU32 6412
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -1114,6 +1181,7 @@ $expectedDetailLevel = switch ($DetailLevel) {
     default { throw "Unsupported detail profile: $DetailLevel" }
 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
+$expectedSourceSoundMaskLow = [Convert]::ToUInt32("E70211AC", 16)
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 12168 }
 $expectedBossDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 439 }
 $telemetryChecks = [ordered]@{
@@ -1134,6 +1202,15 @@ $telemetryChecks = [ordered]@{
     full_level_tick = $telemetry.final_level_tick -eq 7051
     frontend_and_level_transitions = $telemetry.state_transitions -eq 11
     vblank_budget = $telemetry.missed_vblanks -le 20
+    no_frontend_vblank_misses = (
+        $telemetry.missed_vblanks_frontend -eq 0 -and
+        $telemetry.missed_vblanks_game_over -eq 0 -and
+        $telemetry.missed_vblanks_stats -eq 0 -and
+        $telemetry.missed_vblanks_transition -eq 0 -and
+        $telemetry.missed_vblanks_frontend_other -eq 0 -and
+        $telemetry.missed_vblanks -eq
+            $telemetry.missed_vblanks_play
+    )
     hardware_oam_limit = $telemetry.max_hardware_oam -le 128
     no_map_stream_drops = $telemetry.stream_drops -eq 0
     no_reward_drops = $telemetry.reward_drops -eq 0
@@ -1160,7 +1237,8 @@ $telemetryChecks = [ordered]@{
     source_sound_catalog_coverage = (
         # First-level authored trace reaches SFX plus voices 30..37,
         # including Boss (31), Good Luck (33) and Data Cube (37).
-        $telemetry.source_sound_mask_low -eq 0xE70211ACu -and
+        $telemetry.source_sound_mask_low -eq
+            $expectedSourceSoundMaskLow -and
         $telemetry.source_sound_mask_high -eq 0x0000001F
     )
     source_secret_level_collision = (
@@ -1914,7 +1992,7 @@ if (-not (Test-Path -LiteralPath $episode2TestSave)) {
 }
 $episode2SaveBytes = [IO.File]::ReadAllBytes($episode2TestSave)
 if (
-    $episode2SaveBytes.Length -lt 6312 -or
+    $episode2SaveBytes.Length -lt 6340 -or
     [Text.Encoding]::ASCII.GetString(
         $episode2SaveBytes,
         0,
@@ -1969,6 +2047,12 @@ $episode2Telemetry = [ordered]@{
     sprite2_l2_drops = Read-Episode2TelemetryU32 6256
     sprite2_l2_raw_builds = Read-Episode2TelemetryU32 6264
     sprite2_l2_rle_fallbacks = Read-Episode2TelemetryU32 6268
+    missed_vblanks_play = Read-Episode2TelemetryU32 6316
+    missed_vblanks_frontend = Read-Episode2TelemetryU32 6320
+    missed_vblanks_game_over = Read-Episode2TelemetryU32 6324
+    missed_vblanks_stats = Read-Episode2TelemetryU32 6328
+    missed_vblanks_transition = Read-Episode2TelemetryU32 6332
+    missed_vblanks_frontend_other = Read-Episode2TelemetryU32 6336
 }
 $expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
     13079
@@ -2056,11 +2140,20 @@ $episode2Checks = [ordered]@{
     full_level_vblank_budget = (
         # The source-parity weapon path adds a very small amount of work to
         # the complete Episode 2 trace.  The three restored sidebar values
-        # add at most seven tiny HUD OBJs; their cached decimal path measures
-        # 32/10,475 frames.  Keep a tight 0.31 percent ceiling so even one
-        # additional deterministic missed frame remains a regression.
+        # add at most seven tiny HUD OBJs.  Keep a tight 0.31 percent ceiling
+        # while also requiring every miss to originate in gameplay; pre-baked
+        # statistics glyphs and staged static transitions must never miss.
         $episode2Telemetry.missed_vblanks * 10000 -le
             $episode2Telemetry.display_frames * 31
+    )
+    no_frontend_vblank_misses = (
+        $episode2Telemetry.missed_vblanks_frontend -eq 0 -and
+        $episode2Telemetry.missed_vblanks_game_over -eq 0 -and
+        $episode2Telemetry.missed_vblanks_stats -eq 0 -and
+        $episode2Telemetry.missed_vblanks_transition -eq 0 -and
+        $episode2Telemetry.missed_vblanks_frontend_other -eq 0 -and
+        $episode2Telemetry.missed_vblanks -eq
+            $episode2Telemetry.missed_vblanks_play
     )
 }
 $failedEpisode2Checks = @(
@@ -2120,7 +2213,7 @@ foreach (
     }
     $routeSaveBytes = [IO.File]::ReadAllBytes($routeSpec.Save)
     if (
-        $routeSaveBytes.Length -lt 6312 -or
+        $routeSaveBytes.Length -lt 6340 -or
         [Text.Encoding]::ASCII.GetString(
             $routeSaveBytes,
             0,
@@ -2149,6 +2242,13 @@ foreach (
         route_episode = & $routeRead 720
         route_section = & $routeRead 724
         natural_music_stops = & $routeRead 6116
+        missed_vblanks = & $routeRead 20
+        missed_vblanks_play = & $routeRead 6316
+        missed_vblanks_frontend = & $routeRead 6320
+        missed_vblanks_game_over = & $routeRead 6324
+        missed_vblanks_stats = & $routeRead 6328
+        missed_vblanks_transition = & $routeRead 6332
+        missed_vblanks_frontend_other = & $routeRead 6336
     }
     $routeChecks = [ordered]@{
         schema = $routeTelemetry.schema -eq 3
@@ -2173,6 +2273,15 @@ foreach (
             $routeTelemetry.sprite2_decode_failures -eq 0 -and
             $routeTelemetry.sprite2_cache_drops -eq 0 -and
             $routeTelemetry.projectile_cache_drops -eq 0
+        )
+        no_frontend_vblank_misses = (
+            $routeTelemetry.missed_vblanks_frontend -eq 0 -and
+            $routeTelemetry.missed_vblanks_game_over -eq 0 -and
+            $routeTelemetry.missed_vblanks_stats -eq 0 -and
+            $routeTelemetry.missed_vblanks_transition -eq 0 -and
+            $routeTelemetry.missed_vblanks_frontend_other -eq 0 -and
+            $routeTelemetry.missed_vblanks -eq
+                $routeTelemetry.missed_vblanks_play
         )
     }
     $failedRouteChecks = @(
@@ -2289,6 +2398,171 @@ if ($failedArcadeChecks.Count -ne 0) {
     )
 }
 
+if (Test-Path -LiteralPath $transitionTestSave) {
+    Remove-Item -LiteralPath $transitionTestSave -Force
+}
+$transitionTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$transitionTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $transitionTestStdout `
+    -StandardError $transitionTestStderr `
+    -TimeoutMilliseconds 60000
+$transitionRuntimeErrors = @(
+    Select-String `
+        -Path $transitionTestStdout, $transitionTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($transitionRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA front-end transition stress reported " +
+        "$($transitionRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $transitionTestSave)) {
+    throw "Front-end transition stress did not create SRAM telemetry"
+}
+$transitionSaveBytes = [IO.File]::ReadAllBytes($transitionTestSave)
+$transitionPathCount = 8
+$transitionRecordBytes = 108
+$transitionFooterOffset =
+    16 + $transitionPathCount * $transitionRecordBytes
+if (
+    $transitionSaveBytes.Length -lt $transitionFooterOffset + 32 -or
+    [Text.Encoding]::ASCII.GetString(
+        $transitionSaveBytes,
+        0,
+        4
+    ) -ne "TGFA" -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 6 -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 8) -ne
+        $transitionPathCount -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 12) -ne 120
+) {
+    throw "Front-end transition stress SRAM telemetry is invalid"
+}
+$transitionPathNames = @(
+    "game_upgrade",
+    "title_play_mode",
+    "play_mode_episode",
+    "episode_difficulty",
+    "difficulty_game",
+    "game_next_level",
+    "upgrade_submenu",
+    "game_quit"
+)
+$transitionResults = @()
+for ($pathIndex = 0; $pathIndex -lt $transitionPathCount; $pathIndex++) {
+    $offset = 16 + $pathIndex * $transitionRecordBytes
+    $phaseCycles = @()
+    for (
+        $phaseIndex = 0;
+        $phaseIndex -lt 16;
+        $phaseIndex++
+    ) {
+        $phaseCycles += [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 44 + $phaseIndex * 4
+        )
+    }
+    $record = [ordered]@{
+        path = $transitionPathNames[$pathIndex]
+        transitions = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset
+        )
+        missed_vblanks = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 4
+        )
+        vblank_irqs = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 8
+        )
+        full_redraws = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 12
+        )
+        dirty_commits = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 16
+        )
+        dirty_bytes = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 20
+        )
+        runtime_shp_decodes = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 24
+        )
+        runtime_sprite2_decodes = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 28
+        )
+        music_active = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 32
+        )
+        max_cpu_cycles = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 36
+        )
+        failures = [BitConverter]::ToUInt32(
+            $transitionSaveBytes,
+            $offset + 40
+        )
+        phase_cycles = $phaseCycles -join ","
+    }
+    if (
+        $record.transitions -ne 120 -or
+        $record.missed_vblanks -ne 0 -or
+        $record.vblank_irqs -lt 121 -or
+        $record.full_redraws -ne 120 -or
+        $record.runtime_shp_decodes -ne 0 -or
+        $record.runtime_sprite2_decodes -ne 0 -or
+        $record.music_active -ne 1 -or
+        $record.max_cpu_cycles -le 0 -or
+        $record.max_cpu_cycles -gt 180000 -or
+        $record.failures -ne 0
+    ) {
+        throw (
+            "Front-end transition stress failed for " +
+            "$($record.path): " +
+            ($record | ConvertTo-Json -Compress)
+        )
+    }
+    $transitionResults += [pscustomobject]$record
+}
+$transitionFooter = [ordered]@{
+    final_state = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset
+    )
+    final_selection = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 4
+    )
+    frame_pending = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 8
+    )
+    pending_kind = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 12
+    )
+}
+if (
+    $transitionFooter.final_state -ne 7 -or
+    $transitionFooter.final_selection -ne 5 -or
+    $transitionFooter.frame_pending -ne 0 -or
+    $transitionFooter.pending_kind -ne 0
+) {
+    throw (
+        "Front-end transition stress did not settle cleanly: " +
+        ($transitionFooter | ConvertTo-Json -Compress)
+    )
+}
+
 $perfElapsed = Start-TestProcess `
     -FilePath $perf `
     -Arguments @("-F", "600", "-P", "$releaseName.gba") `
@@ -2329,7 +2603,8 @@ foreach (
         $episode2TestInfo,
         $episode3TestInfo,
         $episode4TestInfo,
-        $arcadeTestInfo
+        $arcadeTestInfo,
+        $transitionTestInfo
     )
 ) {
     foreach ($entry in $info.GetEnumerator()) {
@@ -2345,7 +2620,11 @@ foreach ($memory in $memoryInfos) {
 }
 $verification.Add("soundbank_bytes=$soundbankBytes")
 foreach ($entry in $assetReport.GetEnumerator()) {
-    if ($entry.Key -like "finite_music_*") {
+    if (
+        $entry.Key -like "finite_music_*" -or
+        $entry.Key -like "frontend_source_stamp_*" -or
+        $entry.Key -like "frontend_stats_*"
+    ) {
         $verification.Add("asset_$($entry.Key)=$($entry.Value)")
     }
 }
@@ -2431,6 +2710,26 @@ $verification.Add(
 )
 foreach ($entry in $arcadeTelemetry.GetEnumerator()) {
     $verification.Add("arcade_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add(
+    "frontend_transition_stress_host_elapsed_ms=$transitionTestElapsed"
+)
+$verification.Add(
+    "frontend_transition_stress_runtime_error_count=" +
+    $transitionRuntimeErrors.Count
+)
+foreach ($result in $transitionResults) {
+    foreach ($entry in $result.psobject.Properties) {
+        $verification.Add(
+            "frontend_transition_$($result.path)_$($entry.Name)=" +
+            $entry.Value
+        )
+    }
+}
+foreach ($entry in $transitionFooter.GetEnumerator()) {
+    $verification.Add(
+        "frontend_transition_footer_$($entry.Key)=$($entry.Value)"
+    )
 }
 $verification.Add("release_boot_frames=600")
 $verification.Add("release_boot_host_elapsed_ms=$perfElapsed")

@@ -206,7 +206,7 @@ FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)_$(C
 FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFFIX)
 FRONTEND_NAV_STRESS_TARGET := tyrian_gba_frontend_nav_obj_stress_v43_$(CONFIG_SUFFIX)
 FRONTEND_NAV_CAMERA_STRESS_TARGET := tyrian_gba_frontend_nav_camera_stress_v43_$(CONFIG_SUFFIX)
-FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v44_$(CONFIG_SUFFIX)
+FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v48_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_FLAG := \
 	-DAUTOTEST_FRONTEND_CAPTURE_SELECTION=$(CAPTURE_SELECTION)
@@ -299,7 +299,8 @@ ASSET_BINARIES := \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
-	$(RES)/frontend_cube.bin \
+	$(RES)/frontend_stats_tiles.bin \
+	$(RES)/frontend_stats_widths.bin \
 	$(RES)/frontend_native_font.bin \
 	$(RES)/frontend_pregame_font.bin \
 	$(RES)/frontend_static_menu_panels.bin \
@@ -311,6 +312,8 @@ ASSET_BINARIES := \
 	$(RES)/frontend_nav_obj_meta.bin \
 	$(RES)/frontend_nav_obj_palette.bin \
 	$(RES)/frontend_nav_bitmap_pages.bin \
+	$(RES)/frontend_source_stamp_offsets.bin \
+	$(RES)/frontend_source_stamp_data.bin \
 	$(RES)/jukebox_font_tiles.bin \
 	$(RES)/jukebox_backdrop_tiles.bin \
 	$(RES)/jukebox_backdrop_map.bin \

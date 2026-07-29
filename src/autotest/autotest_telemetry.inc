@@ -565,6 +565,30 @@ static void autotest_finish(void)
     sram_write_u32(6304, SPRITE2_RAW_DATA_CRC32);
     sram_write_u32(6308, SOURCE_SPRITE2_L2_SLOT_COUNT);
     sram_write_u32(6312, telemetry_upgrade_loadout_pass);
+    sram_write_u32(6316, telemetry_missed_vblanks_play);
+    sram_write_u32(6320, telemetry_missed_vblanks_frontend);
+    sram_write_u32(6324, telemetry_missed_vblanks_game_over);
+    sram_write_u32(6328, telemetry_missed_vblanks_stats);
+    sram_write_u32(6332, telemetry_missed_vblanks_transition);
+    sram_write_u32(6336, telemetry_missed_vblanks_frontend_other);
+    sram_write_u32(
+        6340,
+        telemetry_frontend_transition_job_cycles_max
+    );
+    for (u8 phase = 0; phase < 16; phase++) {
+        sram_write_u32(
+            6344u + (u32)phase * 4u,
+            telemetry_frontend_transition_phase_cycles_max[phase]
+        );
+    }
+    sram_write_u32(
+        6408,
+        telemetry_missed_vblank_transition_job_last
+    );
+    sram_write_u32(
+        6412,
+        telemetry_missed_vblank_transition_phase_next
+    );
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);

@@ -226,14 +226,18 @@ static void autotest_full_loadout_stress_finish(void)
 #endif
 
 #ifdef AUTOTEST_DEATH_FLOW
+static u8 autotest_death_exit_pending;
+static u8 autotest_death_game_over_pass;
+static u8 autotest_death_normal_weapon_pass;
+
 static void autotest_death_update(void)
 {
     static u16 settled_frames;
     static u8 observed_game_over_music_active;
     const OtDataCatalog *catalog;
     volatile u8 *sram;
-    u8 game_over_pass;
-    u8 normal_weapon_pass;
+
+    if (autotest_death_exit_pending) return;
 
     settled_frames++;
     if (mmActive()) observed_game_over_music_active = 1;
@@ -276,7 +280,7 @@ static void autotest_death_update(void)
     sram_write_u32(76, telemetry_effect_drops);
     sram_write_u32(80, telemetry_display_frames);
     sram_write_u32(84, oam_count);
-    normal_weapon_pass = (
+    autotest_death_normal_weapon_pass = (
         TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER == 0 &&
         source_parity_level.player_front_weapon_id == 1 &&
         source_parity_level.player_front_weapon_power == 1 &&
@@ -297,14 +301,14 @@ static void autotest_death_update(void)
     );
     sram_write_u32(132, source_front_weapon_hdt_id);
     sram_write_u32(136, source_front_weapon_valid);
-    sram_write_u32(140, normal_weapon_pass);
+    sram_write_u32(140, autotest_death_normal_weapon_pass);
     sram_write_u32(144, observed_game_over_music_active);
     sram_write_u32(
         148,
         telemetry_game_over_music_natural_stops
     );
     sram_write_u32(152, settled_frames);
-    game_over_pass = (
+    autotest_death_game_over_pass = (
         game_state == STATE_GAME_OVER &&
         catalog != 0 &&
         catalog->selected_mus_song == 10 &&
@@ -325,7 +329,7 @@ static void autotest_death_update(void)
         source_parity_level.level_end == 0 &&
         !frontend_mode4_active
     );
-    sram_write_u32(88, game_over_pass);
+    sram_write_u32(88, autotest_death_game_over_pass);
 
 #ifdef AUTOTEST_DEATH_CAPTURE
     /*
@@ -341,6 +345,21 @@ static void autotest_death_update(void)
      */
     pad_pressed = KEY_A;
     game_over_update();
+    autotest_death_exit_pending = 1;
+}
+
+static void autotest_death_finish_update(void)
+{
+    const OtDataCatalog *catalog;
+
+    if (
+        !autotest_death_exit_pending ||
+        game_state != STATE_GAME_MENU ||
+        frontend_transition_busy() ||
+        frontend_frame_pending
+    ) {
+        return;
+    }
     catalog = ot_data_catalog();
     sram_write_u32(
         92,
@@ -353,11 +372,10 @@ static void autotest_death_update(void)
     sram_write_u32(112, mmActive());
     sram_write_u32(
         116,
-        game_over_pass &&
-        normal_weapon_pass &&
+        autotest_death_game_over_pass &&
+        autotest_death_normal_weapon_pass &&
         catalog != 0 &&
         catalog->selected_mus_song == 29 &&
-        game_state == STATE_GAME_MENU &&
         frontend_selection == 4 &&
         frontend_mode4_active &&
         telemetry_game_over_exits == 1 &&

@@ -376,7 +376,10 @@ static void frontend_compose_game_menu(u8 selection)
         FRONTEND_FRAME_BYTES
     );
     if (frontend_player_items_valid) {
-        frontend_draw_ship_illustration(frontend_frame_scratch);
+        if (!frontend_ship_panel_cache_apply(frontend_frame_scratch)) {
+            frontend_draw_ship_illustration(frontend_frame_scratch);
+            frontend_ship_panel_cache_capture(frontend_frame_scratch);
+        }
     }
     if (
         selection >= FRONTEND_STATIC_GAME_MENU_COUNT ||
@@ -701,8 +704,7 @@ static void frontend_upgrade_cancel_submenu(void)
     frontend_player_items = frontend_upgrade_original_items;
     player_cash = frontend_upgrade_original_cash;
     frontend_quit_dialog_cache_valid = 0;
-    frontend_enter_state(
-        STATE_UPGRADE_MENU,
+    frontend_start_upgrade_menu_transition(
         frontend_upgrade_category
     );
     audio_effect(SFX_SPRING);
@@ -711,8 +713,7 @@ static void frontend_upgrade_cancel_submenu(void)
 static void frontend_upgrade_commit_submenu(void)
 {
     player_cash = frontend_upgrade_cash_left();
-    frontend_enter_state(
-        STATE_UPGRADE_MENU,
+    frontend_start_upgrade_menu_transition(
         frontend_upgrade_category
     );
     audio_effect(SFX_ITEM);
@@ -827,7 +828,10 @@ static void frontend_render_upgrade_menu(void)
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
         FRONTEND_FRAME_BYTES
     );
-    frontend_draw_ship_illustration(frontend_frame_scratch);
+    if (!frontend_ship_panel_cache_apply(frontend_frame_scratch)) {
+        frontend_draw_ship_illustration(frontend_frame_scratch);
+        frontend_ship_panel_cache_capture(frontend_frame_scratch);
+    }
     if (
         frontend_selection >= FRONTEND_STATIC_UPGRADE_MENU_COUNT ||
         !frontend_copy_static_menu_panel(
@@ -960,11 +964,8 @@ static u8 frontend_render_shared_menu_transition(
     return 1;
 }
 
-static void frontend_draw_upgrade_submenu_preview(void)
+static void frontend_draw_upgrade_submenu_preview_art(void)
 {
-    char line[40];
-    char digits[11];
-
     if (
         frontend_upgrade_category == FRONTEND_UPGRADE_SHIP ||
         frontend_upgrade_category == FRONTEND_UPGRADE_GENERATOR
@@ -979,6 +980,13 @@ static void frontend_draw_upgrade_submenu_preview(void)
             70
         );
     }
+}
+
+static void frontend_draw_upgrade_submenu_preview_details(void)
+{
+    char line[40];
+    char digits[11];
+
     if (
         (
             frontend_upgrade_category ==
@@ -1047,6 +1055,12 @@ static void frontend_draw_upgrade_submenu_preview(void)
         115,
         0xfeu
     );
+}
+
+static void frontend_draw_upgrade_submenu_preview(void)
+{
+    frontend_draw_upgrade_submenu_preview_art();
+    frontend_draw_upgrade_submenu_preview_details();
 }
 
 static void frontend_draw_upgrade_submenu_row(u8 visible_index)
@@ -1144,13 +1158,8 @@ static void frontend_draw_upgrade_submenu_rows(void)
     }
 }
 
-static void frontend_render_upgrade_submenu(void)
+static void frontend_draw_upgrade_submenu_title(void)
 {
-    memcpy(
-        frontend_frame_scratch,
-        frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
-        FRONTEND_FRAME_BYTES
-    );
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         frontend_upgrade_menu_text(
@@ -1161,6 +1170,21 @@ static void frontend_render_upgrade_submenu(void)
         TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y,
         0xfbu
     );
+}
+
+static void frontend_prepare_upgrade_submenu_base(void)
+{
+    memcpy(
+        frontend_frame_scratch,
+        frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
+        FRONTEND_FRAME_BYTES
+    );
+    frontend_draw_upgrade_submenu_title();
+}
+
+static void frontend_render_upgrade_submenu(void)
+{
+    frontend_prepare_upgrade_submenu_base();
     frontend_draw_upgrade_submenu_preview();
     frontend_draw_upgrade_submenu_rows();
     frontend_present(
@@ -1324,31 +1348,10 @@ static void frontend_render_quit_selection(void)
     frontend_dirty_present();
 }
 
-static void frontend_compose_quit_dialog(void)
+static void frontend_compose_quit_shade(void)
 {
-    const char *question =
-        frontend_text_ready &&
-        frontend_text.misc_text[28][0] != '\0' ?
-            frontend_text.misc_text[28] :
-            "ARE YOU SURE YOU WANT TO EXIT?";
-    const char *help =
-        frontend_text_ready &&
-        frontend_text.misc_text[30][0] != '\0' ?
-            frontend_text.misc_text[30] :
-            "YOU WILL RETURN TO THE MAIN MENU.";
-    const char *yes =
-        frontend_text_ready &&
-        frontend_text.misc_text[9][0] != '\0' ?
-            frontend_text.misc_text[9] :
-            "OK";
-    const char *no =
-        frontend_text_ready &&
-        frontend_text.misc_text[10][0] != '\0' ?
-            frontend_text.misc_text[10] :
-            "CANCEL";
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
     u32 cycle_start = stress_cycle_counter_read();
-    u32 elapsed;
 #endif
 
     if (!frontend_apply_static_quit_shade()) {
@@ -1362,12 +1365,32 @@ static void frontend_compose_quit_dialog(void)
         );
     }
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
-    elapsed = stress_cycle_counter_read() - cycle_start;
-    if (elapsed > telemetry_frontend_quit_shade_cycles_max) {
-        telemetry_frontend_quit_shade_cycles_max = elapsed;
+    {
+        u32 elapsed = stress_cycle_counter_read() - cycle_start;
+
+        if (elapsed > telemetry_frontend_quit_shade_cycles_max) {
+            telemetry_frontend_quit_shade_cycles_max = elapsed;
+        }
     }
-    cycle_start = stress_cycle_counter_read();
 #endif
+}
+
+static void frontend_compose_quit_overlay(void)
+{
+    const char *question =
+        frontend_text_ready &&
+        frontend_text.misc_text[28][0] != '\0' ?
+            frontend_text.misc_text[28] :
+            "ARE YOU SURE YOU WANT TO EXIT?";
+    const char *help =
+        frontend_text_ready &&
+        frontend_text.misc_text[30][0] != '\0' ?
+            frontend_text.misc_text[30] :
+            "YOU WILL RETURN TO THE MAIN MENU.";
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    u32 cycle_start = stress_cycle_counter_read();
+#endif
+
     if (!frontend_apply_static_quit_overlay()) {
         (void)frontend_blit_shp_source(
             frontend_frame_scratch,
@@ -1401,22 +1424,52 @@ static void frontend_compose_quit_dialog(void)
         );
     }
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
-    elapsed = stress_cycle_counter_read() - cycle_start;
-    if (elapsed > telemetry_frontend_quit_overlay_cycles_max) {
-        telemetry_frontend_quit_overlay_cycles_max = elapsed;
+    {
+        u32 elapsed = stress_cycle_counter_read() - cycle_start;
+
+        if (elapsed > telemetry_frontend_quit_overlay_cycles_max) {
+            telemetry_frontend_quit_overlay_cycles_max = elapsed;
+        }
     }
-    cycle_start = stress_cycle_counter_read();
 #endif
+}
+
+static void frontend_compose_quit_choices(void)
+{
+    const char *yes =
+        frontend_text_ready &&
+        frontend_text.misc_text[9][0] != '\0' ?
+            frontend_text.misc_text[9] :
+            "OK";
+    const char *no =
+        frontend_text_ready &&
+        frontend_text.misc_text[10][0] != '\0' ?
+            frontend_text.misc_text[10] :
+            "CANCEL";
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+    u32 cycle_start = stress_cycle_counter_read();
+#endif
+
     if (!frontend_apply_static_quit_choice()) {
         frontend_quit_capture_choice_background();
         frontend_draw_quit_choices(yes, no);
     }
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
-    elapsed = stress_cycle_counter_read() - cycle_start;
-    if (elapsed > telemetry_frontend_quit_choices_cycles_max) {
-        telemetry_frontend_quit_choices_cycles_max = elapsed;
+    {
+        u32 elapsed = stress_cycle_counter_read() - cycle_start;
+
+        if (elapsed > telemetry_frontend_quit_choices_cycles_max) {
+            telemetry_frontend_quit_choices_cycles_max = elapsed;
+        }
     }
 #endif
+}
+
+static void frontend_compose_quit_dialog(void)
+{
+    frontend_compose_quit_shade();
+    frontend_compose_quit_overlay();
+    frontend_compose_quit_choices();
 }
 
 static u8 frontend_render_quit_transition(

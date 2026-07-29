@@ -6,6 +6,24 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $toolchainRoot = Join-Path $projectRoot ".toolchain"
 $armRoot = Join-Path $toolchainRoot "arm-gnu-toolchain"
@@ -48,9 +66,7 @@ function Test-ArchiveHash {
     if (-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) {
         return $false
     }
-    $actual = (
-        Get-FileHash -LiteralPath $archivePath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()
+    $actual = Get-Sha256Hex $archivePath
     return $actual -eq $archiveSha256
 }
 

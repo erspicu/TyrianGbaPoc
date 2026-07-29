@@ -21,15 +21,6 @@ enum {
     FRONTEND_STATS_STAGE_TICKS = 30,
     FRONTEND_STATS_CUBE_TICKS = 18,
     FRONTEND_STATS_MAX_CUBES = 4,
-    FRONTEND_STATS_SOURCE_FONT_TABLE = 2,
-    /*
-     * The GBA summary deliberately uses TINY_FONT so the 264-pixel PC
-     * battle text fits the 240-pixel crop.  Its dominant source intensity
-     * is 7, while JE_endLevelAni's original SMALL_FONT_SHAPES intensity is
-     * 13.  Apply only that six-step intensity normalization; positioning,
-     * hue 15 and JE_outTextGlow's -4 settled brightness stay source exact.
-     */
-    FRONTEND_STATS_FONT_BRIGHTNESS_BIAS = 6,
     FRONTEND_DEMO_COUNT = 5,
     FRONTEND_DEMO_IDLE_VBLANKS = 1800,
     FRONTEND_NEXT_PANEL_X = TYRIAN_GBA_LAYOUT_NEXT_PANEL_X,
@@ -241,6 +232,9 @@ static s16 frontend_nav_presented_y EWRAM_BSS;
 
 static void frontend_redraw(void);
 static void frontend_enter_state(u8 state, u8 selection);
+static void frontend_start_game_menu_transition(u8 flags);
+static void frontend_start_upgrade_menu_transition(u8 selection);
+static void frontend_start_quit_transition(u8 enter_dialog);
 static void frontend_render_upgrade_submenu_update(
     u8 old_selection,
     u8 old_scroll
@@ -555,6 +549,20 @@ _Static_assert(
                 FRONTEND_PREGAME_FONT_HEIGHT,
     "mixed-case pre-game glyph catalog changed"
 );
+_Static_assert(
+    FRONTEND_STATS_PREBAKED_GLYPH_COUNT ==
+        FRONTEND_STATS_FONT_GLYPH_COUNT &&
+        FRONTEND_STATS_PREBAKED_WIDTH_BYTES ==
+            FRONTEND_STATS_FONT_GLYPH_COUNT &&
+        FRONTEND_STATS_PREBAKED_TILE_COUNT ==
+            FRONTEND_STATS_TILE_COUNT &&
+        FRONTEND_STATS_PREBAKED_TILE_BYTES ==
+            FRONTEND_STATS_TILE_BYTES &&
+        FRONTEND_STATS_PREBAKED_CUBE_TILE_OFFSET ==
+            FRONTEND_STATS_CUBE_TILE_BASE -
+                FRONTEND_STATS_TILE_BASE,
+    "prebaked source summary OBJ catalog changed"
+);
 #if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
 _Static_assert(
     sizeof(frontend_compact_font_rows) /
@@ -577,10 +585,8 @@ _Static_assert(
     "stats font and cube must fit the end-level enemy-cache window"
 );
 
-static u8 frontend_prepare_map(void)
+static u8 frontend_prepare_map_begin(void)
 {
-    u8 choice;
-
     frontend_map = (OtEpisodeMap){0};
     memset(
         frontend_map_level,
@@ -601,26 +607,46 @@ static u8 frontend_prepare_map(void)
     }
     if (frontend_map.episode_complete) {
         frontend_map_ready = 1;
+    }
+    return 1;
+}
+
+static u8 frontend_prepare_map_choice(u8 choice)
+{
+    if (
+        choice >= frontend_map.choice_count ||
+        frontend_map.episode_complete
+    ) {
         return 1;
     }
+    if (
+        !ot_data_episode_level_resolve(
+            (u8)(frontend_episode + 1u),
+            frontend_map.map_section[choice],
+            frontend_play_mode,
+            frontend_difficulty,
+            &frontend_map_level[choice]
+        )
+    ) {
+        frontend_map = (OtEpisodeMap){0};
+        memset(
+            frontend_map_level,
+            0,
+            sizeof(frontend_map_level)
+        );
+        frontend_map_ready = 0;
+        return 0;
+    }
+    return 1;
+}
+
+static u8 frontend_prepare_map(void)
+{
+    u8 choice;
+
+    if (!frontend_prepare_map_begin()) return 0;
     for (choice = 0; choice < frontend_map.choice_count; choice++) {
-        if (
-            !ot_data_episode_level_resolve(
-                (u8)(frontend_episode + 1u),
-                frontend_map.map_section[choice],
-                frontend_play_mode,
-                frontend_difficulty,
-                &frontend_map_level[choice]
-            )
-        ) {
-            frontend_map = (OtEpisodeMap){0};
-            memset(
-                frontend_map_level,
-                0,
-                sizeof(frontend_map_level)
-            );
-            return 0;
-        }
+        if (!frontend_prepare_map_choice(choice)) return 0;
     }
     frontend_map_ready = 1;
     return 1;
@@ -628,13 +654,27 @@ static u8 frontend_prepare_map(void)
 
 static void frontend_load_game_menu_song(void)
 {
-    audio_load_source_song(
+    const OtDataCatalog *catalog = ot_data_catalog();
+    u8 song =
         frontend_map_ready &&
         frontend_map.menu_song_valid &&
         frontend_map.menu_song < JUKEBOX_MUSIC_COUNT ?
             frontend_map.menu_song :
-            29
-    );
+            29;
+
+    /*
+     * Re-entering a static page must not stop and restart an already active
+     * identical module.  Besides preserving the source song position, this
+     * removes Maxmod's module-start work from repeat menu transitions.
+     */
+    if (
+        catalog != 0 &&
+        catalog->selected_mus_song == song &&
+        mmActive()
+    ) {
+        return;
+    }
+    audio_load_source_song(song);
 }
 
 static u8 frontend_next_choice_count(void)
@@ -1907,26 +1947,90 @@ static void frontend_restore_menu_chrome_rect(
     );
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
-frontend_copy_static_menu_panel(u8 panel_index)
+/*
+ * Assemble large static pages in bounded scanline groups.  A Mode-4 row is
+ * exactly 60 aligned words, so the hot copy loop remains sequential without
+ * issuing a single 38.4 KiB Game Pak burst that can delay audio/VBlank work.
+ */
+static __attribute__((noinline, noclone)) void
+frontend_copy_frame_rows(
+    u8 frame_index,
+    u8 first_row,
+    u8 row_count
+)
 {
     const u8 *source;
     u8 *destination;
     u8 row;
 
-    if (panel_index >= FRONTEND_STATIC_MENU_PANEL_COUNT) return 0;
+    if (
+        frame_index >= FRONTEND_FRAME_COUNT ||
+        first_row >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    if (first_row + row_count > SCREEN_HEIGHT) {
+        row_count = (u8)(SCREEN_HEIGHT - first_row);
+    }
     source =
-        frontend_static_menu_panels +
-        (u32)panel_index * FRONTEND_STATIC_MENU_PANEL_BYTES;
+        frontend_frame_address(frame_index) +
+        (u32)first_row * SCREEN_WIDTH;
     destination =
         frontend_frame_scratch +
-        (u32)FRONTEND_STATIC_MENU_PANEL_Y * SCREEN_WIDTH +
-        FRONTEND_STATIC_MENU_PANEL_X;
-    for (row = 0; row < FRONTEND_STATIC_MENU_PANEL_HEIGHT; row++) {
+        (u32)first_row * SCREEN_WIDTH;
+    for (row = 0; row < row_count; row++) {
         const u32 *source_words =
             (const u32 *)(const void *)source;
-        u32 *destination_words =
-            (u32 *)(void *)destination;
+        u32 *destination_words = (u32 *)(void *)destination;
+        u8 word;
+
+        for (word = 0; word < SCREEN_WIDTH / 4u; word++) {
+            destination_words[word] = source_words[word];
+        }
+        source += SCREEN_WIDTH;
+        destination += SCREEN_WIDTH;
+    }
+}
+
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+frontend_copy_static_menu_panel_rows(
+    u8 panel_index,
+    u8 first_row,
+    u8 row_count
+)
+{
+    const u8 *source;
+    u8 *destination;
+    u8 row;
+
+    if (
+        panel_index >= FRONTEND_STATIC_MENU_PANEL_COUNT ||
+        first_row >= FRONTEND_STATIC_MENU_PANEL_HEIGHT
+    ) {
+        return 0;
+    }
+    if (
+        first_row + row_count >
+        FRONTEND_STATIC_MENU_PANEL_HEIGHT
+    ) {
+        row_count = (u8)(
+            FRONTEND_STATIC_MENU_PANEL_HEIGHT - first_row
+        );
+    }
+    source =
+        frontend_static_menu_panels +
+        (u32)panel_index * FRONTEND_STATIC_MENU_PANEL_BYTES +
+        (u32)first_row * FRONTEND_STATIC_MENU_PANEL_WIDTH;
+    destination =
+        frontend_frame_scratch +
+        (
+            (u32)FRONTEND_STATIC_MENU_PANEL_Y + first_row
+        ) * SCREEN_WIDTH +
+        FRONTEND_STATIC_MENU_PANEL_X;
+    for (row = 0; row < row_count; row++) {
+        const u32 *source_words =
+            (const u32 *)(const void *)source;
+        u32 *destination_words = (u32 *)(void *)destination;
         u8 word;
 
         for (
@@ -1940,4 +2044,14 @@ frontend_copy_static_menu_panel(u8 panel_index)
         destination += SCREEN_WIDTH;
     }
     return 1;
+}
+
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+frontend_copy_static_menu_panel(u8 panel_index)
+{
+    return frontend_copy_static_menu_panel_rows(
+        panel_index,
+        0,
+        FRONTEND_STATIC_MENU_PANEL_HEIGHT
+    );
 }

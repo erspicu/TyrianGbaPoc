@@ -10,160 +10,6 @@ static const char *frontend_stats_text(u8 index, const char *fallback)
     return fallback;
 }
 
-static u16 frontend_stats_source_glyph(char character)
-{
-    if (character >= 'a' && character <= 'z') {
-        character = (char)(character - 'a' + 'A');
-    }
-    if (character >= 'A' && character <= 'Z') {
-        return (u16)(character - 'A');
-    }
-    if (character >= '1' && character <= '9') {
-        return (u16)(69 + character - '0');
-    }
-    switch (character) {
-    case '0': return 79;
-    case '!': return 26;
-    case '?': return 27;
-    case '.': return 28;
-    case ',': return 29;
-    case ':': return 31;
-    case '\'': return 32;
-    case '%': return 62;
-    case '-': return 83;
-    case '/': return 80;
-    default: return 27;
-    }
-}
-
-static void frontend_stats_write_4bpp(
-    u8 *tiles,
-    u8 tile_columns,
-    u8 x,
-    u8 y,
-    u8 colour
-)
-{
-    u32 offset =
-        (
-            (u32)(y >> 3) * tile_columns +
-            (u32)(x >> 3)
-        ) * 32u +
-        (u32)(y & 7u) * 4u +
-        (u32)(x & 7u) / 2u;
-    u8 shift = (x & 1u) != 0 ? 4 : 0;
-
-    tiles[offset] = (u8)(
-        (tiles[offset] & (u8)(0xf0u >> shift)) |
-        (colour << shift)
-    );
-}
-
-static u8 frontend_stats_decode_glyph(
-    u8 slot,
-    const OtShpSprite *sprite
-)
-{
-    u8 pixels[16 * 16];
-    u8 *target = frontend_stats_tile_scratch() +
-        (u32)slot * FRONTEND_STATS_FONT_TILES_PER_GLYPH * 32u;
-    u32 source = 0;
-    u16 x = 0;
-    u16 y = 0;
-
-    if (
-        sprite == 0 ||
-        !sprite->populated ||
-        sprite->width == 0 ||
-        sprite->height == 0 ||
-        sprite->width > 14 ||
-        sprite->height > 14
-    ) {
-        return 0;
-    }
-    memset(pixels, 0, sizeof(pixels));
-    while (source < sprite->encoded.size && y < sprite->height) {
-        u8 code = sprite->encoded.data[source++];
-
-        if (code == 255) {
-            if (source >= sprite->encoded.size) return 0;
-            x = (u16)(x + sprite->encoded.data[source++]);
-        } else if (code == 254) {
-            x = sprite->width;
-        } else if (code == 253) {
-            x++;
-        } else {
-            u8 raw = code & 0x0fu;
-
-            if (x < sprite->width && raw >= 2) {
-                u8 normalized = (u8)(
-                    raw + FRONTEND_STATS_FONT_BRIGHTNESS_BIAS
-                );
-
-                if (normalized > 15) normalized = 15;
-                /*
-                 * Store the SMALL_FONT-equivalent brightness as 1..13; the
-                 * two OBJ palettes apply JE_outTextGlow's current/final
-                 * brightness at presentation.
-                 */
-                pixels[(u16)(y + 1u) * 16u + x + 1u] =
-                    (u8)(normalized - 2u);
-            }
-            x++;
-        }
-        if (x >= sprite->width) {
-            x = 0;
-            y++;
-        }
-    }
-    if (y < sprite->height) return 0;
-
-    /*
-     * JE_outTextGlow first draws four hue-0 copies at x/y +/-1.  One dark
-     * palette entry is sufficient for that outline; the centre pixels keep
-     * all thirteen source brightness values exactly.
-     */
-    for (y = 1; y <= sprite->height; y++) {
-        for (x = 1; x <= sprite->width; x++) {
-            if (
-                pixels[y * 16u + x] == 0 ||
-                pixels[y * 16u + x] == 14
-            ) {
-                continue;
-            }
-            if (pixels[y * 16u + x - 1u] == 0) {
-                pixels[y * 16u + x - 1u] = 14;
-            }
-            if (pixels[y * 16u + x + 1u] == 0) {
-                pixels[y * 16u + x + 1u] = 14;
-            }
-            if (pixels[(y - 1u) * 16u + x] == 0) {
-                pixels[(y - 1u) * 16u + x] = 14;
-            }
-            if (pixels[(y + 1u) * 16u + x] == 0) {
-                pixels[(y + 1u) * 16u + x] = 14;
-            }
-        }
-    }
-    for (y = 0; y < 16; y++) {
-        for (x = 0; x < 16; x++) {
-            u8 colour = pixels[y * 16u + x];
-
-            if (colour != 0) {
-                frontend_stats_write_4bpp(
-                    target,
-                    2,
-                    (u8)x,
-                    (u8)y,
-                    colour
-                );
-            }
-        }
-    }
-    frontend_stats_glyph_width[slot] = (u8)sprite->width;
-    return 1;
-}
-
 static u8 frontend_stats_adjust_brightness(u8 raw, s8 brightness)
 {
     s16 value = (s16)raw + brightness;
@@ -254,63 +100,22 @@ static void frontend_stats_advance_glow(void)
 static u8 frontend_stats_prepare_tiles(void)
 {
     u8 *tiles = frontend_stats_tile_scratch();
-    u8 slot;
-    u8 *cube = tiles +
-        (
-            FRONTEND_STATS_CUBE_TILE_BASE -
-            FRONTEND_STATS_TILE_BASE
-        ) * 32u;
-    u8 y;
 
-    memset(tiles, 0, FRONTEND_STATS_TILE_BYTES);
-    memset(
-        frontend_stats_glyph_width,
-        0,
-        sizeof(frontend_stats_glyph_width)
+    /*
+     * Glyph RLE, the source-equivalent +/-1 outline and cube packing are
+     * immutable.  Copy the verified build-time OBJ catalog; only the glow
+     * palettes remain dynamic for JE_outTextGlow parity.
+     */
+    memcpy(
+        tiles,
+        frontend_stats_tiles,
+        FRONTEND_STATS_TILE_BYTES
     );
-    for (
-        slot = 0;
-        slot < FRONTEND_STATS_FONT_GLYPH_COUNT;
-        slot++
-    ) {
-        OtShpSprite sprite;
-
-        if (
-            !ot_data_shp_sprite_read(
-                FRONTEND_STATS_SOURCE_FONT_TABLE,
-                frontend_stats_source_glyph(
-                    frontend_runtime_font_characters[slot]
-                ),
-                &sprite
-            ) ||
-            !frontend_stats_decode_glyph(slot, &sprite)
-        ) {
-            frontend_stats_font_ready = 0;
-            return 0;
-        }
-    }
-    for (y = 0; y < FRONTEND_CUBE_HEIGHT; y++) {
-        u8 x;
-
-        for (x = 0; x < FRONTEND_CUBE_WIDTH; x++) {
-            u8 pixel = frontend_cube[
-                (u16)y * FRONTEND_CUBE_WIDTH + x
-            ];
-
-            if (pixel != 0xff) {
-                u8 colour = pixel & 0x0fu;
-
-                if (colour == 0) colour = 1;
-                frontend_stats_write_4bpp(
-                    cube,
-                    4,
-                    x,
-                    y,
-                    colour
-                );
-            }
-        }
-    }
+    memcpy(
+        frontend_stats_glyph_width,
+        frontend_stats_widths,
+        FRONTEND_STATS_FONT_GLYPH_COUNT
+    );
     frontend_stats_restart_glow();
     frontend_stats_tiles_pending = 1;
     frontend_stats_font_ready = 1;
@@ -720,6 +525,11 @@ static void frontend_demo_close(void)
 
 static void enter_title(void)
 {
+    frontend_transition_job = FRONTEND_TRANSITION_JOB_NONE;
+    frontend_transition_phase = 0;
+    frontend_transition_flags = 0;
+    frontend_transition_work_index = 0;
+    frontend_transition_work_mode = 0;
     frontend_demo_close();
     frontend_player_items_valid = 0;
     player_cash = 0;
@@ -984,12 +794,10 @@ static void frontend_advance_episode(void)
     frontend_level = (OtEpisodeLevel){0};
     frontend_map_ready = 0;
     frontend_level_ready = 0;
-    if (!frontend_prepare_map()) {
-        enter_title();
-        return;
-    }
-    frontend_enter_state(STATE_GAME_MENU, 4);
-    frontend_load_game_menu_song();
+    frontend_start_game_menu_transition(
+        FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
+        FRONTEND_GAME_MENU_JOB_LOAD_SONG
+    );
 }
 
 static void frontend_begin(void)
@@ -1043,6 +851,12 @@ static void frontend_begin(void)
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_transition_job = FRONTEND_TRANSITION_JOB_NONE;
+    frontend_transition_phase = 0;
+    frontend_transition_flags = 0;
+    frontend_transition_failed = 0;
+    frontend_transition_work_index = 0;
+    frontend_transition_work_mode = 0;
     game_state = STATE_INTRO_LOGO_1;
     frontend_selection = 0;
     mmStop();
@@ -1086,6 +900,610 @@ static void frontend_move_selection(u8 item_count, s8 direction)
                 (u8)(frontend_selection + 1);
     }
     frontend_redraw_selection(old_selection);
+}
+
+static u8 frontend_transition_busy(void)
+{
+    return frontend_transition_job != FRONTEND_TRANSITION_JOB_NONE;
+}
+
+static void frontend_transition_begin(
+    u8 state,
+    u8 selection,
+    u8 job,
+    u8 flags
+)
+{
+    u8 old_state = game_state;
+
+    if (
+        old_state == STATE_NEXT_LEVEL_MENU &&
+        state != STATE_NEXT_LEVEL_MENU
+    ) {
+        frontend_nav_obj_disable();
+    }
+    if (state != STATE_LEVEL_STATS) {
+        frontend_stats_overlay_active = 0;
+        frontend_stats_tiles_pending = 0;
+        frontend_stats_palette_dirty = 0;
+        frontend_stats_font_ready = 0;
+    }
+    game_state = state;
+    frontend_selection = selection;
+    frontend_transition_job = job;
+    frontend_transition_phase = 0;
+    frontend_transition_flags = flags;
+    frontend_transition_failed = 0;
+    frontend_transition_work_index = 0;
+    frontend_transition_work_mode = 0;
+    telemetry_state_transitions++;
+}
+
+static void frontend_start_next_level_transition(void)
+{
+    frontend_transition_begin(
+        STATE_NEXT_LEVEL_MENU,
+        0,
+        FRONTEND_TRANSITION_JOB_NEXT_LEVEL,
+        0
+    );
+}
+
+static void frontend_start_upgrade_submenu_transition(
+    u8 selection
+)
+{
+    frontend_transition_begin(
+        STATE_UPGRADE_SUBMENU,
+        selection,
+        FRONTEND_TRANSITION_JOB_UPGRADE_SUBMENU,
+        0
+    );
+}
+
+static void frontend_start_game_menu_transition(u8 flags)
+{
+    frontend_transition_begin(
+        STATE_GAME_MENU,
+        4,
+        FRONTEND_TRANSITION_JOB_GAME_MENU,
+        flags
+    );
+}
+
+static void frontend_start_upgrade_menu_transition(u8 selection)
+{
+    frontend_transition_begin(
+        STATE_UPGRADE_MENU,
+        selection,
+        FRONTEND_TRANSITION_JOB_UPGRADE_MENU,
+        0
+    );
+}
+
+static void frontend_start_quit_transition(u8 enter_dialog)
+{
+    frontend_transition_begin(
+        enter_dialog ? STATE_QUIT_CONFIRM : STATE_GAME_MENU,
+        enter_dialog ? 0 : 5,
+        FRONTEND_TRANSITION_JOB_QUIT,
+        enter_dialog ? FRONTEND_QUIT_JOB_ENTER : 0
+    );
+}
+
+enum {
+    FRONTEND_TRANSITION_SHIP_NONE = 0,
+    FRONTEND_TRANSITION_SHIP_CACHE_APPLY,
+    FRONTEND_TRANSITION_SHIP_DRAW,
+    FRONTEND_TRANSITION_SHIP_CACHE_CAPTURE,
+    FRONTEND_TRANSITION_PANEL_STATIC,
+    FRONTEND_TRANSITION_PANEL_FALLBACK,
+};
+
+static void frontend_transition_ship_begin(void)
+{
+    frontend_transition_work_index = 0;
+    if (!frontend_player_items_valid) {
+        frontend_transition_work_mode =
+            FRONTEND_TRANSITION_SHIP_NONE;
+    } else if (frontend_ship_panel_cache_matches()) {
+        frontend_transition_work_mode =
+            FRONTEND_TRANSITION_SHIP_CACHE_APPLY;
+    } else {
+        frontend_transition_work_mode =
+            FRONTEND_TRANSITION_SHIP_DRAW;
+    }
+}
+
+/*
+ * Returns true once the 120x160 configuration-dependent panel is complete.
+ * Cache transfers are split into two 80-row groups; a cold panel builds one
+ * stock source layer per update and then captures two equally bounded rows.
+ */
+static u8 frontend_transition_ship_update(void)
+{
+    switch (frontend_transition_work_mode) {
+    case FRONTEND_TRANSITION_SHIP_NONE:
+        return 1;
+
+    case FRONTEND_TRANSITION_SHIP_CACHE_APPLY:
+        (void)frontend_ship_panel_cache_apply_rows(
+            frontend_frame_scratch,
+            (u8)(frontend_transition_work_index * 80u),
+            80
+        );
+        if (++frontend_transition_work_index >= 2) return 1;
+        break;
+
+    case FRONTEND_TRANSITION_SHIP_DRAW:
+        frontend_draw_ship_illustration_part(
+            frontend_frame_scratch,
+            frontend_transition_work_index
+        );
+        if (
+            ++frontend_transition_work_index >=
+            FRONTEND_SHIP_DRAW_PART_COUNT
+        ) {
+            frontend_transition_work_mode =
+                FRONTEND_TRANSITION_SHIP_CACHE_CAPTURE;
+            frontend_transition_work_index = 0;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_SHIP_CACHE_CAPTURE:
+        frontend_ship_panel_cache_capture_rows(
+            frontend_frame_scratch,
+            (u8)(frontend_transition_work_index * 80u),
+            80
+        );
+        if (++frontend_transition_work_index >= 2) {
+            frontend_ship_panel_cache_finalize();
+            return 1;
+        }
+        break;
+
+    default:
+        return 1;
+    }
+    return 0;
+}
+
+static void frontend_transition_fail_to_title(void)
+{
+    frontend_transition_failed = 1;
+    frontend_transition_job = FRONTEND_TRANSITION_JOB_NONE;
+    enter_title();
+}
+
+/*
+ * Static pages are assembled in bounded pieces while the previously
+ * presented page remains stable.  mmFrame() still runs once per VBlank;
+ * only the final phase schedules the atomic Mode-4 page flip.
+ */
+static void frontend_transition_update(void)
+{
+    if (
+        frontend_transition_job == FRONTEND_TRANSITION_JOB_NONE ||
+        frontend_frame_pending
+    ) {
+        return;
+    }
+    switch (frontend_transition_job) {
+    case FRONTEND_TRANSITION_JOB_NEXT_LEVEL:
+        switch (frontend_transition_phase) {
+        case 0:
+            frontend_nav_set_target();
+            frontend_nav_presented_x = frontend_nav_x;
+            frontend_nav_presented_y = frontend_nav_y;
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                0,
+                80
+            );
+            frontend_transition_phase = 1;
+            break;
+        case 1:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                80,
+                80
+            );
+            frontend_transition_phase = 2;
+            break;
+        case 2:
+            frontend_nav_draw();
+            frontend_transition_phase = 3;
+            break;
+        case 3:
+            frontend_prepare_next_level_text_base();
+            frontend_transition_work_index = 0;
+            frontend_transition_phase = 4;
+            break;
+        case 4:
+            {
+                u8 final_item = frontend_next_choice_count();
+
+                frontend_render_next_level_item(
+                    frontend_transition_work_index
+                );
+                if (
+                    frontend_transition_work_index++ >= final_item
+                ) {
+                    frontend_transition_phase = 5;
+                }
+            }
+            break;
+        default:
+            frontend_nav_obj_rebuild();
+            frontend_present(
+                frontend_frame_scratch,
+                frontend_palette_address(
+                    FRONTEND_FRAME_NEXT_LEVEL_0
+                )
+            );
+            frontend_transition_job =
+                FRONTEND_TRANSITION_JOB_NONE;
+            break;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_JOB_UPGRADE_SUBMENU:
+        switch (frontend_transition_phase) {
+        case 0:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                0,
+                80
+            );
+            frontend_transition_phase = 1;
+            break;
+        case 1:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                80,
+                80
+            );
+            frontend_transition_phase = 2;
+            break;
+        case 2:
+            frontend_draw_upgrade_submenu_title();
+            frontend_transition_phase = 3;
+            break;
+        case 3:
+            frontend_draw_upgrade_submenu_preview_art();
+            frontend_transition_phase = 4;
+            break;
+        case 4:
+            frontend_draw_upgrade_submenu_preview_details();
+            frontend_transition_work_index = 0;
+            frontend_transition_phase = 5;
+            break;
+        case 5:
+            frontend_draw_upgrade_submenu_row(
+                frontend_transition_work_index
+            );
+            if (++frontend_transition_work_index >= 6) {
+                frontend_transition_phase = 6;
+            }
+            break;
+        default:
+            frontend_present(
+                frontend_frame_scratch,
+                frontend_palette_address(
+                    FRONTEND_FRAME_MENU_CHROME
+                )
+            );
+            frontend_transition_job =
+                FRONTEND_TRANSITION_JOB_NONE;
+            break;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_JOB_GAME_MENU:
+        switch (frontend_transition_phase) {
+        case 0:
+            if (
+                frontend_transition_flags &
+                    FRONTEND_GAME_MENU_JOB_INITIALIZE_CAMPAIGN
+            ) {
+                frontend_campaign_initialize();
+            }
+            frontend_transition_phase = 1;
+            break;
+        case 1:
+            if (
+                frontend_transition_flags &
+                    FRONTEND_GAME_MENU_JOB_PREPARE_MAP
+            ) {
+                if (!frontend_prepare_map_begin()) {
+                    frontend_transition_fail_to_title();
+                    break;
+                }
+                frontend_transition_work_index = 0;
+                frontend_transition_phase =
+                    (
+                        frontend_map.episode_complete ||
+                        frontend_map.choice_count == 0
+                    ) ?
+                        3 :
+                        2;
+                if (
+                    !frontend_map.episode_complete &&
+                    frontend_map.choice_count == 0
+                ) {
+                    frontend_map_ready = 1;
+                }
+            } else {
+                frontend_transition_phase = 3;
+            }
+            break;
+        case 2:
+            if (
+                !frontend_prepare_map_choice(
+                    frontend_transition_work_index
+                )
+            ) {
+                frontend_transition_fail_to_title();
+                break;
+            }
+            if (
+                ++frontend_transition_work_index >=
+                frontend_map.choice_count
+            ) {
+                frontend_map_ready = 1;
+                frontend_transition_phase = 3;
+            }
+            break;
+        case 3:
+            if (
+                frontend_transition_flags &
+                    FRONTEND_GAME_MENU_JOB_LOAD_SONG
+            ) {
+                frontend_load_game_menu_song();
+            }
+            frontend_transition_phase = 4;
+            break;
+        case 4:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                0,
+                80
+            );
+            frontend_transition_phase = 5;
+            break;
+        case 5:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                80,
+                80
+            );
+            frontend_transition_phase = 6;
+            break;
+        case 6:
+            frontend_transition_ship_begin();
+            frontend_transition_phase = 7;
+            break;
+        case 7:
+            if (frontend_transition_ship_update()) {
+                frontend_transition_phase = 8;
+            }
+            break;
+        case 8:
+            frontend_transition_work_mode =
+                frontend_copy_static_menu_panel_rows(
+                    (u8)(
+                        FRONTEND_STATIC_GAME_MENU_BASE +
+                        frontend_selection
+                    ),
+                    0,
+                    60
+                ) ?
+                    FRONTEND_TRANSITION_PANEL_STATIC :
+                    FRONTEND_TRANSITION_PANEL_FALLBACK;
+            frontend_transition_phase =
+                frontend_transition_work_mode ==
+                    FRONTEND_TRANSITION_PANEL_STATIC ?
+                        9 :
+                        10;
+            break;
+        case 9:
+            (void)frontend_copy_static_menu_panel_rows(
+                (u8)(
+                    FRONTEND_STATIC_GAME_MENU_BASE +
+                    frontend_selection
+                ),
+                60,
+                60
+            );
+            frontend_transition_phase = 10;
+            break;
+        case 10:
+            if (
+                frontend_transition_work_mode ==
+                    FRONTEND_TRANSITION_PANEL_FALLBACK
+            ) {
+                frontend_draw_game_menu_text(frontend_selection);
+            }
+            frontend_transition_phase = 11;
+            break;
+        case 11:
+            frontend_quit_capture_dialog_background();
+            frontend_quit_dialog_cache_valid = 1;
+            frontend_quit_dialog_cache_selection =
+                frontend_selection;
+            frontend_transition_phase = 12;
+            break;
+        default:
+            frontend_present(
+                frontend_frame_scratch,
+                frontend_palette_address(
+                    FRONTEND_FRAME_MENU_CHROME
+                )
+            );
+            frontend_transition_job =
+                FRONTEND_TRANSITION_JOB_NONE;
+            break;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_JOB_UPGRADE_MENU:
+        switch (frontend_transition_phase) {
+        case 0:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                0,
+                80
+            );
+            frontend_transition_phase = 1;
+            break;
+        case 1:
+            frontend_copy_frame_rows(
+                FRONTEND_FRAME_MENU_CHROME,
+                80,
+                80
+            );
+            frontend_transition_phase = 2;
+            break;
+        case 2:
+            frontend_transition_ship_begin();
+            frontend_transition_phase = 3;
+            break;
+        case 3:
+            if (frontend_transition_ship_update()) {
+                frontend_transition_phase = 4;
+            }
+            break;
+        case 4:
+            frontend_transition_work_mode =
+                frontend_copy_static_menu_panel_rows(
+                    (u8)(
+                        FRONTEND_STATIC_UPGRADE_MENU_BASE +
+                        frontend_selection
+                    ),
+                    0,
+                    60
+                ) ?
+                    FRONTEND_TRANSITION_PANEL_STATIC :
+                    FRONTEND_TRANSITION_PANEL_FALLBACK;
+            frontend_transition_phase =
+                frontend_transition_work_mode ==
+                    FRONTEND_TRANSITION_PANEL_STATIC ?
+                        5 :
+                        6;
+            break;
+        case 5:
+            (void)frontend_copy_static_menu_panel_rows(
+                (u8)(
+                    FRONTEND_STATIC_UPGRADE_MENU_BASE +
+                    frontend_selection
+                ),
+                60,
+                60
+            );
+            frontend_transition_phase = 6;
+            break;
+        case 6:
+            if (
+                frontend_transition_work_mode ==
+                    FRONTEND_TRANSITION_PANEL_FALLBACK
+            ) {
+                frontend_draw_upgrade_menu_text();
+            }
+            frontend_transition_phase = 7;
+            break;
+        default:
+            frontend_present(
+                frontend_frame_scratch,
+                frontend_palette_address(
+                    FRONTEND_FRAME_MENU_CHROME
+                )
+            );
+            frontend_transition_job =
+                FRONTEND_TRANSITION_JOB_NONE;
+            break;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_JOB_QUIT:
+        if (
+            frontend_transition_flags &
+                FRONTEND_QUIT_JOB_ENTER
+        ) {
+            switch (frontend_transition_phase) {
+            case 0:
+                if (
+                    frontend_quit_dialog_cache_valid &&
+                    frontend_quit_dialog_cache_selection == 5
+                ) {
+                    frontend_transition_phase = 3;
+                } else {
+                    (void)frontend_copy_static_menu_panel_rows(
+                        FRONTEND_STATIC_GAME_MENU_BASE + 5u,
+                        0,
+                        60
+                    );
+                    frontend_transition_phase = 1;
+                }
+                break;
+            case 1:
+                (void)frontend_copy_static_menu_panel_rows(
+                    FRONTEND_STATIC_GAME_MENU_BASE + 5u,
+                    60,
+                    60
+                );
+                frontend_transition_phase = 2;
+                break;
+            case 2:
+                frontend_quit_capture_dialog_background();
+                frontend_quit_dialog_cache_valid = 1;
+                frontend_quit_dialog_cache_selection = 5;
+                frontend_transition_phase = 3;
+                break;
+            case 3:
+                frontend_compose_quit_shade();
+                frontend_transition_phase = 4;
+                break;
+            case 4:
+                frontend_compose_quit_overlay();
+                frontend_transition_phase = 5;
+                break;
+            case 5:
+                frontend_compose_quit_choices();
+                frontend_transition_phase = 6;
+                break;
+            default:
+                frontend_present(
+                    frontend_frame_scratch,
+                    frontend_palette_address(
+                        FRONTEND_FRAME_MENU_CHROME
+                    )
+                );
+                frontend_transition_job =
+                    FRONTEND_TRANSITION_JOB_NONE;
+                break;
+            }
+        } else {
+            if (frontend_transition_phase == 0) {
+                frontend_quit_restore_dialog_background();
+                frontend_transition_phase = 1;
+            } else {
+                frontend_present(
+                    frontend_frame_scratch,
+                    frontend_palette_address(
+                        FRONTEND_FRAME_MENU_CHROME
+                    )
+                );
+                frontend_transition_job =
+                    FRONTEND_TRANSITION_JOB_NONE;
+            }
+        }
+        break;
+
+    default:
+        frontend_transition_failed = 1;
+        frontend_transition_job = FRONTEND_TRANSITION_JOB_NONE;
+        break;
+    }
 }
 
 static void frontend_update(void)
@@ -1233,9 +1651,10 @@ static void frontend_update(void)
                 ) {
                     frontend_main_section = frontend_level.next_section;
                 }
-                frontend_prepare_map();
-                frontend_enter_state(STATE_GAME_MENU, 4);
-                frontend_load_game_menu_song();
+                frontend_start_game_menu_transition(
+                    FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
+                    FRONTEND_GAME_MENU_JOB_LOAD_SONG
+                );
 #ifdef AUTOTEST
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
                 if (
@@ -1429,10 +1848,10 @@ static void frontend_update(void)
             break;
         case STATE_GAME_MENU:
             frontend_quit_yes = 1;
-            frontend_enter_state(STATE_QUIT_CONFIRM, 0);
+            frontend_start_quit_transition(1);
             break;
         case STATE_NEXT_LEVEL_MENU:
-            frontend_enter_state(STATE_GAME_MENU, 4);
+            frontend_start_game_menu_transition(0);
             break;
         case STATE_UPGRADE_MENU:
             frontend_enter_state(STATE_GAME_MENU, 2);
@@ -1442,7 +1861,7 @@ static void frontend_update(void)
             break;
         case STATE_QUIT_CONFIRM:
             frontend_quit_yes = 0;
-            frontend_enter_state(STATE_GAME_MENU, 5);
+            frontend_start_quit_transition(0);
             audio_effect(SFX_CLICK);
             break;
         default:
@@ -1478,10 +1897,11 @@ static void frontend_update(void)
     case STATE_DIFFICULTY_MENU:
         frontend_difficulty =
             (u8)(FRONTEND_DIFFICULTY_EASY + frontend_selection);
-        frontend_campaign_initialize();
-        frontend_prepare_map();
-        frontend_enter_state(STATE_GAME_MENU, 4);
-        frontend_load_game_menu_song();
+        frontend_start_game_menu_transition(
+            FRONTEND_GAME_MENU_JOB_INITIALIZE_CAMPAIGN |
+            FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
+            FRONTEND_GAME_MENU_JOB_LOAD_SONG
+        );
         break;
     case STATE_GAME_MENU:
         if (frontend_selection == 2) {
@@ -1497,11 +1917,11 @@ static void frontend_update(void)
                 frontend_advance_episode();
             } else {
                 frontend_nav_reset();
-                frontend_enter_state(STATE_NEXT_LEVEL_MENU, 0);
+                frontend_start_next_level_transition();
             }
         } else if (frontend_selection == 5) {
             frontend_quit_yes = 1;
-            frontend_enter_state(STATE_QUIT_CONFIRM, 0);
+            frontend_start_quit_transition(1);
         }
         /* Data Cubes, Ship Specs and Options remain visible but disabled. */
         break;
@@ -1512,8 +1932,7 @@ static void frontend_update(void)
         } else if (
             frontend_upgrade_begin_submenu(frontend_selection)
         ) {
-            frontend_enter_state(
-                STATE_UPGRADE_SUBMENU,
+            frontend_start_upgrade_submenu_transition(
                 frontend_selection
             );
             frontend_upgrade_apply_preview();
@@ -1550,7 +1969,7 @@ static void frontend_update(void)
             enter_title();
         } else {
             audio_effect(SFX_CLICK);
-            frontend_enter_state(STATE_GAME_MENU, 5);
+            frontend_start_quit_transition(0);
         }
         break;
     case STATE_NEXT_LEVEL_MENU:
@@ -1567,12 +1986,13 @@ static void frontend_update(void)
                         frontend_map.map_section[map_choice]
                     )
                 ) {
-                    frontend_enter_state(STATE_GAME_MENU, 4);
-                    frontend_load_game_menu_song();
+                    frontend_start_game_menu_transition(
+                        FRONTEND_GAME_MENU_JOB_LOAD_SONG
+                    );
                 }
             }
         } else {
-            frontend_enter_state(STATE_GAME_MENU, 4);
+            frontend_start_game_menu_transition(0);
         }
         break;
     default:
@@ -1798,7 +2218,8 @@ static void game_over_update(void)
     }
     if (pad_pressed == 0) return;
 
-    frontend_enter_state(STATE_GAME_MENU, 4);
-    frontend_load_game_menu_song();
+    frontend_start_game_menu_transition(
+        FRONTEND_GAME_MENU_JOB_LOAD_SONG
+    );
     telemetry_game_over_exits++;
 }

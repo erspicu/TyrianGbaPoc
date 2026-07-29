@@ -36,9 +36,14 @@ frontend_glyphs:
 	.incbin "res/frontend_glyphs.bin"
 
 	.balign 4
-	.global frontend_cube
-frontend_cube:
-	.incbin "res/frontend_cube.bin"
+	.global frontend_stats_tiles
+frontend_stats_tiles:
+	.incbin "res/frontend_stats_tiles.bin"
+
+	.balign 4
+	.global frontend_stats_widths
+frontend_stats_widths:
+	.incbin "res/frontend_stats_widths.bin"
 
 	.balign 4
 	.global frontend_native_font
@@ -94,6 +99,16 @@ frontend_nav_obj_palette:
 	.global frontend_nav_bitmap_pages
 frontend_nav_bitmap_pages:
 	.incbin "res/frontend_nav_bitmap_pages.bin"
+
+	.balign 4
+	.global frontend_source_stamp_offsets
+frontend_source_stamp_offsets:
+	.incbin "res/frontend_source_stamp_offsets.bin"
+
+	.balign 4
+	.global frontend_source_stamp_data
+frontend_source_stamp_data:
+	.incbin "res/frontend_source_stamp_data.bin"
 
 	.balign 4
 	.global jukebox_font_tiles

@@ -6,4 +6,5 @@
 #include "autotest/autotest_scenarios.inc"
 #include "autotest/autotest_telemetry.inc"
 #include "autotest/autotest_input.inc"
+#include "autotest/autotest_frontend_transitions.inc"
 #endif

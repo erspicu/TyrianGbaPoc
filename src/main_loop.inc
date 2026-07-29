@@ -1,3 +1,30 @@
+static void telemetry_record_missed_vblank_state(u32 count)
+{
+    if (game_state == STATE_PLAY) {
+        telemetry_missed_vblanks_play += count;
+    } else if (game_state == STATE_GAME_OVER) {
+        telemetry_missed_vblanks_game_over += count;
+    } else {
+        telemetry_missed_vblanks_frontend += count;
+        if (game_state == STATE_LEVEL_STATS) {
+            telemetry_missed_vblanks_stats += count;
+        } else if (frontend_transition_busy()) {
+            telemetry_missed_vblanks_transition += count;
+            telemetry_missed_vblank_transition_job_last =
+                frontend_transition_job;
+            /*
+             * The overrun belongs to the work completed in the previous
+             * loop.  The job has already advanced this field, so recording
+             * the next phase makes the causal phase unambiguous as N - 1.
+             */
+            telemetry_missed_vblank_transition_phase_next =
+                frontend_transition_phase;
+        } else {
+            telemetry_missed_vblanks_frontend_other += count;
+        }
+    }
+}
+
 int main(void)
 {
     u32 current_vblank;
@@ -120,6 +147,7 @@ int main(void)
             vblank_steps = 1;
             commit_vblank_now = 0;
             telemetry_missed_vblanks++;
+            telemetry_record_missed_vblank_state(1);
             telemetry_vblank_recovery_loops++;
         } else {
             commit_vblank_now = 1;
@@ -158,7 +186,11 @@ int main(void)
             vblank_steps = current_vblank - last_vblank_seen;
         }
         if (last_vblank_seen && current_vblank > last_vblank_seen + 1) {
-            telemetry_missed_vblanks += current_vblank - last_vblank_seen - 1;
+            u32 missed =
+                current_vblank - last_vblank_seen - 1;
+
+            telemetry_missed_vblanks += missed;
+            telemetry_record_missed_vblank_state(missed);
         }
 #endif
         last_vblank_seen = current_vblank;
@@ -389,12 +421,50 @@ int main(void)
 #ifdef AUTOTEST_BOOT_ONLY
             u8 old_state = game_state;
 #endif
-            frontend_update();
+            if (frontend_transition_busy()) {
+#if TYRIAN_GBA_PERF_TIMER
+                u32 frontend_transition_cycle_start =
+                    stress_cycle_counter_read();
+                u8 frontend_transition_phase_before =
+                    frontend_transition_phase;
+#endif
+                frontend_transition_update();
+#if TYRIAN_GBA_PERF_TIMER
+                {
+                    u32 elapsed =
+                        stress_cycle_counter_read() -
+                        frontend_transition_cycle_start;
+
+                    if (
+                        elapsed >
+                            telemetry_frontend_transition_job_cycles_max
+                    ) {
+                        telemetry_frontend_transition_job_cycles_max =
+                            elapsed;
+                    }
+                    if (
+                        frontend_transition_phase_before <
+                            FRONTEND_TRANSITION_PHASE_TELEMETRY_COUNT &&
+                        elapsed >
+                            telemetry_frontend_transition_phase_cycles_max[
+                                frontend_transition_phase_before
+                            ]
+                    ) {
+                        telemetry_frontend_transition_phase_cycles_max[
+                            frontend_transition_phase_before
+                        ] = elapsed;
+                    }
+                }
+#endif
+            } else {
+                frontend_update();
+            }
 #ifdef AUTOTEST_FRONTEND_CAPTURE_STATE
             static u8 frontend_capture_armed;
 
             if (
                 game_state == AUTOTEST_FRONTEND_CAPTURE_STATE &&
+                !frontend_transition_busy() &&
                 (
                     AUTOTEST_FRONTEND_CAPTURE_STATE !=
                         STATE_LEVEL_STATS ||
@@ -447,374 +517,7 @@ int main(void)
             }
 #endif
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
-            {
-                static u8 frontend_transition_stress_phase;
-                static u16 frontend_transition_stress_count;
-                static u32 frontend_transition_stress_vblank_start;
-                static u32 frontend_transition_stress_game_upgrade[9];
-                static u32 frontend_transition_stress_pre_game[9];
-                static u32 frontend_transition_stress_quit_enter_missed;
-                static u32 frontend_transition_stress_quit_return_missed;
-                static u32 frontend_transition_stress_quit_last_missed;
-                static u8 frontend_transition_stress_quit_last_kind;
-
-                if (
-                    frontend_transition_stress_phase == 0 &&
-                    game_state == STATE_GAME_MENU &&
-                    !frontend_frame_pending
-                ) {
-                    frontend_transition_stress_phase = 1;
-                    autotest_frontend_transition_ready = 1;
-                    telemetry_missed_vblanks = 0;
-                    telemetry_frontend_full_redraws = 0;
-                    telemetry_frontend_dirty_commits = 0;
-                    telemetry_frontend_dirty_bytes = 0;
-                    telemetry_frontend_runtime_shp_decodes = 0;
-                    telemetry_frontend_runtime_sprite2_decodes = 0;
-                    telemetry_state_transitions = 0;
-                    frontend_transition_stress_vblank_start =
-                        telemetry_vblank_irqs;
-                    last_vblank_seen = current_vblank;
-                } else if (
-                    frontend_transition_stress_phase == 1 &&
-                    frontend_transition_stress_count < 120 &&
-                    !frontend_frame_pending
-                ) {
-                    if (game_state == STATE_GAME_MENU) {
-                        frontend_enter_state(
-                            STATE_UPGRADE_MENU,
-                            0
-                        );
-                    } else {
-                        frontend_enter_state(
-                            STATE_GAME_MENU,
-                            2
-                        );
-                    }
-                    audio_effect(SFX_CLICK);
-                    frontend_transition_stress_count++;
-                } else if (
-                    frontend_transition_stress_phase == 1 &&
-                    frontend_transition_stress_count == 120 &&
-                    !frontend_frame_pending
-                ) {
-                    frontend_transition_stress_game_upgrade[0] =
-                        telemetry_missed_vblanks;
-                    frontend_transition_stress_game_upgrade[1] =
-                        telemetry_vblank_irqs -
-                            frontend_transition_stress_vblank_start;
-                    frontend_transition_stress_game_upgrade[2] =
-                        telemetry_frontend_full_redraws;
-                    frontend_transition_stress_game_upgrade[3] =
-                        telemetry_frontend_dirty_commits;
-                    frontend_transition_stress_game_upgrade[4] =
-                        telemetry_frontend_dirty_bytes;
-                    frontend_transition_stress_game_upgrade[5] =
-                        telemetry_frontend_runtime_shp_decodes;
-                    frontend_transition_stress_game_upgrade[6] =
-                        telemetry_frontend_runtime_sprite2_decodes;
-                    frontend_transition_stress_game_upgrade[7] =
-                        mmActive();
-                    frontend_transition_stress_game_upgrade[8] =
-                        telemetry_state_transitions;
-                    frontend_transition_stress_phase = 2;
-                    frontend_transition_stress_count = 0;
-                    frontend_enter_state(
-                        STATE_PLAY_MODE_MENU,
-                        0
-                    );
-                } else if (
-                    frontend_transition_stress_phase == 2 &&
-                    game_state == STATE_PLAY_MODE_MENU &&
-                    !frontend_frame_pending
-                ) {
-                    frontend_transition_stress_phase = 3;
-                    telemetry_missed_vblanks = 0;
-                    telemetry_frontend_full_redraws = 0;
-                    telemetry_frontend_dirty_commits = 0;
-                    telemetry_frontend_dirty_bytes = 0;
-                    telemetry_frontend_runtime_shp_decodes = 0;
-                    telemetry_frontend_runtime_sprite2_decodes = 0;
-                    telemetry_state_transitions = 0;
-                    frontend_transition_stress_vblank_start =
-                        telemetry_vblank_irqs;
-                    last_vblank_seen = current_vblank;
-                } else if (
-                    frontend_transition_stress_phase == 3 &&
-                    frontend_transition_stress_count < 120 &&
-                    !frontend_frame_pending
-                ) {
-                    if (game_state == STATE_PLAY_MODE_MENU) {
-                        frontend_enter_state(
-                            STATE_EPISODE_MENU,
-                            0
-                        );
-                    } else {
-                        frontend_enter_state(
-                            STATE_PLAY_MODE_MENU,
-                            0
-                        );
-                    }
-                    audio_effect(SFX_CLICK);
-                    frontend_transition_stress_count++;
-                } else if (
-                    frontend_transition_stress_phase == 3 &&
-                    frontend_transition_stress_count == 120 &&
-                    !frontend_frame_pending
-                ) {
-                    frontend_transition_stress_pre_game[0] =
-                        telemetry_missed_vblanks;
-                    frontend_transition_stress_pre_game[1] =
-                        telemetry_vblank_irqs -
-                            frontend_transition_stress_vblank_start;
-                    frontend_transition_stress_pre_game[2] =
-                        telemetry_frontend_full_redraws;
-                    frontend_transition_stress_pre_game[3] =
-                        telemetry_frontend_dirty_commits;
-                    frontend_transition_stress_pre_game[4] =
-                        telemetry_frontend_dirty_bytes;
-                    frontend_transition_stress_pre_game[5] =
-                        telemetry_frontend_runtime_shp_decodes;
-                    frontend_transition_stress_pre_game[6] =
-                        telemetry_frontend_runtime_sprite2_decodes;
-                    frontend_transition_stress_pre_game[7] =
-                        mmActive();
-                    frontend_transition_stress_pre_game[8] =
-                        telemetry_state_transitions;
-                    frontend_transition_stress_phase = 4;
-                    frontend_transition_stress_count = 0;
-                    frontend_enter_state(STATE_GAME_MENU, 5);
-                } else if (
-                    frontend_transition_stress_phase == 4 &&
-                    game_state == STATE_GAME_MENU &&
-                    !frontend_frame_pending
-                ) {
-                    frontend_transition_stress_phase = 5;
-                    telemetry_missed_vblanks = 0;
-                    telemetry_frontend_full_redraws = 0;
-                    telemetry_frontend_dirty_commits = 0;
-                    telemetry_frontend_dirty_bytes = 0;
-                    telemetry_frontend_runtime_shp_decodes = 0;
-                    telemetry_frontend_runtime_sprite2_decodes = 0;
-                    telemetry_state_transitions = 0;
-                    frontend_transition_stress_vblank_start =
-                        telemetry_vblank_irqs;
-                    last_vblank_seen = current_vblank;
-                } else if (
-                    frontend_transition_stress_phase == 5 &&
-                    frontend_transition_stress_count < 120 &&
-                    !frontend_frame_pending
-                ) {
-                    if (
-                        frontend_transition_stress_quit_last_kind != 0
-                    ) {
-                        u32 missed_delta =
-                            telemetry_missed_vblanks -
-                            frontend_transition_stress_quit_last_missed;
-
-                        if (
-                            frontend_transition_stress_quit_last_kind ==
-                            1
-                        ) {
-                            frontend_transition_stress_quit_enter_missed +=
-                                missed_delta;
-                        } else {
-                            frontend_transition_stress_quit_return_missed +=
-                                missed_delta;
-                        }
-                    }
-                    frontend_transition_stress_quit_last_missed =
-                        telemetry_missed_vblanks;
-                    if (game_state == STATE_GAME_MENU) {
-                        frontend_transition_stress_quit_last_kind = 1;
-                        frontend_quit_yes = 1;
-                        frontend_enter_state(
-                            STATE_QUIT_CONFIRM,
-                            0
-                        );
-                    } else {
-                        frontend_transition_stress_quit_last_kind = 2;
-                        frontend_enter_state(
-                            STATE_GAME_MENU,
-                            5
-                        );
-                    }
-                    audio_effect(SFX_CLICK);
-                    frontend_transition_stress_count++;
-                } else if (
-                    frontend_transition_stress_phase == 5 &&
-                    frontend_transition_stress_count == 120 &&
-                    !frontend_frame_pending
-                ) {
-                    volatile u8 *sram =
-                        (volatile u8 *)0x0E000000;
-
-                    if (
-                        frontend_transition_stress_quit_last_kind != 0
-                    ) {
-                        u32 missed_delta =
-                            telemetry_missed_vblanks -
-                            frontend_transition_stress_quit_last_missed;
-
-                        if (
-                            frontend_transition_stress_quit_last_kind ==
-                            1
-                        ) {
-                            frontend_transition_stress_quit_enter_missed +=
-                                missed_delta;
-                        } else {
-                            frontend_transition_stress_quit_return_missed +=
-                                missed_delta;
-                        }
-                    }
-                    sram[0] = 'T';
-                    sram[1] = 'G';
-                    sram[2] = 'F';
-                    sram[3] = 'A';
-                    sram_write_u32(4, 3);
-                    sram_write_u32(8, 120);
-                    sram_write_u32(
-                        12,
-                        frontend_transition_stress_game_upgrade[0]
-                    );
-                    sram_write_u32(
-                        16,
-                        frontend_transition_stress_game_upgrade[1]
-                    );
-                    sram_write_u32(
-                        20,
-                        frontend_transition_stress_game_upgrade[2]
-                    );
-                    sram_write_u32(
-                        24,
-                        frontend_transition_stress_game_upgrade[3]
-                    );
-                    sram_write_u32(
-                        28,
-                        frontend_transition_stress_game_upgrade[4]
-                    );
-                    sram_write_u32(
-                        32,
-                        frontend_transition_stress_game_upgrade[5]
-                    );
-                    sram_write_u32(
-                        36,
-                        frontend_transition_stress_game_upgrade[6]
-                    );
-                    sram_write_u32(
-                        40,
-                        frontend_transition_stress_game_upgrade[7]
-                    );
-                    sram_write_u32(
-                        44,
-                        frontend_transition_stress_game_upgrade[8]
-                    );
-                    sram_write_u32(
-                        48,
-                        120
-                    );
-                    sram_write_u32(
-                        52,
-                        frontend_transition_stress_pre_game[0]
-                    );
-                    sram_write_u32(
-                        56,
-                        frontend_transition_stress_pre_game[1]
-                    );
-                    sram_write_u32(
-                        60,
-                        frontend_transition_stress_pre_game[2]
-                    );
-                    sram_write_u32(
-                        64,
-                        frontend_transition_stress_pre_game[3]
-                    );
-                    sram_write_u32(
-                        68,
-                        frontend_transition_stress_pre_game[4]
-                    );
-                    sram_write_u32(
-                        72,
-                        frontend_transition_stress_pre_game[5]
-                    );
-                    sram_write_u32(
-                        76,
-                        frontend_transition_stress_pre_game[6]
-                    );
-                    sram_write_u32(
-                        80,
-                        frontend_transition_stress_pre_game[7]
-                    );
-                    sram_write_u32(
-                        84,
-                        frontend_transition_stress_pre_game[8]
-                    );
-                    sram_write_u32(
-                        88,
-                        frontend_transition_stress_count
-                    );
-                    sram_write_u32(92, telemetry_missed_vblanks);
-                    sram_write_u32(
-                        96,
-                        telemetry_vblank_irqs -
-                            frontend_transition_stress_vblank_start
-                    );
-                    sram_write_u32(
-                        100,
-                        telemetry_frontend_full_redraws
-                    );
-                    sram_write_u32(
-                        104,
-                        telemetry_frontend_dirty_commits
-                    );
-                    sram_write_u32(
-                        108,
-                        telemetry_frontend_dirty_bytes
-                    );
-                    sram_write_u32(
-                        112,
-                        telemetry_frontend_runtime_shp_decodes
-                    );
-                    sram_write_u32(
-                        116,
-                        telemetry_frontend_runtime_sprite2_decodes
-                    );
-                    sram_write_u32(120, mmActive());
-                    sram_write_u32(
-                        124,
-                        telemetry_state_transitions
-                    );
-                    sram_write_u32(128, game_state);
-                    sram_write_u32(132, frontend_selection);
-                    sram_write_u32(136, frontend_frame_pending);
-                    sram_write_u32(140, frontend_pending_kind);
-                    sram_write_u32(
-                        144,
-                        frontend_transition_stress_quit_enter_missed
-                    );
-                    sram_write_u32(
-                        148,
-                        frontend_transition_stress_quit_return_missed
-                    );
-                    sram_write_u32(
-                        152,
-                        telemetry_frontend_quit_capture_cycles_max
-                    );
-                    sram_write_u32(
-                        156,
-                        telemetry_frontend_quit_shade_cycles_max
-                    );
-                    sram_write_u32(
-                        160,
-                        telemetry_frontend_quit_overlay_cycles_max
-                    );
-                    sram_write_u32(
-                        164,
-                        telemetry_frontend_quit_choices_cycles_max
-                    );
-                    __asm__ volatile("swi 3");
-                }
-            }
+            autotest_frontend_transition_update(current_vblank);
 #endif
 #ifdef AUTOTEST_FRONTEND_NAV_CAMERA_STRESS
             {
@@ -1232,10 +935,14 @@ int main(void)
                 }
             }
 #endif
+#ifdef AUTOTEST_DEATH_FLOW
+            autotest_death_finish_update();
+#endif
 #ifdef AUTOTEST
             if (
                 autotest_frontend_finish_pending &&
-                !frontend_frame_pending
+                !frontend_frame_pending &&
+                !frontend_transition_busy()
             ) {
                 autotest_finish();
             }

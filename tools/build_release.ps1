@@ -9,6 +9,24 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-Sha256Hex {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $stream = [IO.File]::OpenRead([IO.Path]::GetFullPath($Path))
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return [BitConverter]::ToString(
+            $sha256.ComputeHash($stream)
+        ).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $projectRoot = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $bootstrap = Join-Path $projectRoot "tools\bootstrap.ps1"
 $toolchainRoot = Join-Path $projectRoot ".toolchain"
@@ -98,9 +116,7 @@ New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $ordinal = 0
 foreach ($oldRom in Get-ChildItem -LiteralPath $buildDir -Filter "*.gba" -File) {
-    $shortHash = (
-        Get-FileHash -LiteralPath $oldRom.FullName -Algorithm SHA256
-    ).Hash.Substring(0, 8).ToLowerInvariant()
+    $shortHash = (Get-Sha256Hex $oldRom.FullName).Substring(0, 8)
     do {
         $suffix = if ($ordinal -eq 0) { "" } else { "-$ordinal" }
         $archiveName =
@@ -164,9 +180,7 @@ foreach ($entry in Get-ChildItem -LiteralPath $buildDir -Force) {
 }
 Move-Item -LiteralPath $stageRom -Destination $finalRom
 
-$hash = (
-    Get-FileHash -LiteralPath $finalRom -Algorithm SHA256
-).Hash.ToLowerInvariant()
+$hash = Get-Sha256Hex $finalRom
 $sizeMiB = [math]::Round((Get-Item -LiteralPath $finalRom).Length / 1MB, 2)
 
 Write-Host ""

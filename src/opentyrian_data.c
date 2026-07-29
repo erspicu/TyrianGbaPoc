@@ -20,6 +20,12 @@ enum {
     OT_LEVEL_MAP1_BYTES = OT_LEVEL_MAP1_COLUMNS * OT_LEVEL_MAP1_ROWS,
     OT_LEVEL_MAP2_BYTES = OT_LEVEL_MAP2_COLUMNS * OT_LEVEL_MAP2_ROWS,
     OT_LEVEL_MAP3_BYTES = OT_LEVEL_MAP3_COLUMNS * OT_LEVEL_MAP3_ROWS,
+    /*
+     * The four stock levelsN.dat files contain at most 51 '*' sections.
+     * Keep a little format headroom while retaining a tiny direct-ROM
+     * lookup table.
+     */
+    OT_EPISODE_SCRIPT_SECTION_CAPACITY = 64,
 };
 
 typedef struct {
@@ -52,9 +58,22 @@ typedef struct {
     OtItemDatabase items;
 } OtDataState;
 
+typedef struct {
+    const uint8_t *data;
+    uint32_t size;
+    uint32_t section_offset[OT_EPISODE_SCRIPT_SECTION_CAPACITY];
+    uint8_t section_count;
+    bool valid;
+} OtEpisodeScriptIndex;
+
 static OtDataCatalog catalog;
 static OtDataState data_state;
+static OtEpisodeScriptIndex episode_script_index;
 static bool initialization_attempted;
+
+static const uint8_t encrypted_pascal_key[10] = {
+    204, 129, 63, 255, 71, 19, 25, 62, 1, 99
+};
 
 static const uint8_t pcx_palette[OT_PIC_COUNT] = {
     0, 7, 5, 8, 10, 5, 18, 19, 19, 20, 21, 22, 5
@@ -226,9 +245,6 @@ static bool encrypted_pascal_read(
     uint32_t destination_size
 )
 {
-    static const uint8_t crypt_key[10] = {
-        204, 129, 63, 255, 71, 19, 25, 62, 1, 99
-    };
     uint8_t length;
     uint32_t index;
 
@@ -254,7 +270,8 @@ static bool encrypted_pascal_read(
         uint32_t i = index - 1;
 
         destination[i] = (char)(
-            (uint8_t)destination[i] ^ crypt_key[i % 10]
+            (uint8_t)destination[i] ^
+            encrypted_pascal_key[i % 10]
         );
         if (i != 0) {
             destination[i] = (char)(
@@ -264,6 +281,58 @@ static bool encrypted_pascal_read(
         }
     }
     destination[length] = '\0';
+    return true;
+}
+
+/*
+ * levelsN.dat is a Pascal-string stream.  A section starts after a record
+ * whose decrypted first character is '*'.  The first character needs only
+ * one XOR with key[0], so indexing the complete stock script does not need
+ * to decrypt or copy any line.  This preserves direct ROMFS source-data
+ * semantics while replacing repeated O(lines) seeks with O(1) lookups.
+ */
+static bool episode_script_index_build(const OtRomFsStat *file)
+{
+    OtEpisodeScriptIndex built = {0};
+    uint32_t cursor = 0;
+
+    if (file == 0 || file->data == 0) return false;
+    if (
+        episode_script_index.valid &&
+        episode_script_index.data == file->data &&
+        episode_script_index.size == file->size
+    ) {
+        return true;
+    }
+    built.data = file->data;
+    built.size = file->size;
+    while (cursor < file->size) {
+        uint8_t length = file->data[cursor++];
+        uint32_t record_end;
+
+        if (!span_is_valid(file->size, cursor, length)) return false;
+        record_end = cursor + length;
+        if (
+            length != 0 &&
+            (
+                file->data[cursor] ^
+                encrypted_pascal_key[0]
+            ) == '*'
+        ) {
+            if (
+                built.section_count >=
+                    OT_EPISODE_SCRIPT_SECTION_CAPACITY
+            ) {
+                return false;
+            }
+            built.section_offset[built.section_count++] =
+                record_end;
+        }
+        cursor = record_end;
+    }
+    if (built.section_count == 0) return false;
+    built.valid = true;
+    episode_script_index = built;
     return true;
 }
 
@@ -314,23 +383,15 @@ static bool episode_seek_section(
     uint32_t *position
 )
 {
-    char line[256];
-    uint16_t current = 0;
-    uint32_t cursor = 0;
-
-    if (section == 0 || position == 0) return false;
-    while (current < section) {
-        if (!encrypted_pascal_read(
-                file,
-                &cursor,
-                line,
-                sizeof(line)
-            )) {
-            return false;
-        }
-        if (line[0] == '*') current++;
+    if (
+        section == 0 ||
+        position == 0 ||
+        !episode_script_index_build(file) ||
+        section > episode_script_index.section_count
+    ) {
+        return false;
     }
-    *position = cursor;
+    *position = episode_script_index.section_offset[section - 1u];
     return true;
 }
 
@@ -1034,6 +1095,7 @@ bool ot_data_init(void)
     initialization_attempted = true;
     catalog = (OtDataCatalog){0};
     data_state = (OtDataState){0};
+    episode_script_index = (OtEpisodeScriptIndex){0};
     catalog.selected_mus_song = UINT16_MAX;
 
     catalog.hdt_valid = parse_hdt();

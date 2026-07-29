@@ -956,11 +956,8 @@ static void frontend_render_next_level_item(u8 selection)
     );
 }
 
-static void frontend_render_next_level(void)
+static void frontend_prepare_next_level_base(void)
 {
-    u8 choice_count = frontend_next_choice_count();
-    u8 choice;
-
     memcpy(
         frontend_frame_scratch,
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
@@ -969,7 +966,10 @@ static void frontend_render_next_level(void)
     frontend_nav_set_target();
     frontend_nav_presented_x = frontend_nav_x;
     frontend_nav_presented_y = frontend_nav_y;
-    frontend_nav_draw();
+}
+
+static void frontend_prepare_next_level_text_base(void)
+{
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         "NEXT LEVEL",
@@ -985,10 +985,25 @@ static void frontend_render_next_level(void)
         FRONTEND_NEXT_PANEL_HEIGHT,
         FRONTEND_NEXT_BACKGROUND_COLOUR
     );
+}
+
+static void frontend_prepare_next_level_text(void)
+{
+    u8 choice_count = frontend_next_choice_count();
+    u8 choice;
+
+    frontend_prepare_next_level_text_base();
     for (choice = 0; choice < choice_count; choice++) {
         frontend_render_next_level_item(choice);
     }
     frontend_render_next_level_item(choice_count);
+}
+
+static void frontend_render_next_level(void)
+{
+    frontend_prepare_next_level_base();
+    frontend_nav_draw();
+    frontend_prepare_next_level_text();
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_NEXT_LEVEL_0)
