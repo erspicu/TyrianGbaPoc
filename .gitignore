@@ -15,6 +15,13 @@
 __pycache__/
 *.py[cod]
 
+# Local capture sessions can contain thousands of raw frames.  Keep only the
+# curated PC/GBA parity references used by the maintained documentation.
+/temp/*
+!/temp/pc_frontend_reference/
+/temp/pc_frontend_reference/*
+!/temp/pc_frontend_reference/selected/
+
 # Local IDE and operating-system files
 .vs/
 .vscode/
