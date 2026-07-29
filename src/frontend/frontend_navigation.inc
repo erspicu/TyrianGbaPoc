@@ -935,7 +935,7 @@ static void frontend_render_next_level_item(u8 selection)
             frontend_text.misc_text[5][0] != '\0'
         ) ?
             frontend_text.misc_text[5] :
-            "EXIT TO GAME MENU";
+            "Exit to Game Menu";
     }
     frontend_fill_rect(
         frontend_frame_scratch,
@@ -945,11 +945,12 @@ static void frontend_render_next_level_item(u8 selection)
         FRONTEND_NEXT_ITEM_HEIGHT,
         FRONTEND_NEXT_BACKGROUND_COLOUR
     );
-    frontend_draw_runtime_text(
+    frontend_draw_menu_text_clipped(
         frontend_frame_scratch,
         label,
         FRONTEND_NEXT_PANEL_X,
         (s16)y,
+        FRONTEND_NEXT_PANEL_X + FRONTEND_NEXT_PANEL_WIDTH,
         selection == frontend_selection ?
             FRONTEND_NEXT_SELECTED_COLOUR :
             FRONTEND_NEXT_TEXT_COLOUR
@@ -970,12 +971,12 @@ static void frontend_prepare_next_level_base(void)
 
 static void frontend_prepare_next_level_text_base(void)
 {
-    frontend_draw_runtime_text_centered(
+    frontend_draw_menu_text_centered(
         frontend_frame_scratch,
-        "NEXT LEVEL",
+        "Next Level",
         TYRIAN_GBA_LAYOUT_NEXT_TITLE_CENTER_X,
         TYRIAN_GBA_LAYOUT_NEXT_TITLE_Y,
-        0xfbu
+        FRONTEND_NEXT_TITLE_COLOUR
     );
     frontend_fill_rect(
         frontend_frame_scratch,

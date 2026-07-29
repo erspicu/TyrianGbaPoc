@@ -172,6 +172,10 @@ FRONTEND_PREGAME_FONT_HEIGHT = 8
 FRONTEND_PREGAME_FONT_WIDTH = 8
 FRONTEND_PREGAME_FONT_SPACE = 4
 FRONTEND_PREGAME_FONT_SHADOW = 240
+FRONTEND_MENU_FONT_WIDTH = 7
+FRONTEND_MENU_FONT_SPACE = 3
+FRONTEND_SMALL_MIXED_FONT_WIDTH = 4
+FRONTEND_SMALL_MIXED_FONT_SPACE = 2
 BACKGROUND_PALETTE_BANK_COUNT = 16
 BACKGROUND_PALETTE_COLOURS_PER_BANK = 16
 BACKGROUND_PALETTE_SOURCE_COLOURS = 256
@@ -2316,6 +2320,174 @@ def build_frontend_static_menu_panels(
             colour,
         )
 
+    def menu_glyph_advance(index: int | None) -> int:
+        if index is None:
+            return FRONTEND_MENU_FONT_SPACE
+        return min(
+            FRONTEND_MENU_FONT_WIDTH,
+            pregame_glyph_width(index) + 1,
+        )
+
+    def menu_text_width(text: str) -> int:
+        return sum(
+            menu_glyph_advance(pregame_glyph_index(character))
+            for character in text
+        )
+
+    def draw_menu_text(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        colour: int,
+    ) -> None:
+        for character in text:
+            index = pregame_glyph_index(character)
+            advance = menu_glyph_advance(index)
+            if x >= right or x + advance > right:
+                break
+            draw_pregame_glyph(
+                frame,
+                index,
+                x + 1,
+                y + 1,
+                FRONTEND_PREGAME_FONT_SHADOW,
+            )
+            draw_pregame_glyph(frame, index, x, y, colour)
+            x += advance
+
+    def draw_menu_centered(
+        frame: np.ndarray,
+        text: str,
+        center_x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        draw_menu_text(
+            frame,
+            text,
+            center_x - menu_text_width(text) // 2,
+            y,
+            FRONTEND_FRAME_WIDTH,
+            colour,
+        )
+
+    def small_mixed_glyph_width(index: int) -> int:
+        return min(
+            FRONTEND_SMALL_MIXED_FONT_WIDTH,
+            pregame_glyph_width(index),
+        )
+
+    def small_mixed_glyph_advance(index: int | None) -> int:
+        if index is None:
+            return FRONTEND_SMALL_MIXED_FONT_SPACE
+        return small_mixed_glyph_width(index) + 1
+
+    def small_mixed_text_width(text: str) -> int:
+        return sum(
+            small_mixed_glyph_advance(
+                pregame_glyph_index(character)
+            )
+            for character in text
+        )
+
+    def draw_small_mixed_glyph(
+        frame: np.ndarray,
+        index: int | None,
+        x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        if index is None:
+            return
+        source_width = pregame_glyph_width(index)
+        target_width = small_mixed_glyph_width(index)
+        for row in range(FRONTEND_PREGAME_FONT_HEIGHT):
+            value = pregame_row(index, row)
+            target_y = y + row
+            if target_y < 0 or target_y >= FRONTEND_FRAME_HEIGHT:
+                continue
+            for column in range(target_width):
+                source_column = (
+                    0 if target_width == 1 else
+                    column * (source_width - 1) //
+                        (target_width - 1)
+                )
+                target_x = x + column
+                if (
+                    0 <= target_x < FRONTEND_FRAME_WIDTH and
+                    value &
+                        (1 << (source_width - source_column - 1))
+                ):
+                    frame[target_y, target_x] = colour
+
+    def draw_small_mixed_text(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        colour: int,
+    ) -> None:
+        for character in text:
+            index = pregame_glyph_index(character)
+            advance = small_mixed_glyph_advance(index)
+            if x >= right or x + advance > right:
+                break
+            draw_small_mixed_glyph(
+                frame,
+                index,
+                x + 1,
+                y + 1,
+                FRONTEND_PREGAME_FONT_SHADOW,
+            )
+            draw_small_mixed_glyph(frame, index, x, y, colour)
+            x += advance
+
+    def draw_small_mixed_wrapped(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        line_height: int,
+        max_lines: int,
+        colour: int,
+    ) -> None:
+        words = text.split()
+        line = ""
+        line_index = 0
+        for word in words:
+            candidate = f"{line} {word}" if line else word
+            if (
+                line and
+                small_mixed_text_width(candidate) > right - x
+            ):
+                draw_small_mixed_text(
+                    frame,
+                    line,
+                    x,
+                    y + line_index * line_height,
+                    right,
+                    colour,
+                )
+                line_index += 1
+                if line_index >= max_lines:
+                    return
+                line = word
+            else:
+                line = candidate
+        if line and line_index < max_lines:
+            draw_small_mixed_text(
+                frame,
+                line,
+                x,
+                y + line_index * line_height,
+                right,
+                colour,
+            )
+
     def draw_wrapped(
         frame: np.ndarray,
         text: str,
@@ -2510,19 +2682,19 @@ def build_frontend_static_menu_panels(
 
     full_game_menu = source.text["full_game_menu"]
     game_fallback = (
-        "GAME MENU",
-        "DATA CUBES",
-        "SHIP SPECS",
-        "UPGRADE SHIP",
-        "OPTIONS",
-        "PLAY NEXT LEVEL",
-        "QUIT GAME",
+        "Game Menu",
+        "Data",
+        "Ship Specs",
+        "Upgrade Ship",
+        "Options",
+        "Play Next Level",
+        "Quit Game",
     )
     for selection in range(FRONTEND_STATIC_GAME_MENU_COUNT):
         frame = menu_chrome.copy()
         title = full_game_menu[0] or game_fallback[0]
 
-        draw_centered(
+        draw_menu_centered(
             frame,
             title,
             layout["TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_CENTER_X"],
@@ -2545,7 +2717,7 @@ def build_frontend_static_menu_panels(
                     if index == 5 else 0
                 )
             )
-            draw_text(
+            draw_menu_text(
                 frame,
                 full_game_menu[index + 1] or game_fallback[index + 1],
                 layout["TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_X"],
@@ -2557,20 +2729,20 @@ def build_frontend_static_menu_panels(
 
     upgrade_menu = source.text["upgrade_menu"]
     upgrade_fallback = (
-        "UPGRADE SHIP",
-        "SHIP TYPE",
-        "FRONT GUN",
-        "REAR GUN",
-        "SHIELD",
-        "GENERATOR",
-        "LEFT SIDEKICK",
-        "RIGHT SIDEKICK",
-        "DONE",
+        "Upgrade Ship",
+        "Ship Type",
+        "Front Gun",
+        "Rear Gun",
+        "Shield",
+        "Generator",
+        "Left Sidekick",
+        "Right Sidekick",
+        "Done",
     )
     for selection in range(FRONTEND_STATIC_UPGRADE_MENU_COUNT):
         frame = menu_chrome.copy()
 
-        draw_centered(
+        draw_menu_centered(
             frame,
             upgrade_menu[0] or upgrade_fallback[0],
             layout["TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X"],
@@ -2578,7 +2750,7 @@ def build_frontend_static_menu_panels(
             0xfb,
         )
         for index in range(FRONTEND_STATIC_UPGRADE_MENU_COUNT):
-            draw_text(
+            draw_menu_text(
                 frame,
                 upgrade_menu[index + 1] or upgrade_fallback[index + 1],
                 layout["TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X"],
@@ -2629,27 +2801,23 @@ def build_frontend_static_menu_panels(
             quit_overlay[target_y, target_x] = pixel
 
     misc_text = source.text["misc_text"]
-    draw_text(
+    draw_small_mixed_text(
         quit_overlay,
-        misc_text[28] or "ARE YOU SURE YOU WANT TO EXIT?",
+        misc_text[28] or "Are you sure you want to exit?",
         layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_X"],
         layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_Y"],
         layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_RIGHT"],
         0xFE,
-        5,
-        3,
     )
-    draw_wrapped(
+    draw_small_mixed_wrapped(
         quit_overlay,
-        misc_text[30] or "YOU WILL RETURN TO THE MAIN MENU.",
+        misc_text[30] or "You will be returned to the main menu.",
         layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_X"],
         layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_Y"],
         layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_RIGHT"],
         9,
         3,
         0xFA,
-        5,
-        3,
     )
     def encode_sparse(
         canvas: np.ndarray,
@@ -2876,7 +3044,10 @@ def build_frontend_static_menu_panels(
         "FRONTEND_STATIC_QUIT_SHADE_BYTES": len(shade_stream),
     }
     report = [
-        "frontend_static_menu_panel_source=stock PIC/text + GBA native font",
+        (
+            "frontend_static_menu_panel_source="
+            "stock PIC/HDT text + project mixed-case 6x8 font"
+        ),
         (
             "frontend_static_menu_panel_strategy="
             "build-time right-panel bake; runtime aligned ROM copy"

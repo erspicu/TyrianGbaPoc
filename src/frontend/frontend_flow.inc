@@ -1839,22 +1839,28 @@ static void frontend_update(void)
     if (pad_pressed & KEY_B) {
         switch (game_state) {
         case STATE_PLAY_MODE_MENU:
+            audio_effect(SFX_SPRING);
             enter_title();
             break;
         case STATE_EPISODE_MENU:
+            audio_effect(SFX_SPRING);
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
             break;
         case STATE_DIFFICULTY_MENU:
+            audio_effect(SFX_SPRING);
             frontend_enter_state(STATE_EPISODE_MENU, frontend_episode);
             break;
         case STATE_GAME_MENU:
             frontend_quit_yes = 1;
+            audio_effect(SFX_SPRING);
             frontend_start_quit_transition(1);
             break;
         case STATE_NEXT_LEVEL_MENU:
+            audio_effect(SFX_SPRING);
             frontend_start_game_menu_transition(0);
             break;
         case STATE_UPGRADE_MENU:
+            audio_effect(SFX_SPRING);
             frontend_enter_state(STATE_GAME_MENU, 2);
             break;
         case STATE_UPGRADE_SUBMENU:
@@ -1874,6 +1880,7 @@ static void frontend_update(void)
 
     switch (game_state) {
     case STATE_TITLE:
+        audio_effect(SFX_SELECT);
         if (frontend_selection == 0) {
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
         } else if (frontend_selection == 1) {
@@ -1883,10 +1890,12 @@ static void frontend_update(void)
         }
         break;
     case STATE_PLAY_MODE_MENU:
+        audio_effect(SFX_SELECT);
         frontend_play_mode = frontend_selection;
         frontend_enter_state(STATE_EPISODE_MENU, 0);
         break;
     case STATE_EPISODE_MENU:
+        audio_effect(SFX_SELECT);
         frontend_episode = frontend_selection;
         frontend_main_section = 1;
         frontend_map = (OtEpisodeMap){0};
@@ -1896,6 +1905,7 @@ static void frontend_update(void)
         frontend_enter_state(STATE_DIFFICULTY_MENU, 1);
         break;
     case STATE_DIFFICULTY_MENU:
+        audio_effect(SFX_SELECT);
         frontend_difficulty =
             (u8)(FRONTEND_DIFFICULTY_EASY + frontend_selection);
         frontend_start_game_menu_transition(
@@ -1909,6 +1919,7 @@ static void frontend_update(void)
             frontend_enter_state(STATE_UPGRADE_MENU, 0);
             audio_effect(SFX_CLICK);
         } else if (frontend_selection == 4) {
+            audio_effect(SFX_CLICK);
             if (
                 !frontend_map_ready &&
                 !frontend_prepare_map()
@@ -1922,7 +1933,15 @@ static void frontend_update(void)
             }
         } else if (frontend_selection == 5) {
             frontend_quit_yes = 1;
+            audio_effect(SFX_CLICK);
             frontend_start_quit_transition(1);
+        } else {
+            /*
+             * These PC menu entries remain visible while their GBA pages
+             * are intentionally unavailable.  Acknowledge the disabled
+             * action with the source S_CLINK instead of failing silently.
+             */
+            audio_effect(SFX_CLINK);
         }
         /* Data Cubes, Ship Specs and Options remain visible but disabled. */
         break;
@@ -1974,6 +1993,7 @@ static void frontend_update(void)
         }
         break;
     case STATE_NEXT_LEVEL_MENU:
+        audio_effect(SFX_CLICK);
         if (frontend_selection < frontend_next_choice_count()) {
             u8 map_choice =
                 frontend_next_map_choice(frontend_selection);

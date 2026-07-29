@@ -32,11 +32,22 @@ enum {
     FRONTEND_NEXT_EXIT_Y = TYRIAN_GBA_LAYOUT_NEXT_EXIT_Y,
     FRONTEND_NEXT_ITEM_HEIGHT = 10,
     FRONTEND_NEXT_BACKGROUND_COLOUR = 228,
-    FRONTEND_NEXT_TEXT_COLOUR = 244,
-    FRONTEND_NEXT_SELECTED_COLOUR = 246,
+    /*
+     * Palette 17 deliberately replaces the Game Menu background for the
+     * navigation screen, but its source 0xfa/0xfb/0xfe ramp is colour-
+     * compatible with palette 0.  Retain the same normal/title/selected
+     * relationship instead of the old dark-red 0xf4/0xf6 approximation.
+     */
+    FRONTEND_NEXT_TEXT_COLOUR = 250,
+    FRONTEND_NEXT_TITLE_COLOUR = 251,
+    FRONTEND_NEXT_SELECTED_COLOUR = 254,
     FRONTEND_NEXT_SHADOW_COLOUR = 240,
     FRONTEND_NEXT_FONT_WIDTH = 6,
     FRONTEND_NEXT_FONT_SPACE = 3,
+    FRONTEND_MENU_FONT_MAX_ADVANCE = 7,
+    FRONTEND_MENU_FONT_SPACE = 3,
+    FRONTEND_SMALL_MIXED_FONT_WIDTH = 4,
+    FRONTEND_SMALL_MIXED_FONT_SPACE = 2,
     FRONTEND_COMPACT_FONT_WIDTH = 5,
     FRONTEND_COMPACT_FONT_SPACE = 3,
     FRONTEND_PREGAME_FONT_MAX_ADVANCE = 8,
@@ -660,9 +671,13 @@ static void frontend_load_game_menu_song(void)
         frontend_map.menu_song_valid &&
         frontend_map.menu_song < JUKEBOX_MUSIC_COUNT ?
             frontend_map.menu_song :
-            29;
+            1;
 
     /*
+     * OpenTyrian initializes songBuy to DEFAULT_SONG_BUY (one-based 2);
+     * play_song() therefore receives zero-based song 1 whenever levelsN.dat
+     * does not override it with ]i.
+     *
      * Re-entering a static page must not stop and restart an already active
      * identical module.  Besides preserving the source song position, this
      * removes Maxmod's module-start work from repeat menu transitions.
@@ -1585,115 +1600,6 @@ static s16 frontend_runtime_text_width_scaled(
     return width;
 }
 
-static void frontend_draw_runtime_text_wrapped_compact(
-    u8 *frame,
-    const char *text,
-    s16 x,
-    s16 y,
-    s16 right,
-    u8 line_height,
-    u8 max_lines,
-    u8 colour
-)
-{
-    char line[43];
-    u8 line_length = 0;
-    u8 lines = 0;
-
-    if (text == 0 || max_lines == 0) return;
-    while (*text != '\0' && lines < max_lines) {
-        const char *word;
-        u8 word_length = 0;
-        s16 candidate_width;
-
-        while (*text == ' ') text++;
-        if (*text == '\0') break;
-        word = text;
-        while (
-            text[word_length] != '\0' &&
-            text[word_length] != ' '
-        ) {
-            word_length++;
-        }
-        if (word_length == 0) break;
-
-        if (line_length != 0) {
-            line[line_length] = ' ';
-            memcpy(
-                line + line_length + 1u,
-                word,
-                word_length
-            );
-            line[line_length + 1u + word_length] = '\0';
-        } else {
-            memcpy(line, word, word_length);
-            line[word_length] = '\0';
-        }
-        candidate_width = frontend_runtime_text_width_scaled(
-            line,
-            FRONTEND_COMPACT_FONT_WIDTH,
-            FRONTEND_COMPACT_FONT_SPACE
-        );
-        if (
-            candidate_width > right - x &&
-            line_length != 0
-        ) {
-            line[line_length] = '\0';
-            frontend_draw_runtime_text_clipped_scaled(
-                frame,
-                line,
-                x,
-                (s16)(y + lines * line_height),
-                right,
-                colour,
-                FRONTEND_COMPACT_FONT_WIDTH,
-                FRONTEND_COMPACT_FONT_SPACE
-            );
-            lines++;
-            line_length = 0;
-            if (lines >= max_lines) break;
-            continue;
-        }
-        line_length = (u8)(
-            line_length +
-            (line_length != 0 ? 1u : 0u) +
-            word_length
-        );
-        text += word_length;
-    }
-    if (line_length != 0 && lines < max_lines) {
-        line[line_length] = '\0';
-        frontend_draw_runtime_text_clipped_scaled(
-            frame,
-            line,
-            x,
-            (s16)(y + lines * line_height),
-            right,
-            colour,
-            FRONTEND_COMPACT_FONT_WIDTH,
-            FRONTEND_COMPACT_FONT_SPACE
-        );
-    }
-}
-
-static void frontend_draw_runtime_text(
-    u8 *frame,
-    const char *text,
-    s16 x,
-    s16 y,
-    u8 colour
-)
-{
-    frontend_draw_runtime_text_clipped(
-        frame,
-        text,
-        x,
-        y,
-        FRONTEND_NEXT_PANEL_X + FRONTEND_NEXT_PANEL_WIDTH,
-        colour
-    );
-}
-
 static s16 frontend_runtime_text_width(const char *text)
 {
     return frontend_runtime_text_width_scaled(
@@ -1881,6 +1787,289 @@ static void frontend_draw_pregame_text_centered(
         SCREEN_WIDTH,
         colour
     );
+}
+
+/*
+ * Game Menu pages use the same authored mixed-case face as the pre-game
+ * pages, with one pixel less tracking.  This keeps PC casing while fitting
+ * the 108-pixel Next Level panel without truncating "Exit to Game Menu".
+ */
+static u8 frontend_menu_font_advance(u8 tile_index)
+{
+    u8 width;
+
+    if (tile_index == 0) return FRONTEND_MENU_FONT_SPACE;
+    width = (u8)(frontend_pregame_font_width(tile_index) + 1u);
+    return width > FRONTEND_MENU_FONT_MAX_ADVANCE ?
+        FRONTEND_MENU_FONT_MAX_ADVANCE :
+        width;
+}
+
+static s16 frontend_menu_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        width = (s16)(
+            width +
+            frontend_menu_font_advance(
+                frontend_pregame_font_tile(*text++)
+            )
+        );
+    }
+    return width;
+}
+
+static void frontend_draw_menu_text_clipped(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_menu_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            (s16)(y + 1),
+            FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_draw_menu_text_centered(
+    u8 *frame,
+    const char *text,
+    s16 center_x,
+    s16 y,
+    u8 colour
+)
+{
+    frontend_draw_menu_text_clipped(
+        frame,
+        text,
+        (s16)(center_x - frontend_menu_text_width(text) / 2),
+        y,
+        SCREEN_WIDTH,
+        colour
+    );
+}
+
+/*
+ * A four-column mixed-case derivative is reserved for source help/dialog
+ * prose.  It samples the authored 6x8 rows at runtime, so no independent
+ * alphabet can drift from the main face and lowercase counters survive.
+ */
+static u8 frontend_small_mixed_font_width(u8 tile_index)
+{
+    u8 width = frontend_pregame_font_width(tile_index);
+
+    return width > FRONTEND_SMALL_MIXED_FONT_WIDTH ?
+        FRONTEND_SMALL_MIXED_FONT_WIDTH :
+        width;
+}
+
+static u8 frontend_small_mixed_font_advance(u8 tile_index)
+{
+    if (tile_index == 0) return FRONTEND_SMALL_MIXED_FONT_SPACE;
+    return (u8)(frontend_small_mixed_font_width(tile_index) + 1u);
+}
+
+static void frontend_blit_small_mixed_font(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    u8 source_width = frontend_pregame_font_width(tile_index);
+    u8 target_width = frontend_small_mixed_font_width(tile_index);
+    u8 row;
+
+    if (source_width == 0 || target_width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 value = frontend_pregame_font_row(tile_index, row);
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < target_width; column++) {
+            u8 source_column =
+                target_width == 1 ?
+                    0 :
+                    (u8)(
+                        (u16)column * (source_width - 1u) /
+                        (target_width - 1u)
+                    );
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (
+                    value &
+                    (1u << (source_width - source_column - 1u))
+                ) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                frame[
+                    (u16)target_y * SCREEN_WIDTH + (u16)target_x
+                ] = colour;
+            }
+        }
+    }
+}
+
+static s16 frontend_small_mixed_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        width = (s16)(
+            width +
+            frontend_small_mixed_font_advance(
+                frontend_pregame_font_tile(*text++)
+            )
+        );
+    }
+    return width;
+}
+
+static void frontend_draw_small_mixed_text_clipped(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_small_mixed_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_small_mixed_font(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            (s16)(y + 1),
+            FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_small_mixed_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_draw_small_mixed_text_wrapped(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 line_height,
+    u8 max_lines,
+    u8 colour
+)
+{
+    char line[67];
+    u8 line_length = 0;
+    u8 lines = 0;
+
+    if (text == 0 || max_lines == 0) return;
+    while (*text != '\0' && lines < max_lines) {
+        const char *word;
+        u8 word_length = 0;
+        s16 candidate_width;
+
+        while (*text == ' ') text++;
+        if (*text == '\0') break;
+        word = text;
+        while (
+            text[word_length] != '\0' &&
+            text[word_length] != ' ' &&
+            word_length < sizeof(line) - 1u
+        ) {
+            word_length++;
+        }
+        if (word_length == 0) break;
+        if (
+            line_length + (line_length != 0 ? 1u : 0u) +
+                word_length >= sizeof(line)
+        ) {
+            break;
+        }
+
+        if (line_length != 0) {
+            line[line_length] = ' ';
+            memcpy(
+                line + line_length + 1u,
+                word,
+                word_length
+            );
+            line[line_length + 1u + word_length] = '\0';
+        } else {
+            memcpy(line, word, word_length);
+            line[word_length] = '\0';
+        }
+        candidate_width = frontend_small_mixed_text_width(line);
+        if (
+            candidate_width > right - x &&
+            line_length != 0
+        ) {
+            line[line_length] = '\0';
+            frontend_draw_small_mixed_text_clipped(
+                frame,
+                line,
+                x,
+                (s16)(y + lines * line_height),
+                right,
+                colour
+            );
+            lines++;
+            line_length = 0;
+            if (lines >= max_lines) break;
+            continue;
+        }
+        line_length = (u8)(
+            line_length +
+            (line_length != 0 ? 1u : 0u) +
+            word_length
+        );
+        text += word_length;
+    }
+    if (line_length != 0 && lines < max_lines) {
+        line[line_length] = '\0';
+        frontend_draw_small_mixed_text_clipped(
+            frame,
+            line,
+            x,
+            (s16)(y + lines * line_height),
+            right,
+            colour
+        );
+    }
 }
 
 static void frontend_fill_rect(

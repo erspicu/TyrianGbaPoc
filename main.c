@@ -19,6 +19,7 @@
  * one-based sndmast.h slot packed as source_sound_01..38.
  */
 #define SFX_WEAPON_1 SFX_SOURCE_SOUND_01
+#define SFX_SELECT SFX_SOURCE_SOUND_08
 #define SFX_EXPLOSION_9 SFX_SOURCE_SOUND_09
 #define SFX_EXPLOSION_11 SFX_SOURCE_SOUND_11
 #define SFX_SPRING SFX_SOURCE_SOUND_16

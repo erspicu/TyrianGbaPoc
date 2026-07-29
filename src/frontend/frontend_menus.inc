@@ -1,13 +1,13 @@
 static const char *frontend_game_menu_label(u8 index)
 {
     static const char *const fallback[7] = {
-        "GAME MENU",
-        "DATA CUBES",
-        "SHIP SPECS",
-        "UPGRADE SHIP",
-        "OPTIONS",
-        "PLAY NEXT LEVEL",
-        "QUIT GAME",
+        "Game Menu",
+        "Data",
+        "Ship Specs",
+        "Upgrade Ship",
+        "Options",
+        "Play Next Level",
+        "Quit Game",
     };
 
     if (
@@ -302,11 +302,16 @@ static void frontend_render_pre_game_selection(u8 old_selection)
         );
         frontend_dirty_add(x, y, width, height);
     }
+    frontend_dirty_present();
+    /*
+     * frontend_dirty_present() defaults to the mutable scratch frame.  This
+     * path instead copies the two dirty rows from the already-baked frame
+     * for the new selection; assign it after arming the dirty commit.
+     */
     frontend_pending_frame =
         frontend_static_pre_game_frames +
         (u32)(static_base + frontend_selection) *
             FRONTEND_FRAME_BYTES;
-    frontend_dirty_present();
 }
 
 static s16 frontend_game_menu_item_y(u8 selection)
@@ -344,7 +349,7 @@ static void frontend_draw_game_menu_item(
         colour =
             selection == active_selection ? 0xfeu : 0xfau;
     }
-    frontend_draw_runtime_text_clipped(
+    frontend_draw_menu_text_clipped(
         frontend_frame_scratch,
         frontend_game_menu_label((u8)(selection + 1u)),
         TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_X,
@@ -358,7 +363,7 @@ static void frontend_draw_game_menu_text(u8 active_selection)
 {
     u8 selection;
 
-    frontend_draw_runtime_text_centered(
+    frontend_draw_menu_text_centered(
         frontend_frame_scratch,
         frontend_game_menu_label(0),
         TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_CENTER_X,
@@ -449,14 +454,14 @@ static const char *frontend_upgrade_menu_item_label(u8 index)
     static const char *const fallback[
         FRONTEND_UPGRADE_MENU_ITEM_COUNT
     ] = {
-        "SHIP TYPE",
-        "FRONT GUN",
-        "REAR GUN",
-        "SHIELD",
-        "GENERATOR",
-        "LEFT SIDEKICK",
-        "RIGHT SIDEKICK",
-        "DONE"
+        "Ship Type",
+        "Front Gun",
+        "Rear Gun",
+        "Shield",
+        "Generator",
+        "Left Sidekick",
+        "Right Sidekick",
+        "Done"
     };
 
     return frontend_upgrade_menu_text(
@@ -477,7 +482,7 @@ static s16 frontend_upgrade_menu_item_y(u8 index)
 
 static void frontend_draw_upgrade_menu_item(u8 index)
 {
-    frontend_draw_runtime_text_clipped(
+    frontend_draw_menu_text_clipped(
         frontend_frame_scratch,
         frontend_upgrade_menu_item_label(index),
         TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X,
@@ -491,9 +496,9 @@ static void frontend_draw_upgrade_menu_text(void)
 {
     u8 index;
 
-    frontend_draw_runtime_text_centered(
+    frontend_draw_menu_text_centered(
         frontend_frame_scratch,
-        frontend_upgrade_menu_text(0, "UPGRADE SHIP"),
+        frontend_upgrade_menu_text(0, "Upgrade Ship"),
         TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X,
         TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y,
         0xfbu
@@ -1406,17 +1411,15 @@ static void frontend_compose_quit_overlay(void)
             0,
             0
         );
-        frontend_draw_runtime_text_clipped_scaled(
+        frontend_draw_small_mixed_text_clipped(
             frontend_frame_scratch,
             question,
             TYRIAN_GBA_LAYOUT_QUIT_QUESTION_X,
             TYRIAN_GBA_LAYOUT_QUIT_QUESTION_Y,
             TYRIAN_GBA_LAYOUT_QUIT_QUESTION_RIGHT,
-            0xfeu,
-            FRONTEND_COMPACT_FONT_WIDTH,
-            FRONTEND_COMPACT_FONT_SPACE
+            0xfeu
         );
-        frontend_draw_runtime_text_wrapped_compact(
+        frontend_draw_small_mixed_text_wrapped(
             frontend_frame_scratch,
             help,
             TYRIAN_GBA_LAYOUT_QUIT_HELP_X,

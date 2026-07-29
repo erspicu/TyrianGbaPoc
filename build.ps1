@@ -1545,7 +1545,7 @@ $deathChecks = [ordered]@{
     source_music_fade = $deathTelemetry.music_fade_steps -eq 59
     gba_oam_limit = $deathTelemetry.final_oam -le 128
     return_to_game_menu = (
-        $deathTelemetry.return_song -eq 29 -and
+        $deathTelemetry.return_song -eq 1 -and
         $deathTelemetry.return_state -eq 7 -and
         $deathTelemetry.return_selection -eq 4 -and
         $deathTelemetry.return_mode4 -eq 1 -and
