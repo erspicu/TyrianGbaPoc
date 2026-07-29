@@ -312,6 +312,7 @@ ASSET_BINARIES := \
 	$(RES)/frontend_static_quit_overlay.bin \
 	$(RES)/frontend_static_quit_choices.bin \
 	$(RES)/frontend_static_quit_shade.bin \
+	$(RES)/frontend_static_help_strips.bin \
 	$(RES)/frontend_nav_obj_tiles.bin \
 	$(RES)/frontend_nav_obj_meta.bin \
 	$(RES)/frontend_nav_obj_palette.bin \

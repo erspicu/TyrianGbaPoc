@@ -257,11 +257,18 @@ if (
     [int64]$assetReport.finite_music_09_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_10_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_30_it_bytes -le 0 -or
-    $assetReport.frontend_source_stamp_count -ne "14925" -or
-    $assetReport.frontend_source_stamp_data_bytes -ne "6751580" -or
+    $assetReport.frontend_source_stamp_shp_keys -ne "31" -or
+    $assetReport.frontend_source_stamp_count -ne "14975" -or
+    $assetReport.frontend_source_stamp_data_bytes -ne "6843864" -or
     $assetReport.frontend_source_stamp_runtime_rle_decode -ne "0" -or
     $assetReport.frontend_source_stamp_strategy -ne
         "build-time lossless decode + 25 scale phases + aligned sparse runs" -or
+    $assetReport.frontend_static_help_strategy -ne
+        "build-time stock HDT mixed-case strips; aligned ROM copy" -or
+    $assetReport.frontend_static_help_dimensions -ne "240x11" -or
+    $assetReport.frontend_static_help_count -ne "34" -or
+    $assetReport.frontend_static_help_bytes -ne "89760" -or
+    $assetReport.frontend_static_help_crc32 -ne "f0b9d8c2" -or
     $assetReport.frontend_stats_tiles_bytes -ne "6656" -or
     $assetReport.frontend_stats_width_bytes -ne "45" -or
     $assetReport.frontend_stats_tiles_crc32 -ne "0f04dee4" -or

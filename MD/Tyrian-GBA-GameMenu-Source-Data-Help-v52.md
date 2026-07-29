@@ -117,3 +117,38 @@ Episode 2 與 Episode 4 Section 1 路線 smoke test 均通過：
 
 Game Menu 的 bar、格線、金額、飛船、Data Cube 與底部提示已在
 240×160 最終畫面檢查，未再出現舊版縮放造成的斷格。
+
+## 最終完整回歸與發行 ROM
+
+`build.ps1 -KeepIntermediates -DetailLevel high -GameSpeed normal`
+完整通過：
+
+- 正式版、主流程、死亡流程、Jukebox、Demo
+- ROMFS 全 62 關資料矩陣
+- Episode 1–4 路線 smoke test
+- Arcade 與 Episode 1 四關 campaign
+- 8 條靜態選單轉場壓力測試
+- ROM header、32 MiB 上限、ROMFS、Sprite2 raw、預烘資產與
+  EWRAM／IWRAM 預算審核
+
+新增的 build-time 資產也已納入 Makefile 與完整審核：
+
+- `frontend_static_help_strips.bin`：89,760 bytes
+- help strips CRC32：`f0b9d8c2`
+- source stamp keys：31
+- source stamp count：14,975
+- source stamp data：6,843,864 bytes
+
+正式設定：
+
+- Detail Level：High
+- Game Speed：Normal
+- ROM 大小：29,535,476 bytes（28.17 MiB）
+- SHA-256：
+  `3c0c636672fbfb366f600e2039f9ded79da647005890e1c8740b355b9917fae7`
+- 正式版 EWRAM 餘裕：28,476 bytes
+- 正式版 IWRAM 餘裕：7,120 bytes
+
+最後以 `tools/build_release.ps1` 進行 clean rebuild；`build/` 只保留
+最新的 `TyrianGBA.gba`，其他測試／歷史 ROM 依專案既定規則移入
+`Backup/`。
