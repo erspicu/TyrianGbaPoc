@@ -116,6 +116,15 @@ Windows 路徑後仍可建置。
 MUS/SHP/PIC/HDT/LVL 等資料和 OpenTyrian 語意決定。不要為單一關卡建立
 專用表格或手工修補資源；新增關卡支援時應修正共用 loader／adapter。
 
+ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
+stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整
+runtime 功能已由另一份嵌入資源承接時，才可從 ROMFS image 排除原始
+payload，而且原始檔仍須保留在 `vendor/` 作為可重建輸入。每一筆排除
+都必須列在 `vfs/manifest.json` 的 `omitted_duplicates`，由建置 audit
+驗證檔案、大小、SHA-256 與替代資源，禁止靠未記錄的 glob 或人工刪除。
+目前只有已完整轉入 `res/soundbank.bin` 的 `tyrian.snd` 與
+`voices.snd` 符合這個條件。
+
 `vendor/opentyrian/REVISION` 記錄用來核對翻寫規格的 upstream commit。
 更新 snapshot 時，必須同步檢查 parity 測試與更新該檔案。
 

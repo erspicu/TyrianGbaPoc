@@ -298,7 +298,11 @@ static void autotest_finish(void)
 #else
     sram[2] = 'B';
     sram[3] = 'A';
+#ifdef AUTOTEST_STACK_CANARY
+    sram[4] = 27;
+#else
     sram[4] = 25;
+#endif
 #endif
     sram[5] = pass;
     sram[6] = game_state;
@@ -589,6 +593,20 @@ static void autotest_finish(void)
         6412,
         telemetry_missed_vblank_transition_phase_next
     );
+#ifdef AUTOTEST_STACK_CANARY
+    {
+        u32 stack_remaining = autotest_stack_canary_remaining();
+
+        sram_write_u32(6416, stack_remaining);
+        sram_write_u32(
+            6420,
+            stack_remaining >= sizeof(u32) * 8u ? 1u : 0u
+        );
+        sram_write_u32(6424, autotest_stack_canary_filled_bytes);
+        sram_write_u32(6428, autotest_ewram_heap_used());
+        sram_write_u32(6432, autotest_ewram_heap_remaining());
+    }
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);

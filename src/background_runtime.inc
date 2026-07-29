@@ -158,6 +158,7 @@ static const u8 *background_shape_pixels[BACKGROUND_SHAPE_COUNT]
 static u8 background_palette_nearest
     [BACKGROUND_PALETTE_BANKS][OT_PALETTE_COLOUR_COUNT]
     EWRAM_BSS __attribute__((aligned(4)));
+static const u8 *background_palette_mask_active;
 /*
  * palette.dat uses the low nibble as brightness, but an RGB-energy lookup is
  * a better generic tie-breaker for special banks.  Keep this tiny hot table
@@ -316,26 +317,59 @@ static u8 background_parse_shapes(const OtDataView *file)
     return 1;
 }
 
-static u8 background_setup_palette(void)
+static u8 background_palette_variant(char shape_file_id)
 {
+    if (shape_file_id >= 'A' && shape_file_id <= 'Z') {
+        shape_file_id = (char)(shape_file_id + ('a' - 'A'));
+    }
+    switch (shape_file_id) {
+    case ')': return 0;
+    case 'w': return 1;
+    case 'x': return 2;
+    case 'y': return 3;
+    case 'z': return 4;
+    default: return UINT8_MAX;
+    }
+}
+
+static u8 background_setup_palette(char shape_file_id)
+{
+    u8 variant = background_palette_variant(shape_file_id);
+
     _Static_assert(
-        BACKGROUND_GBA_PALETTE_BYTES == 512 &&
-            BACKGROUND_PALETTE_NEAREST_BYTES ==
+        BACKGROUND_PALETTE_VARIANT_COUNT == 5 &&
+            BACKGROUND_GBA_PALETTE_VARIANT_BYTES == 512 &&
+            BACKGROUND_GBA_PALETTE_BYTES ==
+                BACKGROUND_PALETTE_VARIANT_COUNT *
+                    BACKGROUND_GBA_PALETTE_VARIANT_BYTES &&
+            BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES ==
                 BACKGROUND_PALETTE_BANKS *
                     OT_PALETTE_COLOUR_COUNT &&
-            BACKGROUND_PALETTE_MASK_BANK_BYTES == 65536,
+            BACKGROUND_PALETTE_NEAREST_BYTES ==
+                BACKGROUND_PALETTE_VARIANT_COUNT *
+                    BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES &&
+            BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES == 65536 &&
+            BACKGROUND_PALETTE_MASK_BANK_BYTES ==
+                BACKGROUND_PALETTE_VARIANT_COUNT *
+                    BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES,
         "generated background palette adapter changed"
     );
+    if (variant >= BACKGROUND_PALETTE_VARIANT_COUNT) return 0;
     dmaCopy(
-        background_gba_palette,
+        background_gba_palette +
+            (u32)variant * BACKGROUND_GBA_PALETTE_VARIANT_BYTES,
         BG_PALETTE,
-        BACKGROUND_GBA_PALETTE_BYTES
+        BACKGROUND_GBA_PALETTE_VARIANT_BYTES
     );
     memcpy(
         background_palette_nearest,
-        background_palette_nearest_asset,
-        BACKGROUND_PALETTE_NEAREST_BYTES
+        background_palette_nearest_asset +
+            (u32)variant * BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES,
+        BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES
     );
+    background_palette_mask_active =
+        background_palette_mask_bank +
+        (u32)variant * BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES;
     return 1;
 }
 
@@ -370,7 +404,7 @@ static u8 background_bind_selected_level(void)
             return 0;
         }
     }
-    if (!background_setup_palette()) return 0;
+    if (!background_setup_palette(level_info.shape_file)) return 0;
     background_cache_approximations = 0;
     background_cache_evictions = 0;
     background_cache_uploads = 0;
@@ -544,7 +578,7 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
          * in ROM, so a miss still performs one O(1) bank read plus the same
          * 64 source-pixel pass as before.
          */
-        best_bank = background_palette_mask_bank[hue_mask];
+        best_bank = background_palette_mask_active[hue_mask];
     }
     for (y = 0; y < 8; y++) {
         u8 pair;

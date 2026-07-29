@@ -375,7 +375,7 @@ static void autotest_death_finish_update(void)
         autotest_death_game_over_pass &&
         autotest_death_normal_weapon_pass &&
         catalog != 0 &&
-        catalog->selected_mus_song == 1 &&
+        catalog->selected_mus_song == 2 &&
         frontend_selection == 4 &&
         frontend_mode4_active &&
         telemetry_game_over_exits == 1 &&

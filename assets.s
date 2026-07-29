@@ -116,9 +116,14 @@ frontend_nav_obj_palette:
 	.incbin "res/frontend_nav_obj_palette.bin"
 
 	.balign 4
-	.global frontend_nav_bitmap_pages
-frontend_nav_bitmap_pages:
-	.incbin "res/frontend_nav_bitmap_pages.bin"
+	.global frontend_nav_bitmap_blocks
+frontend_nav_bitmap_blocks:
+	.incbin "res/frontend_nav_bitmap_blocks.bin"
+
+	.balign 4
+	.global frontend_nav_bitmap_indices
+frontend_nav_bitmap_indices:
+	.incbin "res/frontend_nav_bitmap_indices.bin"
 
 	.balign 4
 	.global frontend_source_stamp_offsets

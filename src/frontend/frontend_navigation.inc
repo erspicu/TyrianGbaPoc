@@ -872,28 +872,48 @@ static u8 frontend_nav_grid_phase(s16 coordinate)
 }
 
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
-frontend_nav_copy_bitmap_page(u8 *destination, const u8 *source)
+frontend_nav_copy_bitmap_page(u8 *destination, u16 page)
 {
-    u8 row;
+    const u16 *indices =
+        frontend_nav_bitmap_indices +
+        (u32)page * FRONTEND_NAV_BITMAP_BLOCKS_PER_PAGE;
+    u8 block;
 
     /*
-     * The generated ROM page pads each 126-pixel row to 128 bytes.  Both
-     * pointers are therefore word aligned for every iteration, avoiding 138
-     * generic memcpy calls and keeping sequential Game Pak prefetch active.
+     * Each dictionary entry contains two adjacent 128-byte source rows.
+     * Only 69 Game Pak source jumps are needed for the complete page; the
+     * two rows within each block remain sequential and word aligned.  The
+     * destination still skips the unused right side of the 240-byte Mode-4
+     * scanline exactly as the former raw-page copier did.
      */
-    for (row = 0; row < FRONTEND_NAV_BITMAP_HEIGHT; row++) {
-        const u32 *source_words =
-            (const u32 *)(const void *)source;
-        u32 *destination_words = (u32 *)(void *)destination;
-        u8 word;
+    for (
+        block = 0;
+        block < FRONTEND_NAV_BITMAP_BLOCKS_PER_PAGE;
+        block++
+    ) {
+        const u8 *source =
+            frontend_nav_bitmap_blocks +
+            ((u32)indices[block] << 8);
+        u8 block_row;
 
-        for (word = 0; word < 31; word++) {
-            destination_words[word] = source_words[word];
+        for (
+            block_row = 0;
+            block_row < FRONTEND_NAV_BITMAP_BLOCK_ROWS;
+            block_row++
+        ) {
+            const u32 *source_words =
+                (const u32 *)(const void *)source;
+            u32 *destination_words = (u32 *)(void *)destination;
+            u8 word;
+
+            for (word = 0; word < 31; word++) {
+                destination_words[word] = source_words[word];
+            }
+            *(u16 *)(void *)(destination + 124) =
+                *(const u16 *)(const void *)(source + 124);
+            source += FRONTEND_NAV_BITMAP_STRIDE;
+            destination += SCREEN_WIDTH;
         }
-        *(u16 *)(void *)(destination + 124) =
-            *(const u16 *)(const void *)(source + 124);
-        source += FRONTEND_NAV_BITMAP_STRIDE;
-        destination += SCREEN_WIDTH;
     }
 }
 
@@ -905,14 +925,11 @@ static void frontend_nav_draw(void)
     u8 phase_y = frontend_nav_grid_phase(
         (s16)(frontend_nav_presented_y >> 1)
     );
-    const u8 *source =
-        frontend_nav_bitmap_pages +
-        (
-            (u32)phase_y * FRONTEND_NAV_GRID_PHASES +
-            phase_x
-        ) *
-        FRONTEND_NAV_BITMAP_PAGE_BYTES;
-    frontend_nav_copy_bitmap_page(frontend_frame_scratch, source);
+    u16 page = (u16)(
+        (u16)phase_y * FRONTEND_NAV_GRID_PHASES +
+        phase_x
+    );
+    frontend_nav_copy_bitmap_page(frontend_frame_scratch, page);
     telemetry_frontend_nav_bitmap_redraws++;
 }
 

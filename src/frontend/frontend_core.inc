@@ -123,6 +123,20 @@ _Static_assert(
     FRONTEND_NAV_BITMAP_WIDTH == FRONTEND_NAV_DIRTY_WIDTH &&
         FRONTEND_NAV_BITMAP_HEIGHT == FRONTEND_NAV_DIRTY_HEIGHT &&
         FRONTEND_NAV_BITMAP_STRIDE == 128 &&
+        FRONTEND_NAV_BITMAP_BLOCK_ROWS == 2 &&
+        FRONTEND_NAV_BITMAP_BLOCK_BYTES ==
+            FRONTEND_NAV_BITMAP_STRIDE *
+                FRONTEND_NAV_BITMAP_BLOCK_ROWS &&
+        FRONTEND_NAV_BITMAP_BLOCKS_PER_PAGE *
+            FRONTEND_NAV_BITMAP_BLOCK_ROWS ==
+                FRONTEND_NAV_BITMAP_HEIGHT &&
+        FRONTEND_NAV_BITMAP_BLOCK_DATA_BYTES ==
+            FRONTEND_NAV_BITMAP_BLOCK_COUNT *
+                FRONTEND_NAV_BITMAP_BLOCK_BYTES &&
+        FRONTEND_NAV_BITMAP_INDEX_BYTES ==
+            FRONTEND_NAV_BITMAP_PAGE_COUNT *
+                FRONTEND_NAV_BITMAP_BLOCKS_PER_PAGE *
+                sizeof(u16) &&
         FRONTEND_NAV_GRID_PHASES == 15 &&
         FRONTEND_NAV_BITMAP_PAGE_COUNT == 225 &&
         FRONTEND_NAV_BITMAP_PAGE_BYTES ==
@@ -731,12 +745,14 @@ static void frontend_load_game_menu_song(void)
         frontend_map.menu_song_valid &&
         frontend_map.menu_song < JUKEBOX_MUSIC_COUNT ?
             frontend_map.menu_song :
-            1;
+            2;
 
     /*
-     * OpenTyrian initializes songBuy to DEFAULT_SONG_BUY (one-based 2);
-     * play_song() therefore receives zero-based song 1 whenever levelsN.dat
-     * does not override it with ]i.
+     * OpenTyrian initializes songBuy to DEFAULT_SONG_BUY (zero-based 2)
+     * and passes it directly to play_song().  Script ]i values are the
+     * separate one-based representation and are normalized by the episode
+     * parser.  Therefore the no-override fallback is song 2, "Buy/Sell
+     * Music", exactly as in the PC source.
      *
      * Re-entering a static page must not stop and restart an already active
      * identical module.  Besides preserving the source song position, this

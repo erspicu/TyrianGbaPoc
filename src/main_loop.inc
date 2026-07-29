@@ -43,6 +43,9 @@ int main(void)
     uint32_t romfs_failed_checks = 0;
     const OtRomFs *mounted_romfs;
 
+#ifdef AUTOTEST_STACK_CANARY
+    autotest_stack_canary_begin();
+#endif
     /*
      * WS0 3/1-cycle reads plus Game Pak prefetch.  Sprite2 raw data, ROMFS
      * and executable code all live in the Game Pak address space.

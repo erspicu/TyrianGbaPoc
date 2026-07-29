@@ -144,9 +144,13 @@ FRONTEND_NAV_OBJ_VRAM_BYTES = 0x4000
 FRONTEND_NAV_BITMAP_WIDTH = 126
 FRONTEND_NAV_BITMAP_HEIGHT = 138
 FRONTEND_NAV_BITMAP_STRIDE = 128
+FRONTEND_NAV_BITMAP_BLOCK_ROWS = 2
 FRONTEND_NAV_GRID_PHASES = 15
 FRONTEND_NAV_BITMAP_PAGE_BYTES = (
     FRONTEND_NAV_BITMAP_STRIDE * FRONTEND_NAV_BITMAP_HEIGHT
+)
+FRONTEND_NAV_BITMAP_BLOCK_BYTES = (
+    FRONTEND_NAV_BITMAP_STRIDE * FRONTEND_NAV_BITMAP_BLOCK_ROWS
 )
 FRONTEND_NAV_PLANET_GRAPHICS = (
     4, 1, 2, 3, 20, 36, 52, 68, 84, 100, 116,
@@ -180,6 +184,7 @@ BACKGROUND_PALETTE_BANK_COUNT = 16
 BACKGROUND_PALETTE_COLOURS_PER_BANK = 16
 BACKGROUND_PALETTE_SOURCE_COLOURS = 256
 BACKGROUND_PALETTE_MASK_COUNT = 1 << 16
+BACKGROUND_PALETTE_SHAPE_FILE_IDS = (")", "w", "x", "y", "z")
 BACKGROUND_MIXED_MASK_GROUPS = (
     (0x0402,),                         # blue/teal + warm green
     (0x0401, 0x0403),                 # neutral + green
@@ -1674,6 +1679,7 @@ def build_frontend_nav_obj_assets(
     bytes,
     bytes,
     bytes,
+    bytes,
     dict[str, int],
     list[str],
 ]:
@@ -1965,7 +1971,7 @@ def build_frontend_nav_obj_assets(
 def build_frontend_nav_bitmap_pages(
     source: FrontendSourceRenderer,
     preview: Path,
-) -> tuple[bytes, dict[str, int], list[str]]:
+) -> tuple[bytes, bytes, dict[str, int], list[str]]:
     """Bake every repeating grid phase plus the fixed OPTION_SHAPES frame.
 
     The source grid is spaced every 15 pixels.  Its camera term is
@@ -2075,20 +2081,92 @@ def build_frontend_nav_bitmap_pages(
             preview / "frontend_nav_bitmap_phase_05_05.png"
         )
 
+    if (
+        FRONTEND_NAV_BITMAP_HEIGHT %
+        FRONTEND_NAV_BITMAP_BLOCK_ROWS
+    ):
+        raise AssertionError(
+            "navigation bitmap height must be an exact block multiple"
+        )
+    blocks_per_page = (
+        FRONTEND_NAV_BITMAP_HEIGHT //
+        FRONTEND_NAV_BITMAP_BLOCK_ROWS
+    )
+    block_catalog: dict[bytes, int] = {}
+    block_data = bytearray()
+    block_indices = bytearray()
+    for page in range(page_count):
+        page_start = page * FRONTEND_NAV_BITMAP_PAGE_BYTES
+        for block in range(blocks_per_page):
+            block_start = (
+                page_start +
+                block * FRONTEND_NAV_BITMAP_BLOCK_BYTES
+            )
+            payload = bytes(
+                pages[
+                    block_start:
+                    block_start + FRONTEND_NAV_BITMAP_BLOCK_BYTES
+                ]
+            )
+            block_id = block_catalog.get(payload)
+            if block_id is None:
+                block_id = len(block_catalog)
+                if block_id > 0xFFFF:
+                    raise ValueError(
+                        "navigation bitmap block catalog exceeds u16"
+                    )
+                block_catalog[payload] = block_id
+                block_data.extend(payload)
+            block_indices.extend(struct.pack("<H", block_id))
+    packed_bytes = len(block_data) + len(block_indices)
+
+    # Reconstruct every source page from the serialized dictionary and index
+    # stream.  This is deliberately independent of the catalog dictionary so
+    # a future packing change cannot silently alter even one menu pixel.
+    roundtrip_cursor = 0
+    for index_offset in range(0, len(block_indices), 2):
+        block_id = struct.unpack_from("<H", block_indices, index_offset)[0]
+        block_start = block_id * FRONTEND_NAV_BITMAP_BLOCK_BYTES
+        block_end = block_start + FRONTEND_NAV_BITMAP_BLOCK_BYTES
+        source_end = roundtrip_cursor + FRONTEND_NAV_BITMAP_BLOCK_BYTES
+        if (
+            block_end > len(block_data) or
+            block_data[block_start:block_end] !=
+                pages[roundtrip_cursor:source_end]
+        ):
+            raise ValueError(
+                "navigation bitmap block dictionary round-trip changed "
+                f"source block {index_offset // 2}"
+            )
+        roundtrip_cursor = source_end
+    if roundtrip_cursor != len(pages):
+        raise AssertionError(
+            "navigation bitmap block dictionary round-trip length changed"
+        )
+
     metadata = {
         "FRONTEND_NAV_BITMAP_WIDTH": FRONTEND_NAV_BITMAP_WIDTH,
         "FRONTEND_NAV_BITMAP_HEIGHT": FRONTEND_NAV_BITMAP_HEIGHT,
         "FRONTEND_NAV_BITMAP_STRIDE": FRONTEND_NAV_BITMAP_STRIDE,
+        "FRONTEND_NAV_BITMAP_BLOCK_ROWS":
+            FRONTEND_NAV_BITMAP_BLOCK_ROWS,
+        "FRONTEND_NAV_BITMAP_BLOCK_BYTES":
+            FRONTEND_NAV_BITMAP_BLOCK_BYTES,
+        "FRONTEND_NAV_BITMAP_BLOCKS_PER_PAGE": blocks_per_page,
+        "FRONTEND_NAV_BITMAP_BLOCK_COUNT": len(block_catalog),
+        "FRONTEND_NAV_BITMAP_BLOCK_DATA_BYTES": len(block_data),
+        "FRONTEND_NAV_BITMAP_INDEX_BYTES": len(block_indices),
         "FRONTEND_NAV_GRID_PHASES": FRONTEND_NAV_GRID_PHASES,
         "FRONTEND_NAV_BITMAP_PAGE_COUNT": page_count,
         "FRONTEND_NAV_BITMAP_PAGE_BYTES": FRONTEND_NAV_BITMAP_PAGE_BYTES,
-        "FRONTEND_NAV_BITMAP_BYTES": len(pages),
+        "FRONTEND_NAV_BITMAP_RAW_BYTES": len(pages),
+        "FRONTEND_NAV_BITMAP_PACKED_BYTES": packed_bytes,
     }
     report = [
         "frontend_nav_bitmap_source=stock PIC1 + SHP table5 sprite28",
         (
             "frontend_nav_bitmap_strategy="
-            "build-time 15x15 grid phase pages"
+            "build-time 15x15 phases + lossless 2-row block dictionary"
         ),
         f"frontend_nav_bitmap_page_count={page_count}",
         (
@@ -2097,11 +2175,27 @@ def build_frontend_nav_bitmap_pages(
             f"stride={FRONTEND_NAV_BITMAP_STRIDE}"
         ),
         f"frontend_nav_bitmap_page_bytes={FRONTEND_NAV_BITMAP_PAGE_BYTES}",
-        f"frontend_nav_bitmap_bytes={len(pages)}",
+        f"frontend_nav_bitmap_raw_bytes={len(pages)}",
+        f"frontend_nav_bitmap_block_rows={FRONTEND_NAV_BITMAP_BLOCK_ROWS}",
+        f"frontend_nav_bitmap_block_count={len(block_catalog)}",
+        f"frontend_nav_bitmap_block_data_bytes={len(block_data)}",
+        f"frontend_nav_bitmap_index_bytes={len(block_indices)}",
+        f"frontend_nav_bitmap_packed_bytes={packed_bytes}",
+        f"frontend_nav_bitmap_saved_bytes={len(pages) - packed_bytes}",
+        "frontend_nav_bitmap_roundtrip_verified=1",
+        f"frontend_nav_bitmap_raw_crc32={zlib.crc32(pages):08x}",
+        (
+            "frontend_nav_bitmap_block_data_crc32="
+            f"{zlib.crc32(block_data):08x}"
+        ),
+        (
+            "frontend_nav_bitmap_index_crc32="
+            f"{zlib.crc32(block_indices):08x}"
+        ),
         "frontend_nav_camera_runtime_shp_decode=0",
         "frontend_nav_camera_runtime_grid_plot=0",
     ]
-    return bytes(pages), metadata, report
+    return bytes(block_data), bytes(block_indices), metadata, report
 
 
 def build_frontend_static_menu_panels(
@@ -3268,7 +3362,8 @@ def build_frontend_mode4_assets(
         nav_obj_report,
     ) = build_frontend_nav_obj_assets(source, preview)
     (
-        nav_bitmap_pages,
+        nav_bitmap_blocks,
+        nav_bitmap_indices,
         nav_bitmap_metadata,
         nav_bitmap_report,
     ) = build_frontend_nav_bitmap_pages(source, preview)
@@ -3791,7 +3886,8 @@ def build_frontend_mode4_assets(
         nav_obj_tiles,
         nav_obj_meta,
         nav_obj_palette,
-        nav_bitmap_pages,
+        nav_bitmap_blocks,
+        nav_bitmap_indices,
         metadata,
         report,
     )
@@ -4315,15 +4411,17 @@ def build_background_palette_assets(
     data_root: Path,
     preview_root: Path,
 ) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
-    """Build a cartridge-wide 4bpp palette adapter for stock MAP tiles.
+    """Build shape-bank-specific 4bpp palette adapters for stock MAP tiles.
 
     Tyrian's 8-bit palette uses the high nibble as a hue family.  A GBA text
     background tile can select only one 16-colour bank, so the former
     "dominant hue" conversion erased narrow authored materials in mixed
-    rock/water/ground tiles.  Keep the eleven common single-hue banks exact
-    and train five deterministic mixed-material banks from every stock
-    shapes?.dat file.  A 16-bit hue-mask table then selects the bank in O(1)
-    at runtime; no level-specific converted art is produced.
+    rock/water/ground tiles.  Keep the eleven common single-hue banks exact,
+    but train the five mixed-material banks independently for each of the
+    five stock shapes?.dat banks.  Runtime selects the matching generated
+    adapter from the source shape-file ID, while LVL maps and pixels remain
+    direct ROMFS data.  This removes cross-bank training dilution without
+    per-level art or hand-authored correction tables.
     """
     palette_data = (data_root / "palette.dat").read_bytes()
     if len(palette_data) < BACKGROUND_PALETTE_SOURCE_COLOURS * 3:
@@ -4343,12 +4441,16 @@ def build_background_palette_assets(
         ),
         dtype=np.float64,
     )
+    shape_mask_histograms: list[dict[int, np.ndarray]] = []
+    shape_file_ids: list[str] = []
     shape_file_count = 0
     shape_tile_count = 0
 
     for shape_path in sorted(data_root.glob("shapes*.dat")):
         source = shape_path.read_bytes()
         position = 0
+        local_histogram: dict[int, np.ndarray] = {}
+        shape_file_id = shape_path.stem[-1].lower()
         shape_file_count += 1
         for shape_index in range(600):
             if position >= len(source):
@@ -4383,16 +4485,30 @@ def build_background_palette_assets(
                         1 << int(hue)
                         for hue in np.unique(values >> 4)
                     )
-                    mask_histogram[mask] += np.bincount(
+                    counts = np.bincount(
                         values,
                         minlength=BACKGROUND_PALETTE_SOURCE_COLOURS,
                     )
+                    mask_histogram[mask] += counts
+                    if mask not in local_histogram:
+                        local_histogram[mask] = np.zeros(
+                            BACKGROUND_PALETTE_SOURCE_COLOURS,
+                            dtype=np.float64,
+                        )
+                    local_histogram[mask] += counts
                     shape_tile_count += 1
+        shape_file_ids.append(shape_file_id)
+        shape_mask_histograms.append(local_histogram)
 
-    if shape_file_count != 5 or shape_tile_count == 0:
+    if (
+        shape_file_count != len(BACKGROUND_PALETTE_SHAPE_FILE_IDS) or
+        tuple(shape_file_ids) != BACKGROUND_PALETTE_SHAPE_FILE_IDS or
+        shape_tile_count == 0
+    ):
         raise ValueError(
             "unexpected stock background shape-bank coverage: "
-            f"files={shape_file_count}, tiles={shape_tile_count}"
+            f"ids={shape_file_ids}, files={shape_file_count}, "
+            f"tiles={shape_tile_count}"
         )
 
     def gba_expand(values: np.ndarray) -> np.ndarray:
@@ -4418,15 +4534,11 @@ def build_background_palette_assets(
         weights[0] = 0
         return weights
 
-    def train_mixed_bank(masks: tuple[int, ...]) -> np.ndarray:
-        weights = hue_balanced_weights(
-            mask_histogram[np.asarray(masks, dtype=np.uint16)].sum(axis=0)
-        )
+    def train_mixed_bank(histogram: np.ndarray) -> np.ndarray:
+        weights = hue_balanced_weights(histogram)
         used = np.flatnonzero(weights)
         if used.size == 0:
-            raise ValueError(
-                f"mixed background palette has no training pixels: {masks!r}"
-            )
+            raise ValueError("mixed background palette has no training pixels")
         points = source_rgb8[used]
         point_weights = weights[used]
         centres = [points[np.argmin(points.sum(axis=1))]]
@@ -4461,7 +4573,24 @@ def build_background_palette_assets(
             result = updated
         return result
 
-    centres = np.empty(
+    def grouped_histogram(
+        histograms: dict[int, np.ndarray] | np.ndarray,
+        masks: tuple[int, ...],
+    ) -> np.ndarray:
+        result = np.zeros(
+            BACKGROUND_PALETTE_SOURCE_COLOURS,
+            dtype=np.float64,
+        )
+        for mask in masks:
+            if isinstance(histograms, dict):
+                values = histograms.get(mask)
+                if values is not None:
+                    result += values
+            else:
+                result += histograms[mask]
+        return result
+
+    global_centres = np.empty(
         (
             BACKGROUND_PALETTE_BANK_COUNT,
             BACKGROUND_PALETTE_COLOURS_PER_BANK - 1,
@@ -4473,114 +4602,255 @@ def build_background_palette_assets(
         source_five_bit = (
             source_rgb6[bank * 16 + 1 : bank * 16 + 16] >> 1
         )
-        centres[bank] = gba_expand(source_five_bit)
+        global_centres[bank] = gba_expand(source_five_bit)
     for bank, masks in enumerate(BACKGROUND_MIXED_MASK_GROUPS, start=11):
-        centres[bank] = train_mixed_bank(masks)
-
-    distance = (
-        source_rgb8[None, :, None, :] -
-        centres[:, None, :, :]
-    )
-    distance = (distance * distance).sum(axis=3)
-    nearest_zero_based = distance.argmin(axis=2).astype(np.uint8)
-    nearest = nearest_zero_based + 1
-    nearest[:, 0] = 0
-    error = np.take_along_axis(
-        distance,
-        nearest_zero_based[:, :, None],
-        axis=2,
-    )[:, :, 0]
-
-    hue_error = np.zeros((16, 16), dtype=np.float64)
-    for hue in range(16):
-        start = hue * 16 + 1
-        hue_error[hue] = error[:, start : start + 15].mean(axis=1)
-
-    mask_bank = np.zeros(
-        BACKGROUND_PALETTE_MASK_COUNT,
-        dtype=np.uint8,
-    )
-    active_masks = set(
-        int(mask)
-        for mask in np.flatnonzero(mask_histogram.sum(axis=1))
-    )
-    for mask in range(1, BACKGROUND_PALETTE_MASK_COUNT):
-        if mask in active_masks:
-            weights = hue_balanced_weights(mask_histogram[mask])
-            bank_cost = weights @ error.T
-        else:
-            hues = [
-                hue for hue in range(16)
-                if mask & (1 << hue)
-            ]
-            bank_cost = hue_error[hues].sum(axis=0)
-        mask_bank[mask] = int(bank_cost.argmin())
-
-    critical_masks = (0x1004, 0x1005)
-    critical_bank = 14
-    if any(mask_bank[mask] != critical_bank for mask in critical_masks):
-        raise ValueError(
-            "TORM mixed-material masks no longer select the audited bank: "
-            + ", ".join(
-                f"{mask:#06x}->{int(mask_bank[mask])}"
-                for mask in critical_masks
-            )
+        global_centres[bank] = train_mixed_bank(
+            grouped_histogram(mask_histogram, masks)
         )
 
-    palette_words = np.zeros(
-        (
-            BACKGROUND_PALETTE_BANK_COUNT,
-            BACKGROUND_PALETTE_COLOURS_PER_BANK,
-        ),
-        dtype="<u2",
-    )
-    for bank in range(BACKGROUND_PALETTE_BANK_COUNT):
-        for colour in range(1, BACKGROUND_PALETTE_COLOURS_PER_BANK):
-            red, green, blue = centres[bank, colour - 1]
-            red5 = int(round(red * 31.0 / 255.0))
-            green5 = int(round(green * 31.0 / 255.0))
-            blue5 = int(round(blue * 31.0 / 255.0))
-            palette_words[bank, colour] = (
-                red5 | (green5 << 5) | (blue5 << 10)
-            )
+    def palette_mapping(
+        centres: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        distance = (
+            source_rgb8[None, :, None, :] -
+            centres[:, None, :, :]
+        )
+        distance = (distance * distance).sum(axis=3)
+        nearest_zero_based = distance.argmin(axis=2).astype(np.uint8)
+        nearest = nearest_zero_based + 1
+        nearest[:, 0] = 0
+        error = np.take_along_axis(
+            distance,
+            nearest_zero_based[:, :, None],
+            axis=2,
+        )[:, :, 0]
+        hue_error = np.zeros((16, 16), dtype=np.float64)
+        for hue in range(16):
+            start = hue * 16 + 1
+            hue_error[hue] = error[:, start : start + 15].mean(axis=1)
+        return nearest, error, hue_error
 
-    preview = Image.new("RGB", (15 * 8, 16 * 8), (0, 0, 0))
-    preview_pixels = preview.load()
-    for bank in range(16):
-        for colour in range(15):
-            rgb = tuple(
-                int(round(component))
-                for component in centres[bank, colour]
+    def active_assignment(
+        error: np.ndarray,
+        histograms: dict[int, np.ndarray],
+    ) -> dict[int, int]:
+        return {
+            mask: int(
+                (
+                    hue_balanced_weights(histogram) @ error.T
+                ).argmin()
             )
-            for y in range(bank * 8, bank * 8 + 8):
-                for x in range(colour * 8, colour * 8 + 8):
-                    preview_pixels[x, y] = rgb
-    preview.save(preview_root / "background_mixed_palette.png")
+            for mask, histogram in histograms.items()
+        }
+
+    def assignment_error(
+        error: np.ndarray,
+        assignment: dict[int, int],
+        histograms: dict[int, np.ndarray],
+    ) -> float:
+        return sum(
+            float(histograms[mask] @ error[bank])
+            for mask, bank in assignment.items()
+        )
+
+    def full_mask_table(
+        hue_error: np.ndarray,
+        assignment: dict[int, int],
+    ) -> np.ndarray:
+        table = np.zeros(
+            BACKGROUND_PALETTE_MASK_COUNT,
+            dtype=np.uint8,
+        )
+        for mask in range(1, BACKGROUND_PALETTE_MASK_COUNT):
+            if mask in assignment:
+                table[mask] = assignment[mask]
+            else:
+                hues = [
+                    hue
+                    for hue in range(16)
+                    if mask & (1 << hue)
+                ]
+                table[mask] = int(
+                    hue_error[hues].sum(axis=0).argmin()
+                )
+        return table
+
+    def palette_words_for(centres: np.ndarray) -> np.ndarray:
+        words = np.zeros(
+            (
+                BACKGROUND_PALETTE_BANK_COUNT,
+                BACKGROUND_PALETTE_COLOURS_PER_BANK,
+            ),
+            dtype="<u2",
+        )
+        for bank in range(BACKGROUND_PALETTE_BANK_COUNT):
+            for colour in range(
+                1,
+                BACKGROUND_PALETTE_COLOURS_PER_BANK,
+            ):
+                red, green, blue = centres[bank, colour - 1]
+                red5 = int(round(red * 31.0 / 255.0))
+                green5 = int(round(green * 31.0 / 255.0))
+                blue5 = int(round(blue * 31.0 / 255.0))
+                words[bank, colour] = (
+                    red5 | (green5 << 5) | (blue5 << 10)
+                )
+        return words
+
+    def save_palette_preview(
+        centres: np.ndarray,
+        shape_file_id: str,
+    ) -> None:
+        preview = Image.new("RGB", (15 * 8, 16 * 8), (0, 0, 0))
+        preview_pixels = preview.load()
+        for bank in range(16):
+            for colour in range(15):
+                rgb = tuple(
+                    int(round(component))
+                    for component in centres[bank, colour]
+                )
+                for y in range(bank * 8, bank * 8 + 8):
+                    for x in range(colour * 8, colour * 8 + 8):
+                        preview_pixels[x, y] = rgb
+        safe_id = "paren" if shape_file_id == ")" else shape_file_id
+        preview.save(
+            preview_root /
+            f"background_mixed_palette_{safe_id}.png"
+        )
+
+    global_nearest, global_error, _ = palette_mapping(global_centres)
+    del global_nearest
+    palette_variants: list[bytes] = []
+    nearest_variants: list[bytes] = []
+    mask_variants: list[bytes] = []
+    variant_reports: list[str] = []
+    critical_masks = (0x1004, 0x1005)
+    critical_banks: list[int] = []
+
+    for shape_file_id, histograms in zip(
+        shape_file_ids,
+        shape_mask_histograms,
+        strict=True,
+    ):
+        local_centres = global_centres.copy()
+        for bank, masks in enumerate(
+            BACKGROUND_MIXED_MASK_GROUPS,
+            start=11,
+        ):
+            local_training = grouped_histogram(histograms, masks)
+            if local_training.sum() != 0:
+                local_centres[bank] = train_mixed_bank(local_training)
+
+        nearest, error, hue_error = palette_mapping(local_centres)
+        assignment = active_assignment(error, histograms)
+        local_objective = assignment_error(
+            error,
+            assignment,
+            histograms,
+        )
+        global_assignment = active_assignment(global_error, histograms)
+        global_objective = assignment_error(
+            global_error,
+            global_assignment,
+            histograms,
+        )
+        if local_objective > global_objective:
+            local_centres = global_centres.copy()
+            nearest, error, hue_error = palette_mapping(local_centres)
+            assignment = global_assignment
+            local_objective = global_objective
+
+        mask_bank = full_mask_table(
+            hue_error,
+            assignment,
+        )
+        palette_words = palette_words_for(local_centres)
+        palette_variants.append(palette_words.tobytes())
+        nearest_variants.append(nearest.tobytes())
+        mask_variants.append(mask_bank.tobytes())
+        save_palette_preview(local_centres, shape_file_id)
+
+        improvement = (
+            0.0
+            if global_objective == 0
+            else
+            (global_objective - local_objective) *
+                100.0 / global_objective
+        )
+        variant_reports.extend((
+            (
+                f"background_palette_shape_{shape_file_id}_active_masks="
+                f"{len(histograms)}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_global_error="
+                f"{global_objective:.0f}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_local_error="
+                f"{local_objective:.0f}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_improvement="
+                f"{improvement:.4f}%"
+            ),
+        ))
+        if shape_file_id == "x":
+            critical_banks = [
+                int(mask_bank[mask])
+                for mask in critical_masks
+            ]
+
+    palette_bytes = b"".join(palette_variants)
+    nearest_bytes = b"".join(nearest_variants)
+    mask_bytes = b"".join(mask_variants)
+    variant_count = len(shape_file_ids)
+    if len(critical_banks) != len(critical_masks):
+        raise ValueError("TORM shape-bank palette audit was not generated")
 
     metadata = {
-        "BACKGROUND_GBA_PALETTE_BYTES": palette_words.nbytes,
-        "BACKGROUND_PALETTE_NEAREST_BYTES": nearest.size,
-        "BACKGROUND_PALETTE_MASK_BANK_BYTES": mask_bank.size,
-        "BACKGROUND_PALETTE_CRITICAL_BANK": critical_bank,
+        "BACKGROUND_PALETTE_VARIANT_COUNT": variant_count,
+        "BACKGROUND_GBA_PALETTE_VARIANT_BYTES":
+            BACKGROUND_PALETTE_BANK_COUNT *
+            BACKGROUND_PALETTE_COLOURS_PER_BANK * 2,
+        "BACKGROUND_GBA_PALETTE_BYTES": len(palette_bytes),
+        "BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES":
+            BACKGROUND_PALETTE_BANK_COUNT *
+            BACKGROUND_PALETTE_SOURCE_COLOURS,
+        "BACKGROUND_PALETTE_NEAREST_BYTES": len(nearest_bytes),
+        "BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES":
+            BACKGROUND_PALETTE_MASK_COUNT,
+        "BACKGROUND_PALETTE_MASK_BANK_BYTES": len(mask_bytes),
+        "BACKGROUND_PALETTE_CRITICAL_BANK": critical_banks[0],
     }
     report = [
-        "background_palette_mode=global source-hue-aware 4bpp",
+        "background_palette_mode=shape-bank source-hue-aware 4bpp",
         f"background_palette_shape_files={shape_file_count}",
+        (
+            "background_palette_shape_file_ids=" +
+            ",".join(shape_file_ids)
+        ),
         f"background_palette_training_tiles={shape_tile_count}",
-        f"background_palette_active_masks={len(active_masks)}",
+        (
+            "background_palette_active_masks="
+            f"{len(np.flatnonzero(mask_histogram.sum(axis=1)))}"
+        ),
         "background_palette_single_hue_banks=0..10 exact",
         "background_palette_mixed_hue_banks=11..15 trained",
         (
-            "background_palette_torm_masks="
+            "background_palette_torm_shape_x_masks="
             + ",".join(f"0x{mask:04x}" for mask in critical_masks)
-            + f"->bank{critical_bank}"
+            + "->"
+            + ",".join(f"bank{bank}" for bank in critical_banks)
         ),
         "background_palette_level_specific_tables=0",
+        "background_palette_shape_bank_specific_tables=5",
+        *variant_reports,
     ]
     return (
-        palette_words.tobytes(),
-        nearest.tobytes(),
-        mask_bank.tobytes(),
+        palette_bytes,
+        nearest_bytes,
+        mask_bytes,
         metadata,
         report,
     )
@@ -6908,6 +7178,10 @@ def main() -> None:
     preview = args.preview_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     preview.mkdir(parents=True, exist_ok=True)
+    # v53 replaced the 3.8 MiB dense navigation page blob with a lossless
+    # block dictionary.  Remove the obsolete generated output so an
+    # incremental build tree cannot misleadingly retain both representations.
+    (output / "frontend_nav_bitmap_pages.bin").unlink(missing_ok=True)
 
     snes = load_snes_builder(workspace)
     nes = snes.load_nes_asset_module(workspace)
@@ -6937,7 +7211,8 @@ def main() -> None:
         frontend_nav_obj_tiles,
         frontend_nav_obj_meta,
         frontend_nav_obj_palette,
-        frontend_nav_bitmap_pages,
+        frontend_nav_bitmap_blocks,
+        frontend_nav_bitmap_indices,
         frontend_metadata,
         frontend_report,
     ) = build_frontend_mode4_assets(data_root, preview, workspace)
@@ -7009,8 +7284,11 @@ def main() -> None:
     (output / "frontend_nav_obj_palette.bin").write_bytes(
         frontend_nav_obj_palette
     )
-    (output / "frontend_nav_bitmap_pages.bin").write_bytes(
-        frontend_nav_bitmap_pages
+    (output / "frontend_nav_bitmap_blocks.bin").write_bytes(
+        frontend_nav_bitmap_blocks
+    )
+    (output / "frontend_nav_bitmap_indices.bin").write_bytes(
+        frontend_nav_bitmap_indices
     )
     (
         frontend_source_stamp_offsets,

@@ -316,7 +316,8 @@ ASSET_BINARIES := \
 	$(RES)/frontend_nav_obj_tiles.bin \
 	$(RES)/frontend_nav_obj_meta.bin \
 	$(RES)/frontend_nav_obj_palette.bin \
-	$(RES)/frontend_nav_bitmap_pages.bin \
+	$(RES)/frontend_nav_bitmap_blocks.bin \
+	$(RES)/frontend_nav_bitmap_indices.bin \
 	$(RES)/frontend_source_stamp_offsets.bin \
 	$(RES)/frontend_source_stamp_data.bin \
 	$(RES)/jukebox_font_tiles.bin \
@@ -453,6 +454,7 @@ $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
 		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DAUTOTEST_STACK_CANARY \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
@@ -603,6 +605,7 @@ $(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o: \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
 		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_TRANSITION_STRESS \
+		-DAUTOTEST_STACK_CANARY \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 

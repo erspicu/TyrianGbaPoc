@@ -257,7 +257,7 @@ static void autotest_frontend_transition_finish(void)
     sram[1] = 'G';
     sram[2] = 'F';
     sram[3] = 'A';
-    sram_write_u32(4, 6);
+    sram_write_u32(4, 8);
     sram_write_u32(8, FRONTEND_TRANSITION_PATH_COUNT);
     sram_write_u32(12, FRONTEND_TRANSITION_ITERATIONS);
     for (path = 0; path < FRONTEND_TRANSITION_PATH_COUNT; path++) {
@@ -315,6 +315,23 @@ static void autotest_frontend_transition_finish(void)
             offset + 28,
             telemetry_frontend_quit_choices_cycles_max
         );
+#ifdef AUTOTEST_STACK_CANARY
+        {
+            u32 stack_remaining = autotest_stack_canary_remaining();
+
+            sram_write_u32(offset + 32, stack_remaining);
+            sram_write_u32(
+                offset + 36,
+                stack_remaining >= sizeof(u32) * 8u ? 1u : 0u
+            );
+            sram_write_u32(
+                offset + 40,
+                autotest_stack_canary_filled_bytes
+            );
+            sram_write_u32(offset + 44, autotest_ewram_heap_used());
+            sram_write_u32(offset + 48, autotest_ewram_heap_remaining());
+        }
+#endif
     }
     __asm__ volatile("swi 3");
 }

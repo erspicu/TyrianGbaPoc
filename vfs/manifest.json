@@ -16,13 +16,21 @@
     "tyrian.hdt",
     "tyrian.pic",
     "tyrian.shp",
-    "tyrian.snd",
     "tyrian?.lvl",
     "tyrianc.shp",
-    "voices.snd",
     "voicesc.snd"
   ],
   "exclude": [],
+  "omitted_duplicates": [
+    {
+      "pattern": "tyrian.snd",
+      "replacement": "res/soundbank.bin"
+    },
+    {
+      "pattern": "voices.snd",
+      "replacement": "res/soundbank.bin"
+    }
+  ],
   "probes": [
     "tyrian1.lvl",
     "tyrian.hdt",

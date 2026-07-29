@@ -164,6 +164,77 @@ def collect_files(manifest: dict, source_root: Path) -> list[FileRecord]:
     return records
 
 
+def collect_omitted_duplicates(
+    manifest: dict,
+    source_root: Path,
+    active_records: list[FileRecord],
+) -> list[dict]:
+    """Audit source payloads replaced by an active generated runtime asset.
+
+    Unique stock data stays in ROMFS even before its feature is connected.
+    Only a source whose complete runtime role is already served by another
+    embedded asset belongs here; the source itself remains in vendor/.
+    """
+    active_names = {
+        record.source_name.lower()
+        for record in active_records
+    }
+    omitted: dict[str, dict] = {}
+
+    for entry in manifest.get("omitted_duplicates", []):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                "manifest omitted_duplicates entries must be objects"
+            )
+        pattern = entry.get("pattern")
+        replacement = entry.get("replacement")
+        if not isinstance(pattern, str) or not pattern:
+            raise ValueError("omitted duplicate pattern is missing")
+        if not isinstance(replacement, str) or not replacement.strip():
+            raise ValueError(
+                f"omitted duplicate replacement is missing: {pattern!r}"
+            )
+        matches = sorted(
+            (
+                path
+                for path in source_root.glob(pattern)
+                if path.is_file()
+            ),
+            key=lambda path: path.name.lower(),
+        )
+        if not matches:
+            raise FileNotFoundError(
+                "omitted duplicate pattern matched no files: "
+                f"{pattern!r}"
+            )
+        for source in matches:
+            source_name = source.relative_to(source_root).as_posix()
+            key = source_name.lower()
+            if key in active_names:
+                raise ValueError(
+                    "ROMFS source cannot be active and an omitted duplicate: "
+                    f"{source_name}"
+                )
+            if key in omitted:
+                raise ValueError(
+                    f"duplicate omitted ROMFS source: {source_name}"
+                )
+            data = source.read_bytes()
+            omitted[key] = {
+                "path": normalize_path(
+                    f"{manifest['mount']}/{source_name}"
+                ),
+                "bytes": len(data),
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "replacement": replacement.strip(),
+            }
+
+    return [
+        omitted[key]
+        for key in sorted(omitted)
+    ]
+
+
 def build_image(manifest: dict, records: list[FileRecord]) -> tuple[bytes, dict]:
     alignment = manifest["alignment"]
     mount = normalize_path(manifest["mount"])
@@ -371,7 +442,18 @@ def main() -> None:
         raise FileNotFoundError(f"source root is missing: {source_root}")
 
     records = collect_files(manifest, source_root)
+    omitted_duplicates = collect_omitted_duplicates(
+        manifest,
+        source_root,
+        records,
+    )
     image, audit = build_image(manifest, records)
+    audit["omitted_duplicate_files"] = omitted_duplicates
+    audit["omitted_duplicate_count"] = len(omitted_duplicates)
+    audit["omitted_duplicate_bytes"] = sum(
+        record["bytes"]
+        for record in omitted_duplicates
+    )
     if len(image) >= MAX_GBA_ROM_BYTES:
         raise ValueError(
             f"ROMFS image is {len(image)} bytes; it alone exceeds GBA ROM"
@@ -391,6 +473,8 @@ def main() -> None:
         "ROMFS "
         f"files={audit['entry_count']} "
         f"payload={audit['payload_bytes']} "
+        f"deduplicated={audit['omitted_duplicate_count']}/"
+        f"{audit['omitted_duplicate_bytes']} "
         f"image={audit['image_bytes']} "
         f"sha256={audit['image_sha256']}"
     )

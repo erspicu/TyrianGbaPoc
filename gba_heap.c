@@ -5,7 +5,13 @@
 extern unsigned char __eheap_start[];
 extern unsigned char __eheap_end[];
 
-void *fake_heap_end;
+/*
+ * Newlib/devkitARM observes fake_heap_end, while AUTOTEST also records the
+ * monotonic high-water mark.  Heap bookkeeping is cold and belongs in EWRAM,
+ * not in the scarce IWRAM hot-code/stack region.
+ */
+void *fake_heap_end __attribute__((section(".sbss")));
+void *fake_heap_high_water __attribute__((section(".sbss")));
 
 void *_sbrk(ptrdiff_t increment)
 {
@@ -36,5 +42,8 @@ void *_sbrk(ptrdiff_t increment)
     }
 
     fake_heap_end = (void *)current;
+    if ((uintptr_t)fake_heap_high_water < current) {
+        fake_heap_high_water = (void *)current;
+    }
     return (void *)previous;
 }

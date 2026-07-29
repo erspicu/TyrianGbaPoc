@@ -46,6 +46,91 @@ static void sram_write_u32(u32 offset, u32 value)
     sram[offset + 3] = (u8)(value >> 24);
 }
 
+#ifdef AUTOTEST_STACK_CANARY
+extern u8 __iheap_start[];
+extern u8 __eheap_start[];
+extern u8 __eheap_end[];
+extern void *fake_heap_high_water;
+
+#define AUTOTEST_STACK_CANARY_WORD 0xD34DB33Fu
+#define AUTOTEST_STACK_CANARY_INIT_GUARD_BYTES 64u
+
+static u32 *autotest_stack_canary_end;
+static u32 autotest_stack_canary_filled_bytes;
+
+/*
+ * Fill only the linker-free IWRAM interval below the currently active C
+ * stack.  The extra 64-byte gap protects this initializer's own frame.
+ * Stack growth later overwrites the pattern from high addresses downward,
+ * making the untouched prefix an exact conservative high-water measure.
+ */
+static __attribute__((noinline, noclone)) void
+autotest_stack_canary_begin(void)
+{
+    uintptr_t stack_pointer;
+    u32 *cursor = (u32 *)(void *)__iheap_start;
+    u32 *limit;
+
+    __asm__ volatile("mov %0, sp" : "=r"(stack_pointer));
+    if (stack_pointer <= AUTOTEST_STACK_CANARY_INIT_GUARD_BYTES) {
+        autotest_stack_canary_end = cursor;
+        autotest_stack_canary_filled_bytes = 0;
+        return;
+    }
+    limit = (u32 *)(void *)(
+        (stack_pointer - AUTOTEST_STACK_CANARY_INIT_GUARD_BYTES) &
+        ~(uintptr_t)3u
+    );
+    if (limit < cursor) limit = cursor;
+    autotest_stack_canary_end = limit;
+    autotest_stack_canary_filled_bytes =
+        (u32)((u8 *)(void *)limit - __iheap_start);
+    while (cursor < limit) {
+        *cursor++ = AUTOTEST_STACK_CANARY_WORD;
+    }
+}
+
+static __attribute__((noinline, noclone)) u32
+autotest_stack_canary_remaining(void)
+{
+    const u32 *cursor = (const u32 *)(const void *)__iheap_start;
+
+    while (
+        cursor < autotest_stack_canary_end &&
+        *cursor == AUTOTEST_STACK_CANARY_WORD
+    ) {
+        cursor++;
+    }
+    return (u32)(
+        (const u8 *)(const void *)cursor -
+        (const u8 *)(const void *)__iheap_start
+    );
+}
+
+static u32 autotest_ewram_heap_used(void)
+{
+    uintptr_t start = (uintptr_t)__eheap_start;
+    uintptr_t end = (uintptr_t)__eheap_end;
+    uintptr_t high_water = fake_heap_high_water ?
+        (uintptr_t)fake_heap_high_water :
+        start;
+
+    if (high_water < start || high_water > end) return UINT32_MAX;
+    return (u32)(high_water - start);
+}
+
+static u32 autotest_ewram_heap_remaining(void)
+{
+    u32 used = autotest_ewram_heap_used();
+    u32 capacity = (u32)(
+        (uintptr_t)__eheap_end -
+        (uintptr_t)__eheap_start
+    );
+
+    return used <= capacity ? capacity - used : 0;
+}
+#endif
+
 #if !TYRIAN_GBA_STRESS_LOADOUT
 /*
  * Cold-start regression for the Upgrade Ship equipment path.  It binds

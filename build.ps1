@@ -106,6 +106,9 @@ $backupDir = Join-Path $projectRoot "Backup"
 $romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
 $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
 $assetReportPath = Join-Path $projectRoot "res\asset_report.txt"
+$obsoleteNavPagesPath = Join-Path (
+    Join-Path $projectRoot "res"
+) "frontend_nav_bitmap_pages.bin"
 $sprite2RawPath = Join-Path $projectRoot "res\sprite2_raw_components.bin"
 $sprite2RawAuditPath = Join-Path $projectRoot "res\sprite2_raw_audit.txt"
 $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
@@ -194,6 +197,10 @@ if (
     $romfsAudit.files.Count -ne $romfsAudit.entry_count -or
     $romfsAudit.probe_count -le 0 -or
     $romfsAudit.probes.Count -ne $romfsAudit.probe_count -or
+    $romfsAudit.omitted_duplicate_count -ne 2 -or
+    $romfsAudit.omitted_duplicate_files.Count -ne
+        $romfsAudit.omitted_duplicate_count -or
+    $romfsAudit.omitted_duplicate_bytes -ne 397279 -or
     $romfsImageBytes -ne $romfsAudit.image_bytes -or
     $romfsAudit.payload_bytes -gt $romfsAudit.image_bytes -or
     $romfsImageSha256 -ne $romfsAudit.image_sha256
@@ -263,6 +270,41 @@ if (
     $assetReport.frontend_source_stamp_runtime_rle_decode -ne "0" -or
     $assetReport.frontend_source_stamp_strategy -ne
         "build-time lossless decode + 25 scale phases + aligned sparse runs" -or
+    $assetReport.frontend_nav_bitmap_strategy -ne
+        "build-time 15x15 phases + lossless 2-row block dictionary" -or
+    $assetReport.frontend_nav_bitmap_raw_bytes -ne "3974400" -or
+    $assetReport.frontend_nav_bitmap_block_rows -ne "2" -or
+    $assetReport.frontend_nav_bitmap_block_count -ne "2916" -or
+    $assetReport.frontend_nav_bitmap_block_data_bytes -ne "746496" -or
+    $assetReport.frontend_nav_bitmap_index_bytes -ne "31050" -or
+    $assetReport.frontend_nav_bitmap_packed_bytes -ne "777546" -or
+    $assetReport.frontend_nav_bitmap_saved_bytes -ne "3196854" -or
+    $assetReport.frontend_nav_bitmap_roundtrip_verified -ne "1" -or
+    $assetReport.background_palette_mode -ne
+        "shape-bank source-hue-aware 4bpp" -or
+    $assetReport.background_palette_shape_file_ids -ne "),w,x,y,z" -or
+    $assetReport.background_palette_level_specific_tables -ne "0" -or
+    $assetReport.background_palette_shape_bank_specific_tables -ne "5" -or
+    [double](
+        $assetReport["background_palette_shape_)_improvement"] -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_w_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_x_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_y_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_z_improvement -replace
+            "%$", ""
+    ) -le 0 -or
     $assetReport.frontend_static_help_strategy -ne
         "build-time stock HDT mixed-case strips; aligned ROM copy" -or
     $assetReport.frontend_static_help_dimensions -ne "240x11" -or
@@ -276,6 +318,12 @@ if (
     $assetReport.frontend_stats_runtime_shp_decode -ne "0"
 ) {
     throw "Finite source-cue or front-end pre-baked asset audit failed"
+}
+if (Test-Path -LiteralPath $obsoleteNavPagesPath -PathType Leaf) {
+    throw (
+        "Obsolete dense navigation pages survived asset generation: " +
+        $obsoleteNavPagesPath
+    )
 }
 
 function Test-GbaRom {
@@ -342,7 +390,15 @@ function Test-GbaMemoryBudget {
         $mapText,
         "(?m)^\s*0x(?<address>03[0-9a-fA-F]{6})\s+__iheap_start\b"
     )
-    if (-not $ewramMatch.Success -or -not $iwramMatch.Success) {
+    $userStackMatch = [regex]::Match(
+        $mapText,
+        "(?m)^\s*0x(?<address>03[0-9a-fA-F]{6})\s+__sp_usr\b"
+    )
+    if (
+        -not $ewramMatch.Success -or
+        -not $iwramMatch.Success -or
+        -not $userStackMatch.Success
+    ) {
         throw "Unable to read GBA memory limits from linker map: $MapPath"
     }
 
@@ -354,21 +410,35 @@ function Test-GbaMemoryBudget {
         $iwramMatch.Groups["address"].Value,
         16
     )
+    $userStackTop = [Convert]::ToUInt32(
+        $userStackMatch.Groups["address"].Value,
+        16
+    )
     $ewramFree = 0x02040000L - $ewramStart
     $iwramFree = 0x03008000L - $iwramStart
+    $iwramUserStackBytes = [int64]$userStackTop - $iwramStart
+    $iwramReservedAboveStack = 0x03008000L - $userStackTop
     # Static front-end transitions keep a 19.2 KiB packed ship-panel cache
-    # in EWRAM. Gameplay reuses the separate Mode-4/Sprite2 union, so the
-    # measured 30 KiB release heap/stack headroom remains real. Retain a
-    # 24 KiB hard floor to catch future growth without rejecting that cache.
-    # The instrumented transition ROM consumes about 1 KiB more IWRAM than
-    # release; keep a 5 KiB floor while release remains independently audited.
+    # in EWRAM. Gameplay reuses the separate Mode-4/Sprite2 union. Maxmod is
+    # the only observed heap client: AUTOTEST measures an exact 3,892-byte
+    # high-water mark and independently requires at least 8 KiB after that
+    # allocation.  A 12 KiB link floor therefore exposes another 12 KiB to
+    # useful static caches without relying on unmeasured free space.
+    #
+    # libgba starts the user stack at __sp_usr (0x03007f00), not at the top of
+    # IWRAM. Full gameplay measured a conservative 2,028-byte peak and the
+    # complete static-menu transition matrix measured 1,288 bytes.  Keep a
+    # 3 KiB link floor, while both instrumented paths independently require
+    # at least 2 KiB of untouched runtime canary.
     if (
-        $ewramFree -lt 24KB -or
-        $iwramFree -lt 5KB
+        $ewramFree -lt 12KB -or
+        $iwramUserStackBytes -lt 3072 -or
+        $iwramReservedAboveStack -ne 256
     ) {
         throw (
             "GBA memory safety margin regressed for ${Name}: " +
-            "EWRAM free=$ewramFree, IWRAM free=$iwramFree"
+            "EWRAM free=$ewramFree, IWRAM raw free=$iwramFree, " +
+            "user stack room=$iwramUserStackBytes"
         )
     }
 
@@ -378,6 +448,9 @@ function Test-GbaMemoryBudget {
         ewram_free_bytes = $ewramFree
         iwram_heap_start = "0x$($iwramStart.ToString('X8'))"
         iwram_free_bytes = $iwramFree
+        iwram_user_stack_top = "0x$($userStackTop.ToString('X8'))"
+        iwram_user_stack_bytes = $iwramUserStackBytes
+        iwram_reserved_above_stack_bytes = $iwramReservedAboveStack
     }
 }
 
@@ -665,7 +738,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 6416) {
+if ($saveBytes.Length -lt 6436) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -910,6 +983,11 @@ $telemetry = [ordered]@{
     ) -join ","
     missed_vblank_transition_job_last = Read-TelemetryU32 6408
     missed_vblank_transition_phase_next = Read-TelemetryU32 6412
+    iwram_stack_remaining_bytes = Read-TelemetryU32 6416
+    iwram_stack_guard_intact = Read-TelemetryU32 6420
+    iwram_stack_canary_filled_bytes = Read-TelemetryU32 6424
+    ewram_heap_used_bytes = Read-TelemetryU32 6428
+    ewram_heap_remaining_bytes = Read-TelemetryU32 6432
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -1192,7 +1270,7 @@ $expectedSourceSoundMaskLow = [Convert]::ToUInt32("E70211AC", 16)
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 12168 }
 $expectedBossDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 439 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 25
+    schema_version = $telemetry.version -eq 27
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
@@ -1354,6 +1432,16 @@ $telemetryChecks = [ordered]@{
         $telemetry.sprite2_l2_max_visible_unique -eq 15
     )
     gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
+    iwram_stack_high_water = (
+        $telemetry.iwram_stack_guard_intact -eq 1 -and
+        $telemetry.iwram_stack_canary_filled_bytes -gt
+            $telemetry.iwram_stack_remaining_bytes -and
+        $telemetry.iwram_stack_remaining_bytes -ge 2048
+    )
+    ewram_heap_high_water = (
+        $telemetry.ewram_heap_used_bytes -eq 3892 -and
+        $telemetry.ewram_heap_remaining_bytes -ge 8192
+    )
     authored_boss_perf_window = (
         $telemetry.boss_perf_started -eq 1 -and
         $telemetry.boss_perf_completed -eq 1 -and
@@ -1552,7 +1640,7 @@ $deathChecks = [ordered]@{
     source_music_fade = $deathTelemetry.music_fade_steps -eq 59
     gba_oam_limit = $deathTelemetry.final_oam -le 128
     return_to_game_menu = (
-        $deathTelemetry.return_song -eq 1 -and
+        $deathTelemetry.return_song -eq 2 -and
         $deathTelemetry.return_state -eq 7 -and
         $deathTelemetry.return_selection -eq 4 -and
         $deathTelemetry.return_mode4 -eq 1 -and
@@ -2435,13 +2523,13 @@ $transitionRecordBytes = 108
 $transitionFooterOffset =
     16 + $transitionPathCount * $transitionRecordBytes
 if (
-    $transitionSaveBytes.Length -lt $transitionFooterOffset + 32 -or
+    $transitionSaveBytes.Length -lt $transitionFooterOffset + 52 -or
     [Text.Encoding]::ASCII.GetString(
         $transitionSaveBytes,
         0,
         4
     ) -ne "TGFA" -or
-    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 6 -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 8 -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 8) -ne
         $transitionPathCount -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 12) -ne 120
@@ -2557,12 +2645,38 @@ $transitionFooter = [ordered]@{
         $transitionSaveBytes,
         $transitionFooterOffset + 12
     )
+    iwram_stack_remaining_bytes = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 32
+    )
+    iwram_stack_guard_intact = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 36
+    )
+    iwram_stack_canary_filled_bytes = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 40
+    )
+    ewram_heap_used_bytes = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 44
+    )
+    ewram_heap_remaining_bytes = [BitConverter]::ToUInt32(
+        $transitionSaveBytes,
+        $transitionFooterOffset + 48
+    )
 }
 if (
     $transitionFooter.final_state -ne 7 -or
     $transitionFooter.final_selection -ne 5 -or
     $transitionFooter.frame_pending -ne 0 -or
-    $transitionFooter.pending_kind -ne 0
+    $transitionFooter.pending_kind -ne 0 -or
+    $transitionFooter.iwram_stack_guard_intact -ne 1 -or
+    $transitionFooter.iwram_stack_canary_filled_bytes -le
+        $transitionFooter.iwram_stack_remaining_bytes -or
+    $transitionFooter.iwram_stack_remaining_bytes -lt 2048 -or
+    $transitionFooter.ewram_heap_used_bytes -ne 3892 -or
+    $transitionFooter.ewram_heap_remaining_bytes -lt 8192
 ) {
     throw (
         "Front-end transition stress did not settle cleanly: " +
