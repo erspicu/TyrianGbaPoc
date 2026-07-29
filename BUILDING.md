@@ -44,6 +44,10 @@ Build-GBA-ROM.bat
   Boss 血條、破關摘要，以及首頁、Play Mode、Episode、Difficulty、
   Game Menu、Upgrade Ship、Next Level、Quit Game 對話框的位置。
 
+公開建置的預設值為正常傷害流程（無敵模式關閉）與一般劇情裝備
+（極限負荷配置關閉）。需要長時間驗證關卡或量測 CPU／OAM 上限時，
+再個別把對應開關設為 `1`；請勿把壓力測試配置誤當成遊戲平衡設定。
+
 座標預設為最終 240×160 GBA 畫面像素；只有名稱含 `SOURCE_Y` 的欄位
 是原始 PC 200-line 座標，runtime 會套用既有的 200→160 轉換。
 建置時會檢查重要矩形與 HUD 是否仍位於畫面內；靜態選單的 build-time

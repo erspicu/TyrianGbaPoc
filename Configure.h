@@ -30,7 +30,7 @@
  * 0：使用正常的 OpenTyrian 傷害與死亡流程。
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
 #endif
 
 /*
@@ -60,7 +60,7 @@
 /* In-level HUD and notices / 關卡內 HUD 與系統提示                          */
 /* ------------------------------------------------------------------------- */
 
-/* Accumulated cash, left-aligned / 累積金額，向右排列。 */
+/* Accumulated cash, left-aligned / 累積金額，以左側座標向右排列。 */
 #ifndef TYRIAN_GBA_LAYOUT_CASH_X
 #define TYRIAN_GBA_LAYOUT_CASH_X 22
 #endif
