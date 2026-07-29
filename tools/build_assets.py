@@ -163,6 +163,15 @@ FRONTEND_NATIVE_FONT_HEIGHT = 7
 FRONTEND_NATIVE_FONT_WIDTH = 6
 FRONTEND_NATIVE_FONT_SPACE = 3
 FRONTEND_NATIVE_FONT_SHADOW = 240
+FRONTEND_PREGAME_FONT_CHARACTERS = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789.,!?'/:-%"
+)
+FRONTEND_PREGAME_FONT_HEIGHT = 8
+FRONTEND_PREGAME_FONT_WIDTH = 7
+FRONTEND_PREGAME_FONT_SPACE = 4
+FRONTEND_PREGAME_FONT_SHADOW = 240
 FRONTEND_STATIC_MENU_PANEL_X = 120
 FRONTEND_STATIC_MENU_PANEL_Y = 0
 FRONTEND_STATIC_MENU_PANEL_WIDTH = 120
@@ -257,6 +266,102 @@ def load_frontend_native_font(path: Path) -> np.ndarray:
             f"{''.join(characters)!r}"
         )
     return np.asarray(rows, dtype=np.uint8)
+
+
+def load_frontend_pregame_font(path: Path) -> np.ndarray:
+    """Load the project-specific mixed-case setup-menu bitmap face."""
+    characters: list[str] = []
+    rows: list[list[int]] = []
+
+    for line_number, raw_line in enumerate(
+        path.read_text(encoding="ascii").splitlines(),
+        start=1,
+    ):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != FRONTEND_PREGAME_FONT_HEIGHT + 1:
+            raise ValueError(
+                "pre-game font row must contain one glyph and eight bytes: "
+                f"{path}:{line_number}"
+            )
+        character = fields[0]
+        if len(character) != 1:
+            raise ValueError(
+                f"pre-game font glyph key is not one character: {character!r}"
+            )
+        values = [int(field, 16) for field in fields[1:]]
+        if any(value < 0 or value > 0x1f for value in values):
+            raise ValueError(
+                f"pre-game font row exceeds five source bits: {character!r}"
+            )
+        characters.append(character)
+        rows.append(values)
+    if "".join(characters) != FRONTEND_PREGAME_FONT_CHARACTERS:
+        raise ValueError(
+            "pre-game font character order changed: "
+            f"{''.join(characters)!r}"
+        )
+    return np.asarray(rows, dtype=np.uint8)
+
+
+FRONTEND_LAYOUT_KEYS = (
+    "TYRIAN_GBA_LAYOUT_TITLE_MENU_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_TITLE_MENU_FIRST_Y",
+    "TYRIAN_GBA_LAYOUT_TITLE_MENU_ROW_STEP",
+    "TYRIAN_GBA_LAYOUT_SETUP_HEADER_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_SETUP_HEADER_Y",
+    "TYRIAN_GBA_LAYOUT_SETUP_CHOICE_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_SETUP_CHOICE_FIRST_Y",
+    "TYRIAN_GBA_LAYOUT_SETUP_CHOICE_ROW_STEP",
+    "TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_X",
+    "TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_RIGHT",
+    "TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_FIRST_Y",
+    "TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_ROW_STEP",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_Y",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_X",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_RIGHT",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_FIRST_SOURCE_Y",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_SOURCE_ROW_STEP",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_QUIT_SOURCE_GAP",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_RIGHT",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_FIRST_Y",
+    "TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_ROW_STEP",
+    "TYRIAN_GBA_LAYOUT_QUIT_QUESTION_X",
+    "TYRIAN_GBA_LAYOUT_QUIT_QUESTION_Y",
+    "TYRIAN_GBA_LAYOUT_QUIT_QUESTION_RIGHT",
+    "TYRIAN_GBA_LAYOUT_QUIT_HELP_X",
+    "TYRIAN_GBA_LAYOUT_QUIT_HELP_Y",
+    "TYRIAN_GBA_LAYOUT_QUIT_HELP_RIGHT",
+    "TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X",
+    "TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y",
+)
+
+
+def load_frontend_layout(path: Path) -> dict[str, int]:
+    """Read literal user layout defaults shared by build-time static assets."""
+    values: dict[str, int] = {}
+    pattern = re.compile(
+        r"^\s*#define\s+(TYRIAN_GBA_LAYOUT_[A-Z0-9_]+)"
+        r"\s+(-?(?:0[xX][0-9a-fA-F]+|\d+))\s*$"
+    )
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        match = pattern.match(raw_line)
+        if match:
+            values[match.group(1)] = int(match.group(2), 0)
+    missing = [name for name in FRONTEND_LAYOUT_KEYS if name not in values]
+    if missing:
+        raise ValueError(
+            "Configure.h is missing literal static-layout definitions: "
+            + ", ".join(missing)
+        )
+    return values
 
 
 def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
@@ -1514,6 +1619,8 @@ def build_frontend_nav_bitmap_pages(
 def build_frontend_static_menu_panels(
     source: FrontendSourceRenderer,
     native_font: np.ndarray,
+    pregame_font: np.ndarray,
+    layout: dict[str, int],
     preview: Path,
 ) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
     """Bake final-resolution text panels shared by the static menu family."""
@@ -1522,6 +1629,11 @@ def build_frontend_static_menu_panels(
         for index, character in enumerate(FRONTEND_NATIVE_FONT_CHARACTERS)
     }
     fallback_index = font_index["?"]
+    pregame_font_index = {
+        character: index
+        for index, character in enumerate(FRONTEND_PREGAME_FONT_CHARACTERS)
+    }
+    pregame_fallback_index = pregame_font_index["?"]
     menu_chrome = source.menu_picture_frame(1)
     panels: list[np.ndarray] = []
     names: list[str] = []
@@ -1635,6 +1747,98 @@ def build_frontend_static_menu_panels(
             space_width,
         )
 
+    def pregame_glyph_index(character: str) -> int | None:
+        if character == " ":
+            return None
+        return pregame_font_index.get(character, pregame_fallback_index)
+
+    def pregame_row(index: int, row: int) -> int:
+        """Apply the face's one-pixel horizontal semibold treatment."""
+        value = int(pregame_font[index, row])
+        return value | (value >> 1)
+
+    def pregame_glyph_width(index: int) -> int:
+        occupied = 0
+        for row in range(FRONTEND_PREGAME_FONT_HEIGHT):
+            occupied |= pregame_row(index, row)
+        return max(1, occupied.bit_length())
+
+    def pregame_glyph_advance(index: int | None) -> int:
+        if index is None:
+            return FRONTEND_PREGAME_FONT_SPACE
+        return min(
+            FRONTEND_PREGAME_FONT_WIDTH,
+            pregame_glyph_width(index) + 2,
+        )
+
+    def pregame_text_width(text: str) -> int:
+        return sum(
+            pregame_glyph_advance(pregame_glyph_index(character))
+            for character in text
+        )
+
+    def draw_pregame_glyph(
+        frame: np.ndarray,
+        index: int | None,
+        x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        if index is None:
+            return
+        natural_width = pregame_glyph_width(index)
+        for row in range(FRONTEND_PREGAME_FONT_HEIGHT):
+            value = pregame_row(index, row)
+            target_y = y + row
+            if target_y < 0 or target_y >= FRONTEND_FRAME_HEIGHT:
+                continue
+            for column in range(natural_width):
+                target_x = x + column
+                if (
+                    0 <= target_x < FRONTEND_FRAME_WIDTH and
+                    value & (1 << (natural_width - column - 1))
+                ):
+                    frame[target_y, target_x] = colour
+
+    def draw_pregame_text(
+        frame: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        right: int,
+        colour: int,
+    ) -> None:
+        for character in text:
+            index = pregame_glyph_index(character)
+            advance = pregame_glyph_advance(index)
+            if x >= right or x + advance > right:
+                break
+            draw_pregame_glyph(
+                frame,
+                index,
+                x + 1,
+                y + 1,
+                FRONTEND_PREGAME_FONT_SHADOW,
+            )
+            draw_pregame_glyph(frame, index, x, y, colour)
+            x += advance
+
+    def draw_pregame_centered(
+        frame: np.ndarray,
+        text: str,
+        center_x: int,
+        y: int,
+        colour: int,
+    ) -> None:
+        draw_pregame_text(
+            frame,
+            text,
+            center_x - pregame_text_width(text) // 2,
+            y,
+            FRONTEND_FRAME_WIDTH,
+            colour,
+        )
+
     def draw_wrapped(
         frame: np.ndarray,
         text: str,
@@ -1726,7 +1930,7 @@ def build_frontend_static_menu_panels(
         )
 
     title_menu = source.text["title_menu"]
-    title_fallback = ("START NEW GAME", "DEMO", "JUKEBOX")
+    title_fallback = ("Start New Game", "Demo", "Jukebox")
     for selection in range(3):
         frame = source.picture_frame(4)
         source.draw_logo(frame)
@@ -1736,79 +1940,93 @@ def build_frontend_static_menu_panels(
             title_fallback[2],
         )
         for index, label in enumerate(labels):
-            draw_centered(
+            draw_pregame_centered(
                 frame,
                 label,
-                120,
-                86 + index * 10,
+                layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_CENTER_X"],
+                layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_ROW_STEP"],
                 0xfe if index == selection else 0xfa,
             )
         add_pre_game(f"title_{selection}", frame, 8)
 
     for selection in range(2):
         frame = source.picture_frame(2)
-        draw_centered(frame, "PLAY MODE", 120, 15, 0xfb)
-        for index, label in enumerate(("FULL GAME", "ARCADE")):
-            draw_centered(
+        draw_pregame_centered(
+            frame,
+            "Play Mode",
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_Y"],
+            0xfb,
+        )
+        for index, label in enumerate(("Full Game", "Arcade")):
+            draw_pregame_centered(
                 frame,
                 label,
-                120,
-                43 + index * 19,
+                layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_CENTER_X"],
+                layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_ROW_STEP"],
                 0xfe if index == selection else 0xfa,
             )
         add_pre_game(f"play_mode_{selection}", frame, 7)
 
     episode_names = source.text["episode_name"]
     episode_fallback = (
-        "SELECT AN EPISODE",
-        "EPISODE 1: ESCAPE",
-        "EPISODE 2: TREACHERY",
-        "EPISODE 3: MISSION: SUICIDE",
-        "EPISODE 4: AN END TO FATE",
+        "Select an Episode",
+        "Episode 1: Escape",
+        "Episode 2: Treachery",
+        "Episode 3: Mission: Suicide",
+        "Episode 4: An End to Fate",
     )
     for selection in range(4):
         frame = source.picture_frame(2)
-        draw_centered(
+        draw_pregame_centered(
             frame,
             episode_names[0] or episode_fallback[0],
-            120,
-            15,
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_Y"],
             0xfb,
         )
         for index in range(4):
-            draw_text(
+            draw_pregame_text(
                 frame,
                 episode_names[index + 1] or episode_fallback[index + 1],
-                15,
-                40 + index * 24,
-                190,
+                layout["TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_X"],
+                layout["TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_ROW_STEP"],
+                layout["TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_RIGHT"],
                 0xfe if index == selection else 0xfa,
             )
         add_pre_game(f"episode_{selection}", frame, 7)
 
     difficulty_names = source.text["difficulty_name"]
     difficulty_fallback = (
-        "DIFFICULTY LEVEL",
-        "EASY",
-        "NORMAL",
-        "HARD",
+        "Difficulty Level",
+        "Easy",
+        "Normal",
+        "Hard",
     )
     for selection in range(3):
         frame = source.picture_frame(2)
-        draw_centered(
+        draw_pregame_centered(
             frame,
             difficulty_names[0] or difficulty_fallback[0],
-            120,
-            15,
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_SETUP_HEADER_Y"],
             0xfb,
         )
         for index in range(3):
-            draw_centered(
+            draw_pregame_centered(
                 frame,
                 difficulty_names[index + 1] or
                     difficulty_fallback[index + 1],
-                120,
-                43 + index * 19,
+                layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_CENTER_X"],
+                layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_SETUP_CHOICE_ROW_STEP"],
                 0xfe if index == selection else 0xfa,
             )
         add_pre_game(f"difficulty_{selection}", frame, 7)
@@ -1827,7 +2045,13 @@ def build_frontend_static_menu_panels(
         frame = menu_chrome.copy()
         title = full_game_menu[0] or game_fallback[0]
 
-        draw_centered(frame, title, 178, 6, 0xfb)
+        draw_centered(
+            frame,
+            title,
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_Y"],
+            0xfb,
+        )
         for index in range(FRONTEND_STATIC_GAME_MENU_COUNT):
             disabled = index in (0, 1, 3)
             colour = (
@@ -1835,13 +2059,21 @@ def build_frontend_static_menu_panels(
             ) if disabled else (
                 0xfe if index == selection else 0xfa
             )
-            source_y = 38 + index * 16 + (16 if index == 5 else 0)
+            source_y = (
+                layout["TYRIAN_GBA_LAYOUT_GAME_MENU_FIRST_SOURCE_Y"] +
+                index *
+                    layout["TYRIAN_GBA_LAYOUT_GAME_MENU_SOURCE_ROW_STEP"] +
+                (
+                    layout["TYRIAN_GBA_LAYOUT_GAME_MENU_QUIT_SOURCE_GAP"]
+                    if index == 5 else 0
+                )
+            )
             draw_text(
                 frame,
                 full_game_menu[index + 1] or game_fallback[index + 1],
-                125,
+                layout["TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_X"],
                 source_y * FRONTEND_FRAME_HEIGHT // 200,
-                238,
+                layout["TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_RIGHT"],
                 colour,
             )
         add(f"game_menu_{selection}", frame)
@@ -1864,17 +2096,19 @@ def build_frontend_static_menu_panels(
         draw_centered(
             frame,
             upgrade_menu[0] or upgrade_fallback[0],
-            176,
-            7,
+            layout["TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y"],
             0xfb,
         )
         for index in range(FRONTEND_STATIC_UPGRADE_MENU_COUNT):
             draw_text(
                 frame,
                 upgrade_menu[index + 1] or upgrade_fallback[index + 1],
-                125,
-                30 + index * 10,
-                238,
+                layout["TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X"],
+                layout["TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_ROW_STEP"],
+                layout["TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_RIGHT"],
                 0xfe if index == selection else 0xfa,
             )
         add(f"upgrade_menu_{selection}", frame)
@@ -1921,9 +2155,9 @@ def build_frontend_static_menu_panels(
     draw_text(
         quit_overlay,
         misc_text[28] or "ARE YOU SURE YOU WANT TO EXIT?",
-        37,
-        53,
-        174,
+        layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_X"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_Y"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_QUESTION_RIGHT"],
         0xFE,
         5,
         3,
@@ -1931,9 +2165,9 @@ def build_frontend_static_menu_panels(
     draw_wrapped(
         quit_overlay,
         misc_text[30] or "YOU WILL RETURN TO THE MAIN MENU.",
-        37,
-        73,
-        174,
+        layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_X"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_Y"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_HELP_RIGHT"],
         9,
         3,
         0xFA,
@@ -2022,15 +2256,15 @@ def build_frontend_static_menu_panels(
         draw_centered(
             choice_frame,
             misc_text[9] or "OK",
-            66,
-            108,
+            layout["TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y"],
             0xFE if yes_selected else 0xF6,
         )
         draw_centered(
             choice_frame,
             misc_text[10] or "CANCEL",
-            137,
-            108,
+            layout["TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y"],
             0xF6 if yes_selected else 0xFE,
         )
         choice_frames.append(choice_frame)
@@ -2114,6 +2348,9 @@ def build_frontend_static_menu_panels(
         "FRONTEND_NATIVE_FONT_GLYPH_COUNT": native_font.shape[0],
         "FRONTEND_NATIVE_FONT_HEIGHT": native_font.shape[1],
         "FRONTEND_NATIVE_FONT_BYTES": native_font.size,
+        "FRONTEND_PREGAME_FONT_GLYPH_COUNT": pregame_font.shape[0],
+        "FRONTEND_PREGAME_FONT_HEIGHT": pregame_font.shape[1],
+        "FRONTEND_PREGAME_FONT_BYTES": pregame_font.size,
         "FRONTEND_STATIC_MENU_PANEL_X": FRONTEND_STATIC_MENU_PANEL_X,
         "FRONTEND_STATIC_MENU_PANEL_Y": FRONTEND_STATIC_MENU_PANEL_Y,
         "FRONTEND_STATIC_MENU_PANEL_WIDTH":
@@ -2168,6 +2405,11 @@ def build_frontend_static_menu_panels(
             "build-time right-panel bake; runtime aligned ROM copy"
         ),
         f"frontend_native_font_bytes={native_font.size}",
+        (
+            "frontend_pregame_font="
+            "project mixed-case 5x8 + horizontal semibold treatment"
+        ),
+        f"frontend_pregame_font_bytes={pregame_font.size}",
         f"frontend_static_menu_panel_count={len(panels)}",
         (
             "frontend_static_menu_panel_dimensions="
@@ -2255,6 +2497,7 @@ def build_frontend_static_menu_panels(
 def build_frontend_mode4_assets(
     data_root: Path,
     preview: Path,
+    project_root: Path,
 ) -> tuple[
     bytes,
     bytes,
@@ -2276,6 +2519,10 @@ def build_frontend_mode4_assets(
     native_font = load_frontend_native_font(
         Path(__file__).with_name("frontend_native_font.txt")
     )
+    pregame_font = load_frontend_pregame_font(
+        Path(__file__).with_name("frontend_pregame_font.txt")
+    )
+    layout = load_frontend_layout(project_root / "Configure.h")
     (
         static_menu_panels,
         static_pre_game_frames,
@@ -2287,6 +2534,8 @@ def build_frontend_mode4_assets(
     ) = build_frontend_static_menu_panels(
         source,
         native_font,
+        pregame_font,
+        layout,
         preview,
     )
     (
@@ -2810,6 +3059,7 @@ def build_frontend_mode4_assets(
         bytes(glyphs),
         cube_stamp.tobytes(),
         native_font.tobytes(),
+        pregame_font.tobytes(),
         static_menu_panels,
         static_pre_game_frames,
         static_quit_overlay,
@@ -5679,6 +5929,7 @@ def main() -> None:
         frontend_glyphs,
         frontend_cube,
         frontend_native_font,
+        frontend_pregame_font,
         frontend_static_menu_panels,
         frontend_static_pre_game_frames,
         frontend_static_quit_overlay,
@@ -5690,13 +5941,16 @@ def main() -> None:
         frontend_nav_bitmap_pages,
         frontend_metadata,
         frontend_report,
-    ) = build_frontend_mode4_assets(data_root, preview)
+    ) = build_frontend_mode4_assets(data_root, preview, workspace)
     (output / "frontend_frames.bin").write_bytes(frontend_frames)
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
     (output / "frontend_cube.bin").write_bytes(frontend_cube)
     (output / "frontend_native_font.bin").write_bytes(
         frontend_native_font
+    )
+    (output / "frontend_pregame_font.bin").write_bytes(
+        frontend_pregame_font
     )
     (output / "frontend_static_menu_panels.bin").write_bytes(
         frontend_static_menu_panels

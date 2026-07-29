@@ -32,13 +32,13 @@ enum {
     FRONTEND_STATS_FONT_BRIGHTNESS_BIAS = 6,
     FRONTEND_DEMO_COUNT = 5,
     FRONTEND_DEMO_IDLE_VBLANKS = 1800,
-    FRONTEND_NEXT_PANEL_X = 126,
-    FRONTEND_NEXT_PANEL_Y = 29,
-    FRONTEND_NEXT_PANEL_WIDTH = 108,
-    FRONTEND_NEXT_PANEL_HEIGHT = 116,
-    FRONTEND_NEXT_CHOICE_Y = 32,
-    FRONTEND_NEXT_CHOICE_STEP = 14,
-    FRONTEND_NEXT_EXIT_Y = 119,
+    FRONTEND_NEXT_PANEL_X = TYRIAN_GBA_LAYOUT_NEXT_PANEL_X,
+    FRONTEND_NEXT_PANEL_Y = TYRIAN_GBA_LAYOUT_NEXT_PANEL_Y,
+    FRONTEND_NEXT_PANEL_WIDTH = TYRIAN_GBA_LAYOUT_NEXT_PANEL_WIDTH,
+    FRONTEND_NEXT_PANEL_HEIGHT = TYRIAN_GBA_LAYOUT_NEXT_PANEL_HEIGHT,
+    FRONTEND_NEXT_CHOICE_Y = TYRIAN_GBA_LAYOUT_NEXT_CHOICE_FIRST_Y,
+    FRONTEND_NEXT_CHOICE_STEP = TYRIAN_GBA_LAYOUT_NEXT_CHOICE_ROW_STEP,
+    FRONTEND_NEXT_EXIT_Y = TYRIAN_GBA_LAYOUT_NEXT_EXIT_Y,
     FRONTEND_NEXT_ITEM_HEIGHT = 10,
     FRONTEND_NEXT_BACKGROUND_COLOUR = 228,
     FRONTEND_NEXT_TEXT_COLOUR = 244,
@@ -48,6 +48,8 @@ enum {
     FRONTEND_NEXT_FONT_SPACE = 3,
     FRONTEND_COMPACT_FONT_WIDTH = 5,
     FRONTEND_COMPACT_FONT_SPACE = 3,
+    FRONTEND_PREGAME_FONT_MAX_ADVANCE = 7,
+    FRONTEND_PREGAME_FONT_SPACE = 4,
     FRONTEND_UPGRADE_CATEGORY_COUNT = 7,
     FRONTEND_UPGRADE_MENU_ITEM_COUNT = 8,
     FRONTEND_UPGRADE_SHIP = 0,
@@ -400,6 +402,10 @@ _Static_assert(
 );
 static const char frontend_runtime_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
+static const char frontend_pregame_font_characters[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789.,!?'/:-%";
 
 #ifndef TYRIAN_GBA_UPGRADE_LIST_FONT_MODE
 #define TYRIAN_GBA_UPGRADE_LIST_FONT_MODE 1
@@ -539,6 +545,15 @@ _Static_assert(
             FRONTEND_NATIVE_FONT_GLYPH_COUNT *
                 FRONTEND_NATIVE_FONT_HEIGHT,
     "native front-end glyph catalog changed"
+);
+_Static_assert(
+    FRONTEND_PREGAME_FONT_GLYPH_COUNT ==
+        sizeof(frontend_pregame_font_characters) - 1u &&
+        FRONTEND_PREGAME_FONT_HEIGHT == 8 &&
+        FRONTEND_PREGAME_FONT_BYTES ==
+            FRONTEND_PREGAME_FONT_GLYPH_COUNT *
+                FRONTEND_PREGAME_FONT_HEIGHT,
+    "mixed-case pre-game glyph catalog changed"
 );
 #if TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 1
 _Static_assert(
@@ -1660,6 +1675,171 @@ static void frontend_draw_runtime_text_centered(
         frame,
         text,
         (s16)(center_x - frontend_runtime_text_width(text) / 2),
+        y,
+        SCREEN_WIDTH,
+        colour
+    );
+}
+
+static u8 frontend_pregame_font_tile(char character)
+{
+    u8 index;
+
+    if (character == ' ') return 0;
+    for (
+        index = 0;
+        index < sizeof(frontend_pregame_font_characters) - 1u;
+        index++
+    ) {
+        if (frontend_pregame_font_characters[index] == character) {
+            return (u8)(index + 1u);
+        }
+    }
+    for (
+        index = 0;
+        index < sizeof(frontend_pregame_font_characters) - 1u;
+        index++
+    ) {
+        if (frontend_pregame_font_characters[index] == '?') {
+            return (u8)(index + 1u);
+        }
+    }
+    return 0;
+}
+
+static u8 frontend_pregame_font_row(u8 tile_index, u8 row)
+{
+    u8 value = frontend_pregame_font[
+        (u16)(tile_index - 1u) * FRONTEND_PREGAME_FONT_HEIGHT + row
+    ];
+
+    /* Match the build-time one-pixel horizontal semibold treatment. */
+    return (u8)(value | (value >> 1));
+}
+
+static u8 frontend_pregame_font_width(u8 tile_index)
+{
+    u8 occupied = 0;
+    u8 row;
+    u8 width = 1;
+
+    if (
+        tile_index == 0 ||
+        tile_index > FRONTEND_PREGAME_FONT_GLYPH_COUNT
+    ) {
+        return 0;
+    }
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        occupied |= frontend_pregame_font_row(tile_index, row);
+    }
+    while (occupied >>= 1) width++;
+    return width;
+}
+
+static u8 frontend_pregame_font_advance(u8 tile_index)
+{
+    u8 width;
+
+    if (tile_index == 0) return FRONTEND_PREGAME_FONT_SPACE;
+    width = (u8)(frontend_pregame_font_width(tile_index) + 2u);
+    return width > FRONTEND_PREGAME_FONT_MAX_ADVANCE ?
+        FRONTEND_PREGAME_FONT_MAX_ADVANCE :
+        width;
+}
+
+static void frontend_blit_pregame_font(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    u8 width = frontend_pregame_font_width(tile_index);
+    u8 row;
+
+    if (width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 value = frontend_pregame_font_row(tile_index, row);
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < width; column++) {
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (value & (1u << (width - column - 1u))) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                frame[
+                    (u16)target_y * SCREEN_WIDTH + (u16)target_x
+                ] = colour;
+            }
+        }
+    }
+}
+
+static s16 frontend_pregame_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        width = (s16)(
+            width +
+            frontend_pregame_font_advance(
+                frontend_pregame_font_tile(*text++)
+            )
+        );
+    }
+    return width;
+}
+
+static void frontend_draw_pregame_text_clipped(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_pregame_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            (s16)(y + 1),
+            FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_draw_pregame_text_centered(
+    u8 *frame,
+    const char *text,
+    s16 center_x,
+    s16 y,
+    u8 colour
+)
+{
+    frontend_draw_pregame_text_clipped(
+        frame,
+        text,
+        (s16)(center_x - frontend_pregame_text_width(text) / 2),
         y,
         SCREEN_WIDTH,
         colour

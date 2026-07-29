@@ -33,6 +33,22 @@ Build-GBA-ROM.bat
 
 `-RebuildAssets` 會先移除可重建的資源輸出，再從 `vendor/` 完整重建。
 
+## Configure.h：測試模式與版面校調
+
+專案根目錄的 `Configure.h` 是一般開發者應優先修改的設定入口。每個
+選項都有中英文註解，修改數值後重新執行 `Build-GBA-ROM.bat` 即可。
+
+- `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE`：開關主角無敵測試模式。
+- `TYRIAN_GBA_STRESS_LOADOUT`：開關全武器、最大火力的極限負荷配置。
+- `TYRIAN_GBA_LAYOUT_*`：調整關卡 HUD、PAUSED／Secret Level 提示、
+  Boss 血條、破關摘要，以及首頁、Play Mode、Episode、Difficulty、
+  Game Menu、Upgrade Ship、Next Level、Quit Game 對話框的位置。
+
+座標預設為最終 240×160 GBA 畫面像素；只有名稱含 `SOURCE_Y` 的欄位
+是原始 PC 200-line 座標，runtime 會套用既有的 200→160 轉換。
+建置時會檢查重要矩形與 HUD 是否仍位於畫面內；靜態選單的 build-time
+資源與 runtime 會共同讀取同一份設定，避免兩邊位置不一致。
+
 ## 完整回歸驗證
 
 日常最終 ROM 使用上面的 BAT。要執行全部 mGBA 自動測試、路線矩陣、

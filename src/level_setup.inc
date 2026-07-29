@@ -229,6 +229,8 @@ static u8 source_player_equipment_apply(void)
     source_parity_level.player_armor = player_armor;
     player_shield = shield.max_power;
     player_shield_max = (u8)(shield.max_power * 2u);
+    player_shield_recharge_cost =
+        (u16)shield.recharge_power * 20u;
     return 1;
 }
 
@@ -360,6 +362,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     player_ship_graphic = 0;
     player_ship_animation = 0;
     player_generator_power = 0;
+    player_weapon_energy = 0;
+    player_shield_recharge_cost = 0;
+    player_shield_wait = 1;
     if (frontend_demo_active || !frontend_player_items_valid) {
         player_cash = 0;
     }

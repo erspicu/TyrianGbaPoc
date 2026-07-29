@@ -417,8 +417,8 @@ static void frontend_render_stats(void)
     oam_count = frontend_stats_scene_oam_count;
     if (source_parity_level.bonus_level) {
         frontend_stats_draw_text(
-            20,
-            source_world_to_screen_y(20),
+            TYRIAN_GBA_LAYOUT_STATS_COMPLETED_X,
+            TYRIAN_GBA_LAYOUT_STATS_COMPLETED_Y,
             frontend_stats_text(16, "BONUS LEVEL"),
             frontend_stats_stage == FRONTEND_STATS_STAGE_COMPLETED ?
                 active_palette :
@@ -426,8 +426,8 @@ static void frontend_render_stats(void)
         );
     } else {
         x = frontend_stats_draw_text(
-            20,
-            source_world_to_screen_y(20),
+            TYRIAN_GBA_LAYOUT_STATS_COMPLETED_X,
+            TYRIAN_GBA_LAYOUT_STATS_COMPLETED_Y,
             frontend_stats_text(
                 frontend_level_completed ? 26 : 61,
                 frontend_level_completed ? "COMPLETED" : "EXITING"
@@ -439,7 +439,7 @@ static void frontend_render_stats(void)
         x = (s16)(x + 6);
         frontend_stats_draw_text(
             x,
-            source_world_to_screen_y(20),
+            TYRIAN_GBA_LAYOUT_STATS_COMPLETED_Y,
             frontend_level.level_name,
             frontend_stats_stage == FRONTEND_STATS_STAGE_COMPLETED ?
                 active_palette :
@@ -452,14 +452,14 @@ static void frontend_render_stats(void)
                 active_palette :
                 settled_palette;
         x = frontend_stats_draw_text(
-            30,
-            source_world_to_screen_y(50),
+            TYRIAN_GBA_LAYOUT_STATS_CASH_X,
+            TYRIAN_GBA_LAYOUT_STATS_CASH_Y,
             frontend_stats_text(27, "CASH"),
             palette
         );
         frontend_stats_draw_u32(
             (s16)(x + 6),
-            source_world_to_screen_y(50),
+            TYRIAN_GBA_LAYOUT_STATS_CASH_Y,
             player_cash,
             palette
         );
@@ -470,20 +470,20 @@ static void frontend_render_stats(void)
                 active_palette :
                 settled_palette;
         x = frontend_stats_draw_text(
-            40,
-            source_world_to_screen_y(90),
+            TYRIAN_GBA_LAYOUT_STATS_ENEMIES_X,
+            TYRIAN_GBA_LAYOUT_STATS_ENEMIES_Y,
             frontend_stats_text(62, "ENEMIES DESTROYED"),
             palette
         );
         x = frontend_stats_draw_u32(
             (s16)(x + 6),
-            source_world_to_screen_y(90),
+            TYRIAN_GBA_LAYOUT_STATS_ENEMIES_Y,
             killed_percent,
             palette
         );
         frontend_stats_draw_text(
             x,
-            source_world_to_screen_y(90),
+            TYRIAN_GBA_LAYOUT_STATS_ENEMIES_Y,
             "%",
             palette
         );
@@ -501,16 +501,20 @@ static void frontend_render_stats(void)
                 active_palette :
                 settled_palette;
         frontend_stats_draw_text(
-            30,
-            source_world_to_screen_y(120),
+            TYRIAN_GBA_LAYOUT_STATS_CUBES_LABEL_X,
+            TYRIAN_GBA_LAYOUT_STATS_CUBES_LABEL_Y,
             frontend_stats_text(3, "CUBES"),
             palette
         );
         if (cube_count > cube_total) cube_count = cube_total;
         for (cube_index = 0; cube_index < cube_count; cube_index++) {
             frontend_stats_put_sprite(
-                (s16)(50 + (u16)cube_index * 30u),
-                source_world_to_screen_y(135),
+                (s16)(
+                    TYRIAN_GBA_LAYOUT_STATS_CUBE_FIRST_X +
+                    (u16)cube_index *
+                        TYRIAN_GBA_LAYOUT_STATS_CUBE_X_STEP
+                ),
+                TYRIAN_GBA_LAYOUT_STATS_CUBE_Y,
                 FRONTEND_STATS_CUBE_TILE_BASE,
                 13,
                 ATTR1_SIZE_32,
@@ -522,8 +526,8 @@ static void frontend_render_stats(void)
             frontend_stats_stage >= FRONTEND_STATS_STAGE_FINAL
         ) {
             frontend_stats_draw_text(
-                50,
-                source_world_to_screen_y(135),
+                TYRIAN_GBA_LAYOUT_STATS_CUBE_FIRST_X,
+                TYRIAN_GBA_LAYOUT_STATS_CUBE_Y,
                 frontend_stats_text(14, "NONE"),
                 settled_palette
             );
@@ -531,8 +535,8 @@ static void frontend_render_stats(void)
     }
     if (frontend_stats_stage >= FRONTEND_STATS_STAGE_FINAL) {
         frontend_stats_draw_text(
-            90,
-            source_world_to_screen_y(160),
+            TYRIAN_GBA_LAYOUT_STATS_PROMPT_X,
+            TYRIAN_GBA_LAYOUT_STATS_PROMPT_Y,
             frontend_stats_text(4, "PRESS A KEY"),
             frontend_stats_timer == 0 ?
                 settled_palette :

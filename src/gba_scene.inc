@@ -702,6 +702,7 @@ static void render_game(void)
         render_pause_text();
     }
     render_cash_counter();
+    render_player_energy_status();
 
     if (
         game_state == STATE_PLAY ||

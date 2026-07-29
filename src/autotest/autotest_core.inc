@@ -55,6 +55,7 @@ static void sram_write_u32(u32 offset, u32 value)
  */
 static u8 autotest_source_upgrade_loadout(void)
 {
+    OtWeaponPortDefinition front_port;
     OtWeaponPortDefinition rear_port;
     OtOptionDefinition left_option;
     OtOptionDefinition right_option;
@@ -75,14 +76,30 @@ static u8 autotest_source_upgrade_loadout(void)
     };
     u16 saved_pad_now = pad_now;
     u16 saved_pad_pressed = pad_pressed;
+    u16 saved_weapon_energy = player_weapon_energy;
+    u16 saved_shield_recharge_cost = player_shield_recharge_cost;
+    u8 saved_shield = player_shield;
+    u8 saved_shield_max = player_shield_max;
+    u8 saved_shield_wait = player_shield_wait;
+    u8 saved_generator_power = player_generator_power;
+    u8 saved_player_alive = player_alive;
+    u8 saved_unlimited_weapon_energy =
+        autotest_unlimited_weapon_energy;
     u8 pass = 1;
     u8 index;
     u8 active;
     u8 special_frames;
     u8 expected_shots;
 
+    /*
+     * This focused probe validates the real energy economy.  Other authored
+     * route/golden tests intentionally retain their pre-energy unlimited
+     * load generator so level timing remains a stable independent contract.
+     */
+    autotest_unlimited_weapon_energy = 0;
     pass =
         pass &&
+        ot_data_hdt_weapon_port_read(1, &front_port) &&
         ot_data_hdt_weapon_port_read(10, &rear_port) &&
         rear_port.opnum == 2 &&
         ot_data_hdt_option_read(19, &left_option) &&
@@ -109,7 +126,9 @@ static u8 autotest_source_upgrade_loadout(void)
     pass =
         pass &&
         source_front_weapon_valid &&
+        source_front_weapon_poweruse == front_port.poweruse &&
         source_rear_weapon_valid &&
+        source_rear_weapon_poweruse == rear_port.poweruse &&
         source_rear_weapon_hdt_id == rear_port.op[0][0] &&
         source_sidekick[0].valid &&
         source_sidekick[0].weapon_valid &&
@@ -118,6 +137,7 @@ static u8 autotest_source_upgrade_loadout(void)
         source_sidekick[1].weapon_valid &&
         source_sidekick[1].option.weapon == right_option.weapon;
 
+    player_weapon_energy = 900;
     pad_now = KEY_A | KEY_B | KEY_R;
     pad_pressed = 0;
     source_player_weapons_update();
@@ -140,6 +160,7 @@ static u8 autotest_source_upgrade_loadout(void)
     source_parity_level.player_sidekick[1] = 0;
     source_front_weapon_init();
     source_sidekick_positions_update();
+    player_weapon_energy = 900;
     pad_now = KEY_B;
     pad_pressed = 0;
     source_player_weapons_update();
@@ -168,6 +189,28 @@ static u8 autotest_source_upgrade_loadout(void)
         special_frames == 7 &&
         source_option_projectile_valid == 7;
 
+    /*
+     * tyrian2.c: shield generation consumes power before powerAdd, and
+     * shots.c consumes a port's poweruse before searching the shot pool.
+     */
+    player_alive = 1;
+    player_shield = 5;
+    player_shield_max = 10;
+    player_shield_recharge_cost = 40;
+    player_shield_wait = 1;
+    player_generator_power = 30;
+    player_weapon_energy = 100;
+    source_player_energy_update();
+    pass =
+        pass &&
+        player_shield == 6 &&
+        player_shield_wait == 15 &&
+        player_weapon_energy == 90 &&
+        source_weapon_energy_consume(25) &&
+        player_weapon_energy == 65 &&
+        !source_weapon_energy_consume(66) &&
+        player_weapon_energy == 65;
+
 restore:
     clear_entities();
     source_parity_level.player_front_weapon_id = saved_front_id;
@@ -184,6 +227,15 @@ restore:
     );
     pad_now = saved_pad_now;
     pad_pressed = saved_pad_pressed;
+    player_weapon_energy = saved_weapon_energy;
+    player_shield_recharge_cost = saved_shield_recharge_cost;
+    player_shield = saved_shield;
+    player_shield_max = saved_shield_max;
+    player_shield_wait = saved_shield_wait;
+    player_generator_power = saved_generator_power;
+    player_alive = saved_player_alive;
+    autotest_unlimited_weapon_energy =
+        saved_unlimited_weapon_energy;
     source_front_weapon_init();
     (void)source_option_projectile_sync();
     return pass;

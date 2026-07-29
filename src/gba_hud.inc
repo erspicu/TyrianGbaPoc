@@ -6,7 +6,7 @@ static void render_cash_counter(void)
     u8 count = 0;
     u8 digit;
     u32 value = player_cash;
-    s16 x = CASH_COUNTER_X;
+    s16 x = TYRIAN_GBA_LAYOUT_CASH_X;
 
     /*
      * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
@@ -24,7 +24,7 @@ static void render_cash_counter(void)
     while (count) {
         digit = digits[--count];
         put_sprite(
-            x, CASH_COUNTER_Y,
+            x, TYRIAN_GBA_LAYOUT_CASH_Y,
             OBJ_TILE_SCORE_DIGITS + digit,
             OBJ_PAL_SCORE_DIGITS, ATTR1_SIZE_8, 0
         );
@@ -32,11 +32,162 @@ static void render_cash_counter(void)
     }
 }
 
+static inline void put_energy_hud_digit(s16 x, s16 y, u8 digit)
+{
+    OBJATTR *object;
+
+    /*
+     * Configure.h statically keeps these rows on-screen.  Avoid the generic
+     * sprite helper's size and clipping branches in this per-frame hot path;
+     * only the hardware OAM guard remains necessary.
+     */
+    if (oam_count >= SPRITE_LIMIT) return;
+    object = &oam_shadow[oam_count++];
+    object->attr0 =
+        (y & 0x00ff) | ATTR0_NORMAL | ATTR0_COLOR_16 | ATTR0_SQUARE;
+    object->attr1 = (x & 0x01ff) | ATTR1_SIZE_8;
+    object->attr2 =
+        OBJ_CHAR(OBJ_TILE_SCORE_DIGITS + digit) |
+        ATTR2_PRIORITY(0) |
+        ATTR2_PALETTE(OBJ_PAL_SCORE_DIGITS);
+    object->dummy = 0;
+}
+
+typedef struct {
+    u16 value;
+    s16 x;
+    u8 digits[3];
+    u8 count;
+    u8 valid;
+} EnergyHudDecimalCache;
+
+static EnergyHudDecimalCache energy_hud_decimal_cache[3];
+
+static void render_hud_value_right(
+    EnergyHudDecimalCache *cache,
+    u16 value,
+    s16 right_x,
+    s16 y
+)
+{
+    u8 hundreds = 0;
+    u8 tens = 0;
+    u8 index;
+    s16 x;
+
+    /*
+     * These three source values are bounded by 900/255/255.  Avoid / and %
+     * here: ARM7TDMI has no divider and GCC otherwise emits several
+     * __aeabi_uidivmod calls.  Armor/shield change rarely and presentation
+     * may render more often than the 30 Hz logic clock, so retain the
+     * formatted digits until the underlying source value changes.
+     */
+    if (cache->valid && cache->value == value) {
+        x = cache->x;
+        for (index = 0; index < cache->count; index++) {
+            u8 digit = cache->digits[index];
+
+            put_energy_hud_digit(x, y, digit);
+            x = (s16)(x + cash_digit_advances[digit]);
+        }
+        return;
+    }
+    if (value > 999) value = 999;
+    cache->value = value;
+    if (value >= 500) {
+        value = (u16)(value - 500);
+        hundreds = 5;
+    }
+    if (value >= 300) {
+        value = (u16)(value - 300);
+        hundreds = (u8)(hundreds + 3);
+    }
+    if (value >= 200) {
+        value = (u16)(value - 200);
+        hundreds = (u8)(hundreds + 2);
+    }
+    if (value >= 100) {
+        value = (u16)(value - 100);
+        hundreds++;
+    }
+    if (value >= 50) {
+        value = (u16)(value - 50);
+        tens = 5;
+    }
+    if (value >= 30) {
+        value = (u16)(value - 30);
+        tens = (u8)(tens + 3);
+    }
+    if (value >= 20) {
+        value = (u16)(value - 20);
+        tens = (u8)(tens + 2);
+    }
+    if (value >= 10) {
+        value = (u16)(value - 10);
+        tens++;
+    }
+    if (hundreds != 0) {
+        cache->digits[0] = hundreds;
+        cache->digits[1] = tens;
+        cache->digits[2] = (u8)value;
+        cache->count = 3;
+    } else if (tens != 0) {
+        cache->digits[0] = tens;
+        cache->digits[1] = (u8)value;
+        cache->count = 2;
+    } else {
+        cache->digits[0] = (u8)value;
+        cache->count = 1;
+    }
+
+    x = right_x;
+    for (index = 0; index < cache->count; index++) {
+        x = (s16)(
+            x - cash_digit_advances[cache->digits[index]]
+        );
+    }
+    cache->x = x;
+    cache->valid = 1;
+    for (index = 0; index < cache->count; index++) {
+        u8 digit = cache->digits[index];
+
+        put_energy_hud_digit(x, y, digit);
+        x = (s16)(x + cash_digit_advances[digit]);
+    }
+}
+
+static void render_player_energy_status(void)
+{
+    /*
+     * The removed PC sidebar exposed three live resources: shared weapon
+     * power, hull armor and shield.  Keep their source values, but present
+     * them as compact numbers in the user-configurable bottom-right stack.
+     */
+    render_hud_value_right(
+        &energy_hud_decimal_cache[0],
+        player_weapon_energy,
+        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y
+    );
+    render_hud_value_right(
+        &energy_hud_decimal_cache[1],
+        player_armor,
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y
+    );
+    render_hud_value_right(
+        &energy_hud_decimal_cache[2],
+        player_shield,
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y
+    );
+}
+
 static void render_pause_text(void)
 {
     u8 index;
-    s16 x = source_world_to_screen_x(120);
-    s16 y = source_world_to_screen_y(90);
+    s16 x = TYRIAN_GBA_LAYOUT_PAUSED_X;
+    s16 y = TYRIAN_GBA_LAYOUT_PAUSED_Y;
 
     /*
      * PC JE_pauseGame draws FONT_SHAPES at (120,90) on game_screen.  Apply
@@ -58,8 +209,8 @@ static void render_pause_text(void)
 static void render_game_over_text(void)
 {
     u8 index;
-    s16 x = source_world_to_screen_x(120);
-    s16 y = source_world_to_screen_y(60);
+    s16 x = TYRIAN_GBA_LAYOUT_GAME_OVER_X;
+    s16 y = TYRIAN_GBA_LAYOUT_GAME_OVER_Y;
 
     /*
      * Direct tyrian2.c GAME OVER call:
@@ -84,11 +235,8 @@ static void render_game_over_text(void)
 static void render_secret_level_text(void)
 {
     u8 index;
-    s16 x = source_world_to_screen_x(90);
-    s16 y = (s16)(
-        source_world_to_screen_y(10) +
-        SOURCE_PRESENTATION_Y_ORIGIN
-    );
+    s16 x = TYRIAN_GBA_LAYOUT_SECRET_LEVEL_X;
+    s16 y = TYRIAN_GBA_LAYOUT_SECRET_LEVEL_Y;
 
     /*
      * Direct tyrian2.c placement of miscText[59].  Unlike world geometry,
@@ -115,11 +263,8 @@ static void render_secret_level_text(void)
 static void render_insert_coin_text(void)
 {
     u8 index;
-    s16 x = source_world_to_screen_x(115);
-    s16 y = (s16)(
-        source_world_to_screen_y(10) +
-        SOURCE_PRESENTATION_Y_ORIGIN
-    );
+    s16 x = TYRIAN_GBA_LAYOUT_INSERT_COIN_X;
+    s16 y = TYRIAN_GBA_LAYOUT_INSERT_COIN_Y;
 
     /*
      * Direct mainint.c demo overlay:
@@ -199,21 +344,24 @@ static void render_boss_bar_at(u8 armor, s16 centre_x)
     full_segments = gba_width >> 3;
     for (index = 0; index < full_segments; index++) {
         put_sprite(
-            fill_x + ((u16)index << 3), 6,
+            fill_x + ((u16)index << 3),
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_Y,
             OBJ_TILE_BOSS_BAR + 1, OBJ_PAL_BOSS_BAR,
             ATTR1_SIZE_8, 0
         );
     }
     if (gba_width & 4) {
         put_sprite(
-            fill_x + ((u16)full_segments << 3), 6,
+            fill_x + ((u16)full_segments << 3),
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_Y,
             OBJ_TILE_BOSS_BAR + 2, OBJ_PAL_BOSS_BAR,
             ATTR1_SIZE_8, 0
         );
     }
     for (index = 0; index < 5; index++) {
         put_sprite(
-            centre_x - 20 + ((u16)index << 3), 6,
+            centre_x - 20 + ((u16)index << 3),
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_Y,
             OBJ_TILE_BOSS_BAR, OBJ_PAL_BOSS_BAR,
             ATTR1_SIZE_8, 0
         );
@@ -258,10 +406,19 @@ static void render_source_boss_bars(void)
         if (value != 0) armor[count++] = value;
     }
     if (count == 1) {
-        render_boss_bar_at(armor[0], 116);
+        render_boss_bar_at(
+            armor[0],
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_SINGLE_CENTER_X
+        );
     } else if (count == 2) {
-        render_boss_bar_at(armor[0], 94);
-        render_boss_bar_at(armor[1], 139);
+        render_boss_bar_at(
+            armor[0],
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_LEFT_CENTER_X
+        );
+        render_boss_bar_at(
+            armor[1],
+            TYRIAN_GBA_LAYOUT_BOSS_BAR_RIGHT_CENTER_X
+        );
     }
     if (
         telemetry_boss_perf_started &&

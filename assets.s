@@ -46,6 +46,11 @@ frontend_native_font:
 	.incbin "res/frontend_native_font.bin"
 
 	.balign 4
+	.global frontend_pregame_font
+frontend_pregame_font:
+	.incbin "res/frontend_pregame_font.bin"
+
+	.balign 4
 	.global frontend_static_menu_panels
 frontend_static_menu_panels:
 	.incbin "res/frontend_static_menu_panels.bin"

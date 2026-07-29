@@ -255,8 +255,10 @@ VFS_INPUTS := \
 	$(wildcard $(VFS_SOURCE_ROOT)/*)
 
 ASSET_INPUTS := \
+	Configure.h \
 	tools/build_assets.py \
 	tools/frontend_native_font.txt \
+	tools/frontend_pregame_font.txt \
 	vendor/builders/snes/build_assets.py \
 	vendor/builders/nes/build_assets.py \
 	vendor/opentyrian/REVISION \
@@ -299,6 +301,7 @@ ASSET_BINARIES := \
 	$(RES)/frontend_glyphs.bin \
 	$(RES)/frontend_cube.bin \
 	$(RES)/frontend_native_font.bin \
+	$(RES)/frontend_pregame_font.bin \
 	$(RES)/frontend_static_menu_panels.bin \
 	$(RES)/frontend_static_pre_game_frames.bin \
 	$(RES)/frontend_static_quit_overlay.bin \
@@ -359,7 +362,7 @@ STRESS_COMMON_OBJECTS := \
 	$(filter-out $(BUILD)/opentyrian_level_port.o,$(COMMON_OBJECTS)) \
 	$(STRESS_LEVEL_OBJECT)
 
-MAIN_INCLUDES := $(wildcard src/*.inc)
+MAIN_INCLUDES := Configure.h $(wildcard src/*.inc src/*/*.inc)
 
 .PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \

@@ -23,9 +23,9 @@ static const char *frontend_game_menu_label(u8 index)
 static const char *frontend_pre_game_title_label(u8 selection)
 {
     static const char *const fallback[3] = {
-        "START NEW GAME",
-        "DEMO",
-        "JUKEBOX",
+        "Start New Game",
+        "Demo",
+        "Jukebox",
     };
     static const u8 source_index[3] = {0, 5, 0xff};
 
@@ -42,7 +42,7 @@ static const char *frontend_pre_game_title_label(u8 selection)
 
 static const char *frontend_pre_game_header(u8 state)
 {
-    if (state == STATE_PLAY_MODE_MENU) return "PLAY MODE";
+    if (state == STATE_PLAY_MODE_MENU) return "Play Mode";
     if (
         state == STATE_EPISODE_MENU &&
         frontend_text_ready &&
@@ -58,8 +58,8 @@ static const char *frontend_pre_game_header(u8 state)
         return frontend_text.difficulty_name[0];
     }
     return state == STATE_EPISODE_MENU ?
-        "SELECT AN EPISODE" :
-        "DIFFICULTY LEVEL";
+        "Select an Episode" :
+        "Difficulty Level";
 }
 
 static u8 frontend_pre_game_item_count(u8 state)
@@ -83,19 +83,19 @@ static const char *frontend_pre_game_item_label(
 )
 {
     static const char *const play_mode[2] = {
-        "FULL GAME",
-        "ARCADE",
+        "Full Game",
+        "Arcade",
     };
     static const char *const episode[4] = {
-        "EPISODE 1: ESCAPE",
-        "EPISODE 2: TREACHERY",
-        "EPISODE 3: MISSION: SUICIDE",
-        "EPISODE 4: AN END TO FATE",
+        "Episode 1: Escape",
+        "Episode 2: Treachery",
+        "Episode 3: Mission: Suicide",
+        "Episode 4: An End to Fate",
     };
     static const char *const difficulty[3] = {
-        "EASY",
-        "NORMAL",
-        "HARD",
+        "Easy",
+        "Normal",
+        "Hard",
     };
 
     if (state == STATE_TITLE) {
@@ -129,13 +129,22 @@ static s16 frontend_pre_game_item_y(u8 state, u8 selection)
 {
     switch (state) {
     case STATE_TITLE:
-        return (s16)(86 + selection * 10u);
+        return (s16)(
+            TYRIAN_GBA_LAYOUT_TITLE_MENU_FIRST_Y +
+            selection * TYRIAN_GBA_LAYOUT_TITLE_MENU_ROW_STEP
+        );
     case STATE_EPISODE_MENU:
-        return (s16)(40 + selection * 24u);
+        return (s16)(
+            TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_FIRST_Y +
+            selection * TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_ROW_STEP
+        );
     case STATE_PLAY_MODE_MENU:
     case STATE_DIFFICULTY_MENU:
     default:
-        return (s16)(43 + selection * 19u);
+        return (s16)(
+            TYRIAN_GBA_LAYOUT_SETUP_CHOICE_FIRST_Y +
+            selection * TYRIAN_GBA_LAYOUT_SETUP_CHOICE_ROW_STEP
+        );
     }
 }
 
@@ -148,10 +157,10 @@ static void frontend_pre_game_item_rect(
     u16 *height
 )
 {
-    *x = state == STATE_EPISODE_MENU ? 8 : 64;
+    *x = 0;
     *y = (u16)frontend_pre_game_item_y(state, selection);
-    *width = state == STATE_EPISODE_MENU ? 184 : 112;
-    *height = 9;
+    *width = SCREEN_WIDTH;
+    *height = FRONTEND_PREGAME_FONT_HEIGHT + 2u;
 }
 
 static void frontend_draw_pre_game_item(
@@ -166,19 +175,21 @@ static void frontend_draw_pre_game_item(
     u8 colour = selection == active_selection ? 0xfeu : 0xfau;
 
     if (state == STATE_EPISODE_MENU) {
-        frontend_draw_runtime_text_clipped(
+        frontend_draw_pregame_text_clipped(
             frontend_frame_scratch,
             label,
-            15,
+            TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_X,
             y,
-            190,
+            TYRIAN_GBA_LAYOUT_EPISODE_CHOICE_RIGHT,
             colour
         );
     } else {
-        frontend_draw_runtime_text_centered(
+        frontend_draw_pregame_text_centered(
             frontend_frame_scratch,
             label,
-            120,
+            state == STATE_TITLE ?
+                TYRIAN_GBA_LAYOUT_TITLE_MENU_CENTER_X :
+                TYRIAN_GBA_LAYOUT_SETUP_CHOICE_CENTER_X,
             y,
             colour
         );
@@ -232,11 +243,11 @@ static void frontend_render_pre_game_menu(void)
         FRONTEND_FRAME_BYTES
     );
     if (game_state != STATE_TITLE) {
-        frontend_draw_runtime_text_centered(
+        frontend_draw_pregame_text_centered(
             frontend_frame_scratch,
             frontend_pre_game_header(game_state),
-            120,
-            15,
+            TYRIAN_GBA_LAYOUT_SETUP_HEADER_CENTER_X,
+            TYRIAN_GBA_LAYOUT_SETUP_HEADER_Y,
             0xfbu
         );
     }
@@ -298,9 +309,14 @@ static s16 frontend_game_menu_item_y(u8 selection)
 {
     return frontend_source_to_screen_y(
         (s16)(
-            38 +
-            selection * 16 +
-            (selection == 5 ? 16 : 0)
+            TYRIAN_GBA_LAYOUT_GAME_MENU_FIRST_SOURCE_Y +
+            selection *
+                TYRIAN_GBA_LAYOUT_GAME_MENU_SOURCE_ROW_STEP +
+            (
+                selection == 5 ?
+                    TYRIAN_GBA_LAYOUT_GAME_MENU_QUIT_SOURCE_GAP :
+                    0
+            )
         )
     );
 }
@@ -327,9 +343,9 @@ static void frontend_draw_game_menu_item(
     frontend_draw_runtime_text_clipped(
         frontend_frame_scratch,
         frontend_game_menu_label((u8)(selection + 1u)),
-        125,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_X,
         frontend_game_menu_item_y(selection),
-        238,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_ITEM_RIGHT,
         colour
     );
 }
@@ -341,8 +357,8 @@ static void frontend_draw_game_menu_text(u8 active_selection)
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         frontend_game_menu_label(0),
-        178,
-        6,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_CENTER_X,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_TITLE_Y,
         0xfbu
     );
     for (selection = 0; selection < 6; selection++) {
@@ -446,7 +462,10 @@ static const char *frontend_upgrade_menu_item_label(u8 index)
 
 static s16 frontend_upgrade_menu_item_y(u8 index)
 {
-    return (s16)(30 + index * 10u);
+    return (s16)(
+        TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_FIRST_Y +
+        index * TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_ROW_STEP
+    );
 }
 
 static void frontend_draw_upgrade_menu_item(u8 index)
@@ -454,9 +473,9 @@ static void frontend_draw_upgrade_menu_item(u8 index)
     frontend_draw_runtime_text_clipped(
         frontend_frame_scratch,
         frontend_upgrade_menu_item_label(index),
-        125,
+        TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X,
         frontend_upgrade_menu_item_y(index),
-        238,
+        TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_RIGHT,
         index == frontend_selection ? 0xfeu : 0xfau
     );
 }
@@ -468,8 +487,8 @@ static void frontend_draw_upgrade_menu_text(void)
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         frontend_upgrade_menu_text(0, "UPGRADE SHIP"),
-        176,
-        7,
+        TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X,
+        TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y,
         0xfbu
     );
     for (
@@ -1138,8 +1157,8 @@ static void frontend_render_upgrade_submenu(void)
             (u8)(frontend_upgrade_category + 1u),
             "UPGRADE"
         ),
-        176,
-        6,
+        TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X,
+        TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y,
         0xfbu
     );
     frontend_draw_upgrade_submenu_preview();
@@ -1203,12 +1222,15 @@ static void frontend_quit_capture_choice_background(void)
 {
     u8 row;
 
-    for (row = 0; row < 14; row++) {
+    for (row = 0; row < FRONTEND_QUIT_CHOICE_CACHE_HEIGHT; row++) {
         memcpy(
-            frontend_quit_choice_background + (u16)row * 160u,
+            frontend_quit_choice_background +
+                (u16)row * FRONTEND_QUIT_CHOICE_CACHE_WIDTH,
             frontend_frame_scratch +
-                (u32)(104u + row) * SCREEN_WIDTH + 32u,
-            160
+                (u32)(FRONTEND_QUIT_CHOICE_CACHE_Y + row) *
+                    SCREEN_WIDTH +
+                FRONTEND_QUIT_CHOICE_CACHE_X,
+            FRONTEND_QUIT_CHOICE_CACHE_WIDTH
         );
     }
 }
@@ -1217,12 +1239,15 @@ static void frontend_quit_restore_choice_background(void)
 {
     u8 row;
 
-    for (row = 0; row < 14; row++) {
+    for (row = 0; row < FRONTEND_QUIT_CHOICE_CACHE_HEIGHT; row++) {
         memcpy(
             frontend_frame_scratch +
-                (u32)(104u + row) * SCREEN_WIDTH + 32u,
-            frontend_quit_choice_background + (u16)row * 160u,
-            160
+                (u32)(FRONTEND_QUIT_CHOICE_CACHE_Y + row) *
+                    SCREEN_WIDTH +
+                FRONTEND_QUIT_CHOICE_CACHE_X,
+            frontend_quit_choice_background +
+                (u16)row * FRONTEND_QUIT_CHOICE_CACHE_WIDTH,
+            FRONTEND_QUIT_CHOICE_CACHE_WIDTH
         );
     }
 }
@@ -1259,15 +1284,15 @@ static void frontend_draw_quit_choices(
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         yes,
-        66,
-        108,
+        TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X,
+        TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y,
         frontend_quit_yes ? 0xfeu : 0xf6u
     );
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         no,
-        137,
-        108,
+        TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X,
+        TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y,
         frontend_quit_yes ? 0xf6u : 0xfeu
     );
 }
@@ -1290,7 +1315,12 @@ static void frontend_render_quit_selection(void)
         frontend_draw_quit_choices(yes, no);
     }
     frontend_dirty_begin();
-    frontend_dirty_add(32, 104, 160, 14);
+    frontend_dirty_add(
+        FRONTEND_QUIT_CHOICE_CACHE_X,
+        FRONTEND_QUIT_CHOICE_CACHE_Y,
+        FRONTEND_QUIT_CHOICE_CACHE_WIDTH,
+        FRONTEND_QUIT_CHOICE_CACHE_HEIGHT
+    );
     frontend_dirty_present();
 }
 
@@ -1352,9 +1382,9 @@ static void frontend_compose_quit_dialog(void)
         frontend_draw_runtime_text_clipped_scaled(
             frontend_frame_scratch,
             question,
-            37,
-            53,
-            174,
+            TYRIAN_GBA_LAYOUT_QUIT_QUESTION_X,
+            TYRIAN_GBA_LAYOUT_QUIT_QUESTION_Y,
+            TYRIAN_GBA_LAYOUT_QUIT_QUESTION_RIGHT,
             0xfeu,
             FRONTEND_COMPACT_FONT_WIDTH,
             FRONTEND_COMPACT_FONT_SPACE
@@ -1362,9 +1392,9 @@ static void frontend_compose_quit_dialog(void)
         frontend_draw_runtime_text_wrapped_compact(
             frontend_frame_scratch,
             help,
-            37,
-            73,
-            174,
+            TYRIAN_GBA_LAYOUT_QUIT_HELP_X,
+            TYRIAN_GBA_LAYOUT_QUIT_HELP_Y,
+            TYRIAN_GBA_LAYOUT_QUIT_HELP_RIGHT,
             9,
             3,
             0xfau

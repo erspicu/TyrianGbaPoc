@@ -298,6 +298,9 @@ static void update_logic(void)
     ) {
         (void)frontend_demo_apply_input();
     }
+    if (!source_parity_level.end_level) {
+        source_player_energy_update();
+    }
     /*
      * Stage 4 makes the direct OpenTyrian event/enemy runtime authoritative
      * for the first-level body.  The keypad adapter also stores the player in

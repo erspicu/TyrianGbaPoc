@@ -51,6 +51,8 @@ is written to `build/TyrianGBA.gba`; previous local ROMs are moved to
 
 For environment details, directory layout, advanced options and full
 regression commands, see [BUILDING.md](BUILDING.md).
+Developer switches and all supported HUD/menu coordinates are documented
+directly in the bilingual [Configure.h](Configure.h).
 
 ## Controls
 

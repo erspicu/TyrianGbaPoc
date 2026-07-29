@@ -9,10 +9,58 @@ static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
         weapon->max <= 8;
 }
 
+/*
+ * Direct single-player slice of tyrian2.c's Shield Gen and Power Bar blocks.
+ * This runs once before event/enemy/player work, matching the PC game loop.
+ */
+static void source_player_energy_update(void)
+{
+#ifdef AUTOTEST
+    if (autotest_unlimited_weapon_energy) {
+        player_weapon_energy = 900;
+        return;
+    }
+#endif
+#if TYRIAN_GBA_STRESS_LOADOUT
+    /* onePlayerAction in the original forces the shared weapon pool to 900. */
+    player_weapon_energy = 900;
+#else
+    if (
+        player_alive &&
+        player_shield < player_shield_max &&
+        player_weapon_energy > player_shield_recharge_cost
+    ) {
+        if (player_shield_wait == 0) player_shield_wait = 1;
+        player_shield_wait--;
+        if (player_shield_wait == 0) {
+            player_shield_wait = 15;
+            player_weapon_energy = (u16)(
+                player_weapon_energy - player_shield_recharge_cost
+            );
+            player_shield++;
+        }
+    }
+    player_weapon_energy = (u16)(
+        player_weapon_energy + player_generator_power
+    );
+    if (player_weapon_energy > 900) player_weapon_energy = 900;
+#endif
+}
+
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static const u8 source_weapon_sound_slot[SOURCE_WEAPON_BAY_COUNT] = {
     0, 2, 4, 4, 2
 };
+
+static u8 source_weapon_energy_consume(u16 poweruse)
+{
+#ifdef AUTOTEST
+    if (autotest_unlimited_weapon_energy) return 1;
+#endif
+    if (player_weapon_energy < poweruse) return 0;
+    player_weapon_energy = (u16)(player_weapon_energy - poweruse);
+    return 1;
+}
 
 static u8 source_front_weapon_sync(void)
 {
@@ -33,6 +81,7 @@ static u8 source_front_weapon_sync(void)
     source_front_weapon_port_id = port_id;
     source_front_weapon_power = power;
     source_front_weapon_hdt_id = 0;
+    source_front_weapon_poweruse = 0;
     source_front_weapon_valid = 0;
     source_shot_multi_pos[SOURCE_WEAPON_BAY_FRONT] = 0;
     memset(&source_front_weapon, 0, sizeof(source_front_weapon));
@@ -54,6 +103,7 @@ static u8 source_front_weapon_sync(void)
      */
     weapon_id = front_port.op[0][power - 1u];
     source_front_weapon_hdt_id = weapon_id;
+    source_front_weapon_poweruse = front_port.poweruse;
     source_front_weapon_valid =
         weapon_id != 0 &&
         ot_data_hdt_weapon_read(weapon_id, &source_front_weapon) &&
@@ -83,6 +133,7 @@ static u8 source_rear_weapon_sync(void)
     source_rear_weapon_power = power;
     source_rear_weapon_mode = mode;
     source_rear_weapon_hdt_id = 0;
+    source_rear_weapon_poweruse = 0;
     source_rear_weapon_valid = 0;
     source_shot_multi_pos[SOURCE_WEAPON_BAY_REAR] = 0;
     memset(&source_rear_weapon, 0, sizeof(source_rear_weapon));
@@ -102,6 +153,7 @@ static u8 source_rear_weapon_sync(void)
     }
     weapon_id = rear_port.op[mode - 1u][power - 1u];
     source_rear_weapon_hdt_id = weapon_id;
+    source_rear_weapon_poweruse = rear_port.poweruse;
     source_rear_weapon_valid =
         weapon_id != 0 &&
         ot_data_hdt_weapon_read(weapon_id, &source_rear_weapon) &&
@@ -112,6 +164,7 @@ static u8 source_rear_weapon_sync(void)
 static u8 source_sidekick_sync(u8 side)
 {
     SourceSidekickRuntime *runtime;
+    OtWeaponPortDefinition port;
     u8 item_id;
     u16 weapon_id;
 
@@ -151,7 +204,17 @@ static u8 source_sidekick_sync(u8 side)
     runtime->weapon_charge = runtime->charge;
     runtime->weapon_valid = 0;
     memset(&runtime->weapon, 0, sizeof(runtime->weapon));
+    runtime->poweruse = 0;
     if (runtime->option.weapon_port == 0) return 1;
+    if (
+        !ot_data_hdt_weapon_port_read(
+            runtime->option.weapon_port,
+            &port
+        )
+    ) {
+        return 0;
+    }
+    runtime->poweruse = port.poweruse;
     weapon_id = (u16)(runtime->option.weapon + runtime->charge);
     runtime->weapon_valid =
         weapon_id != 0 &&
@@ -168,12 +231,14 @@ static void source_front_weapon_init(void)
     source_front_weapon_port_id = 0;
     source_front_weapon_power = 0;
     source_front_weapon_hdt_id = 0;
+    source_front_weapon_poweruse = 0;
     source_front_weapon_valid = 0;
     source_rear_weapon_bound = 0;
     source_rear_weapon_port_id = 0;
     source_rear_weapon_power = 0;
     source_rear_weapon_mode = 0;
     source_rear_weapon_hdt_id = 0;
+    source_rear_weapon_poweruse = 0;
     source_rear_weapon_valid = 0;
     memset(source_shot_repeat, 0, sizeof(source_shot_repeat));
     memset(source_shot_multi_pos, 0, sizeof(source_shot_multi_pos));
@@ -996,6 +1061,7 @@ static void source_sidekick_fire_update(u8 side, u16 button)
         fire = (pad_now & (KEY_A | button)) != 0;
     }
     if (!fire) return;
+    if (!source_weapon_energy_consume(runtime->poweruse)) return;
     if (
         source_spawn_weapon(
             &runtime->weapon,
@@ -1067,23 +1133,35 @@ static void source_player_weapons_update(void)
             source_front_weapon_valid &&
             source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] == 0
         ) {
-            source_spawn_weapon(
-                &source_front_weapon,
-                SOURCE_WEAPON_BAY_FRONT,
-                player_source_x,
-                player_source_y
-            );
+            if (
+                source_weapon_energy_consume(
+                    source_front_weapon_poweruse
+                )
+            ) {
+                source_spawn_weapon(
+                    &source_front_weapon,
+                    SOURCE_WEAPON_BAY_FRONT,
+                    player_source_x,
+                    player_source_y
+                );
+            }
         }
         if (
             source_rear_weapon_valid &&
             source_shot_repeat[SOURCE_WEAPON_BAY_REAR] == 0
         ) {
-            source_spawn_weapon(
-                &source_rear_weapon,
-                SOURCE_WEAPON_BAY_REAR,
-                player_source_x,
-                player_source_y
-            );
+            if (
+                source_weapon_energy_consume(
+                    source_rear_weapon_poweruse
+                )
+            ) {
+                source_spawn_weapon(
+                    &source_rear_weapon,
+                    SOURCE_WEAPON_BAY_REAR,
+                    player_source_x,
+                    player_source_y
+                );
+            }
         }
     }
     source_sidekick_fire_update(0, KEY_B);

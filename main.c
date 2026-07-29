@@ -2,6 +2,7 @@
 #include <maxmod.h>
 #include <string.h>
 
+#include "Configure.h"
 #include "res/asset_meta.h"
 #include "res/soundbank.h"
 #include "res/sprite2_raw_meta.h"
@@ -31,6 +32,49 @@ _Static_assert(
         MSL_NSAMPS == SFX_SOURCE_SOUND_38 + 1,
     "Maxmod bank must contain all 29 Tyrian SFX and nine voices"
 );
+_Static_assert(
+    TYRIAN_GBA_LAYOUT_CASH_X >= 0 &&
+        TYRIAN_GBA_LAYOUT_CASH_X < SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_CASH_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_CASH_Y <= SCREEN_HEIGHT - 8,
+    "cash HUD position must remain visible"
+);
+_Static_assert(
+    TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X <= SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X <= SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X <= SCREEN_WIDTH,
+    "energy HUD right edges must leave room for three digits"
+);
+_Static_assert(
+    TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y <= SCREEN_HEIGHT - 8 &&
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y <= SCREEN_HEIGHT - 8 &&
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y <= SCREEN_HEIGHT - 8,
+    "energy HUD rows must remain visible"
+);
+_Static_assert(
+    TYRIAN_GBA_LAYOUT_NEXT_PANEL_X >= 0 &&
+        TYRIAN_GBA_LAYOUT_NEXT_PANEL_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_NEXT_PANEL_X +
+            TYRIAN_GBA_LAYOUT_NEXT_PANEL_WIDTH <= SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_NEXT_PANEL_Y +
+            TYRIAN_GBA_LAYOUT_NEXT_PANEL_HEIGHT <= SCREEN_HEIGHT,
+    "Next Level text panel must fit the screen"
+);
+_Static_assert(
+    TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y >= 4 &&
+        TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y <= SCREEN_HEIGHT - 10 &&
+        TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X >= 32 &&
+        TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X < 192 &&
+        TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X >= 32 &&
+        TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X < 192,
+    "quit choices must fit their fast restore cache"
+);
 
 #if defined(AUTOTEST_FULL_LOADOUT_STRESS) || \
     defined(AUTOTEST_FRONTEND_TRANSITION_STRESS) || \
@@ -42,31 +86,6 @@ _Static_assert(
 
 #define GBA_WAITCNT (*(volatile u16 *)0x04000204)
 #define GBA_WAITCNT_ROM_PREFETCH_3_1 0x4317u
-
-/*
- * Development-only override.  It is temporarily enabled for interactive
- * campaign validation; forced-death regressions explicitly compile it out,
- * so the translated shield, armor and death path remains covered.
- */
-#ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
-#endif
-#if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 0 && \
-    TYRIAN_GBA_DEV_PLAYER_INVINCIBLE != 1
-#error TYRIAN_GBA_DEV_PLAYER_INVINCIBLE must be 0 or 1
-#endif
-
-/*
- * Diagnostic upper-bound build.  The ordinary release keeps the translated
- * Pulse-Cannon adapter; the dedicated stress target enables six stock HDT
- * weapon sources at once without changing campaign equipment/save state.
- */
-#ifndef TYRIAN_GBA_STRESS_LOADOUT
-#define TYRIAN_GBA_STRESS_LOADOUT 0
-#endif
-#if TYRIAN_GBA_STRESS_LOADOUT != 0 && TYRIAN_GBA_STRESS_LOADOUT != 1
-#error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
-#endif
 
 /*
  * Deterministic source-route tests retain their established power-11
@@ -285,8 +304,6 @@ enum {
 #define REWARD_FRAME_COUNT 3
 #define REWARD_TILES_PER_FRAME 4
 #define REWARD_SEQUENCE_COUNT 5
-#define CASH_COUNTER_X 22
-#define CASH_COUNTER_Y 148
 /*
  * Runtime Sprite2 presentation.  The original PC 256-colour indices are
  * decoded from ROMFS and presented through eight time-shared OBJ banks.
@@ -754,6 +771,7 @@ extern const u8 frontend_palettes[];
 extern const u8 frontend_glyphs[];
 extern const u8 frontend_cube[];
 extern const u8 frontend_native_font[];
+extern const u8 frontend_pregame_font[];
 extern const u8 frontend_static_menu_panels[];
 extern const u8 frontend_static_pre_game_frames[];
 extern const u8 frontend_static_quit_overlay[];
@@ -1058,7 +1076,16 @@ static FrontendGameplayArena frontend_gameplay_arena
         (u8 *)(void *)&frontend_gameplay_arena + \
         FRONTEND_FRAME_BYTES \
     ))
-#define FRONTEND_QUIT_CHOICE_BACKGROUND_BYTES (160u * 14u)
+#define FRONTEND_QUIT_CHOICE_CACHE_X 32u
+#define FRONTEND_QUIT_CHOICE_CACHE_Y \
+    (TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y - 4u)
+#define FRONTEND_QUIT_CHOICE_CACHE_WIDTH 160u
+#define FRONTEND_QUIT_CHOICE_CACHE_HEIGHT 14u
+#define FRONTEND_QUIT_CHOICE_BACKGROUND_BYTES \
+    ( \
+        FRONTEND_QUIT_CHOICE_CACHE_WIDTH * \
+        FRONTEND_QUIT_CHOICE_CACHE_HEIGHT \
+    )
 #define frontend_quit_choice_background \
     ((u8 *)(void *)( \
         (u8 *)(void *)&frontend_gameplay_arena + \
@@ -1124,6 +1151,9 @@ static s8 player_bank;
 static u16 player_ship_graphic;
 static u8 player_ship_animation;
 static u8 player_generator_power;
+static u16 player_weapon_energy;
+static u16 player_shield_recharge_cost;
+static u8 player_shield_wait;
 static u32 player_cash;
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -1151,6 +1181,7 @@ typedef struct {
     u8 animation_frame;
     u8 charge;
     u8 charge_ticks;
+    u16 poweruse;
     s16 x;
     s16 y;
 } SourceSidekickRuntime;
@@ -1163,12 +1194,14 @@ static u8 source_front_weapon_bound;
 static u8 source_front_weapon_port_id;
 static u8 source_front_weapon_power;
 static u16 source_front_weapon_hdt_id;
+static u16 source_front_weapon_poweruse;
 static u8 source_rear_weapon_valid;
 static u8 source_rear_weapon_bound;
 static u8 source_rear_weapon_port_id;
 static u8 source_rear_weapon_power;
 static u8 source_rear_weapon_mode;
 static u16 source_rear_weapon_hdt_id;
+static u16 source_rear_weapon_poweruse;
 static u8 source_shot_repeat[SOURCE_WEAPON_BAY_COUNT];
 static u8 source_shot_multi_pos[SOURCE_WEAPON_BAY_COUNT];
 static s16 source_player_old_x[20];
@@ -1560,6 +1593,14 @@ static const u16 boss_bar_fill_colours[7][3] = {
 #ifdef AUTOTEST
 static u8 autotest_running;
 static u8 autotest_frontend_finish_pending;
+/*
+ * Route/golden tests historically exercise authored level timing with a
+ * permanently firing power-11 cannon.  Keep that test-only load generator
+ * independent from the newly restored stock generator/power-bar economy.
+ * Focused energy tests temporarily clear this flag and therefore still
+ * validate the exact OpenTyrian consumption and recharge rules.
+ */
+static u8 autotest_unlimited_weapon_energy = 1;
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
 static u8 autotest_frontend_transition_ready;
 #endif

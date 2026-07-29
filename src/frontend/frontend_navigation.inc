@@ -973,8 +973,8 @@ static void frontend_render_next_level(void)
     frontend_draw_runtime_text_centered(
         frontend_frame_scratch,
         "NEXT LEVEL",
-        176,
-        7,
+        TYRIAN_GBA_LAYOUT_NEXT_TITLE_CENTER_X,
+        TYRIAN_GBA_LAYOUT_NEXT_TITLE_Y,
         0xfbu
     );
     frontend_fill_rect(
