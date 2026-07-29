@@ -10,6 +10,7 @@ import importlib.util
 import json
 import re
 import struct
+import sys
 import wave
 import zlib
 from pathlib import Path
@@ -435,6 +436,24 @@ def load_snes_builder(project_root: Path) -> ModuleType:
         raise RuntimeError(f"could not load SNES asset builder: {path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def load_background_palette_trainer() -> ModuleType:
+    path = Path(__file__).with_name("background_palette_training.py")
+    module_name = "tyrian_gba_background_palette_training"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"could not load background palette trainer: {path}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
     return module
 
 
@@ -4779,32 +4798,272 @@ def build_background_palette_assets(
         )
         variant_reports.extend((
             (
-                f"background_palette_shape_{shape_file_id}_active_masks="
+                f"background_palette_v53_shape_{shape_file_id}_active_masks="
                 f"{len(histograms)}"
             ),
             (
-                f"background_palette_shape_{shape_file_id}_global_error="
+                f"background_palette_v53_shape_{shape_file_id}_global_error="
                 f"{global_objective:.0f}"
             ),
             (
-                f"background_palette_shape_{shape_file_id}_local_error="
+                f"background_palette_v53_shape_{shape_file_id}_local_error="
                 f"{local_objective:.0f}"
             ),
             (
-                f"background_palette_shape_{shape_file_id}_improvement="
+                f"background_palette_v53_shape_{shape_file_id}_improvement="
                 f"{improvement:.4f}%"
             ),
         ))
-        if shape_file_id == "x":
-            critical_banks = [
-                int(mask_bank[mask])
-                for mask in critical_masks
-            ]
 
     palette_bytes = b"".join(palette_variants)
     nearest_bytes = b"".join(nearest_variants)
     mask_bytes = b"".join(mask_variants)
+    trainer = load_background_palette_trainer()
+    baseline_assets = trainer.PaletteAssets(
+        words=np.frombuffer(
+            palette_bytes,
+            dtype="<u2",
+        ).reshape(
+            len(shape_file_ids),
+            BACKGROUND_PALETTE_BANK_COUNT,
+            BACKGROUND_PALETTE_COLOURS_PER_BANK,
+        ).copy(),
+        nearest=np.frombuffer(
+            nearest_bytes,
+            dtype=np.uint8,
+        ).reshape(
+            len(shape_file_ids),
+            BACKGROUND_PALETTE_BANK_COUNT,
+            BACKGROUND_PALETTE_SOURCE_COLOURS,
+        ).copy(),
+        mask_bank=np.frombuffer(
+            mask_bytes,
+            dtype=np.uint8,
+        ).reshape(
+            len(shape_file_ids),
+            BACKGROUND_PALETTE_MASK_COUNT,
+        ).copy(),
+    )
+    (
+        runtime_datasets,
+        _,
+        runtime_dataset_metadata,
+    ) = trainer.build_runtime_datasets(data_root)
+    perceptual_source_rgb = trainer.load_source_rgb(data_root)
+    perceptual_candidate_rgb = trainer.bgr555_rgb()
+    source_oklab = trainer.rgb_code_to_oklab(perceptual_source_rgb)
+    candidate_oklab = trainer.rgb_code_to_oklab(
+        perceptual_candidate_rgb
+    )
+    source_cielab = trainer.rgb_code_to_cielab(
+        perceptual_source_rgb
+    )
+    candidate_cielab = trainer.rgb_code_to_cielab(
+        perceptual_candidate_rgb
+    )
+    trained = trainer.train_assets_safe_unused(
+        runtime_datasets,
+        baseline_assets,
+        source_oklab,
+        candidate_oklab,
+        source_cielab,
+        candidate_cielab,
+        30,
+        20,
+    )
+    (
+        palette_bytes,
+        nearest_bytes,
+        mask_bytes,
+    ) = trainer.assets_to_bytes(trained.assets)
+    runtime_reports: list[str] = []
+    training_summary: dict[str, dict[str, int]] = {}
+    for record in trained.iterations:
+        profile = str(record["profile"])
+        if "trainable_banks" in record:
+            training_summary.setdefault(profile, {}).update({
+                "protected_banks": int(record["protected_banks"]),
+                "trainable_banks": int(record["trainable_banks"]),
+                "pareto_protected_banks":
+                    int(record["pareto_protected_banks"]),
+            })
+        if "safe_active_mask_changes" in record:
+            training_summary.setdefault(profile, {}).update({
+                "safe_active_mask_changes":
+                    int(record["safe_active_mask_changes"]),
+            })
+    for profile_index, shape_file_id in enumerate(shape_file_ids):
+        dataset = runtime_datasets[shape_file_id]
+        baseline_oklab = trainer.evaluate_profile(
+            dataset,
+            baseline_assets.words[profile_index],
+            baseline_assets.nearest[profile_index],
+            baseline_assets.mask_bank[profile_index],
+            source_oklab,
+            candidate_oklab,
+        )
+        candidate_oklab_evaluation = trainer.evaluate_profile(
+            dataset,
+            trained.assets.words[profile_index],
+            trained.assets.nearest[profile_index],
+            trained.assets.mask_bank[profile_index],
+            source_oklab,
+            candidate_oklab,
+        )
+        baseline_cie_error = trainer.palette_metric_error(
+            baseline_assets.words[profile_index],
+            baseline_assets.nearest[profile_index],
+            source_cielab,
+            candidate_cielab,
+            "ciede2000",
+        )
+        candidate_cie_error = trainer.palette_metric_error(
+            trained.assets.words[profile_index],
+            trained.assets.nearest[profile_index],
+            source_cielab,
+            candidate_cielab,
+            "ciede2000",
+        )
+        baseline_cie = trainer.evaluate_profile_error(
+            dataset,
+            baseline_assets.mask_bank[profile_index],
+            baseline_cie_error,
+        )
+        candidate_cie = trainer.evaluate_profile_error(
+            dataset,
+            trained.assets.mask_bank[profile_index],
+            candidate_cie_error,
+        )
+        oklab_delta = (
+            candidate_oklab_evaluation.key_errors -
+            baseline_oklab.key_errors
+        )
+        cie_delta = (
+            candidate_cie.key_errors -
+            baseline_cie.key_errors
+        )
+        oklab_regressions = int(
+            np.count_nonzero(oklab_delta > 1.0e-12)
+        )
+        cie_regressions = int(
+            np.count_nonzero(cie_delta > 1.0e-8)
+        )
+        oklab_improvement = trainer.improvement_percent(
+            baseline_oklab.mean_squared,
+            candidate_oklab_evaluation.mean_squared,
+        )
+        cie_improvement = trainer.improvement_percent(
+            baseline_cie.mean_squared,
+            candidate_cie.mean_squared,
+        )
+        baseline_ramp = trainer.ramp_report(
+            dataset,
+            profile_index,
+            baseline_assets,
+            candidate_oklab,
+        )
+        candidate_ramp = trainer.ramp_report(
+            dataset,
+            profile_index,
+            trained.assets,
+            candidate_oklab,
+        )
+        if (
+            oklab_regressions != 0 or
+            cie_regressions != 0 or
+            oklab_improvement <= 0 or
+            cie_improvement <= 0 or
+            candidate_ramp["lightness_inversions"] >
+                baseline_ramp["lightness_inversions"] or
+            candidate_ramp["palette_collisions"] >
+                baseline_ramp["palette_collisions"]
+        ):
+            raise ValueError(
+                "background palette perceptual non-regression failed: "
+                f"{shape_file_id}: OKLab={oklab_improvement:.6f}%/"
+                f"{oklab_regressions}, CIEDE2000={cie_improvement:.6f}%/"
+                f"{cie_regressions}, ramp={baseline_ramp}->"
+                f"{candidate_ramp}"
+            )
+        safe_summary = training_summary[shape_file_id]
+        runtime_reports.extend((
+            (
+                f"background_palette_shape_{shape_file_id}_levels="
+                f"{dataset.level_count}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_runtime_keys="
+                f"{len(dataset.keys)}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_active_masks="
+                f"{len(np.unique(dataset.masks))}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_dataset_sha256="
+                f"{dataset.checksum}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_oklab_improvement="
+                f"{oklab_improvement:.6f}%"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"ciede2000_improvement={cie_improvement:.6f}%"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"oklab_regressed_keys={oklab_regressions}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"ciede2000_regressed_keys={cie_regressions}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"ramp_inversions="
+                f"{baseline_ramp['lightness_inversions']}->"
+                f"{candidate_ramp['lightness_inversions']}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"ramp_collisions="
+                f"{baseline_ramp['palette_collisions']}->"
+                f"{candidate_ramp['palette_collisions']}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"trainable_banks={safe_summary['trainable_banks']}"
+            ),
+            (
+                f"background_palette_shape_{shape_file_id}_"
+                f"safe_mask_changes="
+                f"{safe_summary['safe_active_mask_changes']}"
+            ),
+        ))
+        save_palette_preview(
+            perceptual_candidate_rgb[
+                trained.assets.words[profile_index, :, 1:]
+            ],
+            shape_file_id,
+        )
+
     variant_count = len(shape_file_ids)
+    if tuple(shape_file_ids) != tuple(trainer.PROFILE_IDS):
+        raise ValueError(
+            "palette trainer profile ordering changed: "
+            f"{shape_file_ids} != {trainer.PROFILE_IDS}"
+        )
+    x_profile_index = shape_file_ids.index("x")
+    critical_banks = [
+        int(
+            trained.assets.mask_bank[
+                x_profile_index,
+                mask,
+            ]
+        )
+        for mask in critical_masks
+    ]
     if len(critical_banks) != len(critical_masks):
         raise ValueError("TORM shape-bank palette audit was not generated")
 
@@ -4824,19 +5083,49 @@ def build_background_palette_assets(
         "BACKGROUND_PALETTE_CRITICAL_BANK": critical_banks[0],
     }
     report = [
-        "background_palette_mode=shape-bank source-hue-aware 4bpp",
+        (
+            "background_palette_mode="
+            "runtime-key safe-unused OKLab+CIEDE2000"
+        ),
         f"background_palette_shape_files={shape_file_count}",
         (
             "background_palette_shape_file_ids=" +
             ",".join(shape_file_ids)
         ),
-        f"background_palette_training_tiles={shape_tile_count}",
         (
-            "background_palette_active_masks="
-            f"{len(np.flatnonzero(mask_histogram.sum(axis=1)))}"
+            "background_palette_runtime_logical_levels="
+            f"{runtime_dataset_metadata['logical_levels']}"
         ),
-        "background_palette_single_hue_banks=0..10 exact",
-        "background_palette_mixed_hue_banks=11..15 trained",
+        (
+            "background_palette_runtime_map_tiles="
+            f"{runtime_dataset_metadata['map_tiles_including_blank']}"
+        ),
+        (
+            "background_palette_runtime_unique_keys="
+            f"{runtime_dataset_metadata['unique_nonblank_keys']}"
+        ),
+        (
+            "background_palette_runtime_active_masks="
+            f"{runtime_dataset_metadata['active_masks']}"
+        ),
+        (
+            "background_palette_training_policy="
+            "preserve runtime-used v53 banks; train unused banks; "
+            "accept only per-key OKLab+CIEDE2000 non-regressions"
+        ),
+        "background_palette_ciede2000_reference_vectors=3",
+        (
+            "background_palette_palette_sha256="
+            f"{hashlib.sha256(palette_bytes).hexdigest()}"
+        ),
+        (
+            "background_palette_nearest_sha256="
+            f"{hashlib.sha256(nearest_bytes).hexdigest()}"
+        ),
+        (
+            "background_palette_mask_sha256="
+            f"{hashlib.sha256(mask_bytes).hexdigest()}"
+        ),
         (
             "background_palette_torm_shape_x_masks="
             + ",".join(f"0x{mask:04x}" for mask in critical_masks)
@@ -4845,6 +5134,7 @@ def build_background_palette_assets(
         ),
         "background_palette_level_specific_tables=0",
         "background_palette_shape_bank_specific_tables=5",
+        *runtime_reports,
         *variant_reports,
     ]
     return (

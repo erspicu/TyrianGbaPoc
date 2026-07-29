@@ -281,30 +281,83 @@ if (
     $assetReport.frontend_nav_bitmap_saved_bytes -ne "3196854" -or
     $assetReport.frontend_nav_bitmap_roundtrip_verified -ne "1" -or
     $assetReport.background_palette_mode -ne
-        "shape-bank source-hue-aware 4bpp" -or
+        "runtime-key safe-unused OKLab+CIEDE2000" -or
     $assetReport.background_palette_shape_file_ids -ne "),w,x,y,z" -or
     $assetReport.background_palette_level_specific_tables -ne "0" -or
     $assetReport.background_palette_shape_bank_specific_tables -ne "5" -or
+    $assetReport.background_palette_runtime_logical_levels -ne "62" -or
+    $assetReport.background_palette_runtime_map_tiles -ne "13771254" -or
+    $assetReport.background_palette_runtime_unique_keys -ne "33360" -or
+    $assetReport.background_palette_runtime_active_masks -ne "202" -or
+    $assetReport.background_palette_palette_sha256 -ne
+        "130ef4c2292f2d12ba8c8bf544858f22a7795dfbf5160b074320ef7a2ddebe90" -or
+    $assetReport.background_palette_nearest_sha256 -ne
+        "5026d215f4ea94a75790b8226227da39787557f98b11f6902b1779c8035a64a6" -or
+    $assetReport.background_palette_mask_sha256 -ne
+        "24017252ff50a08fa78acbce904c12b38e9a8ae0715305c55babeae338946f45" -or
+    $assetReport.background_palette_training_policy -ne
+        "preserve runtime-used v53 banks; train unused banks; accept only per-key OKLab+CIEDE2000 non-regressions" -or
+    $assetReport.background_palette_ciede2000_reference_vectors -ne "3" -or
+    $assetReport["background_palette_shape_)_dataset_sha256"] -ne
+        "90b1e0f9c3bc6f126353d70c345f7b1952980b0398ba76b2942adfc0157dba98" -or
+    $assetReport.background_palette_shape_w_dataset_sha256 -ne
+        "986e15cc730d5eea7a57afac71d7ed5013076fa79c90602b66fcb9588d0fe78b" -or
+    $assetReport.background_palette_shape_x_dataset_sha256 -ne
+        "fbcae57a89890452da5db8c81fb630df4d02f9f507430158acbb3e2dab98e8a3" -or
+    $assetReport.background_palette_shape_y_dataset_sha256 -ne
+        "628283aa48aee60a72cb6888af10de905c3272cf335fb2c81ae262b03cfd17d0" -or
+    $assetReport.background_palette_shape_z_dataset_sha256 -ne
+        "52f4afcabdffe2e77dc47fb32a9d85299bfa847504cf1953b7e1bf974d27ed43" -or
     [double](
-        $assetReport["background_palette_shape_)_improvement"] -replace
+        $assetReport["background_palette_shape_)_oklab_improvement"] -replace
             "%$", ""
     ) -le 0 -or
     [double](
-        $assetReport.background_palette_shape_w_improvement -replace
+        $assetReport.background_palette_shape_w_oklab_improvement -replace
             "%$", ""
     ) -le 0 -or
     [double](
-        $assetReport.background_palette_shape_x_improvement -replace
+        $assetReport.background_palette_shape_x_oklab_improvement -replace
             "%$", ""
     ) -le 0 -or
     [double](
-        $assetReport.background_palette_shape_y_improvement -replace
+        $assetReport.background_palette_shape_y_oklab_improvement -replace
             "%$", ""
     ) -le 0 -or
     [double](
-        $assetReport.background_palette_shape_z_improvement -replace
+        $assetReport.background_palette_shape_z_oklab_improvement -replace
             "%$", ""
     ) -le 0 -or
+    [double](
+        $assetReport["background_palette_shape_)_ciede2000_improvement"] -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_w_ciede2000_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_x_ciede2000_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_y_ciede2000_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    [double](
+        $assetReport.background_palette_shape_z_ciede2000_improvement -replace
+            "%$", ""
+    ) -le 0 -or
+    $assetReport["background_palette_shape_)_oklab_regressed_keys"] -ne "0" -or
+    $assetReport.background_palette_shape_w_oklab_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_x_oklab_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_y_oklab_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_z_oklab_regressed_keys -ne "0" -or
+    $assetReport["background_palette_shape_)_ciede2000_regressed_keys"] -ne "0" -or
+    $assetReport.background_palette_shape_w_ciede2000_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_x_ciede2000_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_y_ciede2000_regressed_keys -ne "0" -or
+    $assetReport.background_palette_shape_z_ciede2000_regressed_keys -ne "0" -or
     $assetReport.frontend_static_help_strategy -ne
         "build-time stock HDT mixed-case strips; aligned ROM copy" -or
     $assetReport.frontend_static_help_dimensions -ne "240x11" -or

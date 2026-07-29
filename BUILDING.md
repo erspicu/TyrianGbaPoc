@@ -116,6 +116,13 @@ Windows 路徑後仍可建置。
 MUS/SHP/PIC/HDT/LVL 等資料和 OpenTyrian 語意決定。不要為單一關卡建立
 專用表格或手工修補資源；新增關卡支援時應修正共用 loader／adapter。
 
+背景 8bpp → GBA 4bpp 調色盤是平台限制下唯一必要的有損 adapter。
+`tools/background_palette_training.py` 會從全部 62 關重建真正的
+runtime tile keys，只訓練該 shape profile 未使用的 palette banks，
+並要求每個既有 key 在 OKLab 與 CIEDE2000 都不得退步。輸出 hash、
+資料集 coverage 與感知色差門檻由 `build.ps1` 稽核；不要以單關手工
+palette 表取代此共用流程。
+
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整
 runtime 功能已由另一份嵌入資源承接時，才可從 ROMFS image 排除原始

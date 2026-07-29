@@ -605,3 +605,15 @@ Metric 最後仍需由人類畫面偏好校準：
 因此本輪正確結論是「方法與實驗設計已具體化」，不是「已證明某個新
 palette 一定較好」。下一階段若獲准，應只先建立離線 dataset/prototype，
 在有全 62 關數據後才決定產品改寫。
+
+---
+
+## 16. 後續實作結果
+
+研究後續已在 `palette-training-v54` 分支完成安全版實作。正式採用
+的是以 62 關真實 runtime key 訓練、並以 OKLab + CIEDE2000 做
+逐 key non-regression gate 的 `safe-unused` 策略。
+
+量化、畫面 A/B、ROM 成本與完整回歸結果請見：
+
+[Tyrian-GBA-Palette-Training-Implementation-v54.md](Tyrian-GBA-Palette-Training-Implementation-v54.md)
