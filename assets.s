@@ -21,6 +21,21 @@ insert_coin_palette:
 	.incbin "res/insert_coin_palette.bin"
 
 	.balign 4
+	.global background_gba_palette
+background_gba_palette:
+	.incbin "res/background_gba_palette.bin"
+
+	.balign 4
+	.global background_palette_nearest_asset
+background_palette_nearest_asset:
+	.incbin "res/background_palette_nearest.bin"
+
+	.balign 4
+	.global background_palette_mask_bank
+background_palette_mask_bank:
+	.incbin "res/background_palette_mask_bank.bin"
+
+	.balign 4
 	.global frontend_frames
 frontend_frames:
 	.incbin "res/frontend_frames.bin"

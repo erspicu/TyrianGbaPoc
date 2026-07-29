@@ -900,6 +900,7 @@ static void frontend_move_selection(u8 item_count, s8 direction)
                 (u8)(frontend_selection + 1);
     }
     frontend_redraw_selection(old_selection);
+    source_sound_effect(28); /* OpenTyrian S_CURSOR. */
 }
 
 static u8 frontend_transition_busy(void)

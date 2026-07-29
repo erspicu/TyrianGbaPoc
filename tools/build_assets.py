@@ -169,9 +169,20 @@ FRONTEND_PREGAME_FONT_CHARACTERS = (
     "0123456789.,!?'/:-%"
 )
 FRONTEND_PREGAME_FONT_HEIGHT = 8
-FRONTEND_PREGAME_FONT_WIDTH = 7
+FRONTEND_PREGAME_FONT_WIDTH = 8
 FRONTEND_PREGAME_FONT_SPACE = 4
 FRONTEND_PREGAME_FONT_SHADOW = 240
+BACKGROUND_PALETTE_BANK_COUNT = 16
+BACKGROUND_PALETTE_COLOURS_PER_BANK = 16
+BACKGROUND_PALETTE_SOURCE_COLOURS = 256
+BACKGROUND_PALETTE_MASK_COUNT = 1 << 16
+BACKGROUND_MIXED_MASK_GROUPS = (
+    (0x0402,),                         # blue/teal + warm green
+    (0x0401, 0x0403),                 # neutral + green
+    (0x0082, 0x0480),                 # blue/teal + purple
+    (0x1004, 0x1005, 0x0005),         # TORM rock/water boundaries
+    (0x0048, 0x0108, 0x0148, 0x0041, 0x0441),
+)
 FRONTEND_STATS_FONT_GLYPH_COUNT = len(FRONTEND_NATIVE_FONT_CHARACTERS)
 FRONTEND_STATS_FONT_TILES_PER_GLYPH = 4
 FRONTEND_STATS_FONT_BRIGHTNESS_BIAS = 6
@@ -319,9 +330,9 @@ def load_frontend_pregame_font(path: Path) -> np.ndarray:
                 f"pre-game font glyph key is not one character: {character!r}"
             )
         values = [int(field, 16) for field in fields[1:]]
-        if any(value < 0 or value > 0x1f for value in values):
+        if any(value < 0 or value > 0x3f for value in values):
             raise ValueError(
-                f"pre-game font row exceeds five source bits: {character!r}"
+                f"pre-game font row exceeds six source bits: {character!r}"
             )
         characters.append(character)
         rows.append(values)
@@ -2220,9 +2231,8 @@ def build_frontend_static_menu_panels(
         return pregame_font_index.get(character, pregame_fallback_index)
 
     def pregame_row(index: int, row: int) -> int:
-        """Apply the face's one-pixel horizontal semibold treatment."""
-        value = int(pregame_font[index, row])
-        return value | (value >> 1)
+        """Return the authored mixed-case row without synthetic thickening."""
+        return int(pregame_font[index, row])
 
     def pregame_glyph_width(index: int) -> int:
         occupied = 0
@@ -2874,7 +2884,7 @@ def build_frontend_static_menu_panels(
         f"frontend_native_font_bytes={native_font.size}",
         (
             "frontend_pregame_font="
-            "project mixed-case 5x8 + horizontal semibold treatment"
+            "project authored mixed-case 6x8 strokes"
         ),
         f"frontend_pregame_font_bytes={pregame_font.size}",
         f"frontend_static_menu_panel_count={len(panels)}",
@@ -4053,6 +4063,281 @@ def load_tyrian_palette(path: Path) -> list[tuple[int, int, int]]:
         components = data[index * 3 : index * 3 + 3]
         palette.append(tuple((value << 2) | (value >> 4) for value in components))
     return palette
+
+
+def build_background_palette_assets(
+    data_root: Path,
+    preview_root: Path,
+) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+    """Build a cartridge-wide 4bpp palette adapter for stock MAP tiles.
+
+    Tyrian's 8-bit palette uses the high nibble as a hue family.  A GBA text
+    background tile can select only one 16-colour bank, so the former
+    "dominant hue" conversion erased narrow authored materials in mixed
+    rock/water/ground tiles.  Keep the eleven common single-hue banks exact
+    and train five deterministic mixed-material banks from every stock
+    shapes?.dat file.  A 16-bit hue-mask table then selects the bank in O(1)
+    at runtime; no level-specific converted art is produced.
+    """
+    palette_data = (data_root / "palette.dat").read_bytes()
+    if len(palette_data) < BACKGROUND_PALETTE_SOURCE_COLOURS * 3:
+        raise ValueError("palette.dat is truncated")
+    source_rgb6 = np.frombuffer(
+        palette_data[: BACKGROUND_PALETTE_SOURCE_COLOURS * 3],
+        dtype=np.uint8,
+    ).reshape(BACKGROUND_PALETTE_SOURCE_COLOURS, 3)
+    source_rgb8 = (
+        (source_rgb6.astype(np.uint16) << 2) |
+        (source_rgb6.astype(np.uint16) >> 4)
+    ).astype(np.float64)
+    mask_histogram = np.zeros(
+        (
+            BACKGROUND_PALETTE_MASK_COUNT,
+            BACKGROUND_PALETTE_SOURCE_COLOURS,
+        ),
+        dtype=np.float64,
+    )
+    shape_file_count = 0
+    shape_tile_count = 0
+
+    for shape_path in sorted(data_root.glob("shapes*.dat")):
+        source = shape_path.read_bytes()
+        position = 0
+        shape_file_count += 1
+        for shape_index in range(600):
+            if position >= len(source):
+                raise ValueError(
+                    f"background shape bank is truncated: {shape_path}"
+                )
+            blank = source[position]
+            position += 1
+            if blank:
+                pixels = np.zeros((28, 24), dtype=np.uint8)
+            else:
+                if position + 28 * 24 > len(source):
+                    raise ValueError(
+                        f"background shape is truncated: "
+                        f"{shape_path}:{shape_index + 1}"
+                    )
+                pixels = np.frombuffer(
+                    source[position : position + 28 * 24],
+                    dtype=np.uint8,
+                ).reshape(28, 24)
+                position += 28 * 24
+            for phase in range(0, 28, 4):
+                for source_x in range(0, 24, 8):
+                    values = pixels[
+                        phase : min(phase + 8, 28),
+                        source_x : source_x + 8,
+                    ].reshape(-1)
+                    values = values[values != 0]
+                    if values.size == 0:
+                        continue
+                    mask = sum(
+                        1 << int(hue)
+                        for hue in np.unique(values >> 4)
+                    )
+                    mask_histogram[mask] += np.bincount(
+                        values,
+                        minlength=BACKGROUND_PALETTE_SOURCE_COLOURS,
+                    )
+                    shape_tile_count += 1
+
+    if shape_file_count != 5 or shape_tile_count == 0:
+        raise ValueError(
+            "unexpected stock background shape-bank coverage: "
+            f"files={shape_file_count}, tiles={shape_tile_count}"
+        )
+
+    def gba_expand(values: np.ndarray) -> np.ndarray:
+        values = values.astype(np.uint16)
+        return ((values << 3) | (values >> 2)).astype(np.float64)
+
+    def quantize_centres(values: np.ndarray) -> np.ndarray:
+        five_bit = np.clip(
+            np.rint(values * 31.0 / 255.0),
+            0,
+            31,
+        ).astype(np.uint8)
+        return gba_expand(five_bit)
+
+    def hue_balanced_weights(histogram: np.ndarray) -> np.ndarray:
+        weights = histogram.astype(np.float64, copy=True)
+        for hue in range(16):
+            start = hue * 16
+            end = start + 16
+            total = weights[start:end].sum()
+            if total:
+                weights[start:end] /= total
+        weights[0] = 0
+        return weights
+
+    def train_mixed_bank(masks: tuple[int, ...]) -> np.ndarray:
+        weights = hue_balanced_weights(
+            mask_histogram[np.asarray(masks, dtype=np.uint16)].sum(axis=0)
+        )
+        used = np.flatnonzero(weights)
+        if used.size == 0:
+            raise ValueError(
+                f"mixed background palette has no training pixels: {masks!r}"
+            )
+        points = source_rgb8[used]
+        point_weights = weights[used]
+        centres = [points[np.argmin(points.sum(axis=1))]]
+        while len(centres) < 15:
+            current = np.asarray(centres)
+            distance = (
+                (points[:, None, :] - current[None, :, :]) ** 2
+            ).sum(axis=2).min(axis=1)
+            centres.append(
+                points[
+                    np.argmax(
+                        distance * np.sqrt(point_weights + 1.0e-12)
+                    )
+                ]
+            )
+        result = np.asarray(centres, dtype=np.float64)
+        for _ in range(30):
+            assignment = (
+                (points[:, None, :] - result[None, :, :]) ** 2
+            ).sum(axis=2).argmin(axis=1)
+            updated = result.copy()
+            for colour in range(15):
+                selected = assignment == colour
+                if selected.any():
+                    selected_weights = point_weights[selected]
+                    updated[colour] = (
+                        points[selected] * selected_weights[:, None]
+                    ).sum(axis=0) / selected_weights.sum()
+            updated = quantize_centres(updated)
+            if np.array_equal(updated, result):
+                break
+            result = updated
+        return result
+
+    centres = np.empty(
+        (
+            BACKGROUND_PALETTE_BANK_COUNT,
+            BACKGROUND_PALETTE_COLOURS_PER_BANK - 1,
+            3,
+        ),
+        dtype=np.float64,
+    )
+    for bank in range(11):
+        source_five_bit = (
+            source_rgb6[bank * 16 + 1 : bank * 16 + 16] >> 1
+        )
+        centres[bank] = gba_expand(source_five_bit)
+    for bank, masks in enumerate(BACKGROUND_MIXED_MASK_GROUPS, start=11):
+        centres[bank] = train_mixed_bank(masks)
+
+    distance = (
+        source_rgb8[None, :, None, :] -
+        centres[:, None, :, :]
+    )
+    distance = (distance * distance).sum(axis=3)
+    nearest_zero_based = distance.argmin(axis=2).astype(np.uint8)
+    nearest = nearest_zero_based + 1
+    nearest[:, 0] = 0
+    error = np.take_along_axis(
+        distance,
+        nearest_zero_based[:, :, None],
+        axis=2,
+    )[:, :, 0]
+
+    hue_error = np.zeros((16, 16), dtype=np.float64)
+    for hue in range(16):
+        start = hue * 16 + 1
+        hue_error[hue] = error[:, start : start + 15].mean(axis=1)
+
+    mask_bank = np.zeros(
+        BACKGROUND_PALETTE_MASK_COUNT,
+        dtype=np.uint8,
+    )
+    active_masks = set(
+        int(mask)
+        for mask in np.flatnonzero(mask_histogram.sum(axis=1))
+    )
+    for mask in range(1, BACKGROUND_PALETTE_MASK_COUNT):
+        if mask in active_masks:
+            weights = hue_balanced_weights(mask_histogram[mask])
+            bank_cost = weights @ error.T
+        else:
+            hues = [
+                hue for hue in range(16)
+                if mask & (1 << hue)
+            ]
+            bank_cost = hue_error[hues].sum(axis=0)
+        mask_bank[mask] = int(bank_cost.argmin())
+
+    critical_masks = (0x1004, 0x1005)
+    critical_bank = 14
+    if any(mask_bank[mask] != critical_bank for mask in critical_masks):
+        raise ValueError(
+            "TORM mixed-material masks no longer select the audited bank: "
+            + ", ".join(
+                f"{mask:#06x}->{int(mask_bank[mask])}"
+                for mask in critical_masks
+            )
+        )
+
+    palette_words = np.zeros(
+        (
+            BACKGROUND_PALETTE_BANK_COUNT,
+            BACKGROUND_PALETTE_COLOURS_PER_BANK,
+        ),
+        dtype="<u2",
+    )
+    for bank in range(BACKGROUND_PALETTE_BANK_COUNT):
+        for colour in range(1, BACKGROUND_PALETTE_COLOURS_PER_BANK):
+            red, green, blue = centres[bank, colour - 1]
+            red5 = int(round(red * 31.0 / 255.0))
+            green5 = int(round(green * 31.0 / 255.0))
+            blue5 = int(round(blue * 31.0 / 255.0))
+            palette_words[bank, colour] = (
+                red5 | (green5 << 5) | (blue5 << 10)
+            )
+
+    preview = Image.new("RGB", (15 * 8, 16 * 8), (0, 0, 0))
+    preview_pixels = preview.load()
+    for bank in range(16):
+        for colour in range(15):
+            rgb = tuple(
+                int(round(component))
+                for component in centres[bank, colour]
+            )
+            for y in range(bank * 8, bank * 8 + 8):
+                for x in range(colour * 8, colour * 8 + 8):
+                    preview_pixels[x, y] = rgb
+    preview.save(preview_root / "background_mixed_palette.png")
+
+    metadata = {
+        "BACKGROUND_GBA_PALETTE_BYTES": palette_words.nbytes,
+        "BACKGROUND_PALETTE_NEAREST_BYTES": nearest.size,
+        "BACKGROUND_PALETTE_MASK_BANK_BYTES": mask_bank.size,
+        "BACKGROUND_PALETTE_CRITICAL_BANK": critical_bank,
+    }
+    report = [
+        "background_palette_mode=global source-hue-aware 4bpp",
+        f"background_palette_shape_files={shape_file_count}",
+        f"background_palette_training_tiles={shape_tile_count}",
+        f"background_palette_active_masks={len(active_masks)}",
+        "background_palette_single_hue_banks=0..10 exact",
+        "background_palette_mixed_hue_banks=11..15 trained",
+        (
+            "background_palette_torm_masks="
+            + ",".join(f"0x{mask:04x}" for mask in critical_masks)
+            + f"->bank{critical_bank}"
+        ),
+        "background_palette_level_specific_tables=0",
+    ]
+    return (
+        palette_words.tobytes(),
+        nearest.tobytes(),
+        mask_bank.tobytes(),
+        metadata,
+        report,
+    )
 
 
 def build_boss_bar_assets(
@@ -6409,6 +6694,22 @@ def main() -> None:
         frontend_metadata,
         frontend_report,
     ) = build_frontend_mode4_assets(data_root, preview, workspace)
+    (
+        background_gba_palette,
+        background_palette_nearest,
+        background_palette_mask_bank,
+        background_palette_metadata,
+        background_palette_report,
+    ) = build_background_palette_assets(data_root, preview)
+    (output / "background_gba_palette.bin").write_bytes(
+        background_gba_palette
+    )
+    (output / "background_palette_nearest.bin").write_bytes(
+        background_palette_nearest
+    )
+    (output / "background_palette_mask_bank.bin").write_bytes(
+        background_palette_mask_bank
+    )
     (output / "frontend_frames.bin").write_bytes(frontend_frames)
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
     (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
@@ -6426,6 +6727,7 @@ def main() -> None:
         frontend_stats_widths
     )
     frontend_metadata.update(frontend_stats_metadata)
+    frontend_metadata.update(background_palette_metadata)
     frontend_report.extend(frontend_stats_report)
     (output / "frontend_native_font.bin").write_bytes(
         frontend_native_font
@@ -6815,6 +7117,7 @@ def main() -> None:
         "profile=GBA runtime ROMFS Tyrian MAP1 + MAP2 + MAP3",
         f"opentyrian_source_commit={source_commit}",
         *frontend_report,
+        *background_palette_report,
         *jukebox_report,
         "display_hz=59.7275",
         "logic_hz=34.7826",

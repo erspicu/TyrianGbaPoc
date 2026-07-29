@@ -1,5 +1,5 @@
-# TyrianGbaPoc mixed-case 5x8 source face.
-# Runtime/build rendering adds a one-pixel horizontal semibold stroke.
+# TyrianGbaPoc mixed-case 6x8 source face.
+# Rows are rendered exactly; wide M/W glyphs keep their interior counters.
 # Format: character followed by eight hexadecimal row masks.
 A 0e 11 11 1f 11 11 11 00
 B 1e 11 11 1e 11 11 1e 00
@@ -13,7 +13,7 @@ I 0e 04 04 04 04 04 0e 00
 J 07 01 01 01 01 11 0e 00
 K 11 12 14 18 14 12 11 00
 L 10 10 10 10 10 10 1f 00
-M 11 1b 15 15 11 11 11 00
+M 21 33 2d 2d 21 21 21 00
 N 11 19 19 15 13 13 11 00
 O 0e 11 11 11 11 11 0e 00
 P 1e 11 11 1e 10 10 10 00
@@ -23,7 +23,7 @@ S 0f 10 10 0e 01 01 1e 00
 T 1f 04 04 04 04 04 04 00
 U 11 11 11 11 11 11 0e 00
 V 11 11 11 11 11 0a 04 00
-W 11 11 11 15 15 1b 11 00
+W 21 21 21 2d 2d 33 21 00
 X 11 11 0a 04 0a 11 11 00
 Y 11 11 0a 04 04 04 04 00
 Z 1f 01 02 04 08 10 1f 00
@@ -39,7 +39,7 @@ i 04 00 0c 04 04 04 0e 00
 j 02 00 06 02 02 12 12 0c
 k 10 10 12 14 18 14 12 00
 l 0c 04 04 04 04 04 0e 00
-m 00 00 1a 15 15 15 15 00
+m 00 00 36 2b 2b 2b 2b 00
 n 00 00 1e 11 11 11 11 00
 o 00 00 0e 11 11 11 0e 00
 p 00 00 1e 11 11 1e 10 10
@@ -49,7 +49,7 @@ s 00 00 0f 10 0e 01 1e 00
 t 08 08 1e 08 08 08 06 00
 u 00 00 11 11 11 13 0d 00
 v 00 00 11 11 11 0a 04 00
-w 00 00 11 11 15 15 0a 00
+w 00 00 21 21 2d 2d 12 00
 x 00 00 11 0a 04 0a 11 00
 y 00 00 11 11 11 0f 01 0e
 z 00 00 1f 02 04 08 1f 00

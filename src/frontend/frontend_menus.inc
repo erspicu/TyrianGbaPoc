@@ -266,13 +266,25 @@ static void frontend_render_pre_game_menu(void)
 
 static void frontend_render_pre_game_selection(u8 old_selection)
 {
-    u8 base_frame =
-        game_state == STATE_TITLE ?
-            FRONTEND_FRAME_TITLE_CHROME :
-            FRONTEND_FRAME_SELECT_CHROME;
+    u8 static_base;
     u8 selection[2] = {old_selection, frontend_selection};
     u8 index;
 
+    switch (game_state) {
+    case STATE_TITLE:
+        static_base = FRONTEND_STATIC_PRE_GAME_TITLE_BASE;
+        break;
+    case STATE_PLAY_MODE_MENU:
+        static_base = FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE;
+        break;
+    case STATE_EPISODE_MENU:
+        static_base = FRONTEND_STATIC_PRE_GAME_EPISODE_BASE;
+        break;
+    case STATE_DIFFICULTY_MENU:
+    default:
+        static_base = FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE;
+        break;
+    }
     frontend_dirty_begin();
     for (index = 0; index < 2; index++) {
         u16 x;
@@ -288,20 +300,12 @@ static void frontend_render_pre_game_selection(u8 old_selection)
             &width,
             &height
         );
-        frontend_restore_frame_rect(
-            base_frame,
-            x,
-            y,
-            width,
-            height
-        );
-        frontend_draw_pre_game_item(
-            game_state,
-            selection[index],
-            frontend_selection
-        );
         frontend_dirty_add(x, y, width, height);
     }
+    frontend_pending_frame =
+        frontend_static_pre_game_frames +
+        (u32)(static_base + frontend_selection) *
+            FRONTEND_FRAME_BYTES;
     frontend_dirty_present();
 }
 

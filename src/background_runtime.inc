@@ -163,8 +163,6 @@ static u8 background_palette_nearest
  * a better generic tie-breaker for special banks.  Keep this tiny hot table
  * in IWRAM; it replaces the expensive per-tile 16-bank RGB error search.
  */
-static u8 background_source_weight[OT_PALETTE_COLOUR_COUNT]
-    __attribute__((aligned(4)));
 static u32 background_cache_approximations;
 static u32 background_cache_evictions;
 static u32 background_cache_uploads;
@@ -293,27 +291,6 @@ static const u16 background_canvas_rows[BACKGROUND_LAYER_COUNT] = {
     ) / 8,
 };
 
-static u16 background_rgb_to_gba(const u8 *rgb)
-{
-    return (u16)(
-        (rgb[0] >> 1) |
-        ((rgb[1] >> 1) << 5) |
-        ((rgb[2] >> 1) << 10)
-    );
-}
-
-static u32 background_rgb_distance(const u8 *left, const u8 *right)
-{
-    s16 red = (s16)left[0] - right[0];
-    s16 green = (s16)left[1] - right[1];
-    s16 blue = (s16)left[2] - right[2];
-
-    return
-        (u32)(red * red) +
-        (u32)(green * green) +
-        (u32)(blue * blue);
-}
-
 static u8 background_parse_shapes(const OtDataView *file)
 {
     u32 position = 0;
@@ -341,71 +318,24 @@ static u8 background_parse_shapes(const OtDataView *file)
 
 static u8 background_setup_palette(void)
 {
-    OtDataView palette;
-    u8 bank;
-
-    if (!ot_data_palette_view(BACKGROUND_PC_PALETTE_INDEX, &palette)) {
-        return 0;
-    }
-    for (bank = 0; bank < BACKGROUND_PALETTE_BANKS; bank++) {
-        u16 source_index;
-
-        for (
-            source_index = 0;
-            source_index < OT_PALETTE_COLOUR_COUNT;
-            source_index++
-        ) {
-            u8 best = 0;
-            u32 best_error = 0;
-            u8 candidate;
-
-            if (source_index != 0) {
-                best_error = 0xffffffffu;
-                /*
-                 * GBA BG colour zero is transparent in every 4bpp bank.
-                 * Keep raw Tyrian zero transparent, but never map an opaque
-                 * source pixel onto that hardware index.
-                 */
-                for (
-                    candidate = 1;
-                    candidate < BACKGROUND_PALETTE_BANK_COLOURS;
-                    candidate++
-                ) {
-                    u16 candidate_index =
-                        (u16)(bank * 16u + candidate);
-                    u32 error = background_rgb_distance(
-                        palette.data + (u32)source_index * 3u,
-                        palette.data + (u32)candidate_index * 3u
-                    );
-
-                    if (error < best_error) {
-                        best_error = error;
-                        best = candidate;
-                    }
-                }
-            }
-            background_palette_nearest[bank][source_index] = best;
-            if (bank == 0) {
-                const u8 *rgb =
-                    palette.data + (u32)source_index * 3u;
-
-                background_source_weight[source_index] = (u8)(
-                    rgb[0] + rgb[1] + rgb[2]
-                );
-            }
-        }
-        for (
-            source_index = 0;
-            source_index < BACKGROUND_PALETTE_BANK_COLOURS;
-            source_index++
-        ) {
-            u16 palette_index = (u16)(bank * 16u + source_index);
-
-            BG_PALETTE[palette_index] = background_rgb_to_gba(
-                palette.data + (u32)palette_index * 3u
-            );
-        }
-    }
+    _Static_assert(
+        BACKGROUND_GBA_PALETTE_BYTES == 512 &&
+            BACKGROUND_PALETTE_NEAREST_BYTES ==
+                BACKGROUND_PALETTE_BANKS *
+                    OT_PALETTE_COLOUR_COUNT &&
+            BACKGROUND_PALETTE_MASK_BANK_BYTES == 65536,
+        "generated background palette adapter changed"
+    );
+    dmaCopy(
+        background_gba_palette,
+        BG_PALETTE,
+        BACKGROUND_GBA_PALETTE_BYTES
+    );
+    memcpy(
+        background_palette_nearest,
+        background_palette_nearest_asset,
+        BACKGROUND_PALETTE_NEAREST_BYTES
+    );
     return 1;
 }
 
@@ -577,7 +507,6 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
         background_shape_pixels[bottom_shape - 1u] :
         0;
     u16 hue_mask = 0;
-    u16 hue_weight[BACKGROUND_PALETTE_BANKS] = {0};
     u8 best_bank = 0;
     u8 y;
 
@@ -601,42 +530,21 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
                 ] :
                 0;
             if (source[(u8)(y * 8u + x)] != 0) {
-                u8 source_index = source[(u8)(y * 8u + x)];
-                u8 hue = source_index >> 4;
-
                 hue_mask |= (u16)(
-                    1u << hue
-                );
-                hue_weight[hue] = (u16)(
-                    hue_weight[hue] +
-                    background_source_weight[source_index]
+                    1u <<
+                    (source[(u8)(y * 8u + x)] >> 4)
                 );
             }
         }
     }
-    if (hue_mask != 0 && (hue_mask & (hue_mask - 1u)) == 0) {
-        while ((hue_mask & 1u) == 0) {
-            best_bank++;
-            hue_mask >>= 1;
-        }
-    } else if (hue_mask != 0) {
-        u16 best_weight = 0;
-        u8 bank;
-
+    if (hue_mask != 0) {
         /*
-         * The former majority-hue rule can turn a gray/brown mechanical
-         * tile green when numerous near-black green pixels outnumber its
-         * brighter gray structure.  Select the authored hue contributing
-         * the greatest RGB energy instead of counting every nonzero pixel
-         * equally.  This preserves the O(64) source path and avoids the
-         * measured Episode-2 regression of a 16-bank per-pixel search.
+         * Build-time training assigns each stock hue combination to one of
+         * eleven exact or five mixed-material banks.  The 64 KiB table lives
+         * in ROM, so a miss still performs one O(1) bank read plus the same
+         * 64 source-pixel pass as before.
          */
-        for (bank = 0; bank < BACKGROUND_PALETTE_BANKS; bank++) {
-            if (hue_weight[bank] > best_weight) {
-                best_weight = hue_weight[bank];
-                best_bank = bank;
-            }
-        }
+        best_bank = background_palette_mask_bank[hue_mask];
     }
     for (y = 0; y < 8; y++) {
         u8 pair;

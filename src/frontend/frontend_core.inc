@@ -39,7 +39,7 @@ enum {
     FRONTEND_NEXT_FONT_SPACE = 3,
     FRONTEND_COMPACT_FONT_WIDTH = 5,
     FRONTEND_COMPACT_FONT_SPACE = 3,
-    FRONTEND_PREGAME_FONT_MAX_ADVANCE = 7,
+    FRONTEND_PREGAME_FONT_MAX_ADVANCE = 8,
     FRONTEND_PREGAME_FONT_SPACE = 4,
     FRONTEND_UPGRADE_CATEGORY_COUNT = 7,
     FRONTEND_UPGRADE_MENU_ITEM_COUNT = 8,
@@ -1749,12 +1749,9 @@ static u8 frontend_pregame_font_tile(char character)
 
 static u8 frontend_pregame_font_row(u8 tile_index, u8 row)
 {
-    u8 value = frontend_pregame_font[
+    return frontend_pregame_font[
         (u16)(tile_index - 1u) * FRONTEND_PREGAME_FONT_HEIGHT + row
     ];
-
-    /* Match the build-time one-pixel horizontal semibold treatment. */
-    return (u8)(value | (value >> 1));
 }
 
 static u8 frontend_pregame_font_width(u8 tile_index)

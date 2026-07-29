@@ -267,6 +267,7 @@ ASSET_INPUTS := \
 	vendor/tyrian/data/tyrian.shp \
 	$(wildcard vendor/tyrian/data/newsh*.shp) \
 	vendor/tyrian/data/palette.dat \
+	$(wildcard vendor/tyrian/data/shapes*.dat) \
 	vendor/tyrian/data/tyrian.snd \
 	vendor/tyrian/data/voices.snd \
 	$(wildcard vendor/tyrian/image/pics/*.png) \
@@ -296,6 +297,9 @@ ASSET_BINARIES := \
 	$(RES)/obj_palette.bin \
 	$(RES)/secret_level_palettes.bin \
 	$(RES)/insert_coin_palette.bin \
+	$(RES)/background_gba_palette.bin \
+	$(RES)/background_palette_nearest.bin \
+	$(RES)/background_palette_mask_bank.bin \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
 	$(RES)/frontend_glyphs.bin \
