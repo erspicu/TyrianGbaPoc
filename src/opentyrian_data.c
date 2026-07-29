@@ -784,7 +784,17 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
 
     if (!hdt_group_skip(&position, 9)) return false;  /* Event text */
     if (!hdt_group_skip(&position, 6)) return false;  /* Help topics */
-    if (!hdt_group_skip(&position, 34)) return false; /* Main menu help */
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 34; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->main_menu_help[index],
+                sizeof(text->main_menu_help[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
 
     if (!hdt_pascal_skip(&position)) return false;
     for (index = 0; index < 7; index++) {
@@ -1569,6 +1579,54 @@ bool ot_data_level_select(
     if (!initialization_attempted) ot_data_init();
     if (!catalog.initialized) return false;
     return select_lvl(episode, lvl_file_number);
+}
+
+bool ot_data_episode_items_select(uint8_t episode)
+{
+    OtItemDatabase items;
+    OtRomFsStat lvl;
+    uint16_t offset_count = 0;
+    char filename[] = "tyrian1.lvl";
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.initialized ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT
+    ) {
+        return false;
+    }
+    if (episode == 4) {
+        filename[6] = '4';
+        if (
+            !stat_data_file(filename, &lvl) ||
+            !span_is_valid(lvl.size, 0, 2)
+        ) {
+            return false;
+        }
+        offset_count = read_u16(lvl.data);
+        if (
+            offset_count == 0 ||
+            (offset_count & 1u) == 0 ||
+            !offset_table_is_valid(&lvl, offset_count)
+        ) {
+            return false;
+        }
+    }
+    if (
+        !resolve_item_database(
+            episode,
+            episode == 4 ? &lvl : 0,
+            offset_count,
+            &items
+        )
+    ) {
+        return false;
+    }
+    data_state.items = items;
+    catalog.hdt_enemy_table_offset =
+        items.source_offset + items.enemy_table_offset;
+    return true;
 }
 
 bool ot_data_level_info(OtLevelInfo *info)

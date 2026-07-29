@@ -308,7 +308,16 @@ static void frontend_campaign_initialize(void)
     static const u32 initial_cash[OT_EPISODE_COUNT] = {
         10000u, 15000u, 20000u, 30000u
     };
+    OtShipDefinition ship;
+    OtShieldDefinition shield;
 
+    /*
+     * Episode 4 replaces the shared HDT item block inside tyrian4.lvl.
+     * Select that source table before reading ship/shield values or opening
+     * Upgrade Ship; loading a gameplay level merely to populate a menu would
+     * be an incorrect and much more expensive dependency.
+     */
+    (void)ot_data_episode_items_select((u8)(frontend_episode + 1u));
     memset(
         &frontend_player_items,
         0,
@@ -330,6 +339,23 @@ static void frontend_campaign_initialize(void)
         frontend_episode < OT_EPISODE_COUNT ?
             initial_cash[frontend_episode] :
             0;
+    frontend_data_cube_count = 0;
+    player_armor =
+        ot_data_hdt_ship_read(frontend_player_items.ship, &ship) ?
+            ship.damage :
+            10;
+    if (
+        ot_data_hdt_shield_read(
+            frontend_player_items.shield,
+            &shield
+        )
+    ) {
+        player_shield = shield.max_power;
+        player_shield_max = (u8)(shield.max_power * 2u);
+    } else {
+        player_shield = 0;
+        player_shield_max = 0;
+    }
     frontend_player_items_valid = 1;
 }
 
@@ -399,11 +425,31 @@ static void frontend_campaign_sync_from_level(void)
         source_parity_level.player_sidekick_series;
     frontend_player_items.weapon_mode =
         source_parity_level.player_weapon_mode;
+    frontend_data_cube_count =
+        source_parity_level.data_cube_pickup_count > 4u ?
+            4u :
+            (u8)source_parity_level.data_cube_pickup_count;
 }
 _Static_assert(
     FRONTEND_CUBE_BYTES ==
         FRONTEND_CUBE_WIDTH * FRONTEND_CUBE_HEIGHT,
     "generated OPTION_SHAPES cube stamp changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_HELP_STRIP_COUNT == 34 &&
+        FRONTEND_STATIC_HELP_STRIP_Y ==
+            TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y - 1 &&
+        FRONTEND_STATIC_HELP_STRIP_WIDTH == SCREEN_WIDTH &&
+        FRONTEND_STATIC_HELP_STRIP_HEIGHT ==
+            SCREEN_HEIGHT - FRONTEND_STATIC_HELP_STRIP_Y &&
+        FRONTEND_STATIC_HELP_STRIP_BYTES ==
+            FRONTEND_STATIC_HELP_STRIP_WIDTH *
+                FRONTEND_STATIC_HELP_STRIP_HEIGHT &&
+        FRONTEND_STATIC_HELP_STRIPS_BYTES ==
+            FRONTEND_STATIC_HELP_STRIP_COUNT *
+                FRONTEND_STATIC_HELP_STRIP_BYTES &&
+        (FRONTEND_STATIC_HELP_STRIP_BYTES & 3u) == 0,
+    "build-time main-menu help strips changed"
 );
 static const char frontend_runtime_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
@@ -605,6 +651,20 @@ static u8 frontend_prepare_map_begin(void)
         sizeof(frontend_map_level)
     );
     frontend_map_ready = 0;
+    if (
+        !ot_data_episode_items_select(
+            (u8)(frontend_episode + 1u)
+        )
+    ) {
+        return 0;
+    }
+    /*
+     * The IDs may be unchanged while Episode 4's underlying item records
+     * and art selectors differ.  A cache key made only from IDs would then
+     * be stale, so changing/refreshing the source database is an explicit
+     * invalidation boundary.
+     */
+    frontend_ship_panel_cache_valid = 0;
     if (
         !ot_data_episode_map_resolve(
             (u8)(frontend_episode + 1u),
@@ -1950,13 +2010,14 @@ static s16 frontend_small_mixed_text_width(const char *text)
     return width;
 }
 
-static void frontend_draw_small_mixed_text_clipped(
+static void frontend_draw_small_mixed_text_clipped_colours(
     u8 *frame,
     const char *text,
     s16 x,
     s16 y,
     s16 right,
-    u8 colour
+    u8 colour,
+    u8 shadow_colour
 )
 {
     while (*text != '\0' && x < right) {
@@ -1969,7 +2030,7 @@ static void frontend_draw_small_mixed_text_clipped(
             tile_index,
             (s16)(x + 1),
             (s16)(y + 1),
-            FRONTEND_NEXT_SHADOW_COLOUR
+            shadow_colour
         );
         frontend_blit_small_mixed_font(
             frame,
@@ -1980,6 +2041,26 @@ static void frontend_draw_small_mixed_text_clipped(
         );
         x = (s16)(x + advance);
     }
+}
+
+static void frontend_draw_small_mixed_text_clipped(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    frontend_draw_small_mixed_text_clipped_colours(
+        frame,
+        text,
+        x,
+        y,
+        right,
+        colour,
+        FRONTEND_NEXT_SHADOW_COLOUR
+    );
 }
 
 static void frontend_draw_small_mixed_text_wrapped(

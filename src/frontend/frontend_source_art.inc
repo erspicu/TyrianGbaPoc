@@ -1089,6 +1089,125 @@ static void frontend_draw_item_source(
     );
 }
 
+static void frontend_source_rect_bounds(
+    s16 source_x0,
+    s16 source_y0,
+    s16 source_x1,
+    s16 source_y1,
+    u16 *x0,
+    u16 *y0,
+    u16 *x1,
+    u16 *y1
+)
+{
+    s16 mapped_x0 = frontend_source_to_screen_x(source_x0);
+    s16 mapped_y0 = frontend_source_to_screen_y(source_y0);
+    s16 mapped_x1 = frontend_source_to_screen_x((s16)(source_x1 + 1));
+    s16 mapped_y1 = frontend_source_to_screen_y((s16)(source_y1 + 1));
+
+    if (mapped_x0 < 0) mapped_x0 = 0;
+    if (mapped_y0 < 0) mapped_y0 = 0;
+    if (mapped_x1 < 0) mapped_x1 = 0;
+    if (mapped_y1 < 0) mapped_y1 = 0;
+    if (mapped_x0 > SCREEN_WIDTH) mapped_x0 = SCREEN_WIDTH;
+    if (mapped_y0 > SCREEN_HEIGHT) mapped_y0 = SCREEN_HEIGHT;
+    if (mapped_x1 > SCREEN_WIDTH) mapped_x1 = SCREEN_WIDTH;
+    if (mapped_y1 > SCREEN_HEIGHT) mapped_y1 = SCREEN_HEIGHT;
+    if (
+        mapped_x1 <= mapped_x0 &&
+        mapped_x0 < SCREEN_WIDTH
+    ) {
+        mapped_x1 = (s16)(mapped_x0 + 1);
+    }
+    if (
+        mapped_y1 <= mapped_y0 &&
+        mapped_y0 < SCREEN_HEIGHT
+    ) {
+        mapped_y1 = (s16)(mapped_y0 + 1);
+    }
+    *x0 = (u16)mapped_x0;
+    *y0 = (u16)mapped_y0;
+    *x1 = (u16)mapped_x1;
+    *y1 = (u16)mapped_y1;
+}
+
+static void frontend_fill_source_rect(
+    u8 *frame,
+    s16 source_x0,
+    s16 source_y0,
+    s16 source_x1,
+    s16 source_y1,
+    u8 colour
+)
+{
+    u16 x0;
+    u16 y0;
+    u16 x1;
+    u16 y1;
+    u16 y;
+
+    frontend_source_rect_bounds(
+        source_x0,
+        source_y0,
+        source_x1,
+        source_y1,
+        &x0,
+        &y0,
+        &x1,
+        &y1
+    );
+    if (x0 >= x1 || y0 >= y1) return;
+    for (y = y0; y < y1; y++) {
+        memset(
+            frame + (u32)y * SCREEN_WIDTH + x0,
+            colour,
+            (u16)(x1 - x0)
+        );
+    }
+}
+
+static void frontend_half_shade_source_rect(
+    u8 *frame,
+    s16 source_x0,
+    s16 source_y0,
+    s16 source_x1,
+    s16 source_y1
+)
+{
+    u16 x0;
+    u16 y0;
+    u16 x1;
+    u16 y1;
+    u16 y;
+
+    frontend_source_rect_bounds(
+        source_x0,
+        source_y0,
+        source_x1,
+        source_y1,
+        &x0,
+        &y0,
+        &x1,
+        &y1
+    );
+    if (x0 >= x1 || y0 >= y1) return;
+    for (y = y0; y < y1; y++) {
+        u16 x;
+        u8 *row = frame + (u32)y * SCREEN_WIDTH;
+
+        for (x = x0; x < x1; x++) {
+            u8 pixel = row[x];
+
+            row[x] = (u8)((pixel & 0xf0u) | ((pixel & 0x0fu) >> 1));
+        }
+    }
+}
+
+/*
+ * Line-for-line geometry counterpart of OpenTyrian JE_barDrawShadow().
+ * Rectangle primitives are mapped as coherent native GBA rectangles so the
+ * 4:5 scale never drops isolated one-pixel rows or columns.
+ */
 static void frontend_draw_segment_bar_source(
     u8 *frame,
     s16 source_x,
@@ -1100,42 +1219,84 @@ static void frontend_draw_segment_bar_source(
     u8 source_height
 )
 {
+    u8 x_size;
+    u8 y_size;
     u8 segment_count;
     u8 segment;
+    u8 remainder;
+    s16 x = source_x;
 
-    if (resolution == 0) return;
+    if (
+        frame == 0 ||
+        resolution == 0 ||
+        source_width == 0 ||
+        source_height == 0
+    ) {
+        return;
+    }
+    x_size = (u8)(source_width - 1u);
+    y_size = (u8)(source_height - 1u);
     segment_count = (u8)(amount / resolution);
     for (segment = 0; segment < segment_count; segment++) {
-        u8 y;
+        frontend_half_shade_source_rect(
+            frame,
+            (s16)(x + 2),
+            (s16)(source_y + 2),
+            (s16)(x + x_size + 2),
+            (s16)(source_y + y_size + 2)
+        );
+        frontend_fill_source_rect(
+            frame,
+            x,
+            source_y,
+            (s16)(x + x_size),
+            (s16)(source_y + y_size),
+            (u8)(colour + 12u)
+        );
+        frontend_fill_source_rect(
+            frame,
+            x,
+            source_y,
+            (s16)(x + x_size),
+            source_y,
+            (u8)(colour + 13u)
+        );
+        frontend_fill_source_rect(
+            frame,
+            x,
+            source_y,
+            x,
+            source_y,
+            (u8)(colour + 15u)
+        );
+        frontend_fill_source_rect(
+            frame,
+            x,
+            (s16)(source_y + y_size),
+            (s16)(x + x_size),
+            (s16)(source_y + y_size),
+            (u8)(colour + 11u)
+        );
+        x = (s16)(x + x_size + 2u);
+    }
 
-        for (y = 0; y < source_height; y++) {
-            u8 x;
-
-            for (x = 0; x < source_width; x++) {
-                u8 pixel = (u8)(colour + 12u);
-
-                if (y == 0) pixel = (u8)(colour + 13u);
-                if (y + 1u == source_height) {
-                    pixel = (u8)(colour + 11u);
-                }
-                if (x == 0 && y == 0) {
-                    pixel = (u8)(colour + 15u);
-                }
-                frontend_source_plot(
-                    frame,
-                    (s16)(
-                        source_x +
-                        segment * (source_width + 2u) +
-                        x
-                    ),
-                    (s16)(source_y + y),
-                    pixel,
-                    FRONTEND_SOURCE_BLIT_NORMAL,
-                    0,
-                    0
-                );
-            }
-        }
+    remainder = (u8)(amount % resolution);
+    if (remainder != 0) {
+        frontend_half_shade_source_rect(
+            frame,
+            (s16)(x + 2),
+            (s16)(source_y + 2),
+            (s16)(x + x_size + 2),
+            (s16)(source_y + y_size + 2)
+        );
+        frontend_fill_source_rect(
+            frame,
+            x,
+            source_y,
+            (s16)(x + x_size),
+            (s16)(source_y + y_size),
+            (u8)(colour + (12u / resolution) * remainder)
+        );
     }
 }
 
@@ -1342,22 +1503,22 @@ static void frontend_draw_ship_illustration_part(
             frontend_draw_runtime_text_clipped(
                 frame,
                 cash,
-                49,
-                138,
-                116,
+                TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_X,
+                TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_Y,
+                TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_RIGHT,
                 0xfbu
             );
         }
-        if (
-            ot_data_hdt_ship_read(
-                frontend_player_items.ship,
-                &ship
-            )
-        ) {
-            frontend_draw_segment_bar_source(
-                frame, 42, 152, 3, 14, ship.damage, 2, 13
-            );
-        }
+        frontend_draw_segment_bar_source(
+            frame,
+            42,
+            152,
+            3,
+            14,
+            player_armor,
+            2,
+            13
+        );
         if (
             ot_data_hdt_shield_read(
                 frontend_player_items.shield,
@@ -1397,6 +1558,7 @@ static u8 frontend_ship_panel_cache_matches(void)
         frontend_ship_panel_cache_valid &&
         frontend_player_items_valid &&
         frontend_ship_panel_cache_cash == player_cash &&
+        frontend_ship_panel_cache_armor == player_armor &&
         memcmp(
             &frontend_ship_panel_cache_items,
             &frontend_player_items,
@@ -1445,6 +1607,7 @@ static void frontend_ship_panel_cache_finalize(void)
     }
     frontend_ship_panel_cache_items = frontend_player_items;
     frontend_ship_panel_cache_cash = player_cash;
+    frontend_ship_panel_cache_armor = player_armor;
     frontend_ship_panel_cache_valid = 1;
 }
 

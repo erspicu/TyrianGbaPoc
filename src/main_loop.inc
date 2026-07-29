@@ -479,6 +479,15 @@ int main(void)
 #ifdef AUTOTEST_FRONTEND_CAPTURE_SELECTION
                     frontend_selection =
                         AUTOTEST_FRONTEND_CAPTURE_SELECTION;
+#endif
+#ifdef AUTOTEST_FRONTEND_CAPTURE_CUBES
+                    frontend_data_cube_count =
+                        AUTOTEST_FRONTEND_CAPTURE_CUBES > 4 ?
+                            4 :
+                            AUTOTEST_FRONTEND_CAPTURE_CUBES;
+#endif
+#if defined(AUTOTEST_FRONTEND_CAPTURE_SELECTION) || \
+    defined(AUTOTEST_FRONTEND_CAPTURE_CUBES)
                     frontend_redraw();
 #endif
                     frontend_capture_armed = 1;

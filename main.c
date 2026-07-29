@@ -805,6 +805,7 @@ extern const u8 frontend_static_pre_game_frames[];
 extern const u8 frontend_static_quit_overlay[];
 extern const u8 frontend_static_quit_choices[];
 extern const u8 frontend_static_quit_shade[];
+extern const u8 frontend_static_help_strips[];
 extern const u8 frontend_nav_obj_tiles[];
 extern const u8 frontend_nav_obj_meta[];
 extern const u8 frontend_nav_obj_palette[];
@@ -1103,7 +1104,9 @@ static u8 frontend_ship_panel_cache[
 static FrontendPlayerItems
     frontend_ship_panel_cache_items EWRAM_BSS;
 static u32 frontend_ship_panel_cache_cash EWRAM_BSS;
+static u8 frontend_ship_panel_cache_armor EWRAM_BSS;
 static u8 frontend_ship_panel_cache_valid EWRAM_BSS;
+static u8 frontend_data_cube_count EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the

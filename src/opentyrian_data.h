@@ -321,6 +321,7 @@ typedef struct {
     char planet_name[21][16];
     char misc_text[68][42];
     char title_menu[7][21];
+    char main_menu_help[34][66];
     char full_game_menu[7][18];
     char upgrade_menu[9][18];
     char episode_name[6][31];
@@ -376,6 +377,11 @@ bool ot_data_level_select(
     uint8_t episode,
     uint16_t lvl_file_number
 );
+/*
+ * Select only the stock item database for a front-end episode.  Episodes
+ * 1-3 share tyrian.hdt; Episode 4 stores its replacement table in tyrian4.lvl.
+ */
+bool ot_data_episode_items_select(uint8_t episode);
 bool ot_data_level_info(OtLevelInfo *info);
 bool ot_data_level_event_read(uint16_t index, OtEventRecord *event);
 bool ot_data_level_enemy_pool_read(uint16_t index, uint16_t *enemy_id);

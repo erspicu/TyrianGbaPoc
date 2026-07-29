@@ -213,13 +213,15 @@ FRONTEND_STATIC_MENU_PANEL_BYTES = (
 )
 FRONTEND_STATIC_GAME_MENU_COUNT = 6
 FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
+FRONTEND_STATIC_HELP_STRIP_COUNT = 34
 FRONTEND_SOURCE_STAMP_SCALE_PHASES = 5
 FRONTEND_SOURCE_STAMP_PHASE_COUNT = (
     FRONTEND_SOURCE_STAMP_SCALE_PHASES *
     FRONTEND_SOURCE_STAMP_SCALE_PHASES
 )
 FRONTEND_SOURCE_STAMP_SHP_RANGES = (
-    (5, 26, 7),
+    # OPTION_SHAPES 26..34: ship/shield art plus Game Menu data cube.
+    (5, 26, 9),
     (6, 0, 22),
 )
 FRONTEND_SOURCE_STAMP_COMP_TABLES = (38, 39)
@@ -368,6 +370,9 @@ FRONTEND_LAYOUT_KEYS = (
     "TYRIAN_GBA_LAYOUT_GAME_MENU_FIRST_SOURCE_Y",
     "TYRIAN_GBA_LAYOUT_GAME_MENU_SOURCE_ROW_STEP",
     "TYRIAN_GBA_LAYOUT_GAME_MENU_QUIT_SOURCE_GAP",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y",
+    "TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT",
     "TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X",
     "TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_Y",
     "TYRIAN_GBA_LAYOUT_UPGRADE_ITEM_X",
@@ -892,7 +897,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     title_menu = read_group(7)
     skip_group(9)
     skip_group(6)
-    skip_group(34)
+    main_menu_help = read_group(34)
     full_game_menu = read_group(7)
     upgrade_menu = read_group(9)
     skip_group(8)
@@ -906,6 +911,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
         "planet_name": planet_name,
         "misc_text": misc_text,
         "title_menu": title_menu,
+        "main_menu_help": main_menu_help,
         "full_game_menu": full_game_menu,
         "upgrade_menu": upgrade_menu,
         "episode_name": episode_name,
@@ -1606,7 +1612,7 @@ def build_frontend_source_stamp_assets(
             FRONTEND_SOURCE_STAMP_PHASE_COUNT,
         "FRONTEND_SOURCE_STAMP_SHP_KEY_COUNT": shp_key_count,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST": 26,
-        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT": 7,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT": 9,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST": 0,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE6_COUNT": 22,
         "FRONTEND_SOURCE_STAMP_COMP_TABLE_FIRST":
@@ -2104,7 +2110,16 @@ def build_frontend_static_menu_panels(
     pregame_font: np.ndarray,
     layout: dict[str, int],
     preview: Path,
-) -> tuple[bytes, bytes, bytes, dict[str, int], list[str]]:
+) -> tuple[
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    bytes,
+    dict[str, int],
+    list[str],
+]:
     """Bake final-resolution text panels shared by the static menu family."""
     font_index = {
         character: index
@@ -2429,6 +2444,7 @@ def build_frontend_static_menu_panels(
         y: int,
         right: int,
         colour: int,
+        shadow_colour: int = FRONTEND_PREGAME_FONT_SHADOW,
     ) -> None:
         for character in text:
             index = pregame_glyph_index(character)
@@ -2440,7 +2456,7 @@ def build_frontend_static_menu_panels(
                 index,
                 x + 1,
                 y + 1,
-                FRONTEND_PREGAME_FONT_SHADOW,
+                shadow_colour,
             )
             draw_small_mixed_glyph(frame, index, x, y, colour)
             x += advance
@@ -2762,6 +2778,37 @@ def build_frontend_static_menu_panels(
             )
         add(f"upgrade_menu_{selection}", frame)
 
+    # Every mainMenuHelp string is immutable stock HDT text.  Baking the
+    # final 240-pixel strip avoids thousands of runtime glyph divisions on
+    # ARM7TDMI and keeps page changes inside one VBlank/audio budget.
+    help_strip_y = max(
+        0,
+        layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y"] - 1,
+    )
+    help_strip_height = FRONTEND_FRAME_HEIGHT - help_strip_y
+    help_strips: list[np.ndarray] = []
+    main_menu_help = source.text["main_menu_help"]
+    if len(main_menu_help) != FRONTEND_STATIC_HELP_STRIP_COUNT:
+        raise ValueError(
+            "stock main-menu help count changed: "
+            f"{len(main_menu_help)}"
+        )
+    for text in main_menu_help:
+        frame = menu_chrome.copy()
+        draw_small_mixed_text(
+            frame,
+            text,
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT"],
+            0xEA,
+            0xE2,
+        )
+        help_strips.append(frame[help_strip_y:, :].copy())
+    help_strip_bytes = b"".join(
+        strip.tobytes() for strip in help_strips
+    )
+
     # The quit dialog is a transparent overlay on the player's current
     # ship/menu state, so it cannot be baked as an opaque full frame.  Store
     # exact row runs after the one-time SHP decode and 300x200 -> 240x160
@@ -3011,6 +3058,14 @@ def build_frontend_static_menu_panels(
             FRONTEND_STATIC_GAME_MENU_COUNT,
         "FRONTEND_STATIC_UPGRADE_MENU_COUNT":
             FRONTEND_STATIC_UPGRADE_MENU_COUNT,
+        "FRONTEND_STATIC_HELP_STRIP_COUNT":
+            FRONTEND_STATIC_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_HELP_STRIP_Y": help_strip_y,
+        "FRONTEND_STATIC_HELP_STRIP_WIDTH": FRONTEND_FRAME_WIDTH,
+        "FRONTEND_STATIC_HELP_STRIP_HEIGHT": help_strip_height,
+        "FRONTEND_STATIC_HELP_STRIP_BYTES":
+            FRONTEND_FRAME_WIDTH * help_strip_height,
+        "FRONTEND_STATIC_HELP_STRIPS_BYTES": len(help_strip_bytes),
         "FRONTEND_STATIC_MENU_PANEL_COUNT": len(panels),
         "FRONTEND_STATIC_MENU_PANELS_BYTES": len(panel_bytes),
         "FRONTEND_STATIC_PRE_GAME_TITLE_BASE": 0,
@@ -3065,6 +3120,20 @@ def build_frontend_static_menu_panels(
             f"{FRONTEND_STATIC_MENU_PANEL_HEIGHT}"
         ),
         f"frontend_static_menu_panel_bytes={len(panel_bytes)}",
+        (
+            "frontend_static_help_strategy="
+            "build-time stock HDT mixed-case strips; aligned ROM copy"
+        ),
+        (
+            "frontend_static_help_dimensions="
+            f"{FRONTEND_FRAME_WIDTH}x{help_strip_height}"
+        ),
+        f"frontend_static_help_count={len(help_strips)}",
+        f"frontend_static_help_bytes={len(help_strip_bytes)}",
+        (
+            "frontend_static_help_crc32="
+            f"{zlib.crc32(help_strip_bytes):08x}"
+        ),
         (
             "frontend_static_menu_panel_crc32="
             f"{zlib.crc32(panel_bytes):08x}"
@@ -3137,6 +3206,7 @@ def build_frontend_static_menu_panels(
         quit_stream,
         choice_bytes,
         shade_stream,
+        help_strip_bytes,
         metadata,
         report,
     )
@@ -3147,6 +3217,9 @@ def build_frontend_mode4_assets(
     preview: Path,
     project_root: Path,
 ) -> tuple[
+    bytes,
+    bytes,
+    bytes,
     bytes,
     bytes,
     bytes,
@@ -3177,6 +3250,7 @@ def build_frontend_mode4_assets(
         static_quit_overlay,
         static_quit_choices,
         static_quit_shade,
+        static_help_strips,
         static_menu_metadata,
         static_menu_report,
     ) = build_frontend_static_menu_panels(
@@ -3713,6 +3787,7 @@ def build_frontend_mode4_assets(
         static_quit_overlay,
         static_quit_choices,
         static_quit_shade,
+        static_help_strips,
         nav_obj_tiles,
         nav_obj_meta,
         nav_obj_palette,
@@ -6858,6 +6933,7 @@ def main() -> None:
         frontend_static_quit_overlay,
         frontend_static_quit_choices,
         frontend_static_quit_shade,
+        frontend_static_help_strips,
         frontend_nav_obj_tiles,
         frontend_nav_obj_meta,
         frontend_nav_obj_palette,
@@ -6920,6 +6996,9 @@ def main() -> None:
     )
     (output / "frontend_static_quit_shade.bin").write_bytes(
         frontend_static_quit_shade
+    )
+    (output / "frontend_static_help_strips.bin").write_bytes(
+        frontend_static_help_strips
     )
     (output / "frontend_nav_obj_tiles.bin").write_bytes(
         frontend_nav_obj_tiles

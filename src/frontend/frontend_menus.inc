@@ -20,6 +20,191 @@ static const char *frontend_game_menu_label(u8 index)
     return fallback[index < 7 ? index : 0];
 }
 
+/*
+ * Direct zero-based form of OpenTyrian helptext.c menuHelp[MENU_FULL_GAME].
+ * The second entry deliberately selects mainMenuHelp[34] ("Ship Specs").
+ */
+static u8 frontend_game_menu_help_index(u8 selection)
+{
+    static const u8 help_index[6] = {0, 33, 1, 2, 3, 4};
+    return help_index[selection < 6 ? selection : 0];
+}
+
+static const char *frontend_game_menu_help(u8 selection)
+{
+    static const char *const fallback[6] = {
+        "Communications : Read incoming messages",
+        "Access schematics and detailed info on your ship.",
+        "Purchase new weapons and ship components.",
+        "Configuration and Load/Save game",
+        "Journey onward to another level.",
+        "Quit the game.",
+    };
+    u8 index = selection < 6 ? selection : 0;
+    u8 source_index = frontend_game_menu_help_index(selection);
+
+    if (
+        frontend_text_ready &&
+        frontend_text.main_menu_help[source_index][0] != '\0'
+    ) {
+        return frontend_text.main_menu_help[source_index];
+    }
+    return fallback[index];
+}
+
+/*
+ * Direct zero-based form of helptext.c menuHelp[MENU_UPGRADES].
+ * Both sidekick slots intentionally share mainMenuHelp[11], matching PC.
+ */
+static u8 frontend_upgrade_menu_help_index(u8 selection)
+{
+    static const u8 help_index[8] = {5, 6, 7, 8, 9, 10, 10, 11};
+    return help_index[selection < 8 ? selection : 0];
+}
+
+static const char *frontend_upgrade_menu_help(u8 selection)
+{
+    static const char *const fallback[8] = {
+        "Each ship has a different armor rating.",
+        "Change and upgrade your forward weapon.",
+        "Change and upgrade your rear/side weapon.",
+        "Shields are your first line of defense.",
+        "Generators power your weapons and shields.",
+        "Take a chance : Purchase a special weapon.",
+        "Take a chance : Purchase a special weapon.",
+        "Return to the previous menu.",
+    };
+    u8 index = selection < 8 ? selection : 0;
+    u8 source_index = frontend_upgrade_menu_help_index(selection);
+
+    if (
+        frontend_text_ready &&
+        frontend_text.main_menu_help[source_index][0] != '\0'
+    ) {
+        return frontend_text.main_menu_help[source_index];
+    }
+    return fallback[index];
+}
+
+static u16 frontend_menu_help_dirty_y(void)
+{
+    return TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y > 0 ?
+        (u16)(TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y - 1) :
+        0;
+}
+
+static u8 frontend_copy_static_menu_help(u8 source_index)
+{
+    const u32 *source;
+    u32 *destination;
+    u16 word;
+
+    if (source_index >= FRONTEND_STATIC_HELP_STRIP_COUNT) return 0;
+    source = (const u32 *)(const void *)(
+        frontend_static_help_strips +
+        (u32)source_index * FRONTEND_STATIC_HELP_STRIP_BYTES
+    );
+    destination = (u32 *)(void *)(
+        frontend_frame_scratch +
+        (u32)FRONTEND_STATIC_HELP_STRIP_Y * SCREEN_WIDTH
+    );
+    for (
+        word = 0;
+        word < FRONTEND_STATIC_HELP_STRIP_BYTES / 4u;
+        word++
+    ) {
+        destination[word] = source[word];
+    }
+    return 1;
+}
+
+static void frontend_draw_menu_help(
+    u8 source_index,
+    const char *text
+)
+{
+    u16 dirty_y = frontend_menu_help_dirty_y();
+
+    if (frontend_copy_static_menu_help(source_index)) return;
+    /*
+     * JE_drawMainMenuHelpText() redraws this line on every selection.  The
+     * chrome copy removes every old glyph first, then a tiny mixed-case face
+     * reproduces HDT text without scaling a one-pixel PC font.
+     */
+    frontend_restore_menu_chrome_rect(
+        0,
+        dirty_y,
+        SCREEN_WIDTH,
+        (u16)(SCREEN_HEIGHT - dirty_y)
+    );
+    frontend_draw_small_mixed_text_clipped_colours(
+        frontend_frame_scratch,
+        text,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y,
+        TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT,
+        0xeau,
+        0xe2u
+    );
+}
+
+static void frontend_draw_game_menu_help(u8 selection)
+{
+    frontend_draw_menu_help(
+        frontend_game_menu_help_index(selection),
+        frontend_game_menu_help(selection)
+    );
+}
+
+static void frontend_draw_upgrade_menu_help(u8 selection)
+{
+    frontend_draw_menu_help(
+        frontend_upgrade_menu_help_index(selection),
+        frontend_upgrade_menu_help(selection)
+    );
+}
+
+/*
+ * OpenTyrian game_menu.c draws OPTION_SHAPES sprite 34 once per cube.
+ * The count is gameplay state (not a decorative baked panel), so retain
+ * the exact source coordinates and redraw it after every right-panel copy.
+ */
+static void frontend_draw_game_menu_cubes(void)
+{
+    u8 cube;
+
+    for (cube = 0; cube < frontend_data_cube_count; cube++) {
+        s16 source_x = (s16)(208 + cube * 18);
+
+        (void)frontend_blit_shp_source(
+            frontend_frame_scratch,
+            5,
+            34,
+            (s16)(source_x + 2),
+            38,
+            FRONTEND_SOURCE_BLIT_DARK,
+            0,
+            0
+        );
+        (void)frontend_blit_shp_source(
+            frontend_frame_scratch,
+            5,
+            34,
+            source_x,
+            37,
+            FRONTEND_SOURCE_BLIT_NORMAL,
+            0,
+            0
+        );
+    }
+}
+
+static void frontend_draw_game_menu_dynamic(u8 selection)
+{
+    frontend_draw_game_menu_cubes();
+    frontend_draw_game_menu_help(selection);
+}
+
 static const char *frontend_pre_game_title_label(u8 selection)
 {
     static const char *const fallback[3] = {
@@ -398,6 +583,7 @@ static void frontend_compose_game_menu(u8 selection)
     ) {
         frontend_draw_game_menu_text(selection);
     }
+    frontend_draw_game_menu_dynamic(selection);
 }
 
 static void frontend_render_game_menu(void)
@@ -428,6 +614,29 @@ static void frontend_render_game_menu_selection(u8 old_selection)
         );
         frontend_dirty_add(120, y, 120, 9);
     }
+    frontend_draw_game_menu_cubes();
+    frontend_draw_game_menu_help(frontend_selection);
+    frontend_dirty_add(
+        frontend_source_to_screen_x(206),
+        frontend_source_to_screen_y(35),
+        (u16)(
+            SCREEN_WIDTH -
+            frontend_source_to_screen_x(206)
+        ),
+        (u16)(
+            frontend_source_to_screen_y(59) -
+            frontend_source_to_screen_y(35)
+        )
+    );
+    frontend_dirty_add(
+        0,
+        frontend_menu_help_dirty_y(),
+        SCREEN_WIDTH,
+        (u16)(
+            SCREEN_HEIGHT -
+            frontend_menu_help_dirty_y()
+        )
+    );
     frontend_quit_capture_dialog_background();
     frontend_quit_dialog_cache_valid = 1;
     frontend_quit_dialog_cache_selection = frontend_selection;
@@ -852,6 +1061,7 @@ static void frontend_render_upgrade_menu(void)
     ) {
         frontend_draw_upgrade_menu_text();
     }
+    frontend_draw_upgrade_menu_help(frontend_selection);
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
@@ -871,6 +1081,13 @@ static void frontend_render_upgrade_menu_selection(u8 old_selection)
         frontend_draw_upgrade_menu_item(selection[index]);
         frontend_dirty_add(120, y, 120, 9);
     }
+    frontend_draw_upgrade_menu_help(frontend_selection);
+    frontend_dirty_add(
+        0,
+        frontend_menu_help_dirty_y(),
+        SCREEN_WIDTH,
+        (u16)(SCREEN_HEIGHT - frontend_menu_help_dirty_y())
+    );
     frontend_dirty_present();
 }
 
@@ -938,6 +1155,7 @@ static u8 frontend_render_shared_menu_transition(
         ) {
             return 0;
         }
+        frontend_draw_game_menu_dynamic(frontend_selection);
         if (
             !frontend_quit_dialog_cache_valid ||
             frontend_quit_dialog_cache_selection !=
@@ -960,6 +1178,7 @@ static u8 frontend_render_shared_menu_transition(
         ) {
             return 0;
         }
+        frontend_draw_upgrade_menu_help(frontend_selection);
     }
     /*
      * A half-screen rectangle would require 120 tiny DMA launches because
@@ -1507,6 +1726,7 @@ static u8 frontend_render_quit_transition(
             ) {
                 return 0;
             }
+            frontend_draw_game_menu_dynamic(5);
             frontend_quit_capture_dialog_background();
             frontend_quit_dialog_cache_valid = 1;
             frontend_quit_dialog_cache_selection = 5;
@@ -1525,6 +1745,7 @@ static u8 frontend_render_quit_transition(
             }
 #endif
         }
+        frontend_draw_game_menu_dynamic(5);
         frontend_compose_quit_dialog();
     } else if (
         old_state == STATE_QUIT_CONFIRM &&

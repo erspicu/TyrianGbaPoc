@@ -1325,6 +1325,7 @@ static void frontend_transition_update(void)
             ) {
                 frontend_draw_game_menu_text(frontend_selection);
             }
+            frontend_draw_game_menu_dynamic(frontend_selection);
             frontend_transition_phase = 11;
             break;
         case 11:
@@ -1410,6 +1411,7 @@ static void frontend_transition_update(void)
             ) {
                 frontend_draw_upgrade_menu_text();
             }
+            frontend_draw_upgrade_menu_help(frontend_selection);
             frontend_transition_phase = 7;
             break;
         default:
@@ -1432,6 +1434,7 @@ static void frontend_transition_update(void)
         ) {
             switch (frontend_transition_phase) {
             case 0:
+                frontend_draw_game_menu_dynamic(5);
                 if (
                     frontend_quit_dialog_cache_valid &&
                     frontend_quit_dialog_cache_selection == 5
@@ -1455,6 +1458,7 @@ static void frontend_transition_update(void)
                 frontend_transition_phase = 2;
                 break;
             case 2:
+                frontend_draw_game_menu_dynamic(5);
                 frontend_quit_capture_dialog_background();
                 frontend_quit_dialog_cache_valid = 1;
                 frontend_quit_dialog_cache_selection = 5;

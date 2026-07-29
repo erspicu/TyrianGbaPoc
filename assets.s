@@ -96,6 +96,11 @@ frontend_static_quit_shade:
 	.incbin "res/frontend_static_quit_shade.bin"
 
 	.balign 4
+	.global frontend_static_help_strips
+frontend_static_help_strips:
+	.incbin "res/frontend_static_help_strips.bin"
+
+	.balign 4
 	.global frontend_nav_obj_tiles
 frontend_nav_obj_tiles:
 	.incbin "res/frontend_nav_obj_tiles.bin"

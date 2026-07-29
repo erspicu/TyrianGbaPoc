@@ -258,6 +258,39 @@
 #define TYRIAN_GBA_LAYOUT_GAME_MENU_QUIT_SOURCE_GAP 16
 #endif
 
+/*
+ * Source JE_drawMainMenuHelpText() uses PC (10,187).  DARKEN offsets the
+ * actual glyph origin by one source pixel; the defaults below are its
+ * 300x200 -> 240x160 GBA-native counterpart.
+ *
+ * PC 的 JE_drawMainMenuHelpText() 使用 (10,187)，DARKEN 會把實際字形
+ * 再偏移一個來源像素；下列預設值是其 300x200 → 240x160 原生 GBA
+ * 對應位置。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y 150
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT 238
+#endif
+
+/*
+ * Dynamic left-panel score origin, derived from source JE_textShade(65,173).
+ * 左側動態金額起點，依來源 JE_textShade(65,173) 的實際字形偏移換算。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_X
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_X 52
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_Y
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_Y 139
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_RIGHT
+#define TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_RIGHT 116
+#endif
+
 /* Upgrade Ship category panel / Upgrade Ship 分類面板。 */
 #ifndef TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X
 #define TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X 176
