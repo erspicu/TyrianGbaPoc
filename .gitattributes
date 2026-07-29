@@ -10,10 +10,27 @@ Makefile text eol=lf
 *.py text eol=lf
 *.md text eol=lf
 *.ps1 text eol=crlf
+*.bat text eol=crlf
+*.txt text eol=lf
+*.json text eol=lf
 
+*.a binary
+*.anm binary
 *.bin binary
+*.cdt binary
+*.dat binary
+*.dll binary
+*.exe binary
 *.gba binary
+*.hdt binary
 *.it binary
+*.lvl binary
+*.mus binary
+*.pal binary
+*.pic binary
 *.png binary
 *.sav binary
+*.shp binary
+*.snd binary
+*.tym binary
 *.wav binary

@@ -9,13 +9,15 @@ param(
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$workspaceRoot = (Resolve-Path (Join-Path $projectRoot "..\..")).Path
-$msysRoot = Join-Path $workspaceRoot "tools\msys64"
-$sdkRoot = Join-Path $workspaceRoot "tools\gba-sdk"
+$vendorRoot = Join-Path $projectRoot "vendor"
+$msysRoot = Join-Path $projectRoot "tools\portable-msys2"
+$sdkRoot = Join-Path $vendorRoot "gba-sdk"
+$toolchainRoot = Join-Path $projectRoot ".toolchain\arm-gnu-toolchain"
+$armBin = Join-Path $toolchainRoot "bin"
 $bash = Join-Path $msysRoot "usr\bin\bash.exe"
-$ucrtBin = Join-Path $msysRoot "ucrt64\bin"
-$headless = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-headless.exe"
-$perf = Join-Path $workspaceRoot "org\mgba\build-ucrt-headless\mgba-perf.exe"
+$mgbaRoot = Join-Path $vendorRoot "mgba"
+$headless = Join-Path $mgbaRoot "mgba-headless.exe"
+$perf = Join-Path $mgbaRoot "mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
 $releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v40_$configSuffix"
@@ -79,10 +81,17 @@ $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
 $assetReportPath = Join-Path $projectRoot "res\asset_report.txt"
 $sprite2RawPath = Join-Path $projectRoot "res\sprite2_raw_components.bin"
 $sprite2RawAuditPath = Join-Path $projectRoot "res\sprite2_raw_audit.txt"
-$python = (Get-Command python -ErrorAction Stop).Source
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$python = if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $venvPython
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 
 foreach ($required in @(
     $bash,
+    (Join-Path $armBin "arm-none-eabi-gcc.exe"),
+    (Join-Path $armBin "arm-none-eabi-objcopy.exe"),
     $headless,
     $perf,
     (Join-Path $sdkRoot "libgba\lib\libgba.a"),
@@ -94,13 +103,31 @@ foreach ($required in @(
     }
 }
 
-$drive = $projectRoot.Substring(0, 1).ToLowerInvariant()
-$unixProject = "/$drive/" + $projectRoot.Substring(3).Replace("\", "/")
-$pythonDrive = $python.Substring(0, 1).ToLowerInvariant()
-$unixPython = "/$pythonDrive/" + $python.Substring(3).Replace("\", "/")
+function Convert-ToMsysPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -notmatch "^(?<drive>[A-Za-z]):\\(?<tail>.*)$") {
+        throw "Only absolute Windows drive paths are supported: $full"
+    }
+    return (
+        "/" +
+        $Matches.drive.ToLowerInvariant() +
+        "/" +
+        $Matches.tail.Replace("\", "/")
+    )
+}
+
+$unixProject = Convert-ToMsysPath $projectRoot
+$unixPython = Convert-ToMsysPath $python
+$unixArmBin = Convert-ToMsysPath $armBin
+$unixSdkTools = Convert-ToMsysPath (Join-Path $sdkRoot "tools\bin")
 $buildCommand = @'
 set -e
-export PATH=/ucrt64/bin:/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:$PATH
+export PATH="/usr/bin:__ARM_BIN__:__SDK_TOOLS__:$PATH"
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
 make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest
@@ -109,6 +136,8 @@ make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" RO
 '@
 $buildCommand = $buildCommand.Replace("__PROJECT__", $unixProject)
 $buildCommand = $buildCommand.Replace("__PYTHON__", $unixPython)
+$buildCommand = $buildCommand.Replace("__ARM_BIN__", $unixArmBin)
+$buildCommand = $buildCommand.Replace("__SDK_TOOLS__", $unixSdkTools)
 $buildCommand = $buildCommand.Replace("__DETAIL__", $DetailLevel)
 $buildCommand = $buildCommand.Replace("__SPEED__", $GameSpeed)
 
@@ -549,7 +578,7 @@ $memoryInfos = @(
         -MapPath ([IO.Path]::ChangeExtension($arcadeTestRom, ".map"))
 )
 
-$env:PATH = "$ucrtBin;$env:PATH"
+$env:PATH = "$mgbaRoot;$armBin;$env:PATH"
 if (Test-Path -LiteralPath $testSave) {
     Remove-Item -LiteralPath $testSave -Force
 }
@@ -2274,7 +2303,7 @@ if (
     throw "Release-ROM 600-frame boot benchmark did not complete as expected"
 }
 
-$compilerVersion = (& (Join-Path $ucrtBin "arm-none-eabi-gcc.exe") `
+$compilerVersion = (& (Join-Path $armBin "arm-none-eabi-gcc.exe") `
     -dumpfullversion).Trim()
 $mgbaVersion = (& $headless --version "version-probe.gba" |
     Select-Object -First 1).Trim()
@@ -2414,6 +2443,7 @@ $verificationLines |
     Set-Content -LiteralPath $verificationPath -Encoding utf8
 
 if ($KeepIntermediates) {
+    $retainedRom = $releaseRom
     $artifactResult = [pscustomobject]@{
         ArchivedRoms = 0
         DeduplicatedRoms = 0
@@ -2424,10 +2454,12 @@ if ($KeepIntermediates) {
         -BuildDirectory $buildDir `
         -ReleaseRom $releaseRom `
         -BackupDirectory $backupDir
+    $retainedRom = Join-Path $buildDir "TyrianGBA.gba"
+    Move-Item -LiteralPath $releaseRom -Destination $retainedRom
 }
 
 $verificationLines
 "artifact_archived_roms=$($artifactResult.ArchivedRoms)"
 "artifact_deduplicated_roms=$($artifactResult.DeduplicatedRoms)"
 "artifact_removed_entries=$($artifactResult.RemovedEntries)"
-"artifact_retained_rom=$releaseRom"
+"artifact_retained_rom=$retainedRom"

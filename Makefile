@@ -216,11 +216,13 @@ endif
 BUILD := build
 RES := res
 
-WORKSPACE ?= /c/ai_project/AprTyrianNes
-SDK_ROOT ?= $(WORKSPACE)/tools/gba-sdk
+PROJECT_ROOT := $(CURDIR)
+VENDOR_ROOT := $(PROJECT_ROOT)/vendor
+SDK_ROOT ?= $(VENDOR_ROOT)/gba-sdk
 LIBGBA := $(SDK_ROOT)/libgba
 MAXMOD := $(SDK_ROOT)/maxmod
 TOOLS := $(SDK_ROOT)/tools/bin
+GBA_CRT := $(SDK_ROOT)/devkitARM/arm-none-eabi/lib
 
 CC := arm-none-eabi-gcc
 OBJCOPY := arm-none-eabi-objcopy
@@ -236,11 +238,12 @@ CFLAGS += \
 	-DTYRIAN_GBA_DETAIL_LEVEL=$(DETAIL_LEVEL_VALUE) \
 	-DTYRIAN_GBA_GAME_SPEED=$(GAME_SPEED_VALUE)
 ASFLAGS := $(ARCH) -x assembler-with-cpp
-LINKFLAGS := $(ARCH) -specs=gba.specs -Wl,--gc-sections \
-	-L$(LIBGBA)/lib -L$(MAXMOD)/lib
+LINKFLAGS := $(ARCH) -B$(GBA_CRT)/ -specs=$(GBA_CRT)/gba.specs \
+	-Wl,--gc-sections \
+	-L$(GBA_CRT) -L$(LIBGBA)/lib -L$(MAXMOD)/lib
 
 ASSET_STAMP := $(RES)/assets.stamp
-VFS_SOURCE_ROOT := ../../org/AprCSTyrian/Build/data
+VFS_SOURCE_ROOT := vendor/tyrian/data
 VFS_MANIFEST := vfs/manifest.json
 VFS_IMAGE := $(RES)/tyrian_romfs.bin
 VFS_META := $(RES)/tyrian_romfs_meta.h
@@ -254,26 +257,37 @@ VFS_INPUTS := \
 ASSET_INPUTS := \
 	tools/build_assets.py \
 	tools/frontend_native_font.txt \
-	../../org/TyrianSnesPoc/tools/build_assets.py \
-	../../org/TyrianNesPoc/tools/build_assets.py \
-	../../org/AprCSTyrian/Build/data/tyrian.hdt \
-	../../org/AprCSTyrian/Build/data/tyrian.pic \
-	../../org/AprCSTyrian/Build/data/tyrian.shp \
-	$(wildcard ../../org/AprCSTyrian/Build/data/newsh*.shp) \
-	../../org/AprCSTyrian/Build/data/palette.dat \
-	../../org/AprCSTyrian/Build/data/tyrian.snd \
-	../../org/AprCSTyrian/Build/data/voices.snd \
-	$(wildcard ../../org/AprCSTyrian/image/sheets/10_powerups/*.png) \
-	$(wildcard ../../org/AprCSTyrian/image/sheets/11_coins_cubes/*.png) \
-	$(wildcard ../../org/AprCSTyrian/image/sheets_newsh/newsh_*/*.png) \
-	../../org/opentyrian/src/tyrian2.c \
-	../../org/opentyrian/src/varz.h \
-	../../org/opentyrian/src/episodes.h \
-	../../org/opentyrian/src/jukebox.c \
-	../../org/opentyrian/src/starlib.c \
-	../../org/opentyrian/src/musmast.c \
-	../../org/TyrianAudioLab/Music/channel-calibration.json \
-	$(wildcard ../../org/TyrianAudioLab/Music/*.tym)
+	vendor/builders/snes/build_assets.py \
+	vendor/builders/nes/build_assets.py \
+	vendor/opentyrian/REVISION \
+	vendor/tyrian/data/tyrian.hdt \
+	vendor/tyrian/data/tyrian.pic \
+	vendor/tyrian/data/tyrian.shp \
+	$(wildcard vendor/tyrian/data/newsh*.shp) \
+	vendor/tyrian/data/palette.dat \
+	vendor/tyrian/data/tyrian.snd \
+	vendor/tyrian/data/voices.snd \
+	$(wildcard vendor/tyrian/image/pics/*.png) \
+	$(wildcard vendor/tyrian/image/sprites/00_font/*.png) \
+	$(wildcard vendor/tyrian/image/sprites/01_smallfont/*.png) \
+	$(wildcard vendor/tyrian/image/sprites/02_tinyfont/*.png) \
+	$(wildcard vendor/tyrian/image/sprites/03_planet/*.png) \
+	$(wildcard vendor/tyrian/image/sheets/08_player_shots/*.png) \
+	$(wildcard vendor/tyrian/image/sheets/09_player_ships/*.png) \
+	$(wildcard vendor/tyrian/image/sheets/10_powerups/*.png) \
+	$(wildcard vendor/tyrian/image/sheets/11_coins_cubes/*.png) \
+	$(wildcard vendor/tyrian/image/sheets_newsh/newsh_2/*.png) \
+	$(wildcard vendor/tyrian/image/sheets_newsh/newsh_4/*.png) \
+	$(wildcard vendor/tyrian/image/sheets_newsh/newsh_6/*.png) \
+	$(wildcard vendor/tyrian/image/sheets_newsh/newsh_e/*.png) \
+	vendor/opentyrian/src/tyrian2.c \
+	vendor/opentyrian/src/varz.h \
+	vendor/opentyrian/src/episodes.h \
+	vendor/opentyrian/src/jukebox.c \
+	vendor/opentyrian/src/starlib.c \
+	vendor/opentyrian/src/musmast.c \
+	vendor/audio/Music/channel-calibration.json \
+	$(wildcard vendor/audio/Music/*.tym)
 
 ASSET_BINARIES := \
 	$(RES)/obj_tiles.bin \
@@ -394,7 +408,7 @@ $(BUILD) $(BUILD)/preview $(RES):
 
 $(ASSET_STAMP): $(ASSET_INPUTS) | $(BUILD)/preview
 	$(PYTHON) tools/build_assets.py \
-		--workspace "$(WORKSPACE)" \
+		--project-root "$(PROJECT_ROOT)" \
 		--output "$(CURDIR)/$(RES)" \
 		--preview-dir "$(CURDIR)/$(BUILD)/preview"
 

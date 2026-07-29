@@ -265,8 +265,14 @@ def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
     return ENEMY_FRAME_PALETTE_GROUPS[key[0]]
 
 
-def load_snes_builder(workspace: Path) -> ModuleType:
-    path = workspace / "org" / "TyrianSnesPoc" / "tools" / "build_assets.py"
+def load_snes_builder(project_root: Path) -> ModuleType:
+    path = (
+        project_root /
+        "vendor" /
+        "builders" /
+        "snes" /
+        "build_assets.py"
+    )
     spec = importlib.util.spec_from_file_location("tyrian_snes_assets_for_gba", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load SNES asset builder: {path}")
@@ -278,6 +284,15 @@ def load_snes_builder(workspace: Path) -> ModuleType:
 def read_git_head(repo: Path) -> str:
     """Read a local Git HEAD without depending on git.exe being on PATH."""
     git_dir = repo / ".git"
+    revision = repo / "REVISION"
+    if not git_dir.exists() and revision.is_file():
+        head = revision.read_text(encoding="ascii").strip()
+        if (
+            len(head) == 40 and
+            all(char in "0123456789abcdef" for char in head)
+        ):
+            return head
+        raise ValueError(f"unexpected source REVISION value: {head}")
     if git_dir.is_file():
         marker = git_dir.read_text(encoding="utf-8").strip()
         if not marker.startswith("gitdir: "):
@@ -4415,8 +4430,8 @@ def build_sparse_tym_tracker_it(
     ) -> tuple[list[int], list[float]]:
         calibration_path = (
             inner_workspace /
-            "org" /
-            "TyrianAudioLab" /
+            "vendor" /
+            "audio" /
             "Music" /
             "channel-calibration.json"
         )
@@ -5635,12 +5650,12 @@ def audit_opentyrian_level1_source_data(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--preview-dir", type=Path, required=True)
     args = parser.parse_args()
 
-    workspace = args.workspace.resolve()
+    workspace = args.project_root.resolve()
     output = args.output.resolve()
     preview = args.preview_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -5648,9 +5663,9 @@ def main() -> None:
 
     snes = load_snes_builder(workspace)
     nes = snes.load_nes_asset_module(workspace)
-    image_root = workspace / "org" / "AprCSTyrian" / "image"
-    data_root = workspace / "org" / "AprCSTyrian" / "Build" / "data"
-    opentyrian_root = workspace / "org" / "opentyrian"
+    image_root = workspace / "vendor" / "tyrian" / "image"
+    data_root = workspace / "vendor" / "tyrian" / "data"
+    opentyrian_root = workspace / "vendor" / "opentyrian"
     source_commit = read_git_head(opentyrian_root)
     if source_commit != OPENTYRIAN_SOURCE_COMMIT:
         raise ValueError(
@@ -5934,7 +5949,7 @@ def main() -> None:
         Image.Resampling.NEAREST,
     ).save(preview / "boss_bar_pc_style.png")
 
-    music_root = workspace / "org" / "TyrianAudioLab" / "Music"
+    music_root = workspace / "vendor" / "audio" / "Music"
     music_paths = sorted(music_root.glob("[0-9][0-9]_*.tym"))
     if len(music_paths) != JUKEBOX_MUSIC_COUNT:
         raise ValueError(

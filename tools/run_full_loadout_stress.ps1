@@ -29,16 +29,18 @@ $ErrorActionPreference = "Stop"
 $projectRoot = [IO.Path]::GetFullPath(
     (Join-Path $PSScriptRoot "..")
 )
-$workspaceRoot = [IO.Path]::GetFullPath(
-    (Join-Path $projectRoot "..\..")
-)
 $buildDir = Join-Path $projectRoot "build"
-$bash = Join-Path $workspaceRoot "tools\msys64\usr\bin\bash.exe"
-$headless = Join-Path (
-    $workspaceRoot
-) "org\mgba\build-ucrt-headless\mgba-headless.exe"
-$ucrtBin = Join-Path $workspaceRoot "tools\msys64\ucrt64\bin"
-$python = "/c/Python314/python.exe"
+$bash = Join-Path $projectRoot "tools\portable-msys2\usr\bin\bash.exe"
+$headless = Join-Path $projectRoot "vendor\mgba\mgba-headless.exe"
+$mgbaRoot = Join-Path $projectRoot "vendor\mgba"
+$armBin = Join-Path $projectRoot ".toolchain\arm-gnu-toolchain\bin"
+$sdkTools = Join-Path $projectRoot "vendor\gba-sdk\tools\bin"
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$pythonPath = if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
+    $venvPython
+} else {
+    (Get-Command python -ErrorAction Stop).Source
+}
 $name = (
     "tyrian_gba_full_loadout_sprite_stress_ep2_v36_" +
     "${Variant}_detail_${DetailLevel}_speed_normal"
@@ -49,20 +51,32 @@ $stdout = Join-Path $buildDir "${name}_mgba_stdout.txt"
 $stderr = Join-Path $buildDir "${name}_mgba_stderr.txt"
 $json = Join-Path $buildDir "${name}_telemetry.json"
 
-if (
-    -not $projectRoot.StartsWith(
-        [IO.Path]::GetFullPath($workspaceRoot),
-        [StringComparison]::OrdinalIgnoreCase
+function Convert-ToMsysPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path
     )
-) {
-    throw "Project root escaped the expected workspace: $projectRoot"
+
+    $full = [IO.Path]::GetFullPath($Path)
+    if ($full -notmatch "^(?<drive>[A-Za-z]):\\(?<tail>.*)$") {
+        throw "Only absolute Windows drive paths are supported: $full"
+    }
+    return (
+        "/" +
+        $Matches.drive.ToLowerInvariant() +
+        "/" +
+        $Matches.tail.Replace("\", "/")
+    )
 }
+
 if (-not $NoBuild) {
-    $msysProject = $projectRoot.Replace("\", "/").Replace("C:", "/c")
+    $msysProject = Convert-ToMsysPath $projectRoot
+    $python = Convert-ToMsysPath $pythonPath
+    $msysArmBin = Convert-ToMsysPath $armBin
+    $msysSdkTools = Convert-ToMsysPath $sdkTools
     $command = (
         "set -e; " +
-        "export PATH=/ucrt64/bin:" +
-        "/c/ai_project/AprTyrianNes/tools/gba-sdk/tools/bin:`$PATH; " +
+        "export PATH='/usr/bin:${msysArmBin}:${msysSdkTools}':`$PATH; " +
         "cd '$msysProject'; " +
         "make -j2 PYTHON=$python " +
         "DETAIL_LEVEL=$DetailLevel GAME_SPEED=normal " +
@@ -82,7 +96,7 @@ foreach ($old in @($save, $stdout, $stderr, $json)) {
         Remove-Item -LiteralPath $old -Force
     }
 }
-$env:PATH = "$ucrtBin;$env:PATH"
+$env:PATH = "$mgbaRoot;$armBin;$env:PATH"
 $process = Start-Process `
     -FilePath $headless `
     -ArgumentList @("-S", "3", "$name.gba") `

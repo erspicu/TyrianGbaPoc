@@ -1,0 +1,3 @@
+# Keep Windows drives mounted as /c, /d, ... so project scripts can use
+# stable MSYS paths without depending on a machine-wide MSYS2 installation.
+none / cygdrive binary,posix=0,noacl,user 0 0
