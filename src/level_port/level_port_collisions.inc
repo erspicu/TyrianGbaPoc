@@ -1,0 +1,1058 @@
+static void ot_add_hit_effect(
+    OtHitEffect *effects,
+    uint8_t *effect_count,
+    int16_t x,
+    int16_t y,
+    bool large,
+    bool ground
+)
+{
+    OtHitEffect *effect;
+
+    if (*effect_count >= OT_HIT_EFFECT_COUNT) return;
+    effect = &effects[*effect_count];
+    effect->x = x;
+    effect->y = y;
+    effect->large = large;
+    effect->ground = ground;
+    (*effect_count)++;
+}
+
+static void ot_add_pickup_effect(
+    OtPlayerCollisionResult *result,
+    int16_t x,
+    int16_t y,
+    uint8_t explosion_type
+)
+{
+    OtPickupEffect *effect;
+
+    if (
+        result->pickup_effect_count >= OT_PICKUP_EFFECT_COUNT
+    ) {
+        return;
+    }
+    effect = &result->pickup_effects[result->pickup_effect_count];
+    effect->x = x;
+    effect->y = y;
+    effect->explosion_type = explosion_type;
+    result->pickup_effect_count++;
+}
+
+static void ot_spawn_death_enemy(
+    OtLevelPortState *state,
+    uint8_t dead_index,
+    uint16_t enemy_definition_id
+)
+{
+    OtEnemyDefinition definition;
+    uint8_t pool;
+    uint8_t created;
+    OtEnemy *child;
+    const OtEnemy *dead = &state->enemy[dead_index];
+
+    if (
+        enemy_definition_id == 0 ||
+        !ot_level_enemy_read(enemy_definition_id, &definition)
+    ) {
+        if (enemy_definition_id != 0) {
+            state->death_spawn_attempt_count++;
+            state->death_spawn_missing_definition_count++;
+            state->assets_valid = false;
+        }
+        return;
+    }
+    pool = (uint8_t)(dead_index - dead_index % OT_ENEMY_POOL_SIZE);
+    if (definition.value > 30000) pool = 0;
+    created = ot_new_enemy(
+        state,
+        pool,
+        enemy_definition_id,
+        0,
+        OT_SPAWN_DEATH
+    );
+    if (created == 0) return;
+    child = &state->enemy[created - 1];
+    child->scoreitem = child->evalue != 0;
+    child->ex = dead->ex;
+    child->ey = dead->ey;
+}
+
+static void ot_credit_destroyed_enemy(
+    OtLevelPortState *state,
+    const OtEnemy *enemy,
+    OtShotCollisionResult *result
+)
+{
+    if (enemy->evalue == 1) {
+        /*
+         * Direct translation of the cubeMax++ branch in the player-shot
+         * death path.  A data cube can be credited by destruction without
+         * becoming a separate score-item object.
+         */
+        state->data_cube_pickup_count++;
+        result->data_cubes_awarded++;
+    } else if (enemy->evalue > 1 && enemy->evalue < 10000) {
+        uint32_t value = (uint16_t)enemy->evalue;
+
+        state->direct_cash_awarded += value;
+        result->cash_awarded += value;
+    }
+}
+
+static bool ot_death_link_matches(
+    const OtEnemy *candidate,
+    uint8_t target_link
+)
+{
+    uint8_t candidate_link = candidate->linknum;
+
+    return
+        target_link == 254 ||
+        (
+            target_link != 255 &&
+            (
+                target_link == candidate_link ||
+                (int16_t)target_link - 100 == candidate_link ||
+                (
+                    candidate_link > 40 &&
+                    candidate_link / 20 == target_link / 20 &&
+                    candidate_link <= target_link
+                )
+            )
+        );
+}
+
+static ARM_CODE __attribute__((noinline, noclone)) void
+ot_kill_enemy_group(
+    OtLevelPortState *state,
+    uint8_t hit_index,
+    OtShotCollisionResult *result
+)
+{
+    uint8_t index;
+    uint8_t target_link = state->enemy[hit_index].linknum;
+
+    if (target_link == 0) target_link = 255;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        if (
+            index != hit_index &&
+            !ot_death_link_matches(enemy, target_link)
+        ) {
+            continue;
+        }
+        if (enemy->special) {
+            if (
+                enemy->flagnum == 0 ||
+                enemy->flagnum > OT_GLOBAL_FLAG_COUNT
+            ) {
+                state->assets_valid = false;
+            } else {
+                state->global_flags[enemy->flagnum - 1] = enemy->setto;
+            }
+        }
+        ot_spawn_death_enemy(state, index, enemy->enemydie);
+        ot_credit_destroyed_enemy(state, enemy, result);
+        ot_add_hit_effect(
+            result->effects,
+            &result->effect_count,
+            (int16_t)(enemy->ex + enemy->mapoffset),
+            enemy->ey,
+            enemy->size == 1,
+            enemy->enemyground
+        );
+        state->frame_sound_queue[6] =
+            enemy->size == 1 ? 9 : 8;
+        /*
+         * OpenTyrian keeps dlevel=-1 components in availability state 2 and
+         * swaps them to their authored damaged graphic.  This is how a
+         * destructible foreground reveals the underlying background without
+         * discarding its fixed remnant.
+         */
+        if (
+            enemy->edlevel == -1 &&
+            target_link == enemy->linknum
+        ) {
+            enemy->edlevel = 0;
+            state->enemy_avail[index] = 2;
+            ot_player_shot_collision_mask_set(state, index, false);
+            enemy->egr[0] = enemy->edgr;
+            enemy->ani = 1;
+            enemy->aniactive = 0;
+            enemy->animax = 0;
+            enemy->animin = 1;
+            enemy->edamaged = true;
+            enemy->enemycycle = 1;
+        } else {
+            ot_release_enemy(state, index);
+            state->enemy_kill_count++;
+        }
+        result->kill_count++;
+    }
+}
+
+static ARM_CODE __attribute__((noinline, noclone)) void
+ot_apply_damaged_transition(
+    OtLevelPortState *state,
+    uint8_t hit_index,
+    uint8_t target_link,
+    OtShotCollisionResult *result
+)
+{
+    uint8_t index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+        uint8_t link;
+        bool matches;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        link = enemy->linknum;
+        matches =
+            index == hit_index ||
+            (
+                target_link != 255 &&
+                (
+                    (enemy->edlevel > 0 && link == target_link) ||
+                    (
+                        state->enemy_continual_damage &&
+                        (int16_t)target_link - 100 == link
+                    ) ||
+                    (
+                        link > 40 &&
+                        link / 20 == target_link / 20 &&
+                        link <= target_link
+                    )
+                )
+            );
+        if (!matches) continue;
+
+        enemy->enemycycle = 1;
+        enemy->edamaged = !enemy->edamaged;
+        if (enemy->edani != 0) {
+            enemy->ani = (uint8_t)ot_abs_s8(enemy->edani);
+            enemy->aniactive = 1;
+            enemy->animax = 0;
+            enemy->animin = (uint8_t)enemy->edgr;
+            enemy->enemycycle = (uint8_t)(enemy->animin - 1);
+        } else if (enemy->edgr > 0) {
+            enemy->egr[0] = enemy->edgr;
+            enemy->ani = 1;
+            enemy->aniactive = 0;
+            enemy->animax = 0;
+            enemy->animin = 1;
+        } else {
+            ot_release_enemy(state, index);
+            state->enemy_kill_count++;
+            result->kill_count++;
+        }
+        enemy->aniwhenfire = 0;
+        if (enemy->armorleft > (uint8_t)enemy->edlevel) {
+            enemy->armorleft = (uint8_t)enemy->edlevel;
+        }
+        ot_add_hit_effect(
+            result->effects,
+            &result->effect_count,
+            (int16_t)(enemy->ex + enemy->mapoffset),
+            enemy->ey,
+            enemy->size == 1,
+            enemy->enemyground
+        );
+    }
+}
+
+ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_begin_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t index;
+
+    if (state == 0) return;
+    state->player_shot_collision_active_mask[0] = 0;
+    state->player_shot_collision_active_mask[1] = 0;
+    state->player_shot_collision_active_mask[2] = 0;
+    state->player_shot_collision_active_mask[3] = 0;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (state->enemy_avail[index] == 0) {
+            state->player_shot_collision_active_mask[index >> 5] |=
+                1u << (index & 31);
+        }
+    }
+    state->player_shot_collision_mask_active = true;
+    state->player_shot_collision_mask_rebuild_count++;
+#else
+    (void)state;
+#endif
+}
+
+void ot_level_port_end_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+    if (state == 0) return;
+    state->player_shot_collision_mask_active = false;
+}
+
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+static const uint8_t ot_collision_debruijn_index[32] = {
+    0, 1, 28, 2, 29, 14, 24, 3,
+    30, 22, 20, 15, 25, 17, 4, 8,
+    31, 27, 13, 23, 21, 19, 16, 7,
+    26, 12, 18, 6, 11, 5, 10, 9,
+};
+
+static inline uint8_t ot_collision_lowest_set_bit(uint32_t bits)
+{
+    uint32_t isolated = bits & (0u - bits);
+
+    return ot_collision_debruijn_index[
+        (isolated * 0x077cb531u) >> 27
+    ];
+}
+
+/*
+ * Return collision candidates in the same ascending slot order as the
+ * original 0..99 loop.  The live mask is re-read after every candidate:
+ * death-spawn children in a later slot can therefore still be hit by the
+ * same penetrating shot, while children allocated below the cursor cannot,
+ * exactly matching the source loop's mutation semantics.
+ */
+static inline bool ot_next_player_shot_collision_candidate(
+    const OtLevelPortState *state,
+    uint8_t *cursor,
+    uint8_t *enemy_index
+)
+{
+    uint8_t search = *cursor;
+
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
+    if (!state->player_shot_collision_mask_active) {
+        if (search >= OT_ENEMY_COUNT) return false;
+        *enemy_index = search;
+        *cursor = (uint8_t)(search + 1);
+        return true;
+    }
+#endif
+
+    while (search < OT_ENEMY_COUNT) {
+        uint8_t word_index = (uint8_t)(search >> 5);
+        uint32_t candidates =
+            state->player_shot_collision_active_mask[word_index] &
+            (UINT32_MAX << (search & 31));
+
+        if (candidates != 0) {
+            uint8_t bit = ot_collision_lowest_set_bit(candidates);
+            uint8_t candidate =
+                (uint8_t)((word_index << 5) + bit);
+
+            if (candidate >= OT_ENEMY_COUNT) return false;
+            *enemy_index = candidate;
+            *cursor = (uint8_t)(candidate + 1);
+            return true;
+        }
+        search = (uint8_t)((word_index + 1) << 5);
+    }
+    return false;
+}
+
+static inline void ot_record_player_shot_collision_visits(
+    OtLevelPortState *state,
+    uint32_t visits
+)
+{
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->player_shot_collision_candidate_visit_count += visits;
+#else
+    (void)state;
+    (void)visits;
+#endif
+}
+#endif
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) bool
+ot_level_port_player_shot_overlaps(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y
+)
+{
+    uint8_t index;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t cursor = 0;
+    uint32_t visits = 0;
+#endif
+
+    if (state == 0) return false;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    while (
+        ot_next_player_shot_collision_candidate(
+            state,
+            &cursor,
+            &index
+        )
+    ) {
+        const OtEnemy *enemy;
+
+        visits++;
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
+        if (state->enemy_avail[index] != 0) continue;
+#endif
+        enemy = &state->enemy[index];
+        if (
+            (
+                enemy->enemycycle == 0 &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    ),
+                    25
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(enemy->ey - shot_y - 12)
+                    ,
+                    29
+                )
+            ) ||
+            (
+                enemy->enemycycle != 0 &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    ),
+                    13
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(enemy->ey - shot_y - 6)
+                    ,
+                    15
+                )
+            )
+        ) {
+            ot_record_player_shot_collision_visits(state, visits);
+            return true;
+        }
+    }
+    ot_record_player_shot_collision_visits(state, visits);
+#else
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy;
+
+        if (state->enemy_avail[index] != 0) continue;
+        enemy = &state->enemy[index];
+        if (
+            (
+                enemy->enemycycle == 0 &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    ),
+                    25
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(enemy->ey - shot_y - 12)
+                    ,
+                    29
+                )
+            ) ||
+            (
+                enemy->enemycycle != 0 &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset - shot_x
+                    ),
+                    13
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(enemy->ey - shot_y - 6)
+                    ,
+                    15
+                )
+            )
+        ) {
+            return true;
+        }
+    }
+#endif
+    return false;
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot_packed(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+)
+{
+    uint8_t damage = (uint8_t)damage_and_radii;
+    uint8_t radius_w = (uint8_t)(damage_and_radii >> 8);
+    uint8_t radius_h = (uint8_t)(damage_and_radii >> 16);
+    uint8_t index;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    uint8_t cursor = 0;
+    uint32_t visits = 0;
+#endif
+
+    if (result == 0) return;
+    /*
+     * effects[] is consumed only through effect_count.  Clearing the whole
+     * fixed 16-entry array for every active projectile was pure stack
+     * bandwidth (several KiB per gameplay tick under the stress loadout).
+     */
+    result->collided = false;
+#if !TYRIAN_GBA_COLLISION_LAZY_RESULT
+    result->consumed = false;
+    result->remaining_damage = damage;
+    result->hit_count = 0;
+    result->kill_count = 0;
+    result->effect_count = 0;
+    result->data_cubes_awarded = 0;
+    result->cash_awarded = 0;
+#endif
+    if (state == 0 || damage == 0) return;
+
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    while (
+        ot_next_player_shot_collision_candidate(
+            state,
+            &cursor,
+            &index
+        )
+    )
+#else
+    for (index = 0; index < OT_ENEMY_COUNT; index++)
+#endif
+    {
+        OtEnemy *enemy;
+        bool collided;
+        uint16_t armor;
+        uint8_t target_link;
+
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+        visits++;
+#endif
+#if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
+        if (state->enemy_avail[index] != 0) continue;
+#endif
+        enemy = &state->enemy[index];
+        if (enemy->enemycycle == 0) {
+            collided =
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset -
+                            shot_x - radius_w
+                    ),
+                    (uint16_t)(25u + radius_w)
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ey - shot_y - 12 - radius_h
+                    ),
+                    (uint16_t)(29u + radius_h)
+                );
+        } else {
+            collided =
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ex + enemy->mapoffset -
+                            shot_x - radius_w
+                    ),
+                    (uint16_t)(13u + radius_w)
+                ) &&
+                ot_player_shot_axis_overlaps(
+                    (int16_t)(
+                        enemy->ey - shot_y - 6 - radius_h
+                    ),
+                    (uint16_t)(15u + radius_h)
+                );
+        }
+        if (!collided) continue;
+
+#if TYRIAN_GBA_COLLISION_LAZY_RESULT
+        if (!result->collided) {
+            /*
+             * Misses dominate the full-loadout trace.  A miss only promises
+             * collided=false; length-delimited result fields become live at
+             * the first actual hit, immediately before any consumer or
+             * damage path can observe them.
+             */
+            result->consumed = false;
+            result->remaining_damage = damage;
+            result->hit_count = 0;
+            result->kill_count = 0;
+            result->effect_count = 0;
+            result->data_cubes_awarded = 0;
+            result->cash_awarded = 0;
+            result->collided = true;
+        }
+#else
+        result->collided = true;
+#endif
+        result->hit_count++;
+        state->player_shot_collision_count++;
+        armor = enemy->armorleft;
+        target_link = enemy->linknum;
+        if (target_link == 0) target_link = 255;
+        for (uint8_t bar = 0; bar < 2; bar++) {
+            if (
+                target_link != 255 &&
+                target_link == state->boss_bar_link[bar]
+            ) {
+                state->boss_bar_color[bar] = 6;
+            }
+        }
+
+        if (armor > result->remaining_damage) {
+            uint8_t damage_before = result->remaining_damage;
+
+            state->frame_sound_queue[5] = 3;
+            if (enemy->armorleft != 255) {
+                enemy->armorleft =
+                    (uint8_t)(enemy->armorleft - damage_before);
+            }
+            ot_add_hit_effect(
+                result->effects,
+                &result->effect_count,
+                shot_x,
+                shot_y,
+                false,
+                enemy->enemyground
+            );
+            if (
+                (int16_t)armor - damage_before <= enemy->edlevel &&
+                (
+                    (!enemy->edamaged) ^
+                    (enemy->edani < 0)
+                )
+            ) {
+                ot_apply_damaged_transition(
+                    state,
+                    index,
+                    target_link,
+                    result
+                );
+            }
+        } else {
+            ot_kill_enemy_group(state, index, result);
+        }
+
+        if (result->remaining_damage <= armor) {
+            result->remaining_damage = 0;
+            result->consumed = true;
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+            ot_record_player_shot_collision_visits(state, visits);
+#endif
+            return;
+        }
+        result->remaining_damage =
+            (uint8_t)(result->remaining_damage - armor);
+    }
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+    ot_record_player_shot_collision_visits(state, visits);
+#endif
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot_sized(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    uint8_t radius_w,
+    uint8_t radius_h,
+    OtShotCollisionResult *result
+)
+{
+    ot_level_port_collide_player_shot_packed(
+        state,
+        shot_x,
+        shot_y,
+        result,
+        (uint32_t)damage |
+            ((uint32_t)radius_w << 8) |
+            ((uint32_t)radius_h << 16)
+    );
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    uint8_t damage,
+    OtShotCollisionResult *result
+)
+{
+    ot_level_port_collide_player_shot_packed(
+        state,
+        shot_x,
+        shot_y,
+        result,
+        damage
+    );
+}
+
+static void ot_recalculate_purple_balls(OtLevelPortState *state)
+{
+    static const uint8_t required[12] = {
+        1, 1, 2, 4, 8, 12, 16, 20, 25, 30, 40, 50
+    };
+    uint8_t power = state->player_front_weapon_power;
+
+    if (power > 11) power = 11;
+    state->player_purple_balls_needed = required[power];
+}
+
+static bool ot_power_up_weapon(
+    OtLevelPortState *state,
+    bool front,
+    OtPlayerCollisionResult *result
+)
+{
+    uint8_t *weapon_id = front ?
+        &state->player_front_weapon_id :
+        &state->player_rear_weapon_id;
+    uint8_t *weapon_power = front ?
+        &state->player_front_weapon_power :
+        &state->player_rear_weapon_power;
+
+    /*
+     * player.c:power_up_weapon(), specialized only by replacing the PC
+     * shotMultiPos reset with source-state ownership in this GBA port.
+     */
+    if (*weapon_id != 0 && *weapon_power < 11) {
+        (*weapon_power)++;
+        ot_recalculate_purple_balls(state);
+        return true;
+    }
+    result->cash_awarded += 1000;
+    state->powerup_consolation_cash += 1000;
+    return false;
+}
+
+static void ot_handle_purple_ball(
+    OtLevelPortState *state,
+    OtPlayerCollisionResult *result
+)
+{
+    if (state->player_purple_balls_needed > 1) {
+        state->player_purple_balls_needed--;
+    } else {
+        (void)ot_power_up_weapon(state, true, result);
+    }
+}
+
+/*
+ * varz.c specialArcadeWeapon[PORT_NUM], indexed by the one-based front-port
+ * pickup ID minus one.  This is source gameplay data, kept here only because
+ * the table is compiled into OpenTyrian rather than stored in tyrian.hdt.
+ */
+static const uint8_t ot_special_arcade_weapon[OT_HDT_PORT_COUNT - 1] = {
+    17, 17, 18, 0, 0, 0, 10, 0, 0, 0, 0, 0, 44, 0,
+    10, 0, 19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+};
+
+void ot_level_port_collide_player(
+    OtLevelPortState *state,
+    bool player_vulnerable,
+    OtPlayerCollisionResult *result
+)
+{
+    uint8_t index;
+
+    if (result == 0) return;
+    /*
+     * As above, the effect arrays are length-delimited.  Initialize only
+     * their counts and the scalar result fields instead of clearing both
+     * arrays every tick.
+     */
+    result->pickup_count = 0;
+    result->contact_count = 0;
+    result->damage = 0;
+    result->effect_count = 0;
+    result->data_cubes_awarded = 0;
+    result->front_powerups = 0;
+    result->rear_powerups = 0;
+    result->orbiting_asteroids_awarded = 0;
+    result->superbombs_awarded = 0;
+    result->bonus_level_triggered = false;
+    result->next_level = 0;
+    result->cash_awarded = 0;
+    result->pickup_effect_count = 0;
+    if (state == 0) return;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        OtEnemy *enemy;
+        uint8_t availability;
+        int16_t value;
+        bool was_score_item;
+        bool consumed = false;
+        bool suppress_contact = false;
+        bool show_fixed_pickup_effect = false;
+
+        if (state->enemy_avail[index] == 1) continue;
+        enemy = &state->enemy[index];
+        if (
+            ot_abs_s16(
+                (int16_t)(
+                    state->player_x -
+                    (enemy->ex + enemy->mapoffset)
+                )
+            ) >= 12 ||
+            ot_abs_s16(
+                (int16_t)(state->player_y - enemy->ey)
+            ) >= 14
+        ) {
+            continue;
+        }
+        availability = state->enemy_avail[index];
+        value = enemy->evalue;
+        was_score_item = enemy->scoreitem;
+
+        /*
+         * Direct fixed-single-player translation of JE_playerCollide().
+         * Keep the source branch order: high-value equipment, armor, bonus
+         * portals, ordinary score items, then damaging enemy contact.
+         */
+        if (value > 29999) {
+            suppress_contact = true;
+            if (value == 30000) {
+                result->cash_awarded += 100;
+                ot_handle_purple_ball(state, result);
+                state->high_value_pickup_count++;
+                state->frame_sound_queue[7] = 29;
+                consumed = true;
+            } else if (value > 32100) {
+                result->cash_awarded += 250;
+                state->player_special = (uint8_t)(value - 32100);
+                state->high_value_pickup_count++;
+                state->frame_sound_queue[7] = 29;
+                consumed = true;
+            } else if (value > 32000) {
+                if (state->arcade_mode) {
+                    uint8_t option_id = (uint8_t)(value - 32000);
+
+                    /*
+                     * mainint.c onePlayerAction branch assigns the same
+                     * option to LEFT_SIDEKICK and RIGHT_SIDEKICK.
+                     */
+                    state->player_sidekick[0] = option_id;
+                    state->player_sidekick[1] = option_id;
+                    result->cash_awarded += 250;
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
+            } else if (value > 31000) {
+                /*
+                 * Preserve the source's unconditional 250-credit award
+                 * before its player-2/onePlayerAction ownership checks.
+                 */
+                result->cash_awarded += 250;
+                if (state->arcade_mode) {
+                    state->player_rear_weapon_id =
+                        (uint8_t)(value - 31000);
+                    if (state->player_rear_weapon_power == 0) {
+                        state->player_rear_weapon_power = 1;
+                    }
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
+            } else {
+                if (state->arcade_mode) {
+                    uint8_t port_id = (uint8_t)(value - 30000);
+
+                    state->player_front_weapon_id = port_id;
+                    if (
+                        port_id > 0 &&
+                        port_id <=
+                            sizeof(ot_special_arcade_weapon)
+                    ) {
+                        state->player_special =
+                            ot_special_arcade_weapon[port_id - 1u];
+                    } else {
+                        state->player_special = 0;
+                    }
+                    result->cash_awarded += 250;
+                    state->high_value_pickup_count++;
+                    state->frame_sound_queue[7] = 29;
+                    consumed = true;
+                }
+            }
+        } else if (value > 20000) {
+            suppress_contact = true;
+            uint16_t armor = (uint16_t)(
+                state->player_armor + value - 20000
+            );
+
+            state->player_armor = armor > 28 ? 28 : (uint8_t)armor;
+            state->armor_pickup_count++;
+            state->frame_sound_queue[7] = 29;
+            consumed = true;
+        } else if (value > 10000 && availability == 2) {
+            suppress_contact = true;
+            if (!state->bonus_level) {
+                state->bonus_level = true;
+                state->next_level = (uint16_t)(value - 10000);
+                state->display_time = 150;
+                state->bonus_portal_pickup_count++;
+                result->bonus_level_triggered = true;
+                result->next_level = state->next_level;
+                consumed = true;
+            }
+        } else if (enemy->scoreitem) {
+            suppress_contact = true;
+            consumed = true;
+            show_fixed_pickup_effect = true;
+            state->frame_sound_queue[7] = 18;
+            if (value == 1) {
+                state->data_cube_pickup_count++;
+                result->data_cubes_awarded++;
+                state->frame_sound_queue[3] = 37;
+            } else if (value == -1) {
+                state->front_weapon_powerup_count++;
+                result->front_powerups++;
+                (void)ot_power_up_weapon(state, true, result);
+                state->frame_sound_queue[7] = 29;
+            } else if (value == -2) {
+                state->rear_weapon_powerup_count++;
+                result->rear_powerups++;
+                (void)ot_power_up_weapon(state, false, result);
+                state->frame_sound_queue[7] = 29;
+            } else if (value == -3) {
+                state->orbiting_asteroid_pickup_count++;
+                result->orbiting_asteroids_awarded++;
+            } else if (value == -4) {
+                if (state->player_superbombs < 10) {
+                    state->player_superbombs++;
+                    result->superbombs_awarded++;
+                }
+                state->superbomb_pickup_count++;
+            } else if (value == -5) {
+                state->player_front_weapon_id = 25;
+                state->player_rear_weapon_id = 26;
+                state->player_front_weapon_power = 1;
+                state->player_rear_weapon_power = 1;
+                state->player_weapon_mode = 1;
+                state->hotdog_pickup_count++;
+            } else {
+                /*
+                 * Literal source fallback: this_player->cash += evalue.
+                 * Known special negative values have already branched.
+                 */
+                result->cash_awarded += (uint32_t)(int32_t)value;
+            }
+        }
+
+        if (consumed) {
+            if (show_fixed_pickup_effect) {
+                /*
+                 * Literal JE_playerCollide() tail:
+                 * JE_setupExplosion(..., explosiontype, true, false).
+                 * JE_makeEnemy split the source byte into enemyground and
+                 * explonum, so reconstruct it without another HDT read.
+                 */
+                ot_add_pickup_effect(
+                    result,
+                    (int16_t)(enemy->ex + enemy->mapoffset),
+                    enemy->ey,
+                    (uint8_t)(
+                        (enemy->explonum << 1) |
+                        (enemy->enemyground ? 0u : 1u)
+                    )
+                );
+            }
+            ot_release_enemy(state, index);
+            if (was_score_item) {
+                state->score_item_pickup_count++;
+            }
+            result->pickup_count++;
+            continue;
+        }
+        if (
+            !suppress_contact &&
+            player_vulnerable &&
+            availability == 0 &&
+            enemy->enemyground
+        ) {
+            uint8_t damage = enemy->armorleft;
+
+            if (damage > 2) damage = 2;
+            state->player_enemy_contact_count++;
+            result->contact_count++;
+            result->damage = (uint16_t)(result->damage + damage);
+        }
+    }
+}
+
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_update_enemy_shots(OtLevelPortState *state)
+{
+    uint8_t index;
+
+    if (state == 0) return;
+    for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+        OtEnemyShot *shot = &state->enemy_shot[index];
+        uint8_t old_duration;
+
+        if (!shot->active) continue;
+        state->enemy_shot_motion_update_count++;
+        shot->sxm = (int16_t)(shot->sxm + shot->sxc);
+        shot->sx = (int16_t)(shot->sx + shot->sxm);
+        if (shot->tx != 0) {
+            if (shot->sx > state->player_x) {
+                if (shot->sxm > -(int16_t)shot->tx) shot->sxm--;
+            } else if (shot->sxm < shot->tx) {
+                shot->sxm++;
+            }
+        }
+        shot->sym = (int16_t)(shot->sym + shot->syc);
+        shot->sy = (int16_t)(shot->sy + shot->sym);
+        if (shot->ty != 0) {
+            if (shot->sy > state->player_y) {
+                if (shot->sym > -(int16_t)shot->ty) shot->sym--;
+            } else if (shot->sym < shot->ty) {
+                shot->sym++;
+            }
+        }
+
+        old_duration = shot->duration;
+        shot->duration--;
+        if (
+            old_duration == 0 ||
+            shot->sy > 190 ||
+            shot->sy <= -14 ||
+            shot->sx > 275 ||
+            shot->sx <= 0
+        ) {
+            ot_release_enemy_shot(state, shot);
+            continue;
+        }
+        if (
+            shot->sx > state->player_x - 11 &&
+            shot->sx < state->player_x + 11 &&
+            shot->sy > state->player_y - 14 &&
+            shot->sy < state->player_y + 14
+        ) {
+            state->frame_player_damage =
+                (uint16_t)(state->frame_player_damage + shot->sdmg);
+            ot_release_enemy_shot(state, shot);
+            state->enemy_shot_player_hit_count++;
+            continue;
+        }
+        if (shot->animax != 0) {
+            shot->animate++;
+            if (shot->animate >= shot->animax) shot->animate = 0;
+        }
+    }
+}
