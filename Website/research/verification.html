@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 使用 mGBA、SRAM telemetry、route golden 與資源 audit 驗證移植正確性與效能。">
+  <meta name="theme-color" content="#05070c">
+  <title>Telemetry 與自動回歸 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽"><a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a></nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Verification</span></nav>
+        <p class="eyebrow">Research 06 / Verification</p>
+        <h1>「看起來能玩」不是完成條件。</h1>
+        <p class="lede">長關卡、隨機掉落、cache 與一次性音樂很難只靠肉眼覆蓋。ROM 在 mGBA 中跑真實流程，再用 SRAM 回傳可機器判讀的契約。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="contract">SRAM telemetry contract</h2>
+          <p>
+            每個 focused AUTOTEST ROM 在完成後，把 magic、schema、pass flag 與
+            counters 寫到 SRAM，再以測試 SWI 結束。PowerShell host 讀回 little-endian
+            欄位，任何 golden、budget 或 accounting 不符就讓建置失敗。
+          </p>
+          <p>
+            這比解析 emulator 畫面或 log 更穩定：ROM 本身知道目前 level position、
+            event cursor、敵人數、cache miss、music state 與 pending frame。
+          </p>
+
+          <h2 id="coverage">不是一支超長測試</h2>
+          <div class="engineering-list">
+            <div class="engineering-item"><span class="number">A</span><h3>完整第一關</h3><p>來源事件、Boss、獎賞、聲音、破關飛行、一次性歌曲、統計與回 Game Menu。</p></div>
+            <div class="engineering-item"><span class="number">B</span><h3>Episode routes</h3><p>Episode 2／3／4 第一關與 Episode 1 四關 campaign，驗證 script 轉場與不同資產 bank。</p></div>
+            <div class="engineering-item"><span class="number">C</span><h3>ROMFS matrix</h3><p>四個 Episode 共 62 個 playable sections，讀事件、enemy pool、背景與 Sprite2 catalog。</p></div>
+            <div class="engineering-item"><span class="number">D</span><h3>Focused flows</h3><p>Death、Demo、JukeBox、Arcade equipment、frontend、Next Level camera 與 960 次靜態轉場。</p></div>
+          </div>
+
+          <h2 id="accounting">用 accounting 找出「少了什麼」</h2>
+          <p>
+            只檢查 final state 會放過中間偷漏。專案額外要求：
+          </p>
+          <ul>
+            <li>source events = applied + deferred + skipped；</li>
+            <li>spawn attempts = successes + pool full + missing；</li>
+            <li>VRAM uploads = cache misses，upload bytes 符合 tile size；</li>
+            <li>L2 raw builds = L2 misses，RLE fallback = 0；</li>
+            <li>music cue start = 1，natural stop = 1；</li>
+            <li>reward／effect／projectile drops = 0。</li>
+          </ul>
+
+          <h2 id="performance">效能也要有狀態來源</h2>
+          <p>
+            Missed VBlank 分為 gameplay、stats、game over、transition 與 frontend
+            other。High／Normal 現行完整 route：
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>8 / 29</strong><span>Episode 1 / 2 gameplay misses</span></div>
+            <div class="metric"><strong>13 / 22</strong><span>Episode 3 / 4 gameplay misses</span></div>
+            <div class="metric"><strong>0</strong><span>all frontend deterministic misses</span></div>
+          </div>
+          <p>
+            這些數字不是宣稱任何情境永不 drop frame；它們是固定輸入下的 regression
+            baseline。若程式改動讓同一路徑多出 deterministic miss，建置立即失敗。
+          </p>
+
+          <h2 id="visual">自動測試仍不能取代視覺 QA</h2>
+          <p>
+            CRC 可證明資產沒變，不能判斷 priority 是否符合人眼預期；event count
+            也不能判斷字體好不好看。專案同時保留 deterministic screenshot ROM、
+            pixel comparison 與人工試玩。AI 建議亦必須經這三層證據交叉確認。
+          </p>
+          <div class="callout warning">
+            Mature port 的意思不是「不再出 bug」，而是每次修復都盡量留下能阻止
+            同類問題回來的測試契約。
+          </div>
+        </article>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#contract">SRAM 契約</a></li><li><a href="#coverage">測試分層</a></li><li><a href="#accounting">Accounting</a></li><li><a href="#performance">效能基線</a></li><li><a href="#visual">視覺 QA</a></li></ul></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="romfs.html">上一篇：ROMFS</a><a href="index.html">全部研究</a><a href="../download.html">下載</a></nav></div></footer>
+</body>
+</html>

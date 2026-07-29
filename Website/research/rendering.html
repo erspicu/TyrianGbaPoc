@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Tyrian PC gameplay space 到 GBA 240×160 的中央裁切、多圖層與繪圖順序移植策略。">
+  <meta name="theme-color" content="#05070c">
+  <title>多圖層與中央裁切 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Rendering</span></nav>
+        <p class="eyebrow">Research 01 / Rendering</p>
+        <h1>不縮放 gameplay，只做最後裁切。</h1>
+        <p class="lede">原版座標與關卡演算法保留在 PC gameplay space；GBA 不參與敵人位置重算，只負責 240×160 的最終呈現。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="space">兩個座標空間</h2>
+          <p>
+            Tyrian 的完整 PC 畫面是 320×200，但戰鬥視窗不是整個畫面。右側儀表板與
+            下方狀態區移除後，專案使用 264×184 的原始 gameplay space。GBA 顯示為
+            240×160，因此水平與垂直各捨去 24 pixels：
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>264×184</strong><span>PC gameplay space</span></div>
+            <div class="metric"><strong>36, 12</strong><span>source crop origin</span></div>
+            <div class="metric"><strong>240×160</strong><span>GBA final viewport</span></div>
+          </div>
+          <p>
+            玩家、敵人、子彈、碰撞與 level event 仍使用 source coordinates。
+            只有 presentation 把 world coordinate 減去裁切 origin。這避免逐物件縮放、
+            rounding drift 與碰撞規格分叉，也讓畫面密度保持原版感。
+          </p>
+          <div class="callout warning">
+            裁切並不代表玩家能飛到看不見的位置。玩家移動邊界另外依船體尺寸收緊，
+            確保機頭與尾翼不被最終 viewport 切掉。
+          </div>
+
+          <h2 id="layers">三層不是三張裝飾圖</h2>
+          <p>
+            原版每層具有獨立捲動速度、水平 phase、是否位於敵人前後方等狀態。
+            GBA 使用三個 tile background 保存 layer identity，不能把缺少的 tile
+            用「看起來最接近」的圖補上，否則岩壁、雲與可破壞物件會在後續事件中錯位。
+          </p>
+          <ul>
+            <li>底層地形：通常最慢或作為固定地面。</li>
+            <li>中層：可依 source flag 移到部分 enemy group 前方。</li>
+            <li>上層／雲層：需要與 sky enemy、top enemy 分開排序。</li>
+          </ul>
+
+          <h2 id="priority">把 PC draw order 翻成有限 priority</h2>
+          <p>
+            PC renderer 可以依序畫很多群組；GBA 只有有限 BG priority 與 OBJ priority。
+            專案沒有為某張錯圖硬寫例外，而是把 OpenTyrian 的
+            <code>background2over</code>、<code>background3over</code>、
+            <code>topEnemyOver</code>、<code>skyEnemyOverAll</code> 等規則整理成
+            可枚舉的 priority policy。
+          </p>
+          <p>
+            回歸測試會跑完整組合，現行契約包含 252 個 layer-rule checks。這讓修正
+            Episode 1 的雲層時，不會無意破壞 Episode 4 的前景物件。
+          </p>
+
+          <h2 id="cost">為何 1:1 更便宜</h2>
+          <p>
+            ARM7TDMI 沒有硬體除法器。若每個 sprite、子彈與碰撞 box 都做 240/264、
+            160/184 的比例換算，除了 CPU cost，也會引入不同的四捨五入結果。
+            1:1 crop 把成本收斂成整數加減、OAM clipping 與 background offset，
+            將有限 cycle 留給敵人 AI、碰撞與資源快取。
+          </p>
+
+          <figure>
+            <div class="screenshot-card"><img src="../assets/images/gameplay-cavern.png" alt="中央裁切後的第一關多圖層場景" width="240" height="160"></div>
+            <figcaption><span>Source coordinates，GBA final crop</span><span>240×160</span></figcaption>
+          </figure>
+        </article>
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul><li><a href="#space">座標空間</a></li><li><a href="#layers">三個圖層</a></li><li><a href="#priority">繪圖順序</a></li><li><a href="#cost">運算成本</a></li></ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="index.html">全部研究</a><a href="sprite-cache.html">下一篇：Sprite2 cache</a><a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a></nav></div></footer>
+</body>
+</html>

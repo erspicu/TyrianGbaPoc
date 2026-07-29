@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc ROMFS、原始 MUS/SHP/PIC/HDT/LVL loader 與可擴充資料層設計。">
+  <meta name="theme-color" content="#05070c">
+  <title>ROMFS 與可擴充資料層 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽"><a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a></nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>ROMFS</span></nav>
+        <p class="eyebrow">Research 05 / Data architecture</p>
+        <h1>一套 loader，不能只服務第一關。</h1>
+        <p class="lede">若每遇到錯圖就建立一份 GBA-only 對照表，Episode 越多，維護成本越接近無限。資料層必須把原始檔當作真實來源。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="goal">為 C 移植碼提供熟悉的 I/O</h2>
+          <p>
+            GBA ROM 是 memory-mapped，但 OpenTyrian 原始碼習慣以檔名、offset、
+            record 與 loader 讀資料。專案的 ROMFS 在 build 階段把 stock data
+            連同 path metadata 打包；runtime <code>stat</code> 取得直接指向 ROM 的
+            span，避免把整個檔案搬到 RAM。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>68</strong><span>current ROMFS entries</span></div>
+            <div class="metric"><strong>9.85 MiB</strong><span>ROMFS image</span></div>
+            <div class="metric"><strong>0 copies</strong><span>whole-file staging</span></div>
+          </div>
+
+          <h2 id="loaders">原始格式各自解讀</h2>
+          <ul>
+            <li><strong>MUS：</strong>曲目 offset、LDS pattern 與 patch 資訊。</li>
+            <li><strong>SHP／Sprite2：</strong>壓縮圖形 bank 與 frame/component layout。</li>
+            <li><strong>PIC：</strong>前端背景、palette 與 source presentation。</li>
+            <li><strong>HDT：</strong>武器、port、ship、option、shield 與 enemy 定義。</li>
+            <li><strong>LVL：</strong>事件、enemy pool、map shapes 與三層 map。</li>
+            <li><strong>levelsN.dat：</strong>加密 episode script、跳轉、難度、路線與選項。</li>
+          </ul>
+          <p>
+            邏輯先問 loader「原版資料是什麼」，再由 GBA adapter 決定如何顯示。
+            這也是修正 Episode 2／4 錯素材時的重要界線：問題應在通用 bank/index
+            規則解決，不在關卡中加入一個特殊 if。
+          </p>
+
+          <h2 id="transform">允許的 build-time 轉換</h2>
+          <p>
+            「讀原始資料」不等於所有工作都必須在 16.78 MHz runtime 做。
+            可接受的轉換以資料不變性與完整覆蓋為原則：
+          </p>
+          <ul>
+            <li>完整 Sprite2 bank 的無損 RLE 展開，而非只列第一關看過的 frames；</li>
+            <li>前端完整 source stamp 集合，而非每個選單狀態手繪替代圖；</li>
+            <li>字型由 stock glyph 無損轉為 GBA tile layout；</li>
+            <li>音樂轉成 Maxmod soundbank，但曲目與流程仍由原始 song ID 驅動。</li>
+          </ul>
+          <div class="callout">
+            Build-time 資產是原始資料的通用表示；關卡事件仍決定「用什麼」，
+            不會被預轉換工具接管 gameplay 規格。
+          </div>
+
+          <h2 id="index">加密腳本的 O(1) section seek</h2>
+          <p>
+            <code>levelsN.dat</code> 是 encrypted Pascal-string stream。舊 seek
+            每次從開頭逐行解密到第 N 個 <code>*</code>。新版直接掃 record length，
+            只解 encrypted first character 來辨識 section marker，保存 ROM offset。
+          </p>
+          <p>
+            四個 stock scripts 實際有 24–51 sections；快取約 272 bytes，
+            不需要 generated route catalog。跳轉、Full Game／Arcade 與 difficulty
+            判定仍由原 parser 執行。
+          </p>
+
+          <h2 id="integrity">完整性契約</h2>
+          <p>
+            ROMFS build 產生 entry count、metadata CRC、payload CRC、manifest CRC
+            與 image SHA-256。ROM 啟動時做 probe/self-test；完整 matrix 再走過四個
+            Episode 共 62 個 playable LVL sections，確保資料架構不是只對示範關卡成立。
+          </p>
+        </article>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#goal">I/O 目標</a></li><li><a href="#loaders">Loader</a></li><li><a href="#transform">Build 轉換</a></li><li><a href="#index">Script index</a></li><li><a href="#integrity">完整性</a></li></ul></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="frontend.html">上一篇：Frontend</a><a href="verification.html">下一篇：Verification</a><a href="index.html">全部研究</a></nav></div></footer>
+</body>
+</html>

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 技術研究：GBA 多圖層、Sprite2 快取、ROMFS、固定時序與靜態選單最佳化。">
+  <meta name="theme-color" content="#05070c">
+  <title>技術研究 — TyrianGbaPoc</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="../assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html#project">專案</a>
+        <a href="../index.html#engineering">技術</a>
+        <a href="../index.html#gallery">畫面</a>
+        <a href="index.html" aria-current="page">研究筆記</a>
+        <a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><span>技術研究</span></nav>
+        <p class="eyebrow">Engineering field notes</p>
+        <h1>在 GBA 限制內，保留原版語意。</h1>
+        <p class="lede">
+          這裡整理移植中最有通用價值的設計。它不是效能魔法清單，而是說明每個
+          瓶頸如何被量測、資料不變性的邊界如何切分，以及何時寧可保留限制，
+          也不以錯誤的畫面或規則換取表面流暢。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell">
+        <div class="research-grid">
+          <a class="research-link reveal" href="rendering.html">
+            <span><strong>多圖層、中央裁切與繪圖順序</strong><p>PC 264×184 gameplay space 如何交給 240×160 GBA 最終裁切，以及 layer priority 的翻譯方式。</p></span>
+            <span class="arrow" aria-hidden="true">01 ↗</span>
+          </a>
+          <a class="research-link reveal" href="sprite-cache.html">
+            <span><strong>Sprite2 預解壓與 EWRAM L2</strong><p>將不可變 RLE 移到 build，保留 runtime palette/filter，解決 Boss 多部件動畫風暴。</p></span>
+            <span class="arrow" aria-hidden="true">02 ↗</span>
+          </a>
+          <a class="research-link reveal" href="timing.html">
+            <span><strong>固定時序、VBlank 與 frame drop</strong><p>ARM7TDMI 趕不上場景時，如何延後畫面而不拖慢遊戲與音樂時鐘。</p></span>
+            <span class="arrow" aria-hidden="true">03 ↗</span>
+          </a>
+          <a class="research-link reveal" href="frontend.html">
+            <span><strong>靜態選單的混合渲染管線</strong><p>build-time pages、source stamps、局部文字、硬體 OBJ 與分幀原子換頁。</p></span>
+            <span class="arrow" aria-hidden="true">04 ↗</span>
+          </a>
+          <a class="research-link reveal" href="romfs.html">
+            <span><strong>ROMFS 與可擴充資料層</strong><p>不為每關建立專用轉換表，仍能讓 C 移植碼低成本讀取 MUS/SHP/PIC/HDT/LVL。</p></span>
+            <span class="arrow" aria-hidden="true">05 ↗</span>
+          </a>
+          <a class="research-link reveal" href="verification.html">
+            <span><strong>Telemetry 與自動回歸</strong><p>用 mGBA SRAM 契約追蹤 route、cache、OAM、VBlank、一次性音樂與 source parity。</p></span>
+            <span class="arrow" aria-hidden="true">06 ↗</span>
+          </a>
+        </div>
+
+        <div class="callout">
+          深入的歷史調查、逐版本數據與 parity 報告仍保存在原始碼庫
+          <a href="https://github.com/erspicu/TyrianGbaPoc/tree/main/MD">MD/</a>。
+          網站文章是面向一般技術讀者的整理版。
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>© <span data-year></span> TyrianGbaPoc contributors. 技術內容以目前 main 實作為準。</div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="../index.html">首頁</a>
+        <a href="../download.html">下載</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

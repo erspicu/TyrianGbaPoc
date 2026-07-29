@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Tyrian GBA 靜態選單的底圖、文字、硬體 OBJ、EWRAM cache 與分幀轉場策略。">
+  <meta name="theme-color" content="#05070c">
+  <title>靜態選單混合渲染 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽"><a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a></nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Frontend</span></nav>
+        <p class="eyebrow">Research 04 / Frontend</p>
+        <h1>每一種內容，交給適合的硬體路徑。</h1>
+        <p class="lede">設定選單看似比關卡簡單，但整頁縮放、SHP 解碼與文字重畫會讓音樂明顯鈍住。解法不是只換一個 video mode，而是分離靜態與動態工作。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="problem">為什麼按一下就卡</h2>
+          <p>
+            早期 Game Menu 會在每次進入、游標移動或上下層切換時，重新從 stock
+            PIC/SHP 解碼、組合 320×200 source page、縮放到 240×160，再把文字畫進
+            bitmap。CPU 在同一輪做完所有工作，Maxmod 沒有足夠時間更新。
+          </p>
+
+          <h2 id="split">三種內容，三種策略</h2>
+          <div class="engineering-list">
+            <div class="engineering-item"><span class="number">A</span><h3>完全靜態</h3><p>Chrome、設定頁與固定 panel 在 build-time 從原版資料準備為 Mode 4 page／rows，runtime 線性複製。</p></div>
+            <div class="engineering-item"><span class="number">B</span><h3>狀態依賴</h3><p>船體、裝備、金錢依 HDT 與 player state 組合；完成後放進 19.2 KiB EWRAM ship-panel cache。</p></div>
+            <div class="engineering-item"><span class="number">C</span><h3>持續動態</h3><p>Next Level 旋轉星球用硬體 OBJ；文字在最終 240×160 座標獨立畫，避免跟著背景縮糊。</p></div>
+          </div>
+
+          <h2 id="stamps">通用 source stamp catalog</h2>
+          <p>
+            Upgrade Ship 的裝備圖不能把每個組合都烘成完整頁面。build 端因此產生
+            14,925 個 stock source stamps，涵蓋必要 tyrian.shp、Sprite2 banks 與
+            4/5 scale 的 25 個 sub-pixel phase。runtime 仍由原版資料 ID 決定圖形，
+            只是不再做 RLE 與逐像素 resize。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>14,925</strong><span>source stamps</span></div>
+            <div class="metric"><strong>6.75 MiB</strong><span>sparse pixel stream</span></div>
+            <div class="metric"><strong>0</strong><span>runtime SHP decode</span></div>
+          </div>
+
+          <h2 id="staging">轉場不是一次 function call</h2>
+          <p>
+            新頁面在 scratch page 分階段準備：每次最多 80 rows page copy、60 rows
+            panel、單一 Next Level 選項或單一 Upgrade row。舊畫面保持可見，
+            <code>mmFrame()</code> 每個 VBlank 都會執行；只有最後才排程一次 Mode 4
+            page flip。
+          </p>
+          <p>
+            Quit Game 對話框再細分成背景 capture、shade、overlay 與 choices。
+            取消時直接還原 cache，不重新建構 Game Menu。
+          </p>
+
+          <h2 id="results">960 次壓力轉場</h2>
+          <p>
+            八條已開放雙向路徑各做 120 次，共 960 次。High／Normal 結果為
+            0 missed VBlank、0 runtime SHP、0 runtime Sprite2、music active。
+            最大單 phase 118,465 cycles，低於 180,000-cycle 回歸門檻。
+          </p>
+          <figure>
+            <div class="screenshot-card"><img src="../assets/images/game-menu.png" alt="以快取與靜態 panel 組成的 Game Menu" width="240" height="160"></div>
+            <figcaption><span>Game Menu</span><span>ship cache + static panel</span></figcaption>
+          </figure>
+        </article>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#problem">原始瓶頸</a></li><li><a href="#split">內容分流</a></li><li><a href="#stamps">Source stamps</a></li><li><a href="#staging">分幀轉場</a></li><li><a href="#results">壓力測試</a></li></ul></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="timing.html">上一篇：Timing</a><a href="romfs.html">下一篇：ROMFS</a><a href="index.html">全部研究</a></nav></div></footer>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="下載 TyrianGbaPoc GBA ROM，或使用專案內的獨立工具鏈自行建置。">
+  <meta name="theme-color" content="#05070c">
+  <title>下載與建置 — TyrianGbaPoc</title>
+  <link rel="icon" href="assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/css/site.css">
+  <script src="assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="index.html#project">專案</a>
+        <a href="index.html#engineering">技術</a>
+        <a href="index.html#gallery">畫面</a>
+        <a href="research/index.html">研究筆記</a>
+        <a class="nav-download" href="download.html" aria-current="page">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="index.html">首頁</a><span>/</span><span>下載</span></nav>
+        <p class="eyebrow">ROM & reproducible build</p>
+        <h1>下載版本，或自己重建。</h1>
+        <p class="lede">
+          可玩 ROM 只發布為 GitHub Release 資產，不提交到原始碼版本庫。
+          專案也包含固定版本的 SDK、工具與 source data 路徑，Windows 上可一鍵產生 ROM。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell">
+        <div class="release-panel reveal">
+          <div>
+            <p class="eyebrow">Latest published milestone</p>
+            <h2>GitHub Releases</h2>
+            <p>選擇最新版本，下載附加的 <code>.gba</code> 檔與閱讀該版本的變更、測試結果及已知限制。</p>
+          </div>
+          <a class="button button-primary" href="https://github.com/erspicu/TyrianGbaPoc/releases/latest" rel="external">開啟最新 Release <span aria-hidden="true">↗</span></a>
+        </div>
+
+        <div class="callout warning">
+          <strong>開發中：</strong>這是一個仍在逐步完整化的非官方移植版。不同 Episode、
+          裝備與少見路徑的成熟度可能不同；請以 Release notes 為準。
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="play">如何遊玩</h2>
+          <p>
+            使用支援 Game Boy Advance 的模擬器或相容硬體載入 ROM。
+            開發回歸主要使用專案內固定版本的 mGBA；正式試玩也建議從 mGBA 開始。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>D-pad</strong><span>移動／選擇</span></div>
+            <div class="metric"><strong>A / B</strong><span>射擊／確認／返回</span></div>
+            <div class="metric"><strong>Start</strong><span>確認／遊戲內暫停</span></div>
+          </div>
+
+          <h2 id="build">Windows 一鍵建置</h2>
+          <p>
+            需求為 Windows 10/11 與 Python 3.10 或更新版本。Clone 專案後，
+            在根目錄執行：
+          </p>
+          <div class="command-block"><button class="copy-command" type="button" data-copy="#build-command">複製</button><span id="build-command">Build-GBA-ROM.bat</span></div>
+          <p>
+            第一次執行會把固定版 ARM GNU Toolchain 安裝到專案內的
+            <code>.toolchain/</code>。不需要在系統層安裝 devkitPro。
+            完成後只保留：
+          </p>
+          <div class="command-block"><span>build\TyrianGBA.gba</span></div>
+          <p>
+            先前的本機 ROM 會搬到 <code>Backup/</code>，建置中間物與 ROM 都由
+            <code>.gitignore</code> 排除。完整環境、路徑與回歸測試請閱讀根目錄
+            <a href="https://github.com/erspicu/TyrianGbaPoc/blob/main/BUILDING.md">BUILDING.md</a>。
+          </p>
+
+          <h2 id="profiles">可調整設定</h2>
+          <p>
+            根目錄 <code>Configure.h</code> 集中管理開發用無敵模式、極限武器負荷、
+            HUD 與選單座標。Detail Level 可選 Low、Normal、High、Pentium；
+            Game Speed 提供 Low、Normal。Release 預設值以每版說明為準。
+          </p>
+
+          <h2 id="legal">資料與權利</h2>
+          <p>
+            本專案非 Tyrian 官方產品，也不代表原作者或任何平台持有人。
+            Tyrian 名稱與原始素材權利屬各自權利人；OpenTyrian、GBA SDK、
+            Maxmod 與 mGBA 的來源和授權列於專案
+            <a href="https://github.com/erspicu/TyrianGbaPoc/blob/main/THIRD_PARTY_NOTICES.md">THIRD_PARTY_NOTICES.md</a>。
+            請依所在地法規與各項授權使用資料、ROM、模擬器與硬體。
+          </p>
+        </article>
+
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul>
+            <li><a href="#play">如何遊玩</a></li>
+            <li><a href="#build">一鍵建置</a></li>
+            <li><a href="#profiles">可調整設定</a></li>
+            <li><a href="#legal">資料與權利</a></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>© <span data-year></span> TyrianGbaPoc contributors. 非官方 GBA 移植專案。</div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="index.html">首頁</a>
+        <a href="research/index.html">研究</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Tyrian Sprite2 build-time 無損預解壓、runtime palette mapping、EWRAM L2 與 VRAM L1 快取。">
+  <meta name="theme-color" content="#05070c">
+  <title>Sprite2 預解壓與二級快取 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Sprite cache</span></nav>
+        <p class="eyebrow">Research 02 / Sprite pipeline</p>
+        <h1>把不會變的解碼，留在 build。</h1>
+        <p class="lede">Boss 不是一張 sprite，而是多部件、動畫與 palette 的 miss storm。解法必須保留原版視覺，同時把首次與重複成本切開。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="problem">原始 runtime 路徑</h2>
+          <p>
+            Tyrian Sprite2 frame 由多個壓縮 component 組成。早期版本在 cache miss 時
+            查檔、清除 buffer、做 RLE 解碼、組成 32×32 frame，再逐 pixel 依 GBA
+            palette pack。Boss 同時出現多部件與動畫幀時，一個 tick 可能連續觸發
+            五次以上 miss，足以跨過單幀預算。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>11,552</strong><span>raw components</span></div>
+            <div class="metric"><strong>1,940,736 B</strong><span>lossless raw catalog</span></div>
+            <div class="metric"><strong>64 slots</strong><span>EWRAM L2</span></div>
+          </div>
+
+          <h2 id="boundary">依資料不變性切分</h2>
+          <p>
+            RLE 解壓與 component layout 對同一份 stock shape bank 永遠不變；
+            palette、iced/filter 等映射則會隨關卡與事件變化。因此 build 階段只產生
+            原始 8-bit index，不烘焙 GBA palette：
+          </p>
+          <ol>
+            <li>build：完整 bank RLE 無損解壓，保留原始 pixel index。</li>
+            <li>L2 miss：ROM raw → 當前 palette/filter 查表 → EWRAM。</li>
+            <li>L2 hit、VRAM miss：1 KiB DMA 上傳。</li>
+            <li>L1 hit：直接沿用已在 VRAM 的 OBJ tiles。</li>
+          </ol>
+          <p>
+            這不是 per-level 圖形表。gameplay 仍從 HDT/LVL/egr 決定
+            <em>哪一張</em> graphic；raw catalog 只提供完整且無損的通用表示。
+          </p>
+
+          <h2 id="keys">Key、palette 與失效</h2>
+          <p>
+            L2 key 為 <code>(shape_table, graphic, size, filter)</code>。
+            L2 保存已上色 tile，因此關卡重新設定 enemy palette 時必須 flush；
+            若只清 VRAM L1，舊關卡色彩仍可能從 EWRAM 被重新上傳。
+          </p>
+          <div class="callout">
+            這個失效規則很小，卻是 cache 正確性的核心：速度來自重用，
+            視覺 parity 則來自知道何時不能重用。
+          </div>
+
+          <h2 id="results">Boss 段落結果</h2>
+          <p>
+            Episode 1 第一關完整 trace 中，Boss performance window 的 Sprite2
+            L2 為 100 hits、21 misses、0 fallback；L1/VRAM 仍因動畫 frame
+            產生 121 uploads，但不再重做 RLE。正式回歸同時要求：
+          </p>
+          <ul>
+            <li>raw catalog CRC 與 bytes 正確；</li>
+            <li>L2 raw build 次數必須等於 L2 misses；</li>
+            <li>RLE fallback、cache drop、projectile drop 必須為 0；</li>
+            <li>Boss missed VBlank 維持在明確預算內。</li>
+          </ul>
+
+          <figure>
+            <div class="screenshot-card"><img src="../assets/images/gameplay-boss.png" alt="多部件 Boss 與大量敵我彈幕" width="240" height="160"></div>
+            <figcaption><span>多部件 Boss 動畫</span><span>L2 warm path / VRAM DMA</span></figcaption>
+          </figure>
+        </article>
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul><li><a href="#problem">原始瓶頸</a></li><li><a href="#boundary">切分邊界</a></li><li><a href="#keys">Cache key</a></li><li><a href="#results">實測結果</a></li></ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="rendering.html">上一篇：Rendering</a><a href="timing.html">下一篇：Timing</a><a href="index.html">全部研究</a></nav></div></footer>
+</body>
+</html>

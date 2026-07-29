@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="GBA 固定時間步進、VBlank recovery、presentation defer 與動態 frame drop 的設計。">
+  <meta name="theme-color" content="#05070c">
+  <title>固定時序與 Frame Drop — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽"><a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a></nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Timing</span></nav>
+        <p class="eyebrow">Research 03 / Timing</p>
+        <h1>可以少畫一幀，不能讓世界變慢。</h1>
+        <p class="lede">極端彈幕、爆炸與背景 streaming 同時出現時，GBA 可能無法每個 VBlank 都準備新畫面。遊戲時鐘、音樂與輸入仍必須按真實時間前進。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="budget">一個 frame 的預算</h2>
+          <p>
+            GBA CPU 約 16.78 MHz，螢幕接近 59.73 Hz，一個 frame 約有 280,896
+            CPU cycles。這個數字包含遊戲邏輯、背景準備、Sprite cache、render、
+            audio update、input 與 VBlank commit，不只是「畫 sprite」。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>16.78 MHz</strong><span>ARM7TDMI</span></div>
+            <div class="metric"><strong>59.73 Hz</strong><span>display cadence</span></div>
+            <div class="metric"><strong>≈280,896</strong><span>cycles / frame</span></div>
+          </div>
+
+          <h2 id="fixed">Fixed timestep</h2>
+          <p>
+            邏輯累加器以 wall-clock VBlank 推進。Normal speed 保留來源節奏；
+            如果上一輪工作跨過 VBlank，主迴圈會消耗已發生的 IRQ，執行必要的
+            catch-up logic，而不是再次睡到下一個 VBlank。這避免「一次超時，
+            額外再停一幀」的連鎖遲滯。
+          </p>
+
+          <h2 id="defer">Presentation defer</h2>
+          <p>
+            場景趕不及時，當前完整畫面可以再呈現一次；新 OAM、tile row 與 page
+            flip 等到真正的 VBlank 再 commit。邏輯位置、敵人生命、武器 cooldown、
+            Maxmod 更新與背景 source position 不因重複畫面而停住。
+          </p>
+          <div class="callout warning">
+            Frame drop 不是把所有邏輯改成 30 Hz，也不是凍結背景來掩蓋成本。
+            它只改變「何時交付下一個完整 presentation」。
+          </div>
+
+          <h2 id="hotpath">先優化，再允許 drop</h2>
+          <p>
+            Drop frame 是安全網，不是第一個答案。專案仍針對實測 hot path 使用：
+          </p>
+          <ul>
+            <li>Game Pak prefetch 與 3/1 waitstate；</li>
+            <li>IWRAM／ARM code 放置；</li>
+            <li>active bitmask 跳過無效碰撞候選；</li>
+            <li>Sprite2 raw catalog、EWRAM L2 與 VRAM upload queue；</li>
+            <li>背景 row prefetch 與 bounded cache work；</li>
+            <li>移除 hot loop 的軟體除法與不必要的 memory write。</li>
+          </ul>
+          <p>
+            Branchless 並不自動更快。ARM7TDMI 沒有現代 branch predictor，
+            但額外乘法、全部路徑的 memory access 也可能比簡單短路分支昂貴；
+            每個改動都以 cycle counter 與完整 route golden 驗證。
+          </p>
+
+          <h2 id="telemetry">把漏幀分到真正狀態</h2>
+          <p>
+            總 missed VBlank 會分成 gameplay、stats、game-over、frontend transition
+            與其他 frontend。這能分辨「Boss 計算真的重」和「選單誤做 runtime
+            SHP 解碼」。目前 High／Normal 的 Episode 1–4 路線，
+            frontend／stats／transition deterministic misses 全部為 0。
+          </p>
+        </article>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#budget">Frame budget</a></li><li><a href="#fixed">Fixed timestep</a></li><li><a href="#defer">Presentation defer</a></li><li><a href="#hotpath">Hot paths</a></li><li><a href="#telemetry">Telemetry</a></li></ul></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="sprite-cache.html">上一篇：Sprite cache</a><a href="frontend.html">下一篇：Frontend</a><a href="index.html">全部研究</a></nav></div></footer>
+</body>
+</html>

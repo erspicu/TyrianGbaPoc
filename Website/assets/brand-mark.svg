@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Tyrian GBA geometric ship mark</title>
+  <path fill="#070a0f" stroke="#d9a84f" stroke-width="2" d="M32 3 58 17v30L32 61 6 47V17z"/>
+  <path fill="#77d9d7" d="m32 12 8 15 11 4-11 4-3 16-5-7-5 7-3-16-11-4 11-4z"/>
+  <path fill="#f0bd5f" d="m32 17 3 14-3 8-3-8z"/>
+  <circle cx="32" cy="31" r="3" fill="#05070c"/>
+</svg>
