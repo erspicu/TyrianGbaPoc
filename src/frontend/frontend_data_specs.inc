@@ -27,7 +27,67 @@ enum {
      * last_line - 9.  Nine rows are therefore the true visible viewport.
      */
     FRONTEND_DATA_READER_VISIBLE_LINES = 9,
+    /*
+     * Source-font stamps are deliberately issued in small batches.  This
+     * keeps each static-page construction step below one GBA display frame
+     * while Maxmod continues servicing the menu song every VBlank.
+     */
+    FRONTEND_COOPERATIVE_TEXT_GLYPHS_PER_STEP = 16,
+    FRONTEND_DATA_RECORDS_PER_STEP = 4,
+    FRONTEND_DATA_STAMP_RUNS_PER_STEP = 16,
+    FRONTEND_SHIP_ART_DECODE_ROWS_PER_STEP = 6,
+    FRONTEND_SHIP_ART_FILTER_ROWS_PER_STEP = 6,
 };
+
+typedef struct {
+    const char *text;
+    s16 x;
+    s16 y;
+    s16 right;
+    s16 draw_x;
+    u8 line_height;
+    u8 max_lines;
+    u8 colour;
+    u8 lines;
+    u8 line_length;
+    u8 draw_index;
+    u8 line_ready;
+    u8 active;
+    char line[67];
+} FrontendWrappedTextJob;
+
+typedef struct {
+    OtShpSprite sprite;
+    u32 position;
+    u16 x;
+    u16 y;
+    u16 filter_row;
+    s16 source_x;
+    s16 source_y;
+    u8 phase;
+    u8 active;
+} FrontendShipArtJob;
+
+static OtDataCubeReader frontend_data_cube_reader EWRAM_BSS;
+static FrontendSourceStampJob frontend_data_stamp_job EWRAM_BSS;
+static FrontendWrappedTextJob frontend_data_text_job EWRAM_BSS;
+static FrontendWrappedTextJob
+    frontend_ship_specs_text_job EWRAM_BSS;
+static FrontendShipArtJob frontend_ship_specs_art_job EWRAM_BSS;
+
+static void frontend_wrapped_text_job_begin(
+    FrontendWrappedTextJob *job,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 line_height,
+    u8 max_lines,
+    u8 colour
+);
+static u8 frontend_wrapped_text_job_step(
+    FrontendWrappedTextJob *job
+);
 
 static const u8 frontend_data_face_palette_index[12] = {
     1, 2, 3, 4, 6, 9, 11, 12, 16, 13, 14, 15,
@@ -45,39 +105,66 @@ static const char *frontend_data_text(u8 index, const char *fallback)
     return fallback;
 }
 
-static u8 frontend_data_prepare(void)
+static u8 frontend_data_source_count(void)
 {
-    u8 source_count =
+    return
         frontend_data_cube_count > OT_EPISODE_CUBE_CAPACITY ?
             OT_EPISODE_CUBE_CAPACITY :
             frontend_data_cube_count;
-    u8 source_index;
+}
 
+static void frontend_data_prepare_begin(void)
+{
     frontend_data_page_count = 0;
     frontend_data_cache_valid = 0;
-    for (source_index = 0; source_index < source_count; source_index++) {
-        u8 cube_index = frontend_data_cube_list[source_index];
-
-        if (
-            cube_index != 0 &&
-            ot_data_cube_read(
-                (u8)(frontend_episode + 1u),
-                cube_index,
-                &frontend_data_cube_cache[
-                    frontend_data_page_count
-                ]
-            )
-        ) {
-            frontend_data_page_count++;
-        }
-    }
-    frontend_data_cache_valid = 1;
     frontend_data_reader_index = 0;
-    frontend_data_scroll_line = 0;
+    frontend_data_scroll_pixel = 0;
+    frontend_data_scroll_target = 0;
     frontend_data_glow = 1;
     frontend_data_glow_delta = 1;
     frontend_data_glow_wait = 0;
     frontend_quit_dialog_cache_valid = 0;
+    frontend_data_cube_reader = (OtDataCubeReader){0};
+    frontend_data_stamp_job = (FrontendSourceStampJob){0};
+    frontend_data_text_job = (FrontendWrappedTextJob){0};
+}
+
+static void frontend_data_prepare_one(u8 source_index)
+{
+    u8 cube_index;
+
+    if (source_index >= frontend_data_source_count()) return;
+    cube_index = frontend_data_cube_list[source_index];
+    if (
+        cube_index != 0 &&
+        ot_data_cube_read(
+            (u8)(frontend_episode + 1u),
+            cube_index,
+            &frontend_data_cube_cache[frontend_data_page_count]
+        )
+    ) {
+        frontend_data_page_count++;
+    }
+}
+
+static void frontend_data_prepare_finish(void)
+{
+    frontend_data_cache_valid = 1;
+}
+
+static u8 frontend_data_prepare(void)
+{
+    u8 source_index;
+
+    frontend_data_prepare_begin();
+    for (
+        source_index = 0;
+        source_index < frontend_data_source_count();
+        source_index++
+    ) {
+        frontend_data_prepare_one(source_index);
+    }
+    frontend_data_prepare_finish();
     return 1;
 }
 
@@ -132,42 +219,110 @@ static void frontend_data_draw_cube(
     s8 glow
 )
 {
+    u8 layer;
+
+    for (layer = 0; layer < 3; layer++) {
+        s16 source_x = 166;
+        s16 source_y = (s16)(38 + cube_slot * 28);
+
+        if (layer == 0) {
+            (void)frontend_blit_shp_source(
+                frontend_frame_scratch,
+                5,
+                25,
+                (s16)(source_x + 4),
+                (s16)(source_y + 4),
+                FRONTEND_SOURCE_BLIT_DARK,
+                0,
+                0
+            );
+        } else if (layer == 1) {
+            (void)frontend_blit_shp_source(
+                frontend_frame_scratch,
+                5,
+                25,
+                (s16)(source_x + 3),
+                (s16)(source_y + 3),
+                FRONTEND_SOURCE_BLIT_DARK,
+                0,
+                0
+            );
+        } else {
+            (void)frontend_blit_shp_source(
+                frontend_frame_scratch,
+                5,
+                25,
+                source_x,
+                source_y,
+                FRONTEND_SOURCE_BLIT_HUE,
+                13,
+                glow
+            );
+        }
+    }
+}
+
+static void frontend_data_draw_cube_layer(
+    u8 cube_slot,
+    s8 glow,
+    u8 layer
+)
+{
     s16 source_x = 166;
     s16 source_y = (s16)(38 + cube_slot * 28);
 
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        5,
-        25,
-        (s16)(source_x + 4),
-        (s16)(source_y + 4),
-        FRONTEND_SOURCE_BLIT_DARK,
-        0,
-        0
-    );
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        5,
-        25,
-        (s16)(source_x + 3),
-        (s16)(source_y + 3),
-        FRONTEND_SOURCE_BLIT_DARK,
-        0,
-        0
-    );
+    if (layer == 0) {
+        source_x = (s16)(source_x + 4);
+        source_y = (s16)(source_y + 4);
+    } else if (layer == 1) {
+        source_x = (s16)(source_x + 3);
+        source_y = (s16)(source_y + 3);
+    }
     (void)frontend_blit_shp_source(
         frontend_frame_scratch,
         5,
         25,
         source_x,
         source_y,
-        FRONTEND_SOURCE_BLIT_HUE,
-        13,
-        glow
+        layer < 2 ?
+            FRONTEND_SOURCE_BLIT_DARK :
+            FRONTEND_SOURCE_BLIT_HUE,
+        layer < 2 ? 0 : 13,
+        layer < 2 ? 0 : glow
     );
 }
 
-static void frontend_data_draw_portrait(void)
+static u8 frontend_data_cube_layer_begin(
+    u8 cube_slot,
+    s8 glow,
+    u8 layer
+)
+{
+    s16 source_x = 166;
+    s16 source_y = (s16)(38 + cube_slot * 28);
+
+    if (layer == 0) {
+        source_x = (s16)(source_x + 4);
+        source_y = (s16)(source_y + 4);
+    } else if (layer == 1) {
+        source_x = (s16)(source_x + 3);
+        source_y = (s16)(source_y + 3);
+    }
+    return frontend_source_stamp_job_begin(
+        &frontend_data_stamp_job,
+        frontend_frame_scratch,
+        frontend_source_stamp_shp_key(5, 25),
+        source_x,
+        source_y,
+        layer < 2 ?
+            FRONTEND_SOURCE_BLIT_DARK :
+            FRONTEND_SOURCE_BLIT_HUE,
+        layer < 2 ? 0 : 13,
+        layer < 2 ? 0 : glow
+    );
+}
+
+static void frontend_data_draw_portrait_frame(void)
 {
     frontend_fill_source_rect(
         frontend_frame_scratch,
@@ -187,6 +342,10 @@ static void frontend_data_draw_portrait(void)
         0,
         0
     );
+}
+
+static void frontend_data_draw_selected_portrait(void)
+{
     if (
         frontend_selection < frontend_data_page_count &&
         frontend_data_cache_valid
@@ -231,68 +390,130 @@ static void frontend_data_draw_portrait(void)
     }
 }
 
+static void frontend_data_draw_portrait(void)
+{
+    frontend_data_draw_portrait_frame();
+    frontend_data_draw_selected_portrait();
+}
+
+static void frontend_data_draw_list_title(u8 cube_slot)
+{
+    u8 colour =
+        cube_slot == frontend_selection ? 0xfcu : 0xfau;
+
+    frontend_draw_small_mixed_text_wrapped(
+        frontend_frame_scratch,
+        frontend_data_cube_cache[cube_slot].title,
+        FRONTEND_DATA_TEXT_X,
+        frontend_source_to_screen_y(
+            (s16)(44 + cube_slot * 28)
+        ),
+        FRONTEND_DATA_TEXT_RIGHT,
+        FRONTEND_DATA_TEXT_LINE_HEIGHT,
+        2,
+        colour
+    );
+}
+
+static void frontend_data_list_title_begin(u8 cube_slot)
+{
+    u8 colour =
+        cube_slot == frontend_selection ? 0xfcu : 0xfau;
+
+    frontend_wrapped_text_job_begin(
+        &frontend_data_text_job,
+        frontend_data_cube_cache[cube_slot].title,
+        FRONTEND_DATA_TEXT_X,
+        frontend_source_to_screen_y(
+            (s16)(44 + cube_slot * 28)
+        ),
+        FRONTEND_DATA_TEXT_RIGHT,
+        FRONTEND_DATA_TEXT_LINE_HEIGHT,
+        2,
+        colour
+    );
+}
+
+static void frontend_data_draw_list_item(u8 cube_slot)
+{
+    frontend_data_draw_cube(
+        cube_slot,
+        cube_slot == frontend_selection ?
+            frontend_data_glow :
+            0
+    );
+    frontend_data_draw_list_title(cube_slot);
+}
+
+static void frontend_data_draw_exit_item(void)
+{
+    u8 done_slot = frontend_data_page_count;
+    s16 done_source_y = frontend_data_page_count == 0 ?
+        160 :
+        (s16)(44 + done_slot * 28);
+
+    frontend_draw_small_mixed_text_clipped(
+        frontend_frame_scratch,
+        frontend_data_text(5, "Exit to Game Menu"),
+        frontend_source_to_screen_x(172),
+        frontend_source_to_screen_y(done_source_y),
+        SCREEN_WIDTH,
+        done_slot == frontend_selection ? 0xfcu : 0xfau
+    );
+}
+
+static void frontend_data_exit_text_begin(void)
+{
+    u8 done_slot = frontend_data_page_count;
+    s16 done_source_y = frontend_data_page_count == 0 ?
+        160 :
+        (s16)(44 + done_slot * 28);
+
+    frontend_wrapped_text_job_begin(
+        &frontend_data_text_job,
+        frontend_data_text(5, "Exit to Game Menu"),
+        frontend_source_to_screen_x(172),
+        frontend_source_to_screen_y(done_source_y),
+        SCREEN_WIDTH,
+        8,
+        1,
+        done_slot == frontend_selection ? 0xfcu : 0xfau
+    );
+}
+
+static void frontend_data_draw_empty_message(void)
+{
+    frontend_draw_small_mixed_text_wrapped(
+        frontend_frame_scratch,
+        frontend_data_text(
+            15,
+            "No Data is available at this time."
+        ),
+        frontend_source_to_screen_x(166),
+        frontend_source_to_screen_y(80),
+        FRONTEND_DATA_TEXT_RIGHT,
+        8,
+        5,
+        0xfau
+    );
+}
+
 static void frontend_data_draw_list(void)
 {
     u8 cube_slot;
 
     if (frontend_data_page_count == 0) {
-        frontend_draw_small_mixed_text_wrapped(
-            frontend_frame_scratch,
-            frontend_data_text(
-                15,
-                "No Data is available at this time."
-            ),
-            frontend_source_to_screen_x(166),
-            frontend_source_to_screen_y(80),
-            FRONTEND_DATA_TEXT_RIGHT,
-            8,
-            5,
-            0xfau
-        );
+        frontend_data_draw_empty_message();
     } else {
         for (
             cube_slot = 0;
             cube_slot < frontend_data_page_count;
             cube_slot++
         ) {
-            u8 colour =
-                cube_slot == frontend_selection ? 0xfcu : 0xfau;
-
-            frontend_data_draw_cube(
-                cube_slot,
-                cube_slot == frontend_selection ?
-                    frontend_data_glow :
-                    0
-            );
-            frontend_draw_small_mixed_text_wrapped(
-                frontend_frame_scratch,
-                frontend_data_cube_cache[cube_slot].title,
-                FRONTEND_DATA_TEXT_X,
-                frontend_source_to_screen_y(
-                    (s16)(44 + cube_slot * 28)
-                ),
-                FRONTEND_DATA_TEXT_RIGHT,
-                FRONTEND_DATA_TEXT_LINE_HEIGHT,
-                2,
-                colour
-            );
+            frontend_data_draw_list_item(cube_slot);
         }
     }
-    {
-        u8 done_slot = frontend_data_page_count;
-        s16 done_source_y = frontend_data_page_count == 0 ?
-            160 :
-            (s16)(44 + done_slot * 28);
-
-        frontend_draw_small_mixed_text_clipped(
-            frontend_frame_scratch,
-            frontend_data_text(5, "Exit to Game Menu"),
-            frontend_source_to_screen_x(172),
-            frontend_source_to_screen_y(done_source_y),
-            SCREEN_WIDTH,
-            done_slot == frontend_selection ? 0xfcu : 0xfau
-        );
-    }
+    frontend_data_draw_exit_item();
 }
 
 static void frontend_data_compose_list(void)
@@ -360,19 +581,23 @@ static void frontend_data_draw_reader_panel(void)
     const OtDataCube *cube =
         &frontend_data_cube_cache[frontend_data_reader_index];
     u8 line;
-    u8 max_scroll =
+    u16 max_scroll_pixels =
         cube->last_line > FRONTEND_DATA_READER_VISIBLE_LINES ?
-            (u8)(
-                cube->last_line -
-                FRONTEND_DATA_READER_VISIBLE_LINES
+            (u16)(
+                (
+                    cube->last_line -
+                    FRONTEND_DATA_READER_VISIBLE_LINES
+                ) * 12u
             ) :
             0;
+    u8 first_line = (u8)(frontend_data_scroll_pixel / 12u);
+    u8 line_offset = (u8)(frontend_data_scroll_pixel % 12u);
     u8 percent =
-        max_scroll == 0 ?
+        max_scroll_pixels == 0 ?
             100 :
             (u8)(
-                (u16)frontend_data_scroll_line * 100u /
-                max_scroll
+                (u32)frontend_data_scroll_pixel * 100u /
+                max_scroll_pixels
             );
     char percent_text[48];
     char percent_prefix[44];
@@ -388,18 +613,16 @@ static void frontend_data_draw_reader_panel(void)
     );
     for (
         line = 0;
-        line < FRONTEND_DATA_READER_VISIBLE_LINES;
+        line < FRONTEND_DATA_READER_VISIBLE_LINES + 1u;
         line++
     ) {
-        u8 source_line =
-            (u8)(frontend_data_scroll_line + line);
+        u8 source_line = (u8)(first_line + line);
 
         if (source_line >= cube->last_line) break;
         const char *text = cube->text[source_line];
         s16 x = FRONTEND_DATA_READER_X;
-        s16 y = (s16)(
-            FRONTEND_DATA_READER_Y +
-            line * FRONTEND_DATA_READER_LINE_HEIGHT
+        s16 y = frontend_source_to_screen_y(
+            (s16)(50 + line * 12u - line_offset)
         );
 
         /*
@@ -527,6 +750,27 @@ static void frontend_data_draw_reader_panel(void)
             x = (s16)(x + target_width);
         }
     }
+    /*
+     * PC redraws the fixed header/footer bands after the smoothly moving
+     * text.  This masks the partial first/tenth line at exactly the source
+     * viewport edges instead of snapping one full wrapped line per input.
+     */
+    frontend_fill_source_rect(
+        frontend_frame_scratch,
+        160,
+        39,
+        310,
+        48,
+        228
+    );
+    frontend_fill_source_rect(
+        frontend_frame_scratch,
+        160,
+        157,
+        310,
+        166,
+        228
+    );
     {
         const char *source_prefix =
             frontend_data_text(11, "Read:");
@@ -591,23 +835,44 @@ static void frontend_data_reader_scroll(s8 direction)
 {
     const OtDataCube *cube =
         &frontend_data_cube_cache[frontend_data_reader_index];
-    u8 max_scroll =
+    u16 max_scroll =
         cube->last_line > FRONTEND_DATA_READER_VISIBLE_LINES ?
-            (u8)(
-                cube->last_line -
-                FRONTEND_DATA_READER_VISIBLE_LINES
+            (u16)(
+                (
+                    cube->last_line -
+                    FRONTEND_DATA_READER_VISIBLE_LINES
+                ) * 12u
             ) :
             0;
-    u8 old_scroll = frontend_data_scroll_line;
+    u16 target = frontend_data_scroll_target;
 
     if (direction < 0) {
-        if (frontend_data_scroll_line != 0) {
-            frontend_data_scroll_line--;
-        }
-    } else if (frontend_data_scroll_line < max_scroll) {
-        frontend_data_scroll_line++;
+        target = target >= 12u ? (u16)(target - 12u) : 0;
+    } else if (target < max_scroll) {
+        target = (u16)(target + 12u);
+        if (target > max_scroll) target = max_scroll;
     }
-    if (old_scroll != frontend_data_scroll_line) {
+    if (target != frontend_data_scroll_target) {
+        frontend_data_scroll_target = target;
+        source_sound_effect(28); /* OpenTyrian S_CURSOR. */
+    }
+}
+
+static void frontend_data_reader_animate(void)
+{
+    if (
+        game_state != STATE_DATA_CUBE_READER ||
+        frontend_frame_pending ||
+        frontend_data_scroll_pixel == frontend_data_scroll_target
+    ) {
+        return;
+    }
+    if (frontend_data_scroll_pixel < frontend_data_scroll_target) {
+        frontend_data_scroll_pixel++;
+    } else {
+        frontend_data_scroll_pixel--;
+    }
+    {
         frontend_data_draw_reader_panel();
         frontend_dirty_begin();
         frontend_dirty_add(
@@ -617,7 +882,6 @@ static void frontend_data_reader_scroll(s8 direction)
             FRONTEND_DATA_RIGHT_HEIGHT
         );
         frontend_dirty_present();
-        source_sound_effect(28); /* OpenTyrian S_CURSOR. */
     }
 }
 
@@ -706,10 +970,8 @@ static u8 frontend_ship_specs_prepare(void)
     return 1;
 }
 
-static void frontend_ship_specs_draw_grid(void)
+static void frontend_ship_specs_clear(void)
 {
-    u8 line;
-
     frontend_fill_rect(
         frontend_frame_scratch,
         0,
@@ -718,6 +980,12 @@ static void frontend_ship_specs_draw_grid(void)
         SCREEN_HEIGHT,
         0
     );
+}
+
+static void frontend_ship_specs_draw_grid_vertical(void)
+{
+    u8 line;
+
     for (line = 0; line < 8; line++) {
         s16 source_x = (s16)(25 + line * 15);
         s16 bright_x = frontend_source_to_screen_x(source_x);
@@ -744,6 +1012,28 @@ static void frontend_ship_specs_draw_grid(void)
             }
         }
     }
+    frontend_fill_rect(
+        frontend_frame_scratch,
+        0,
+        0,
+        1,
+        SCREEN_HEIGHT,
+        37
+    );
+    frontend_fill_rect(
+        frontend_frame_scratch,
+        SCREEN_WIDTH - 1,
+        0,
+        1,
+        SCREEN_HEIGHT,
+        37
+    );
+}
+
+static void frontend_ship_specs_draw_grid_horizontal(void)
+{
+    u8 line;
+
     for (line = 0; line < 10; line++) {
         s16 source_y = (s16)(30 + line * 15);
         s16 bright_y = frontend_source_to_screen_y(source_y);
@@ -797,31 +1087,17 @@ static void frontend_ship_specs_draw_grid(void)
         1,
         37
     );
-    frontend_fill_rect(
-        frontend_frame_scratch,
-        0,
-        0,
-        1,
-        SCREEN_HEIGHT,
-        37
-    );
-    frontend_fill_rect(
-        frontend_frame_scratch,
-        SCREEN_WIDTH - 1,
-        0,
-        1,
-        SCREEN_HEIGHT,
-        37
-    );
 }
 
-static void frontend_render_ship_specs(void)
+static void frontend_ship_specs_draw_grid(void)
 {
-    u8 big_graphic = frontend_ship_specs_ship.bigshipgraphic;
-    s16 ship_x;
-    s16 ship_y;
+    frontend_ship_specs_clear();
+    frontend_ship_specs_draw_grid_vertical();
+    frontend_ship_specs_draw_grid_horizontal();
+}
 
-    frontend_ship_specs_draw_grid();
+static void frontend_ship_specs_draw_title(void)
+{
     frontend_draw_menu_text_clipped(
         frontend_frame_scratch,
         frontend_ship_specs_ship.name,
@@ -830,26 +1106,200 @@ static void frontend_render_ship_specs(void)
         SCREEN_WIDTH,
         0xcbu
     );
-    frontend_draw_small_mixed_text_wrapped(
-        frontend_frame_scratch,
-        frontend_ship_info_cache->paragraph[0],
+}
+
+static void frontend_wrapped_text_job_begin(
+    FrontendWrappedTextJob *job,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 line_height,
+    u8 max_lines,
+    u8 colour
+)
+{
+    *job = (FrontendWrappedTextJob){0};
+    job->text = text;
+    job->x = x;
+    job->y = y;
+    job->right = right;
+    job->line_height = line_height;
+    job->max_lines = max_lines;
+    job->colour = colour;
+    job->active =
+        text != 0 && max_lines != 0 && *text != '\0';
+}
+
+static void frontend_wrapped_text_job_prepare_line(
+    FrontendWrappedTextJob *job
+)
+{
+    u8 line_length = 0;
+
+    while (
+        job->active &&
+        *job->text != '\0' &&
+        job->lines < job->max_lines
+    ) {
+        const char *word;
+        u8 word_length = 0;
+        s16 candidate_width;
+
+        while (*job->text == ' ') job->text++;
+        if (*job->text == '\0') break;
+        word = job->text;
+        while (
+            job->text[word_length] != '\0' &&
+            job->text[word_length] != ' ' &&
+            word_length < sizeof(job->line) - 1u
+        ) {
+            word_length++;
+        }
+        if (
+            word_length == 0 ||
+            line_length +
+                (line_length != 0 ? 1u : 0u) +
+                word_length >= sizeof(job->line)
+        ) {
+            break;
+        }
+        if (line_length != 0) {
+            job->line[line_length] = ' ';
+            memcpy(
+                job->line + line_length + 1u,
+                word,
+                word_length
+            );
+            job->line[
+                line_length + 1u + word_length
+            ] = '\0';
+        } else {
+            memcpy(job->line, word, word_length);
+            job->line[word_length] = '\0';
+        }
+        candidate_width =
+            frontend_small_mixed_text_width(job->line);
+        if (
+            candidate_width > job->right - job->x &&
+            line_length != 0
+        ) {
+            job->line[line_length] = '\0';
+            break;
+        }
+        line_length = (u8)(
+            line_length +
+            (line_length != 0 ? 1u : 0u) +
+            word_length
+        );
+        job->text += word_length;
+    }
+    if (line_length != 0 && job->lines < job->max_lines) {
+        job->line[line_length] = '\0';
+        job->line_length = line_length;
+        job->draw_index = 0;
+        job->draw_x = job->x;
+        job->line_ready = 1;
+    } else {
+        job->active = 0;
+    }
+}
+
+/*
+ * Draw at most a handful of source glyphs per call.  The line breaking is
+ * byte-for-byte equivalent to frontend_draw_small_mixed_text_wrapped(); only
+ * the scheduling differs.
+ */
+static u8 frontend_wrapped_text_job_step(
+    FrontendWrappedTextJob *job
+)
+{
+    u8 glyphs = 0;
+
+    if (!job->active) return 1;
+    if (!job->line_ready) {
+        frontend_wrapped_text_job_prepare_line(job);
+        if (!job->active) return 1;
+    }
+    while (
+        job->draw_index < job->line_length &&
+        glyphs < FRONTEND_COOPERATIVE_TEXT_GLYPHS_PER_STEP
+    ) {
+        u8 tile_index = frontend_pregame_font_tile(
+            job->line[job->draw_index++]
+        );
+        u8 advance =
+            frontend_small_mixed_font_advance(tile_index);
+        s16 draw_y = (s16)(
+            job->y + job->lines * job->line_height
+        );
+
+        if (job->draw_x + advance > job->right) {
+            job->draw_index = job->line_length;
+            break;
+        }
+        frontend_blit_small_mixed_font(
+            frontend_frame_scratch,
+            tile_index,
+            (s16)(job->draw_x + 1),
+            (s16)(draw_y + 1),
+            FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_small_mixed_font(
+            frontend_frame_scratch,
+            tile_index,
+            job->draw_x,
+            draw_y,
+            job->colour
+        );
+        job->draw_x = (s16)(job->draw_x + advance);
+        glyphs++;
+    }
+    if (job->draw_index >= job->line_length) {
+        job->line_ready = 0;
+        job->line_length = 0;
+        job->lines++;
+        if (
+            job->lines >= job->max_lines ||
+            *job->text == '\0'
+        ) {
+            job->active = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void frontend_ship_specs_text_begin(u8 paragraph)
+{
+    frontend_wrapped_text_job_begin(
+        &frontend_ship_specs_text_job,
+        paragraph < OT_SHIP_INFO_PARAGRAPH_COUNT ?
+            frontend_ship_info_cache->paragraph[paragraph] :
+            "",
         frontend_source_to_screen_x(100),
-        frontend_source_to_screen_y(20),
+        frontend_source_to_screen_y(
+            paragraph == 0 ? 20 : 100
+        ),
         SCREEN_WIDTH - 3,
         8,
         9,
         0xc9u
     );
-    frontend_draw_small_mixed_text_wrapped(
-        frontend_frame_scratch,
-        frontend_ship_info_cache->paragraph[1],
-        frontend_source_to_screen_x(100),
-        frontend_source_to_screen_y(100),
-        SCREEN_WIDTH - 3,
-        8,
-        9,
-        0xc9u
-    );
+}
+
+static void frontend_ship_specs_draw_paragraph(u8 paragraph)
+{
+    if (paragraph >= OT_SHIP_INFO_PARAGRAPH_COUNT) return;
+    frontend_ship_specs_text_begin(paragraph);
+    while (!frontend_wrapped_text_job_step(
+        &frontend_ship_specs_text_job
+    )) {
+    }
+}
+
+static void frontend_ship_specs_draw_footer(void)
+{
     frontend_draw_small_mixed_text_clipped(
         frontend_frame_scratch,
         frontend_data_text(4, "Press a key"),
@@ -863,34 +1313,276 @@ static void frontend_render_ship_specs(void)
         SCREEN_WIDTH,
         0xcau
     );
+}
 
+/*
+ * OpenTyrian does not hue-shift the complete ship sprite.  It decodes the
+ * stock OPTION_SHAPES frame to a black temporary surface, compares every
+ * pixel with its four neighbours, and overlays only local-brightness maxima
+ * in green.  Keeping that exact operation here restores the source
+ * wireframe/scan look while still reading the original SHP at runtime.
+ */
+static u8 frontend_ship_specs_green_ship_begin(
+    u16 sprite_index,
+    s16 source_x,
+    s16 source_y
+)
+{
+    OtShpSprite sprite;
+
+    frontend_ship_specs_art_job = (FrontendShipArtJob){0};
+    if (
+        !ot_data_shp_sprite_read(5, sprite_index, &sprite) ||
+        !sprite.populated ||
+        sprite.width == 0 ||
+        sprite.height == 0 ||
+        sprite.width > FRONTEND_SHIP_SPRITE_WIDTH ||
+        sprite.height > FRONTEND_SHIP_SPRITE_HEIGHT
+    ) {
+        return 0;
+    }
+    memset(
+        frontend_ship_sprite_scratch,
+        0,
+        FRONTEND_SHIP_SPRITE_BYTES
+    );
+    telemetry_frontend_runtime_shp_decodes++;
+    frontend_ship_specs_art_job.sprite = sprite;
+    frontend_ship_specs_art_job.source_x = source_x;
+    frontend_ship_specs_art_job.source_y = source_y;
+    frontend_ship_specs_art_job.active = 1;
+    return 1;
+}
+
+/*
+ * Decode and filter a bounded number of source rows per VBlank.  This is the
+ * exact OpenTyrian local-brightness wireframe operation, merely made
+ * cooperative so entering Ship Specs cannot starve audio.
+ */
+static s8 frontend_ship_specs_green_ship_step(void)
+{
+    FrontendShipArtJob *job = &frontend_ship_specs_art_job;
+    const OtShpSprite *sprite = &job->sprite;
+
+    if (!job->active) return -1;
+    if (job->phase == 0) {
+        u16 row_limit = (u16)(
+            job->y + FRONTEND_SHIP_ART_DECODE_ROWS_PER_STEP
+        );
+
+        if (row_limit > sprite->height) {
+            row_limit = sprite->height;
+        }
+        while (
+            job->position < sprite->encoded.size &&
+            job->y < row_limit
+        ) {
+            u8 code =
+                sprite->encoded.data[job->position++];
+
+            if (code == 255) {
+                if (job->position >= sprite->encoded.size) {
+                    job->active = 0;
+                    return -1;
+                }
+                job->x = (u16)(
+                    job->x +
+                    sprite->encoded.data[job->position++]
+                );
+            } else if (code == 254) {
+                job->x = sprite->width;
+            } else if (code == 253) {
+                job->x++;
+            } else {
+                if (job->x < sprite->width) {
+                    frontend_ship_sprite_scratch[
+                        (u32)job->y *
+                            FRONTEND_SHIP_SPRITE_WIDTH +
+                        job->x
+                    ] = code;
+                }
+                job->x++;
+            }
+            while (
+                job->x >= sprite->width &&
+                job->y < sprite->height
+            ) {
+                job->x = (u16)(job->x - sprite->width);
+                job->y++;
+            }
+        }
+        if (job->y >= sprite->height) {
+            job->phase = 1;
+            job->filter_row = 0;
+        } else if (job->position >= sprite->encoded.size) {
+            job->active = 0;
+            return -1;
+        }
+        return 0;
+    } else {
+        u16 end_row = (u16)(
+            job->filter_row +
+            FRONTEND_SHIP_ART_FILTER_ROWS_PER_STEP
+        );
+        u16 y;
+
+        if (end_row > sprite->height) {
+            end_row = sprite->height;
+        }
+        for (y = job->filter_row; y < end_row; y++) {
+            u16 x;
+
+            for (x = 0; x < sprite->width; x++) {
+                const u8 *pixel =
+                    frontend_ship_sprite_scratch +
+                    (u32)y * FRONTEND_SHIP_SPRITE_WIDTH +
+                    x;
+                u8 value = *pixel & 0x0fu;
+                u16 neighbours = 0;
+
+                if (value == 0) continue;
+                if (y != 0) {
+                    neighbours +=
+                        pixel[
+                            -(s32)FRONTEND_SHIP_SPRITE_WIDTH
+                        ] & 0x0fu;
+                }
+                if (y + 1u < sprite->height) {
+                    neighbours +=
+                        pixel[FRONTEND_SHIP_SPRITE_WIDTH] &
+                        0x0fu;
+                }
+                if (x != 0) neighbours += pixel[-1] & 0x0fu;
+                if (x + 1u < sprite->width) {
+                    neighbours += pixel[1] & 0x0fu;
+                }
+                if (value > (neighbours >> 2)) {
+                    frontend_source_plot(
+                        frontend_frame_scratch,
+                        (s16)(job->source_x + x),
+                        (s16)(job->source_y + y),
+                        (u8)(0xc0u | value),
+                        FRONTEND_SOURCE_BLIT_NORMAL,
+                        0,
+                        0
+                    );
+                }
+            }
+        }
+        job->filter_row = end_row;
+        if (job->filter_row >= sprite->height) {
+            job->active = 0;
+            return 1;
+        }
+        return 0;
+    }
+}
+
+static u8 frontend_ship_specs_art_parameters(
+    u16 *sprite_index,
+    s16 *ship_x,
+    s16 *ship_y
+)
+{
+    u8 big_graphic = frontend_ship_specs_ship.bigshipgraphic;
+
+    if (
+        sprite_index == 0 ||
+        ship_x == 0 ||
+        ship_y == 0
+    ) {
+        return 0;
+    }
     if (big_graphic == 0) big_graphic = 32;
     switch (big_graphic) {
     case 28:
-        ship_x = 1;
-        ship_y = 36;
+        *ship_x = 1;
+        *ship_y = 36;
         break;
     case 33:
-        ship_x = 1;
-        ship_y = 35;
+        *ship_x = 1;
+        *ship_y = 35;
         break;
     case 32:
     default:
-        ship_x = 5;
-        ship_y = 33;
+        *ship_x = 5;
+        *ship_y = 33;
         big_graphic = 32;
         break;
     }
-    (void)frontend_blit_shp_source(
-        frontend_frame_scratch,
-        5,
-        (u16)(big_graphic - 1u),
-        ship_x,
-        ship_y,
-        FRONTEND_SOURCE_BLIT_HUE,
-        12,
-        0
-    );
+    *sprite_index = (u16)(big_graphic - 1u);
+    return 1;
+}
+
+static u8 frontend_ship_specs_art_begin(void)
+{
+    u16 sprite_index;
+    s16 ship_x;
+    s16 ship_y;
+
+    return
+        frontend_ship_specs_art_parameters(
+            &sprite_index,
+            &ship_x,
+            &ship_y
+        ) &&
+        frontend_ship_specs_green_ship_begin(
+            sprite_index,
+            ship_x,
+            ship_y
+        );
+}
+
+static void frontend_ship_specs_draw_art_fallback(void)
+{
+    u16 sprite_index;
+    s16 ship_x;
+    s16 ship_y;
+
+    if (
+        frontend_ship_specs_art_parameters(
+            &sprite_index,
+            &ship_x,
+            &ship_y
+        )
+    ) {
+        (void)frontend_blit_shp_source(
+            frontend_frame_scratch,
+            5,
+            sprite_index,
+            ship_x,
+            ship_y,
+            FRONTEND_SOURCE_BLIT_HUE,
+            12,
+            0
+        );
+    }
+}
+
+static void frontend_ship_specs_draw_art(void)
+{
+    s8 result;
+
+    if (!frontend_ship_specs_art_begin()) {
+        frontend_ship_specs_draw_art_fallback();
+        return;
+    }
+    do {
+        result = frontend_ship_specs_green_ship_step();
+    } while (result == 0);
+    if (result < 0) {
+        frontend_ship_specs_draw_art_fallback();
+    }
+}
+
+static void frontend_render_ship_specs(void)
+{
+    frontend_ship_specs_draw_grid();
+    frontend_ship_specs_draw_title();
+    frontend_ship_specs_draw_paragraph(0);
+    frontend_ship_specs_draw_paragraph(1);
+    frontend_ship_specs_draw_footer();
+    frontend_ship_specs_draw_art();
     frontend_present(
         frontend_frame_scratch,
         frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)

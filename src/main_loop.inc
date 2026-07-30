@@ -328,11 +328,10 @@ int main(void)
                 )
             ) {
                 /*
-                 * Capture a real first-Episode ROMFS cube without requiring
-                 * a complete level playthrough before the visual test.
+                 * The stock Episode 1 pre-menu script exposes four cubes.
+                 * Keep that naturally parsed campaign state intact so the
+                 * visual regression catches ]?, ]! and ]+ timing failures.
                  */
-                frontend_data_cube_count = 1;
-                frontend_data_cube_list[0] = 1;
                 frontend_selection = 0;
             } else if (
                 game_state == STATE_GAME_MENU &&

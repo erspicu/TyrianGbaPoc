@@ -20,6 +20,7 @@ enum {
     OT_LEVEL_MAP1_BYTES = OT_LEVEL_MAP1_COLUMNS * OT_LEVEL_MAP1_ROWS,
     OT_LEVEL_MAP2_BYTES = OT_LEVEL_MAP2_COLUMNS * OT_LEVEL_MAP2_ROWS,
     OT_LEVEL_MAP3_BYTES = OT_LEVEL_MAP3_COLUMNS * OT_LEVEL_MAP3_ROWS,
+    OT_CUBE_INDEX_CAPACITY = 96,
     /*
      * The four stock levelsN.dat files contain at most 51 '*' sections.
      * Keep a little format headroom while retaining a tiny direct-ROM
@@ -66,9 +67,20 @@ typedef struct {
     bool valid;
 } OtEpisodeScriptIndex;
 
+typedef struct {
+    const uint8_t *data;
+    uint32_t size;
+    uint32_t record_offset[OT_CUBE_INDEX_CAPACITY];
+    uint8_t record_count;
+    bool valid;
+} OtCubeIndex;
+
 static OtDataCatalog catalog;
 static OtDataState data_state;
 static OtEpisodeScriptIndex episode_script_index;
+static OtCubeIndex cube_file_index;
+static uint8_t cube_tiny_font_width_cache[256];
+static bool cube_tiny_font_width_cache_valid;
 static bool initialization_attempted;
 
 static const uint8_t encrypted_pascal_key[10] = {
@@ -377,6 +389,79 @@ static uint8_t script_item_values(
     return count;
 }
 
+/*
+ * Preserve JE_loadMap()'s ordered ]?, ]! and ]+ state mutations for both
+ * the pre-menu map pass and the playable-level pass.  A shared parser keeps
+ * the two adapters byte-for-byte consistent.
+ *
+ * Return 0 for a non-cube directive, 1 for success and -1 for malformed
+ * state (currently only operation-capacity overflow).
+ */
+static int episode_cube_directive_parse(
+    const char *line,
+    uint8_t cube_list[OT_EPISODE_CUBE_CAPACITY],
+    uint8_t *cube_list_count,
+    bool *cube_list_valid,
+    OtEpisodeCubeOperation
+        cube_operation[OT_EPISODE_CUBE_OPERATION_CAPACITY],
+    uint8_t *cube_operation_count
+)
+{
+    uint16_t value;
+
+    if (
+        line == 0 ||
+        line[0] != ']' ||
+        (
+            line[1] != '?' &&
+            line[1] != '!' &&
+            line[1] != '+'
+        )
+    ) {
+        return 0;
+    }
+    if (
+        cube_list == 0 ||
+        cube_list_count == 0 ||
+        cube_list_valid == 0 ||
+        cube_operation == 0 ||
+        cube_operation_count == 0 ||
+        *cube_operation_count >=
+            OT_EPISODE_CUBE_OPERATION_CAPACITY
+    ) {
+        return -1;
+    }
+
+    value = script_number(line + 4);
+    if (value > OT_EPISODE_CUBE_CAPACITY) {
+        value = OT_EPISODE_CUBE_CAPACITY;
+    }
+    if (line[1] == '?') {
+        uint8_t index;
+
+        *cube_list_count = (uint8_t)value;
+        *cube_list_valid = true;
+        memset(cube_list, 0, OT_EPISODE_CUBE_CAPACITY);
+        for (index = 0; index < value; index++) {
+            cube_list[index] = (uint8_t)script_number(
+                line + 3u + (uint32_t)(index + 1u) * 4u
+            );
+        }
+    }
+    cube_operation[(*cube_operation_count)++] =
+        (OtEpisodeCubeOperation){
+            line[1] == '?' ?
+                OT_EPISODE_CUBE_OP_CLAMP :
+                (
+                    line[1] == '!' ?
+                        OT_EPISODE_CUBE_OP_SET :
+                        OT_EPISODE_CUBE_OP_ADD
+                ),
+            (uint8_t)value,
+        };
+    return 1;
+}
+
 static bool episode_seek_section(
     const OtRomFsStat *file,
     uint16_t section,
@@ -392,6 +477,53 @@ static bool episode_seek_section(
         return false;
     }
     *position = episode_script_index.section_offset[section - 1u];
+    return true;
+}
+
+/*
+ * cubetxtN.dat is another encrypted Pascal stream.  Record boundaries and
+ * '*' markers can be indexed without decrypting whole strings: the first
+ * encrypted byte only needs key[0].  This turns every cube lookup from a
+ * repeated O(file) scan into one direct ROM offset.
+ */
+static bool cube_file_index_build(const OtRomFsStat *file)
+{
+    OtCubeIndex built = {0};
+    uint32_t cursor = 0;
+
+    if (file == 0 || file->data == 0) return false;
+    if (
+        cube_file_index.valid &&
+        cube_file_index.data == file->data &&
+        cube_file_index.size == file->size
+    ) {
+        return true;
+    }
+    built.data = file->data;
+    built.size = file->size;
+    while (cursor < file->size) {
+        uint32_t record_offset = cursor;
+        uint8_t length = file->data[cursor++];
+
+        if (!span_is_valid(file->size, cursor, length)) return false;
+        if (
+            length != 0 &&
+            (
+                file->data[cursor] ^
+                encrypted_pascal_key[0]
+            ) == '*'
+        ) {
+            if (built.record_count >= OT_CUBE_INDEX_CAPACITY) {
+                return false;
+            }
+            built.record_offset[built.record_count++] =
+                record_offset;
+        }
+        cursor += length;
+    }
+    if (built.record_count == 0) return false;
+    built.valid = true;
+    cube_file_index = built;
     return true;
 }
 
@@ -904,40 +1036,80 @@ static int16_t cube_tiny_font_sprite(uint8_t character)
     return -1;
 }
 
-static uint8_t cube_tiny_font_character_width(
-    uint8_t character,
-    uint8_t width_cache[256]
-)
+static bool cube_tiny_font_width_cache_build(void)
 {
-    uint8_t cached = width_cache[character];
-    int16_t sprite_id;
-    OtShpSprite sprite;
+    uint8_t sprite_width[256];
+    uint32_t position;
+    uint32_t end;
+    uint16_t count;
+    uint16_t sprite;
+    uint16_t character;
 
-    if (cached != UINT8_MAX) return cached;
-    if (character == ' ') {
-        width_cache[character] = 6;
-        return 6;
+    if (cube_tiny_font_width_cache_valid) return true;
+    if (data_state.shp.data == 0) return false;
+    position = table_offset(&data_state.shp, 2);
+    end = table_offset(&data_state.shp, 3);
+    if (!span_is_valid(end, position, 2)) return false;
+    count = read_u16(data_state.shp.data + position);
+    position += 2;
+    if (count > 256) return false;
+    memset(sprite_width, 0, sizeof(sprite_width));
+    for (sprite = 0; sprite < count; sprite++) {
+        bool populated;
+
+        if (!span_is_valid(end, position, 1)) return false;
+        populated = data_state.shp.data[position++] != 0;
+        if (populated) {
+            uint16_t width;
+            uint16_t encoded_bytes;
+
+            if (!span_is_valid(end, position, 6)) return false;
+            width = read_u16(data_state.shp.data + position);
+            encoded_bytes =
+                read_u16(data_state.shp.data + position + 4);
+            position += 6;
+            if (
+                width >= UINT8_MAX ||
+                !span_is_valid(end, position, encoded_bytes)
+            ) {
+                return false;
+            }
+            sprite_width[sprite] = (uint8_t)(width + 1u);
+            position += encoded_bytes;
+        }
     }
-    sprite_id = cube_tiny_font_sprite(character);
-    if (
-        sprite_id >= 0 &&
-        ot_data_shp_sprite_read(2, (uint16_t)sprite_id, &sprite) &&
-        sprite.populated &&
-        sprite.width < UINT8_MAX
-    ) {
-        cached = (uint8_t)(sprite.width + 1u);
-    } else {
-        /* '~' changes brightness in the source font and has zero advance. */
-        cached = 0;
+    if (position != end) return false;
+    memset(
+        cube_tiny_font_width_cache,
+        0,
+        sizeof(cube_tiny_font_width_cache)
+    );
+    cube_tiny_font_width_cache[' '] = 6;
+    for (character = 0; character < 256; character++) {
+        int16_t sprite_id =
+            cube_tiny_font_sprite((uint8_t)character);
+
+        if (sprite_id >= 0 && sprite_id < (int16_t)count) {
+            cube_tiny_font_width_cache[character] =
+                sprite_width[sprite_id];
+        }
     }
-    width_cache[character] = cached;
-    return cached;
+    cube_tiny_font_width_cache_valid = true;
+    return true;
 }
 
-static uint16_t cube_tiny_font_text_width(
-    const char *text,
-    uint8_t width_cache[256]
-)
+static uint8_t cube_tiny_font_character_width(uint8_t character)
+{
+    if (
+        !cube_tiny_font_width_cache_valid &&
+        !cube_tiny_font_width_cache_build()
+    ) {
+        return character == ' ' ? 6 : 0;
+    }
+    return cube_tiny_font_width_cache[character];
+}
+
+static uint16_t cube_tiny_font_text_width(const char *text)
 {
     uint16_t width = 0;
 
@@ -945,12 +1117,208 @@ static uint16_t cube_tiny_font_text_width(
         width = (uint16_t)(
             width +
             cube_tiny_font_character_width(
-                (uint8_t)*text++,
-                width_cache
+                (uint8_t)*text++
             )
         );
     }
     return width;
+}
+
+static void cube_text_record_consume(
+    char buffer[256],
+    OtDataCubeReader *reader,
+    OtDataCube *cube
+)
+{
+    uint16_t word_start;
+    uint16_t index;
+    uint16_t buffer_length;
+
+    if (buffer[0] == '\0') {
+        reader->line = (uint16_t)(
+            reader->line +
+            (reader->line_chars == 0 ? 4u : 1u)
+        );
+        reader->line_chars = 0;
+        reader->line_width = 0;
+        return;
+    }
+
+    buffer_length = (uint16_t)strlen(buffer);
+    word_start = 0;
+    for (index = 0; index <= buffer_length; index++) {
+        bool end_of_line = buffer[index] == '\0';
+        bool end_of_word =
+            end_of_line || buffer[index] == ' ';
+
+        if (end_of_word) {
+            char *word;
+            uint16_t word_chars;
+            uint16_t word_width;
+            bool prepend_space = true;
+
+            buffer[index] = '\0';
+            word = buffer + word_start;
+            word_start = (uint16_t)(index + 1u);
+            word_chars = (uint16_t)strlen(word);
+            word_width = cube_tiny_font_text_width(word);
+            if (
+                word_chars >
+                    OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
+                word_width > 150
+            ) {
+                break;
+            }
+            reader->line_chars = (uint16_t)(
+                reader->line_chars + word_chars + 1u
+            );
+            reader->line_width = (uint16_t)(
+                reader->line_width + word_width + 6u
+            );
+            if (
+                reader->line_chars >
+                    OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
+                reader->line_width > 150
+            ) {
+                reader->line++;
+                reader->line_chars = word_chars;
+                reader->line_width = word_width;
+                prepend_space = false;
+            }
+            if (
+                reader->line < OT_DATA_CUBE_TEXT_LINE_COUNT &&
+                word_chars != 0
+            ) {
+                size_t used = strlen(cube->text[reader->line]);
+
+                if (
+                    prepend_space &&
+                    used + 1u <
+                        OT_DATA_CUBE_TEXT_LINE_BYTES
+                ) {
+                    cube->text[reader->line][used++] = ' ';
+                    cube->text[reader->line][used] = '\0';
+                }
+                if (
+                    used + word_chars <
+                        OT_DATA_CUBE_TEXT_LINE_BYTES
+                ) {
+                    memcpy(
+                        cube->text[reader->line] + used,
+                        word,
+                        word_chars + 1u
+                    );
+                    cube->last_line =
+                        (uint8_t)(reader->line + 1u);
+                }
+            }
+        }
+        if (end_of_line) break;
+    }
+}
+
+bool ot_data_cube_read_begin(
+    uint8_t episode,
+    uint8_t cube_index,
+    OtDataCube *cube,
+    OtDataCubeReader *reader
+)
+{
+    OtRomFsStat file;
+    char filename[] = "cubetxt1.dat";
+    char buffer[256];
+    uint16_t face_number;
+
+    if (
+        cube == 0 ||
+        reader == 0 ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        cube_index == 0
+    ) {
+        return false;
+    }
+    *reader = (OtDataCubeReader){0};
+    filename[7] = (char)('0' + episode);
+    if (
+        !stat_data_file(filename, &file) ||
+        !cube_file_index_build(&file) ||
+        cube_index > cube_file_index.record_count
+    ) {
+        return false;
+    }
+    memset(cube, 0, sizeof(*cube));
+    reader->data = file.data;
+    reader->size = file.size;
+    reader->position =
+        cube_file_index.record_offset[cube_index - 1u];
+    if (
+        !encrypted_pascal_read(
+            &file,
+            &reader->position,
+            buffer,
+            sizeof(buffer)
+        ) ||
+        buffer[0] != '*'
+    ) {
+        return false;
+    }
+    face_number = script_number(buffer + 4);
+    cube->face_sprite =
+        face_number == 0 ? -1 : (int16_t)(face_number - 1u);
+    if (
+        !encrypted_pascal_read(
+            &file,
+            &reader->position,
+            cube->title,
+            sizeof(cube->title)
+        ) ||
+        !encrypted_pascal_read(
+            &file,
+            &reader->position,
+            cube->header,
+            sizeof(cube->header)
+        )
+    ) {
+        return false;
+    }
+    reader->active = true;
+    return true;
+}
+
+int8_t ot_data_cube_read_step(
+    OtDataCubeReader *reader,
+    OtDataCube *cube
+)
+{
+    OtRomFsStat file = {0};
+    char buffer[256];
+
+    if (
+        reader == 0 ||
+        cube == 0 ||
+        !reader->active ||
+        reader->data == 0
+    ) {
+        return -1;
+    }
+    file.data = reader->data;
+    file.size = reader->size;
+    if (!encrypted_pascal_read(
+            &file,
+            &reader->position,
+            buffer,
+            sizeof(buffer)
+        )) {
+        reader->active = false;
+        return -1;
+    }
+    if (buffer[0] == '*') {
+        reader->active = false;
+        return 1;
+    }
+    cube_text_record_consume(buffer, reader, cube);
+    return 0;
 }
 
 bool ot_data_cube_read(
@@ -959,162 +1327,21 @@ bool ot_data_cube_read(
     OtDataCube *cube
 )
 {
-    OtRomFsStat file;
-    char filename[] = "cubetxt1.dat";
-    char buffer[256];
-    uint8_t width_cache[256];
-    uint32_t position = 0;
-    uint16_t line = 0;
-    uint16_t line_chars = 0;
-    uint16_t line_width = 0;
-    uint16_t face_number;
+    OtDataCubeReader reader;
+    int8_t result;
 
-    if (
-        cube == 0 ||
-        episode == 0 ||
-        episode > OT_EPISODE_COUNT ||
-        cube_index == 0
-    ) {
+    if (!ot_data_cube_read_begin(
+            episode,
+            cube_index,
+            cube,
+            &reader
+        )) {
         return false;
     }
-    filename[7] = (char)('0' + episode);
-    if (!stat_data_file(filename, &file)) return false;
-    memset(cube, 0, sizeof(*cube));
-    memset(width_cache, UINT8_MAX, sizeof(width_cache));
-
-    /*
-     * load_cube() seeks by counting '*' records.  The marker itself also
-     * carries the one-based face number at offset four.
-     */
-    while (cube_index != 0) {
-        if (!encrypted_pascal_read(
-                &file,
-                &position,
-                buffer,
-                sizeof(buffer)
-            )) {
-            return false;
-        }
-        if (buffer[0] == '*') cube_index--;
-    }
-    face_number = script_number(buffer + 4);
-    cube->face_sprite =
-        face_number == 0 ? -1 : (int16_t)(face_number - 1u);
-    if (
-        !encrypted_pascal_read(
-            &file,
-            &position,
-            cube->title,
-            sizeof(cube->title)
-        ) ||
-        !encrypted_pascal_read(
-            &file,
-            &position,
-            cube->header,
-            sizeof(cube->header)
-        )
-    ) {
-        return false;
-    }
-
-    for (;;) {
-        uint16_t word_start;
-        uint16_t index;
-        uint16_t buffer_length;
-
-        if (!encrypted_pascal_read(
-                &file,
-                &position,
-                buffer,
-                sizeof(buffer)
-            )) {
-            return false;
-        }
-        if (buffer[0] == '*') break;
-        if (buffer[0] == '\0') {
-            line = (uint16_t)(
-                line + (line_chars == 0 ? 4u : 1u)
-            );
-            line_chars = 0;
-            line_width = 0;
-            continue;
-        }
-
-        buffer_length = (uint16_t)strlen(buffer);
-        word_start = 0;
-        for (index = 0; index <= buffer_length; index++) {
-            bool end_of_line = buffer[index] == '\0';
-            bool end_of_word =
-                end_of_line || buffer[index] == ' ';
-
-            if (end_of_word) {
-                char *word;
-                uint16_t word_chars;
-                uint16_t word_width;
-                bool prepend_space = true;
-
-                buffer[index] = '\0';
-                word = buffer + word_start;
-                word_start = (uint16_t)(index + 1u);
-                word_chars = (uint16_t)strlen(word);
-                word_width = cube_tiny_font_text_width(
-                    word,
-                    width_cache
-                );
-                if (
-                    word_chars >
-                        OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
-                    word_width > 150
-                ) {
-                    break;
-                }
-                line_chars = (uint16_t)(
-                    line_chars + word_chars + 1u
-                );
-                line_width = (uint16_t)(
-                    line_width + word_width + 6u
-                );
-                if (
-                    line_chars >
-                        OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
-                    line_width > 150
-                ) {
-                    line++;
-                    line_chars = word_chars;
-                    line_width = word_width;
-                    prepend_space = false;
-                }
-                if (
-                    line < OT_DATA_CUBE_TEXT_LINE_COUNT &&
-                    word_chars != 0
-                ) {
-                    size_t used = strlen(cube->text[line]);
-
-                    if (
-                        prepend_space &&
-                        used + 1u <
-                            OT_DATA_CUBE_TEXT_LINE_BYTES
-                    ) {
-                        cube->text[line][used++] = ' ';
-                        cube->text[line][used] = '\0';
-                    }
-                    if (
-                        used + word_chars <
-                        OT_DATA_CUBE_TEXT_LINE_BYTES
-                    ) {
-                        memcpy(
-                            cube->text[line] + used,
-                            word,
-                            word_chars + 1u
-                        );
-                        cube->last_line = (uint8_t)(line + 1u);
-                    }
-                }
-            }
-            if (end_of_line) break;
-        }
-    }
-    return true;
+    do {
+        result = ot_data_cube_read_step(&reader, cube);
+    } while (result == 0);
+    return result > 0;
 }
 
 bool ot_data_ship_info_read(
@@ -1447,12 +1674,16 @@ bool ot_data_init(void)
     catalog = (OtDataCatalog){0};
     data_state = (OtDataState){0};
     episode_script_index = (OtEpisodeScriptIndex){0};
+    cube_file_index = (OtCubeIndex){0};
+    cube_tiny_font_width_cache_valid = false;
     catalog.selected_mus_song = UINT16_MAX;
 
     catalog.hdt_valid = parse_hdt();
     catalog.lvl_valid = parse_lvl();
     catalog.pic_valid = parse_pic();
-    catalog.shp_valid = parse_shp();
+    catalog.shp_valid =
+        parse_shp() &&
+        cube_tiny_font_width_cache_build();
     catalog.mus_valid = parse_mus();
     catalog.raw_bytes_referenced =
         data_state.lvl.size +
@@ -1597,63 +1828,22 @@ bool ot_data_episode_level_resolve(
                 } while (line[0] != '#');
                 break;
 
-            case '?': {
-                uint16_t count = script_number(line + 4);
-                uint8_t index;
-
-                if (count > OT_EPISODE_CUBE_CAPACITY) {
-                    count = OT_EPISODE_CUBE_CAPACITY;
-                }
-                resolved.cube_list_count = (uint8_t)count;
-                resolved.cube_list_valid = true;
-                memset(
-                    resolved.cube_list,
-                    0,
-                    sizeof(resolved.cube_list)
-                );
-                for (index = 0; index < count; index++) {
-                    resolved.cube_list[index] = (uint8_t)script_number(
-                        line + 3u + (uint32_t)(index + 1u) * 4u
-                    );
-                }
-                if (
-                    resolved.cube_operation_count >=
-                        OT_EPISODE_CUBE_OPERATION_CAPACITY
-                ) {
-                    return false;
-                }
-                resolved.cube_operation[
-                    resolved.cube_operation_count++
-                ] = (OtEpisodeCubeOperation){
-                    OT_EPISODE_CUBE_OP_CLAMP,
-                    (uint8_t)count,
-                };
-                break;
-            }
-
+            case '?':
             case '!':
-            case '+': {
-                uint16_t value = script_number(line + 4);
-
-                if (value > OT_EPISODE_CUBE_CAPACITY) {
-                    value = OT_EPISODE_CUBE_CAPACITY;
-                }
+            case '+':
                 if (
-                    resolved.cube_operation_count >=
-                        OT_EPISODE_CUBE_OPERATION_CAPACITY
+                    episode_cube_directive_parse(
+                        line,
+                        resolved.cube_list,
+                        &resolved.cube_list_count,
+                        &resolved.cube_list_valid,
+                        resolved.cube_operation,
+                        &resolved.cube_operation_count
+                    ) < 0
                 ) {
                     return false;
                 }
-                resolved.cube_operation[
-                    resolved.cube_operation_count++
-                ] = (OtEpisodeCubeOperation){
-                    line[1] == '!' ?
-                        OT_EPISODE_CUBE_OP_SET :
-                        OT_EPISODE_CUBE_OP_ADD,
-                    (uint8_t)value,
-                };
                 break;
-            }
 
             case 'G': {
                 uint16_t choice_count = script_number(line + 7);
@@ -1866,6 +2056,23 @@ bool ot_data_episode_map_resolve(
                         return false;
                     }
                 } while (line[0] != '#');
+                break;
+
+            case '?':
+            case '!':
+            case '+':
+                if (
+                    episode_cube_directive_parse(
+                        line,
+                        resolved.cube_list,
+                        &resolved.cube_list_count,
+                        &resolved.cube_list_valid,
+                        resolved.cube_operation,
+                        &resolved.cube_operation_count
+                    ) < 0
+                ) {
+                    return false;
+                }
                 break;
 
             case 'G': {

@@ -5,8 +5,12 @@ static u16 autotest_aim_keys(s16 target_x, s16 target_y)
 
     if (target_x < SOURCE_PLAYER_MIN_X) target_x = SOURCE_PLAYER_MIN_X;
     if (target_x > SOURCE_PLAYER_MAX_X) target_x = SOURCE_PLAYER_MAX_X;
-    if (target_y < SOURCE_PLAYER_MIN_Y) target_y = SOURCE_PLAYER_MIN_Y;
-    if (target_y > SOURCE_PLAYER_MAX_Y) target_y = SOURCE_PLAYER_MAX_Y;
+    if (target_y < SOURCE_PLAYER_CLAMP_MIN_Y) {
+        target_y = SOURCE_PLAYER_CLAMP_MIN_Y;
+    }
+    if (target_y > SOURCE_PLAYER_CLAMP_MAX_Y) {
+        target_y = SOURCE_PLAYER_CLAMP_MAX_Y;
+    }
     if (player_source_x < target_x - 2) {
         keys |= KEY_RIGHT;
     } else if (player_source_x > target_x + 2) {

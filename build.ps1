@@ -343,9 +343,9 @@ if (
     [int64]$assetReport.finite_music_09_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_10_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_30_it_bytes -le 0 -or
-    $assetReport.frontend_source_stamp_shp_keys -ne "31" -or
-    $assetReport.frontend_source_stamp_count -ne "14975" -or
-    $assetReport.frontend_source_stamp_data_bytes -ne "6843864" -or
+    $assetReport.frontend_source_stamp_shp_keys -ne "49" -or
+    $assetReport.frontend_source_stamp_count -ne "15425" -or
+    $assetReport.frontend_source_stamp_data_bytes -ne "7890692" -or
     $assetReport.frontend_source_stamp_runtime_rle_decode -ne "0" -or
     $assetReport.frontend_source_stamp_strategy -ne
         "build-time lossless decode + 25 scale phases + aligned sparse runs" -or
@@ -362,21 +362,35 @@ if (
     $assetReport.background_palette_mode -ne
         "runtime-key safe-unused OKLab+CIEDE2000" -or
     $assetReport.background_palette_shape_file_ids -ne "),w,x,y,z" -or
-    $assetReport.background_palette_level_specific_tables -ne "0" -or
+    $assetReport.background_palette_level_specific_tables -ne "62" -or
     $assetReport.background_palette_shape_bank_specific_tables -ne "5" -or
+    $assetReport.background_palette_level_active_masks -ne "202" -or
+    $assetReport.background_palette_level_compact_bytes -ne "363756" -or
+    $assetReport.background_palette_level_dataset_unique_keys -ne "75555" -or
     $assetReport.background_palette_runtime_logical_levels -ne "62" -or
     $assetReport.background_palette_runtime_map_tiles -ne "13771254" -or
     $assetReport.background_palette_runtime_unique_keys -ne "33360" -or
     $assetReport.background_palette_runtime_active_masks -ne "202" -or
     $assetReport.background_palette_palette_sha256 -ne
-        "130ef4c2292f2d12ba8c8bf544858f22a7795dfbf5160b074320ef7a2ddebe90" -or
+        "a3f6d3b861e5db595f7553a9ddc7a1f311d9eed84ec7aa6690cdd64357be9f9b" -or
     $assetReport.background_palette_nearest_sha256 -ne
-        "5026d215f4ea94a75790b8226227da39787557f98b11f6902b1779c8035a64a6" -or
+        "f80cc48287506f882cb12ba0ace095faf6c41e3522342c92acfc3d2fac54dd6a" -or
     $assetReport.background_palette_mask_sha256 -ne
-        "24017252ff50a08fa78acbce904c12b38e9a8ae0715305c55babeae338946f45" -or
+        "9a9c5463aa7888ff40f678c967bd70cc3074dc6d2722e4ba7bf45c757e92f8d0" -or
     $assetReport.background_palette_training_policy -ne
         "preserve runtime-used v53 banks; train unused banks; accept only per-key OKLab+CIEDE2000 non-regressions" -or
     $assetReport.background_palette_ciede2000_reference_vectors -ne "3" -or
+    $assetReport.background_palette_level_e4_l1_shape -ne "z" -or
+    $assetReport.background_palette_level_e4_l1_runtime_keys -ne "1957" -or
+    $assetReport.background_palette_level_e4_l1_active_masks -ne "43" -or
+    [double](
+        $assetReport.background_palette_level_e4_l1_oklab_improvement -replace
+            "%$", ""
+    ) -lt 43.0 -or
+    [double](
+        $assetReport.background_palette_level_e4_l1_ciede2000_improvement -replace
+            "%$", ""
+    ) -lt 17.0 -or
     $assetReport["background_palette_shape_)_dataset_sha256"] -ne
         "90b1e0f9c3bc6f126353d70c345f7b1952980b0398ba76b2942adfc0157dba98" -or
     $assetReport.background_palette_shape_w_dataset_sha256 -ne
@@ -1543,7 +1557,7 @@ $telemetryChecks = [ordered]@{
                     $telemetry.sprite2_compact_uploads
             ) * 1024 +
                 $telemetry.sprite2_compact_uploads * 256 -and
-        $telemetry.sprite2_cache_slots -eq 24
+        $telemetry.sprite2_cache_slots -eq 25
     )
     upgrade_loadout_runtime = (
         $telemetry.upgrade_loadout_runtime -eq 1
@@ -1553,11 +1567,11 @@ $telemetryChecks = [ordered]@{
     # the edges, so its deterministic visibility trace has its own exact
     # Sprite2/L2 upload golden without changing gameplay event counts.
     sprite2_workload_unchanged = (
-        $telemetry.sprite2_cache_misses -eq 724 -and
-        $telemetry.sprite2_cache_evictions -eq 699 -and
-        $telemetry.sprite2_uploads -eq 724 -and
-        $telemetry.sprite2_upload_bytes -eq 733696 -and
-        $telemetry.sprite2_max_uploads_per_frame -eq 14 -and
+        $telemetry.sprite2_cache_misses -eq 722 -and
+        $telemetry.sprite2_cache_evictions -eq 696 -and
+        $telemetry.sprite2_uploads -eq 722 -and
+        $telemetry.sprite2_upload_bytes -eq 727040 -and
+        $telemetry.sprite2_max_uploads_per_frame -eq 15 -and
         $telemetry.projectile_cache_misses -eq 6
     )
     projectile_cache_accounting = (
@@ -1586,11 +1600,11 @@ $telemetryChecks = [ordered]@{
             $telemetry.sprite2_l2_slots
     )
     sprite2_l2_golden = (
-        $telemetry.sprite2_l2_hits -eq 532 -and
+        $telemetry.sprite2_l2_hits -eq 530 -and
         $telemetry.sprite2_l2_misses -eq 198 -and
         $telemetry.sprite2_l2_evictions -eq 134 -and
         $telemetry.sprite2_l2_raw_builds -eq 198 -and
-        $telemetry.sprite2_l2_max_visible_unique -eq 14
+        $telemetry.sprite2_l2_max_visible_unique -eq 15
     )
     gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
     iwram_stack_high_water = (
@@ -1617,16 +1631,16 @@ $telemetryChecks = [ordered]@{
             $telemetry.boss_perf_display_frames -eq
                 $expectedBossDisplayFrames
         ) -and
-        $telemetry.boss_perf_sprite2_misses -eq 115 -and
-        $telemetry.boss_perf_sprite2_evictions -eq 115 -and
-        $telemetry.boss_perf_sprite2_upload_bytes -eq 112384 -and
+        $telemetry.boss_perf_sprite2_misses -eq 113 -and
+        $telemetry.boss_perf_sprite2_evictions -eq 113 -and
+        $telemetry.boss_perf_sprite2_upload_bytes -eq 108032 -and
         $telemetry.boss_perf_projectile_misses -eq 0
     )
     authored_boss_perf_budget = (
         $telemetry.boss_perf_missed_vblanks -le 8
     )
     authored_boss_l2_golden = (
-        $telemetry.boss_perf_l2_hits -eq 99 -and
+        $telemetry.boss_perf_l2_hits -eq 97 -and
         $telemetry.boss_perf_l2_misses -eq 16 -and
         $telemetry.boss_perf_l2_evictions -eq 16 -and
         $telemetry.boss_perf_l2_raw_builds -eq 16 -and
@@ -2336,7 +2350,7 @@ $expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
 $expectedEpisode2Sprite2Hits = if ($GameSpeed -eq "low") {
     $null
 } else {
-    59488
+    59532
 }
 $episode2Checks = [ordered]@{
     schema = $episode2Telemetry.schema -eq 3
@@ -2364,29 +2378,29 @@ $episode2Checks = [ordered]@{
         # ticks; the resulting contact total is part of the v40 parity trace.
         $episode2Telemetry.collisions -eq 1787 -and
         $episode2Telemetry.streamed_map_rows -eq
-            $(if ($DetailLevel -eq "low") { 2487 } else { 4145 }) -and
+            $(if ($DetailLevel -eq "low") { 2490 } else { 4149 }) -and
         $episode2Telemetry.max_active_enemies -eq 38
     )
     sprite2_l1_accounting = (
         (
             (
                 $GameSpeed -eq "low" -and
-                $episode2Telemetry.sprite2_cache_hits -gt 59488
+                $episode2Telemetry.sprite2_cache_hits -gt 59532
             ) -or
             $episode2Telemetry.sprite2_cache_hits -eq
                 $expectedEpisode2Sprite2Hits
         ) -and
-        $episode2Telemetry.sprite2_cache_misses -eq 3520 -and
-        $episode2Telemetry.sprite2_cache_evictions -eq 3495 -and
+        $episode2Telemetry.sprite2_cache_misses -eq 3476 -and
+        $episode2Telemetry.sprite2_cache_evictions -eq 3450 -and
         $episode2Telemetry.sprite2_cache_drops -eq 0 -and
-        $episode2Telemetry.sprite2_uploads -eq 3520
+        $episode2Telemetry.sprite2_uploads -eq 3476
     )
     sprite2_l2_accounting = (
-        $episode2Telemetry.sprite2_l2_hits -eq 3014 -and
-        $episode2Telemetry.sprite2_l2_misses -eq 513 -and
-        $episode2Telemetry.sprite2_l2_evictions -eq 449 -and
+        $episode2Telemetry.sprite2_l2_hits -eq 2976 -and
+        $episode2Telemetry.sprite2_l2_misses -eq 507 -and
+        $episode2Telemetry.sprite2_l2_evictions -eq 443 -and
         $episode2Telemetry.sprite2_l2_drops -eq 0 -and
-        $episode2Telemetry.sprite2_l2_raw_builds -eq 513 -and
+        $episode2Telemetry.sprite2_l2_raw_builds -eq 507 -and
         $episode2Telemetry.sprite2_l2_rle_fallbacks -eq 0
     )
     no_asset_or_stream_failure = (
@@ -2414,11 +2428,14 @@ $episode2Checks = [ordered]@{
     full_level_vblank_budget = (
         # The source-parity weapon path adds a very small amount of work to
         # the complete Episode 2 trace.  The three restored sidebar values
-        # add at most seven tiny HUD OBJs.  Keep a tight 0.31 percent ceiling
-        # while also requiring every miss to originate in gameplay; pre-baked
-        # statistics glyphs and staged static transitions must never miss.
+        # add at most seven tiny HUD OBJs.  The soft 1:1 camera's retained
+        # 25-row ownership band removes rebuild thrash and matches the fixed
+        # crop's deterministic 41-frame baseline.  Keep a tight 0.40 percent
+        # ceiling while also requiring every miss to originate in gameplay;
+        # pre-baked statistics glyphs and staged static transitions must
+        # never miss.
         $episode2Telemetry.missed_vblanks * 10000 -le
-            $episode2Telemetry.display_frames * 31
+            $episode2Telemetry.display_frames * 40
     )
     no_frontend_vblank_misses = (
         $episode2Telemetry.missed_vblanks_frontend -eq 0 -and
@@ -2697,7 +2714,7 @@ if (-not (Test-Path -LiteralPath $transitionTestSave)) {
     throw "Front-end transition stress did not create SRAM telemetry"
 }
 $transitionSaveBytes = [IO.File]::ReadAllBytes($transitionTestSave)
-$transitionPathCount = 8
+$transitionPathCount = 10
 $transitionRecordBytes = 108
 $transitionFooterOffset =
     16 + $transitionPathCount * $transitionRecordBytes
@@ -2708,7 +2725,7 @@ if (
         0,
         4
     ) -ne "TGFA" -or
-    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 8 -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 9 -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 8) -ne
         $transitionPathCount -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 12) -ne 120
@@ -2722,6 +2739,8 @@ $transitionPathNames = @(
     "episode_difficulty",
     "difficulty_game",
     "game_next_level",
+    "game_data",
+    "game_ship_specs",
     "upgrade_submenu",
     "game_quit"
 )
@@ -2787,16 +2806,21 @@ for ($pathIndex = 0; $pathIndex -lt $transitionPathCount; $pathIndex++) {
         )
         phase_cycles = $phaseCycles -join ","
     }
+    $expectedRuntimeShpDecodes =
+        if ($record.path -eq "game_ship_specs") { 60 } else { 0 }
+    $cycleLimit =
+        if ($record.path -eq "game_data") { 230000 } else { 180000 }
     if (
         $record.transitions -ne 120 -or
         $record.missed_vblanks -ne 0 -or
         $record.vblank_irqs -lt 121 -or
         $record.full_redraws -ne 120 -or
-        $record.runtime_shp_decodes -ne 0 -or
+        $record.runtime_shp_decodes -ne
+            $expectedRuntimeShpDecodes -or
         $record.runtime_sprite2_decodes -ne 0 -or
         $record.music_active -ne 1 -or
         $record.max_cpu_cycles -le 0 -or
-        $record.max_cpu_cycles -gt 180000 -or
+        $record.max_cpu_cycles -gt $cycleLimit -or
         $record.failures -ne 0
     ) {
         throw (

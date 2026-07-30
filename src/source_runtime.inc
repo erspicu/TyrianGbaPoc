@@ -511,6 +511,22 @@ static u8 source_option_projectile_build(void)
 
 static u8 source_enemy_cache_slot_reserved(u8 slot)
 {
+    if (
+        slot > SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT &&
+        (
+            game_state != STATE_PLAY ||
+            source_parity_level.display_time != 0 ||
+            frontend_demo_active
+        )
+    ) {
+        /*
+         * Compact slots after the primary one time-share the 16-tile
+         * GAME OVER / SECRET LEVEL / INSERT COIN bank.  These overlays are
+         * mutually exclusive with ordinary play, but a demo or source
+         * secret notice can occupy the bank while the world still renders.
+         */
+        return 1;
+    }
 #if TYRIAN_GBA_STRESS_LOADOUT
     (void)slot;
     return 0;
@@ -923,10 +939,18 @@ static void source_player_cache_commit(void)
 static u16 source_enemy_cache_tile(u8 slot)
 {
     if (slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) {
+        u8 compact =
+            (u8)(slot - SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT);
+
+        if (compact != 0) {
+            return (u16)(
+                OBJ_TILE_GAME_OVER_RUNTIME +
+                (compact - 1u) *
+                    SOURCE_ENEMY_COMPACT_TILES_PER_SLOT
+            );
+        }
         return (u16)(
-            SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
-            (slot - SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) *
-                SOURCE_ENEMY_COMPACT_TILES_PER_SLOT
+            SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE
         );
     }
     if (slot < SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT) {
@@ -957,17 +981,45 @@ static u8 source_enemy_cache_slot_is_compact(u8 slot)
 static u8 source_enemy_cache_tile_is_compact(u16 tile)
 {
     return
-        tile >= SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE &&
-        tile <
-            SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
-                SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT *
-                    SOURCE_ENEMY_COMPACT_TILES_PER_SLOT;
+        (
+            tile >= SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE &&
+            tile <
+                SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
+                    SOURCE_ENEMY_COMPACT_TILES_PER_SLOT
+        ) ||
+        (
+            tile >= OBJ_TILE_GAME_OVER_RUNTIME &&
+            tile <
+                OBJ_TILE_GAME_OVER_RUNTIME +
+                    (
+                        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT -
+                        1u
+                    ) *
+                        SOURCE_ENEMY_COMPACT_TILES_PER_SLOT
+        );
 }
 
 static void source_enemy_cache_begin_frame(void)
 {
     source_enemy_cache_epoch++;
     source_player_cache_visible = 0;
+    if (
+        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT > 1 &&
+        (
+            game_state != STATE_PLAY ||
+            source_parity_level.display_time != 0 ||
+            frontend_demo_active
+        )
+    ) {
+        /*
+         * A status-label DMA overwrites the time-shared compact slot.
+         * Leave it invalid until the overlay disappears so a later hit can
+         * never reuse corrupted OBJ data.
+         */
+        source_enemy_cache[
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + 1u
+        ].valid = 0;
+    }
     if (source_enemy_cache_epoch == 0) {
         u8 index;
 

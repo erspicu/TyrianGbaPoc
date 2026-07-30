@@ -334,36 +334,36 @@ static u8 frontend_source_colour(
     return (u8)((hue << 4) | (u8)value);
 }
 
-static s16 frontend_scale_floor(s32 numerator, s32 denominator)
+static inline s16 frontend_scale_four_fifths_floor(s32 value)
 {
     /*
      * Python's offline 5-phase scaler uses floor division. C99 division
      * truncates toward zero, which placed partially clipped left/top OBJ one
-     * pixel away from their pre-scaled bitmap phase. Keep both paths exact.
+     * pixel away from their pre-scaled bitmap phase.  Every static Tyrian
+     * menu coordinate uses the same exact 300x200 -> 240x160 ratio (4/5),
+     * so the exact 16-bit reciprocal 0xcccd replaces ARM7's __aeabi_idiv.
+     * For negative values floor(4n/5) == -floor(4(-n+1)/5).
      */
-    if (numerator >= 0) {
-        return (s16)(numerator / denominator);
+    if (value >= 0) {
+        return (s16)(
+            ((u32)value * 0xcccdu) >> 16
+        );
     }
-    return (s16)(-((-numerator + denominator - 1) / denominator));
+    return (s16)-(
+        ((u32)(-value + 1) * 0xcccdu) >> 16
+    );
 }
 
 static s16 frontend_source_to_screen_x(s16 source_x)
 {
-    return frontend_scale_floor(
-        (
-            (s32)source_x - FRONTEND_MENU_SOURCE_CROP_X
-        ) *
-            SCREEN_WIDTH,
-        FRONTEND_MENU_SOURCE_WIDTH
+    return frontend_scale_four_fifths_floor(
+        (s32)source_x - FRONTEND_MENU_SOURCE_CROP_X
     );
 }
 
 static s16 frontend_source_to_screen_y(s16 source_y)
 {
-    return frontend_scale_floor(
-        (s32)source_y * SCREEN_HEIGHT,
-        OT_PIC_DECODED_HEIGHT
-    );
+    return frontend_scale_four_fifths_floor(source_y);
 }
 
 static void frontend_source_plot(
@@ -404,6 +404,16 @@ static u32 frontend_source_stamp_shp_key(
 )
 {
     if (
+        table == 4 &&
+        sprite_index <
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_FIRST +
+                FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT
+    ) {
+        return
+            sprite_index -
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_FIRST;
+    }
+    if (
         table == 5 &&
         sprite_index >= FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST &&
         sprite_index <
@@ -411,6 +421,7 @@ static u32 frontend_source_stamp_shp_key(
                 FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT
     ) {
         return
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
             sprite_index -
             FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST;
     }
@@ -421,6 +432,7 @@ static u32 frontend_source_stamp_shp_key(
                 FRONTEND_SOURCE_STAMP_SHP_TABLE6_COUNT
     ) {
         return
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
             FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT +
             sprite_index -
             FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST;
@@ -455,6 +467,19 @@ static u32 frontend_source_stamp_comp_key(
         ) +
         graphic - 1u;
 }
+
+typedef struct {
+    u8 *frame;
+    const u8 *cursor;
+    const u8 *end;
+    s16 base_x;
+    s16 base_y;
+    u16 runs_remaining;
+    u8 mode;
+    u8 hue;
+    s8 brightness;
+    u8 active;
+} FrontendSourceStampJob;
 
 /*
  * Build-time source stamps are the static-menu equivalent of the gameplay
@@ -598,6 +623,188 @@ frontend_blit_source_stamp(
         cursor += padded_length;
     }
     return cursor == end;
+}
+
+static u8 frontend_source_stamp_job_begin(
+    FrontendSourceStampJob *job,
+    u8 *frame,
+    u32 key,
+    s16 source_x,
+    s16 source_y,
+    u8 mode,
+    u8 hue,
+    s8 brightness
+)
+{
+    const u32 *offsets =
+        (const u32 *)(const void *)frontend_source_stamp_offsets;
+    u32 phase_x;
+    u32 phase_y;
+    u32 record;
+    u32 stream_offset;
+    u32 stream_end;
+    const u8 *stream;
+
+    *job = (FrontendSourceStampJob){0};
+    if (
+        frame == 0 ||
+        key >= FRONTEND_SOURCE_STAMP_KEY_COUNT ||
+        source_x < (s16)FRONTEND_MENU_SOURCE_CROP_X ||
+        source_y < 0
+    ) {
+        return 0;
+    }
+    phase_x = (u32)(
+        source_x - FRONTEND_MENU_SOURCE_CROP_X
+    ) % FRONTEND_SOURCE_STAMP_SCALE_PHASES;
+    phase_y =
+        (u32)source_y % FRONTEND_SOURCE_STAMP_SCALE_PHASES;
+    record =
+        key * FRONTEND_SOURCE_STAMP_PHASE_COUNT +
+        phase_y * FRONTEND_SOURCE_STAMP_SCALE_PHASES +
+        phase_x;
+    if (record >= FRONTEND_SOURCE_STAMP_COUNT) return 0;
+    stream_offset = offsets[record];
+    stream_end =
+        record + 1u < FRONTEND_SOURCE_STAMP_COUNT ?
+            offsets[record + 1u] :
+            FRONTEND_SOURCE_STAMP_DATA_BYTES;
+    if (
+        stream_offset >= stream_end ||
+        stream_end > FRONTEND_SOURCE_STAMP_DATA_BYTES ||
+        stream_end - stream_offset < 4u
+    ) {
+        return 0;
+    }
+    stream = frontend_source_stamp_data + stream_offset;
+    job->frame = frame;
+    job->cursor = stream + 4;
+    job->end = frontend_source_stamp_data + stream_end;
+    job->base_x = frontend_source_to_screen_x(source_x);
+    job->base_y = frontend_source_to_screen_y(source_y);
+    job->runs_remaining = (u16)(
+        stream[0] | ((u16)stream[1] << 8)
+    );
+    job->mode = mode;
+    job->hue = hue;
+    job->brightness = brightness;
+    job->active = 1;
+    return 1;
+}
+
+/*
+ * Replay a bounded number of sparse rows from a build-time source stamp.
+ * Zero means more work remains, one means complete, and -1 denotes a bounds
+ * failure in the generated stream.
+ */
+static s8 frontend_source_stamp_job_step(
+    FrontendSourceStampJob *job,
+    u8 run_budget
+)
+{
+    u8 completed = 0;
+
+    if (!job->active || run_budget == 0) return -1;
+    while (
+        job->runs_remaining != 0 &&
+        completed < run_budget
+    ) {
+        u8 relative_y;
+        u8 relative_x;
+        u16 length;
+        u32 padded_length;
+        s16 target_x;
+        s16 target_y;
+        u16 source_skip = 0;
+        u16 visible_length;
+
+        if ((u32)(job->end - job->cursor) < 4u) {
+            job->active = 0;
+            return -1;
+        }
+        relative_y = job->cursor[0];
+        relative_x = job->cursor[1];
+        length = (u16)(
+            job->cursor[2] |
+            ((u16)job->cursor[3] << 8)
+        );
+        job->cursor += 4;
+        padded_length = (length + 3u) & ~3u;
+        if (
+            length == 0 ||
+            (u32)(job->end - job->cursor) < padded_length
+        ) {
+            job->active = 0;
+            return -1;
+        }
+        target_x = (s16)(job->base_x + relative_x);
+        target_y = (s16)(job->base_y + relative_y);
+        visible_length = length;
+        if (target_x < 0) {
+            source_skip = (u16)(-target_x);
+            if (source_skip < visible_length) {
+                visible_length = (u16)(
+                    visible_length - source_skip
+                );
+                target_x = 0;
+            } else {
+                visible_length = 0;
+            }
+        }
+        if (target_x >= SCREEN_WIDTH) {
+            visible_length = 0;
+        } else if (
+            target_x + visible_length > SCREEN_WIDTH
+        ) {
+            visible_length = (u16)(SCREEN_WIDTH - target_x);
+        }
+        if (
+            target_y >= 0 &&
+            target_y < SCREEN_HEIGHT &&
+            visible_length != 0
+        ) {
+            u8 *destination =
+                job->frame +
+                (u32)target_y * SCREEN_WIDTH +
+                target_x;
+            const u8 *source_pixels =
+                job->cursor + source_skip;
+
+            if (job->mode == FRONTEND_SOURCE_BLIT_NORMAL) {
+                memcpy(
+                    destination,
+                    source_pixels,
+                    visible_length
+                );
+            } else {
+                u16 pixel_index;
+
+                for (
+                    pixel_index = 0;
+                    pixel_index < visible_length;
+                    pixel_index++
+                ) {
+                    destination[pixel_index] =
+                        frontend_source_colour(
+                            source_pixels[pixel_index],
+                            job->mode,
+                            job->hue,
+                            job->brightness
+                        );
+                }
+            }
+        }
+        job->cursor += padded_length;
+        job->runs_remaining--;
+        completed++;
+    }
+    if (job->runs_remaining == 0) {
+        u8 valid = job->cursor == job->end;
+
+        job->active = 0;
+        return valid ? 1 : -1;
+    }
+    return 0;
 }
 
 static u8 frontend_blit_shp_source(

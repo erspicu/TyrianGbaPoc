@@ -4,9 +4,11 @@
  * No GBA-native level background is stored in the cartridge.  The selected
  * tyrianN.lvl map, its big-endian shape lookup, shapes?.dat pixels and the
  * stock palette.dat are read directly from ROMFS.  The hardware map remains
- * a 32-row GBA ring, but only the 21 rows which can intersect the 160-pixel
- * viewport own cache references.  A separately referenced prefetch row
- * covers the next upward-scroll boundary without pinning invisible rows.
+ * a 32-row GBA ring.  The 21 rows which can intersect the 160-pixel viewport
+ * plus the soft camera's two-row hysteresis margin own cache references.
+ * This retains rows already exposed by camera motion without repeatedly
+ * decoding them when the player reverses direction.  A separately referenced
+ * prefetch row covers the next upward-scroll boundary.
  */
 
 enum {
@@ -41,6 +43,13 @@ enum {
      * its O(512 * 32-byte) visual-approximation fallback.
      */
     BACKGROUND_VISIBLE_TILE_ROWS = SCREEN_HEIGHT / 8 + 1,
+    BACKGROUND_CAMERA_RETAIN_TILE_ROWS =
+        TYRIAN_GBA_SOFT_CROP_CAMERA ?
+            (SOURCE_VIEW_CROP_Y + 7) / 8 :
+            0,
+    BACKGROUND_RETAINED_TILE_ROWS =
+        BACKGROUND_VISIBLE_TILE_ROWS +
+        BACKGROUND_CAMERA_RETAIN_TILE_ROWS * 2,
     BACKGROUND_SEMANTIC_CACHE_SIZE = 1024,
     BACKGROUND_SEMANTIC_WAYS = 4,
     BACKGROUND_SEMANTIC_SETS =
@@ -59,8 +68,8 @@ enum {
 };
 
 _Static_assert(
-    BACKGROUND_VISIBLE_TILE_ROWS + 1 <= MAP_RING_ROWS,
-    "visible background plus prefetch row must fit the hardware ring"
+    BACKGROUND_RETAINED_TILE_ROWS + 1 <= MAP_RING_ROWS,
+    "retained camera window plus prefetch row must fit the hardware ring"
 );
 
 typedef struct {
@@ -1444,9 +1453,18 @@ static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
 )
 {
     BackgroundLayerCache *cache;
-    u16 retain_top = top_row;
+    u16 retain_top =
+        top_row > BACKGROUND_CAMERA_RETAIN_TILE_ROWS ?
+            (u16)(
+                top_row - BACKGROUND_CAMERA_RETAIN_TILE_ROWS
+            ) :
+            0;
     u16 retain_last =
-        (u16)(top_row + BACKGROUND_VISIBLE_TILE_ROWS);
+        (u16)(
+            top_row +
+            BACKGROUND_VISIBLE_TILE_ROWS +
+            BACKGROUND_CAMERA_RETAIN_TILE_ROWS
+        );
     u8 ring_row;
 
     if (
@@ -1467,7 +1485,18 @@ static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
         u16 held_top =
             gameplay_presentation.full_scroll_pixel[layer] >> 3;
         u16 held_last =
-            (u16)(held_top + BACKGROUND_VISIBLE_TILE_ROWS);
+            (u16)(
+                held_top +
+                BACKGROUND_VISIBLE_TILE_ROWS +
+                BACKGROUND_CAMERA_RETAIN_TILE_ROWS
+            );
+
+        held_top =
+            held_top > BACKGROUND_CAMERA_RETAIN_TILE_ROWS ?
+                (u16)(
+                    held_top - BACKGROUND_CAMERA_RETAIN_TILE_ROWS
+                ) :
+                0;
 
         /*
          * The two viewports differ by at most the forced-presentation
@@ -1672,12 +1701,13 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
         /*
          * A just-installed row overlaps the previous presentation window for
          * one frame.  Do not add another prefetched row until that outgoing
-         * row has been released, keeping the maximum ownership window at 22
-         * rows rather than silently growing back toward the 32-row problem.
+         * row has been released, keeping the maximum ownership window at the
+         * 25-row camera hysteresis band plus one prefetched row rather than
+         * silently growing back toward the old 32-row problem.
          */
         if (
             background_layer_cache[layer].ring_reference_rows >
-            BACKGROUND_VISIBLE_TILE_ROWS
+            BACKGROUND_RETAINED_TILE_ROWS
         ) {
             continue;
         }

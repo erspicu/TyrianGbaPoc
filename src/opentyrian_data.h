@@ -232,11 +232,25 @@ typedef struct {
     uint32_t section_bytes;
 } OtLevelInfo;
 
+enum {
+    OT_EPISODE_CUBE_CAPACITY = 4,
+    OT_EPISODE_CUBE_OPERATION_CAPACITY = 16,
+    OT_EPISODE_CUBE_OP_CLAMP = 1,
+    OT_EPISODE_CUBE_OP_SET = 2,
+    OT_EPISODE_CUBE_OP_ADD = 3,
+};
+
+typedef struct {
+    uint8_t type;
+    uint8_t value;
+} OtEpisodeCubeOperation;
+
 /*
- * Original ]G route information consumed by JE_itemScreen().  Full Game
- * exposes every destination; one-player Arcade selects the final entry.
- * Planet and section values remain the one-based values stored in
- * levelsN.dat.
+ * Original pre-menu route information consumed by JE_loadMap() before
+ * JE_itemScreen().  Full Game exposes every ]G destination; one-player
+ * Arcade selects the final entry.  Cube directives are retained in their
+ * source order because ]?, ]! and ]+ mutate persistent campaign state before
+ * the Data menu becomes visible.
  */
 typedef struct {
     uint8_t episode;
@@ -250,25 +264,18 @@ typedef struct {
         OT_EPISODE_ITEM_GROUP_COUNT
     ][OT_EPISODE_ITEM_GROUP_CAPACITY];
     uint8_t item_count[OT_EPISODE_ITEM_GROUP_COUNT];
+    uint8_t cube_list[OT_EPISODE_CUBE_CAPACITY];
+    uint8_t cube_list_count;
+    OtEpisodeCubeOperation
+        cube_operation[OT_EPISODE_CUBE_OPERATION_CAPACITY];
+    uint8_t cube_operation_count;
     uint8_t menu_song;
     bool item_inventory_valid;
+    bool cube_list_valid;
     bool menu_song_valid;
     bool direct_level;
     bool episode_complete;
 } OtEpisodeMap;
-
-enum {
-    OT_EPISODE_CUBE_CAPACITY = 4,
-    OT_EPISODE_CUBE_OPERATION_CAPACITY = 16,
-    OT_EPISODE_CUBE_OP_CLAMP = 1,
-    OT_EPISODE_CUBE_OP_SET = 2,
-    OT_EPISODE_CUBE_OP_ADD = 3,
-};
-
-typedef struct {
-    uint8_t type;
-    uint8_t value;
-} OtEpisodeCubeOperation;
 
 /*
  * Result of interpreting one original levelsN.dat section. Script sections
@@ -376,6 +383,21 @@ typedef struct {
 } OtDataCube;
 
 /*
+ * Cooperative form of OpenTyrian load_cube().  One step decrypts and wraps
+ * at most one source Pascal record so static-menu audio can continue between
+ * records on the GBA.
+ */
+typedef struct {
+    const uint8_t *data;
+    uint32_t size;
+    uint32_t position;
+    uint16_t line;
+    uint16_t line_chars;
+    uint16_t line_width;
+    bool active;
+} OtDataCubeReader;
+
+/*
  * The two stock description paragraphs read from tyrian.hdt for one ship.
  * Keeping this an on-demand view avoids permanently retaining the complete
  * 13-ship, 6.5 KiB table in EWRAM.
@@ -392,6 +414,16 @@ bool ot_data_frontend_text_load(OtFrontendText *text);
 bool ot_data_cube_read(
     uint8_t episode,
     uint8_t cube_index,
+    OtDataCube *cube
+);
+bool ot_data_cube_read_begin(
+    uint8_t episode,
+    uint8_t cube_index,
+    OtDataCube *cube,
+    OtDataCubeReader *reader
+);
+int8_t ot_data_cube_read_step(
+    OtDataCubeReader *reader,
     OtDataCube *cube
 );
 bool ot_data_ship_info_read(

@@ -7,6 +7,8 @@ enum {
     FRONTEND_TRANSITION_PATH_EPISODE_DIFFICULTY,
     FRONTEND_TRANSITION_PATH_DIFFICULTY_GAME,
     FRONTEND_TRANSITION_PATH_GAME_NEXT,
+    FRONTEND_TRANSITION_PATH_GAME_DATA,
+    FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS,
     FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU,
     FRONTEND_TRANSITION_PATH_GAME_QUIT,
     FRONTEND_TRANSITION_PATH_COUNT,
@@ -74,6 +76,8 @@ static u8 autotest_frontend_transition_start_state(u8 path)
     case FRONTEND_TRANSITION_PATH_GAME_UPGRADE:
     case FRONTEND_TRANSITION_PATH_DIFFICULTY_GAME:
     case FRONTEND_TRANSITION_PATH_GAME_NEXT:
+    case FRONTEND_TRANSITION_PATH_GAME_DATA:
+    case FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS:
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         return STATE_GAME_MENU;
     case FRONTEND_TRANSITION_PATH_TITLE_PLAY_MODE:
@@ -97,6 +101,10 @@ static u8 autotest_frontend_transition_start_selection(u8 path)
     case FRONTEND_TRANSITION_PATH_DIFFICULTY_GAME:
     case FRONTEND_TRANSITION_PATH_GAME_NEXT:
         return 4;
+    case FRONTEND_TRANSITION_PATH_GAME_DATA:
+        return 0;
+    case FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS:
+        return 1;
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         return 5;
     default:
@@ -120,9 +128,9 @@ static void autotest_frontend_transition_step(u8 path)
     switch (path) {
     case FRONTEND_TRANSITION_PATH_GAME_UPGRADE:
         if (game_state == STATE_GAME_MENU) {
-            frontend_enter_state(STATE_UPGRADE_MENU, 0);
+            frontend_start_upgrade_menu_transition(0);
         } else {
-            frontend_enter_state(STATE_GAME_MENU, 2);
+            frontend_start_game_menu_transition_selected(0, 2);
         }
         break;
 
@@ -175,6 +183,39 @@ static void autotest_frontend_transition_step(u8 path)
             frontend_start_next_level_transition();
         } else {
             frontend_start_game_menu_transition(0);
+        }
+        break;
+
+    case FRONTEND_TRANSITION_PATH_GAME_DATA:
+        if (game_state == STATE_GAME_MENU) {
+            frontend_start_data_cubes_transition(
+                0,
+                FRONTEND_DATA_JOB_RELOAD |
+                    FRONTEND_DATA_JOB_FULL_FRAME
+            );
+        } else {
+            /*
+             * Episode 1 section 2 exposes exactly four records before ]I.
+             * This catches regressions which apply ]?, ]! and ]+ only after
+             * level entry instead of before the Game Menu, as JE_loadMap()
+             * does on PC.
+             */
+            if (
+                frontend_data_cube_count != 4 ||
+                frontend_data_page_count != 4
+            ) {
+                autotest_frontend_transition_failures++;
+            }
+            frontend_data_cache_valid = 0;
+            frontend_start_game_menu_transition_selected(0, 0);
+        }
+        break;
+
+    case FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS:
+        if (game_state == STATE_GAME_MENU) {
+            frontend_start_ship_specs_transition();
+        } else {
+            frontend_start_game_menu_transition_selected(0, 1);
         }
         break;
 
@@ -257,7 +298,7 @@ static void autotest_frontend_transition_finish(void)
     sram[1] = 'G';
     sram[2] = 'F';
     sram[3] = 'A';
-    sram_write_u32(4, 8);
+    sram_write_u32(4, 9);
     sram_write_u32(8, FRONTEND_TRANSITION_PATH_COUNT);
     sram_write_u32(12, FRONTEND_TRANSITION_ITERATIONS);
     for (path = 0; path < FRONTEND_TRANSITION_PATH_COUNT; path++) {

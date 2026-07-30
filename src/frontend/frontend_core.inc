@@ -415,28 +415,31 @@ static void frontend_campaign_apply_to_level(void)
         frontend_player_items.weapon_mode;
 }
 
-static void frontend_campaign_apply_level_script(
-    const OtEpisodeLevel *level
+static void frontend_campaign_apply_cube_script(
+    const u8 cube_list[OT_EPISODE_CUBE_CAPACITY],
+    u8 cube_list_valid,
+    const OtEpisodeCubeOperation *cube_operation,
+    u8 cube_operation_count
 )
 {
     u8 operation;
 
-    if (level == 0) return;
+    if (cube_list == 0 || cube_operation == 0) return;
     frontend_data_cache_valid = 0;
-    if (level->cube_list_valid) {
+    if (cube_list_valid) {
         memcpy(
             frontend_data_cube_list,
-            level->cube_list,
+            cube_list,
             sizeof(frontend_data_cube_list)
         );
     }
     for (
         operation = 0;
-        operation < level->cube_operation_count;
+        operation < cube_operation_count;
         operation++
     ) {
         const OtEpisodeCubeOperation *item =
-            &level->cube_operation[operation];
+            &cube_operation[operation];
 
         switch (item->type) {
         case OT_EPISODE_CUBE_OP_CLAMP:
@@ -470,6 +473,32 @@ static void frontend_campaign_apply_level_script(
             break;
         }
     }
+}
+
+static void frontend_campaign_apply_map_script(
+    const OtEpisodeMap *map
+)
+{
+    if (map == 0) return;
+    frontend_campaign_apply_cube_script(
+        map->cube_list,
+        map->cube_list_valid,
+        map->cube_operation,
+        map->cube_operation_count
+    );
+}
+
+static void frontend_campaign_apply_level_script(
+    const OtEpisodeLevel *level
+)
+{
+    if (level == 0) return;
+    frontend_campaign_apply_cube_script(
+        level->cube_list,
+        level->cube_list_valid,
+        level->cube_operation,
+        level->cube_operation_count
+    );
     frontend_level_cube_start_count = frontend_data_cube_count;
 }
 
@@ -544,6 +573,9 @@ static const char frontend_pregame_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
     "0123456789.,!?'/:-%";
+static u8 frontend_pregame_font_width_cache[
+    FRONTEND_PREGAME_FONT_GLYPH_COUNT + 1u
+] EWRAM_BSS;
 
 #ifndef TYRIAN_GBA_UPGRADE_LIST_FONT_MODE
 #define TYRIAN_GBA_UPGRADE_LIST_FONT_MODE 1
@@ -763,6 +795,12 @@ static u8 frontend_prepare_map_begin(void)
     ) {
         return 0;
     }
+    /*
+     * JE_loadMap() executes ]?, ]! and ]+ before ]I opens Game Menu.
+     * Applying them here makes the four stock Data cubes visible on the
+     * menu that immediately follows, rather than one level too late.
+     */
+    frontend_campaign_apply_map_script(&frontend_map);
     if (frontend_map.episode_complete) {
         frontend_map_ready = 1;
     }
@@ -794,6 +832,41 @@ static u8 frontend_prepare_map_choice(u8 choice)
         );
         frontend_map_ready = 0;
         return 0;
+    }
+    if (frontend_map.direct_level) {
+        OtEpisodeLevel *level = &frontend_map_level[choice];
+
+        /*
+         * A direct ]L route is parsed once for the pre-menu map pass and
+         * again for level metadata.  Its cube prefix is therefore identical
+         * and has already mutated campaign state above.  Validate that
+         * invariant, then remove the duplicate from the level-entry pass.
+         */
+        if (
+            level->cube_list_valid != frontend_map.cube_list_valid ||
+            level->cube_list_count != frontend_map.cube_list_count ||
+            level->cube_operation_count !=
+                frontend_map.cube_operation_count ||
+            (
+                level->cube_list_valid &&
+                memcmp(
+                    level->cube_list,
+                    frontend_map.cube_list,
+                    sizeof(level->cube_list)
+                ) != 0
+            ) ||
+            memcmp(
+                level->cube_operation,
+                frontend_map.cube_operation,
+                (size_t)level->cube_operation_count *
+                    sizeof(level->cube_operation[0])
+            ) != 0
+        ) {
+            return 0;
+        }
+        level->cube_list_valid = false;
+        level->cube_list_count = 0;
+        level->cube_operation_count = 0;
     }
     return 1;
 }
@@ -900,12 +973,69 @@ static void frontend_set_affine_identity(void)
     REG_BG2CNT = BG_PRIORITY(0);
 }
 
+/*
+ * JE_scaleInPicture() expands the completed 320x200 Ship Specs page from a
+ * narrow, half-height rectangle.  Mode 4 is affine, so the GBA can reproduce
+ * that presentation in hardware without resampling 38.4 KiB in software on
+ * every animation frame.
+ */
+static void frontend_set_affine_ship_specs(void)
+{
+    u16 step = frontend_ship_specs_scale_step;
+    u16 width;
+    u16 height;
+    u16 scale_x;
+    u16 scale_y;
+    s16 left;
+
+    if (step == 0) step = 1;
+    if (step > FRONTEND_SHIP_SPECS_SCALE_STEPS) {
+        step = FRONTEND_SHIP_SPECS_SCALE_STEPS;
+    }
+    width = (u16)(
+        (
+            (u32)SCREEN_WIDTH * step +
+            FRONTEND_SHIP_SPECS_SCALE_STEPS - 1u
+        ) /
+        FRONTEND_SHIP_SPECS_SCALE_STEPS
+    );
+    if (width < 4) width = 4;
+    height = (u16)(
+        SCREEN_HEIGHT / 2u +
+        (
+            (u32)(SCREEN_HEIGHT / 2u) * step +
+            FRONTEND_SHIP_SPECS_SCALE_STEPS - 1u
+        ) /
+        FRONTEND_SHIP_SPECS_SCALE_STEPS
+    );
+    if (height > SCREEN_HEIGHT) height = SCREEN_HEIGHT;
+    scale_x = (u16)(((u32)SCREEN_WIDTH << 8) / width);
+    scale_y = (u16)(((u32)SCREEN_HEIGHT << 8) / height);
+    left = (s16)((SCREEN_WIDTH - width) / 2u);
+
+    REG_BG2PA = scale_x;
+    REG_BG2PB = 0;
+    REG_BG2PC = 0;
+    REG_BG2PD = scale_y;
+    REG_BG2X = (u32)(-(s32)left * scale_x);
+    REG_BG2Y = 0;
+    REG_BG2CNT = BG_PRIORITY(0);
+}
+
 static void frontend_commit_mode4_registers(void)
 {
     u16 display =
         MODE_4 | BG2_ON |
         (frontend_display_page ? BACKBUFFER : 0);
 
+    if (
+        game_state == STATE_SHIP_SPECS &&
+        frontend_ship_specs_scale_active
+    ) {
+        frontend_set_affine_ship_specs();
+    } else {
+        frontend_set_affine_identity();
+    }
     if (
         game_state == STATE_NEXT_LEVEL_MENU &&
         frontend_nav_obj_active
@@ -1793,28 +1923,30 @@ static void frontend_draw_runtime_text_centered(
 
 static u8 frontend_pregame_font_tile(char character)
 {
-    u8 index;
-
     if (character == ' ') return 0;
-    for (
-        index = 0;
-        index < sizeof(frontend_pregame_font_characters) - 1u;
-        index++
-    ) {
-        if (frontend_pregame_font_characters[index] == character) {
-            return (u8)(index + 1u);
-        }
+    if (character >= 'A' && character <= 'Z') {
+        return (u8)(character - 'A' + 1);
     }
-    for (
-        index = 0;
-        index < sizeof(frontend_pregame_font_characters) - 1u;
-        index++
-    ) {
-        if (frontend_pregame_font_characters[index] == '?') {
-            return (u8)(index + 1u);
-        }
+    if (character >= 'a' && character <= 'z') {
+        return (u8)(character - 'a' + 27);
     }
-    return 0;
+    if (character >= '0' && character <= '9') {
+        return (u8)(character - '0' + 53);
+    }
+    switch (character) {
+    case '.': return 63;
+    case ',': return 64;
+    case '!': return 65;
+    case '?': return 66;
+    case '\'': return 67;
+    case '/': return 68;
+    case ':': return 69;
+    case '-': return 70;
+    case '%': return 71;
+    default:
+        /* The stock helper face uses '?' for every unsupported byte. */
+        return 66;
+    }
 }
 
 static u8 frontend_pregame_font_row(u8 tile_index, u8 row)
@@ -1829,6 +1961,7 @@ static u8 frontend_pregame_font_width(u8 tile_index)
     u8 occupied = 0;
     u8 row;
     u8 width = 1;
+    u8 cached;
 
     if (
         tile_index == 0 ||
@@ -1836,10 +1969,13 @@ static u8 frontend_pregame_font_width(u8 tile_index)
     ) {
         return 0;
     }
+    cached = frontend_pregame_font_width_cache[tile_index];
+    if (cached != 0) return cached;
     for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
         occupied |= frontend_pregame_font_row(tile_index, row);
     }
     while (occupied >>= 1) width++;
+    frontend_pregame_font_width_cache[tile_index] = width;
     return width;
 }
 
@@ -2054,6 +2190,28 @@ static u8 frontend_small_mixed_font_advance(u8 tile_index)
     return (u8)(frontend_small_mixed_font_width(tile_index) + 1u);
 }
 
+static u8 frontend_small_mixed_source_column(
+    u8 source_width,
+    u8 target_width,
+    u8 column
+)
+{
+    static const u8 one_third[8] = {
+        0, 0, 0, 1, 1, 1, 2, 2,
+    };
+    static const u8 two_thirds[8] = {
+        0, 0, 1, 2, 2, 3, 4, 4,
+    };
+    u8 last = (u8)(source_width - 1u);
+
+    if (target_width <= 1 || column == 0) return 0;
+    if (column + 1u >= target_width) return last;
+    if (target_width == 3) return (u8)(last >> 1);
+    return column == 1 ?
+        one_third[last] :
+        two_thirds[last];
+}
+
 static void frontend_blit_small_mixed_font(
     u8 *frame,
     u8 tile_index,
@@ -2075,12 +2233,11 @@ static void frontend_blit_small_mixed_font(
         if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
         for (column = 0; column < target_width; column++) {
             u8 source_column =
-                target_width == 1 ?
-                    0 :
-                    (u8)(
-                        (u16)column * (source_width - 1u) /
-                        (target_width - 1u)
-                    );
+                frontend_small_mixed_source_column(
+                    source_width,
+                    target_width,
+                    column
+                );
             s16 target_x = (s16)(x + column);
 
             if (

@@ -1352,10 +1352,10 @@ static void update_player(void)
     } else if (player_source_x > SOURCE_PLAYER_MAX_X) {
         player_source_x = SOURCE_PLAYER_MAX_X;
     }
-    if (player_source_y < SOURCE_PLAYER_MIN_Y) {
-        player_source_y = SOURCE_PLAYER_MIN_Y;
-    } else if (player_source_y > SOURCE_PLAYER_MAX_Y) {
-        player_source_y = SOURCE_PLAYER_MAX_Y;
+    if (player_source_y < SOURCE_PLAYER_CLAMP_MIN_Y) {
+        player_source_y = SOURCE_PLAYER_CLAMP_MIN_Y;
+    } else if (player_source_y > SOURCE_PLAYER_CLAMP_MAX_Y) {
+        player_source_y = SOURCE_PLAYER_CLAMP_MAX_Y;
     }
     source_camera_update();
 

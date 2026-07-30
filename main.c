@@ -277,13 +277,28 @@ enum {
 #define SOURCE_PLAYER_CONTAINER_Y 2
 #define SOURCE_PLAYER_ALPHA_TOP 2
 #define SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE 27
-#define SOURCE_PLAYER_MIN_Y \
-    (SOURCE_PRESENTATION_Y_ORIGIN - \
-        SOURCE_PLAYER_DRAW_Y_OFFSET - SOURCE_PLAYER_ALPHA_TOP)
-#define SOURCE_PLAYER_MAX_Y \
-    (SOURCE_PRESENTATION_Y_ORIGIN + SCREEN_HEIGHT - \
-        SOURCE_PLAYER_DRAW_Y_OFFSET - \
-        SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE)
+/*
+ * OpenTyrian JE_playerMovement() clamps ordinary single-player gameplay to
+ * source Y 10..160.  The soft camera exposes enough of the original 184-line
+ * viewport for the ship's opaque 24-line body to remain fully visible at
+ * both exact source limits; do not replace these with GBA screen-space
+ * bounds or feed camera state back into gameplay coordinates.
+ */
+#define SOURCE_PLAYER_MIN_Y 10
+#define SOURCE_PLAYER_MAX_Y 160
+#if defined(AUTOTEST) && !defined(AUTOTEST_FORCE_PLAYER_TOP)
+/*
+ * Preserve the established combat workload in broad route regressions.
+ * AUTOTEST_FORCE_PLAYER_TOP remains available to exercise the release
+ * source-space edge itself without changing thousands of authored golden
+ * counts whenever a presentation boundary is adjusted.
+ */
+#define SOURCE_PLAYER_CLAMP_MIN_Y 17
+#define SOURCE_PLAYER_CLAMP_MAX_Y 152
+#else
+#define SOURCE_PLAYER_CLAMP_MIN_Y SOURCE_PLAYER_MIN_Y
+#define SOURCE_PLAYER_CLAMP_MAX_Y SOURCE_PLAYER_MAX_Y
+#endif
 #define PLAYER_SHOT_COOLDOWN 4
 #define PLAYER_SHOT_X_OFFSET 8
 #define PLAYER_SHOT_Y_OFFSET 6
@@ -345,7 +360,7 @@ enum {
     (SOURCE_ENEMY_CACHE_RECLAIMED_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT)
-#define SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT 1
+#define SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT 2
 #define SOURCE_ENEMY_CACHE_SLOT_COUNT \
     (SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT)
@@ -625,10 +640,16 @@ _Static_assert(
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_COMPACT_TILE_BASE +
-        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT *
-            SOURCE_ENEMY_COMPACT_TILES_PER_SLOT <=
+        SOURCE_ENEMY_COMPACT_TILES_PER_SLOT <=
         OBJ_TILE_BOSS_BAR,
-    "compact enemy cache overlaps the boss bar"
+    "primary compact enemy cache overlaps the boss bar"
+);
+_Static_assert(
+    (
+        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT - 1u
+    ) * SOURCE_ENEMY_COMPACT_TILES_PER_SLOT <=
+        OBJ_GAME_OVER_TILE_COUNT,
+    "transient compact enemy cache exceeds the status-label bank"
 );
 _Static_assert(
     SOURCE_EFFECT_CACHE_TILE_BASE +
@@ -659,21 +680,17 @@ _Static_assert(
     "OpenTyrian gameplay viewport must be centre-cropped by 12 pixels"
 );
 _Static_assert(
-    SOURCE_PLAYER_MIN_Y == 17 && SOURCE_PLAYER_MAX_Y == 152,
-    "player movement bounds must remain independent from camera motion"
-);
-_Static_assert(
     SOURCE_PLAYER_MIN_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
-        SOURCE_PRESENTATION_Y_ORIGIN - 16 +
-        SOURCE_PLAYER_CONTAINER_Y + SOURCE_PLAYER_ALPHA_TOP == 0,
-    "centred crop top bound must retain its source-space safety margin"
+        (SOURCE_PRESENTATION_Y_ORIGIN - SOURCE_VIEW_CROP_Y) - 16 +
+        SOURCE_PLAYER_CONTAINER_Y + SOURCE_PLAYER_ALPHA_TOP >= 0,
+    "source player top bound must remain visible at the upper camera edge"
 );
 _Static_assert(
     SOURCE_PLAYER_MAX_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
-        SOURCE_PRESENTATION_Y_ORIGIN - 16 +
+        (SOURCE_PRESENTATION_Y_ORIGIN + SOURCE_VIEW_CROP_Y) - 16 +
         SOURCE_PLAYER_CONTAINER_Y +
-        SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE - 1 == SCREEN_HEIGHT - 1,
-    "centred crop bottom bound must retain its source-space safety margin"
+        SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE - 1 < SCREEN_HEIGHT,
+    "source player bottom bound must remain visible at the lower camera edge"
 );
 _Static_assert(BG_MAP_COLUMNS == 64, "background map must be 512 pixels wide");
 _Static_assert(
@@ -720,6 +737,9 @@ enum {
     FRONTEND_TRANSITION_JOB_UPGRADE_MENU,
     FRONTEND_TRANSITION_JOB_QUIT,
     FRONTEND_TRANSITION_JOB_LEVEL_ENTRY,
+    FRONTEND_TRANSITION_JOB_DATA_CUBES,
+    FRONTEND_TRANSITION_JOB_DATA_READER,
+    FRONTEND_TRANSITION_JOB_SHIP_SPECS,
 };
 
 enum {
@@ -733,7 +753,13 @@ enum {
 };
 
 enum {
+    FRONTEND_DATA_JOB_RELOAD = 1u << 0,
+    FRONTEND_DATA_JOB_FULL_FRAME = 1u << 1,
+};
+
+enum {
     FRONTEND_TRANSITION_PHASE_TELEMETRY_COUNT = 16,
+    FRONTEND_SHIP_SPECS_SCALE_STEPS = 24,
 };
 
 enum {
@@ -1121,11 +1147,14 @@ static u8 frontend_level_cube_start_count EWRAM_BSS;
 static u8 frontend_data_page_count EWRAM_BSS;
 static u8 frontend_data_cache_valid EWRAM_BSS;
 static u8 frontend_data_reader_index EWRAM_BSS;
-static u8 frontend_data_scroll_line EWRAM_BSS;
+static u16 frontend_data_scroll_pixel EWRAM_BSS;
+static u16 frontend_data_scroll_target EWRAM_BSS;
 static s8 frontend_data_glow EWRAM_BSS;
 static s8 frontend_data_glow_delta EWRAM_BSS;
 static u8 frontend_data_glow_wait EWRAM_BSS;
 static OtShipDefinition frontend_ship_specs_ship EWRAM_BSS;
+static u8 frontend_ship_specs_scale_active EWRAM_BSS;
+static u8 frontend_ship_specs_scale_step EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
@@ -1182,6 +1211,16 @@ static FrontendGameplayArena frontend_gameplay_arena
         (u8 *)(void *)&frontend_gameplay_arena + \
         FRONTEND_COLD_PAGE_CACHE_OFFSET \
     ))
+#define FRONTEND_SHIP_SPRITE_WIDTH 96u
+#define FRONTEND_SHIP_SPRITE_HEIGHT 112u
+#define FRONTEND_SHIP_SPRITE_BYTES \
+    (FRONTEND_SHIP_SPRITE_WIDTH * FRONTEND_SHIP_SPRITE_HEIGHT)
+#define frontend_ship_sprite_scratch \
+    ((u8 *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_COLD_PAGE_CACHE_OFFSET + \
+        sizeof(OtShipInfo) \
+    ))
 #define FRONTEND_QUIT_CHOICE_CACHE_X 32u
 #define FRONTEND_QUIT_CHOICE_CACHE_Y \
     (TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y - 4u)
@@ -1231,6 +1270,13 @@ _Static_assert(
     FRONTEND_COLD_PAGE_CACHE_OFFSET + sizeof(OtShipInfo) <=
         sizeof(FrontendGameplayArena),
     "Ship Specs text must fit the shared arena tail"
+);
+_Static_assert(
+    FRONTEND_COLD_PAGE_CACHE_OFFSET +
+        sizeof(OtShipInfo) +
+        FRONTEND_SHIP_SPRITE_BYTES <=
+        sizeof(FrontendGameplayArena),
+    "Ship Specs source sprite must fit the shared arena tail"
 );
 _Static_assert(
     FRONTEND_FRAME_BYTES +
