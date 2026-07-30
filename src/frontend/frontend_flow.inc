@@ -873,6 +873,10 @@ static void frontend_begin(void)
     frontend_transition_failed = 0;
     frontend_transition_work_index = 0;
     frontend_transition_work_mode = 0;
+    telemetry_level_music_transition_starts = 0;
+    telemetry_level_music_fade_out_steps = 0;
+    telemetry_level_music_silent_vblanks = 0;
+    telemetry_level_music_fade_in_steps = 0;
     game_state = STATE_INTRO_LOGO_1;
     frontend_selection = 0;
     mmStop();
@@ -1006,6 +1010,23 @@ static void frontend_start_quit_transition(u8 enter_dialog)
         FRONTEND_TRANSITION_JOB_QUIT,
         enter_dialog ? FRONTEND_QUIT_JOB_ENTER : 0
     );
+}
+
+static void frontend_start_level_entry_transition(u16 selected_section)
+{
+    frontend_level_entry_section = selected_section;
+    telemetry_level_music_transition_starts++;
+    /*
+     * This is an asynchronous operation inside the existing Next Level
+     * state, not a visible state change.  Do not increment the source-style
+     * front-end transition counter merely because audio now has a fade.
+     */
+    frontend_transition_job = FRONTEND_TRANSITION_JOB_LEVEL_ENTRY;
+    frontend_transition_phase = 0;
+    frontend_transition_flags = 0;
+    frontend_transition_failed = 0;
+    frontend_transition_work_index = 0;
+    frontend_transition_work_mode = 0;
 }
 
 enum {
@@ -1517,6 +1538,84 @@ static void frontend_transition_update(void)
                 frontend_transition_job =
                     FRONTEND_TRANSITION_JOB_NONE;
             }
+        }
+        break;
+
+    case FRONTEND_TRANSITION_JOB_LEVEL_ENTRY:
+        switch (frontend_transition_phase) {
+        case 0:
+            /*
+             * Fade the module only.  UI confirmation effects remain audible
+             * while the menu song approaches an exact zero sample.
+             */
+            if (!mmActive()) {
+                mmSetModuleVolume(0);
+                frontend_transition_work_index = 0;
+                frontend_transition_phase = 1;
+                break;
+            }
+            if (
+                frontend_transition_work_index <
+                    TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS
+            ) {
+                u16 remaining;
+                u16 volume;
+
+                frontend_transition_work_index++;
+                telemetry_level_music_fade_out_steps++;
+                remaining = (u16)(
+                    TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS -
+                    frontend_transition_work_index
+                );
+                volume = (u16)(
+                    (
+                        (u32)AUDIO_SOURCE_MUSIC_VOLUME_MAX *
+                            remaining +
+                        TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS /
+                            2u
+                    ) /
+                    TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS
+                );
+                mmSetModuleVolume(volume);
+            }
+            if (
+                frontend_transition_work_index >=
+                    TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS
+            ) {
+                frontend_transition_work_index = 0;
+                frontend_transition_phase = 1;
+            }
+            break;
+
+        case 1:
+            /*
+             * mmFrame() ran before this state update.  Holding zero for the
+             * configured count lets Maxmod submit a silent buffer before
+             * mmStop(), avoiding a Direct Sound FIFO/DC discontinuity.
+             */
+            frontend_transition_work_index++;
+            telemetry_level_music_silent_vblanks++;
+            if (
+                frontend_transition_work_index >=
+                    TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS
+            ) {
+                mmStop();
+                frontend_transition_work_index = 0;
+                frontend_transition_phase = 2;
+            }
+            break;
+
+        default:
+            frontend_nav_obj_disable();
+            frontend_transition_job =
+                FRONTEND_TRANSITION_JOB_NONE;
+            if (!enter_level(frontend_level_entry_section)) {
+                frontend_start_game_menu_transition(
+                    FRONTEND_GAME_MENU_JOB_LOAD_SONG
+                );
+            }
+            frontend_level_entry_section = 0;
+            break;
         }
         break;
 
@@ -2097,16 +2196,9 @@ static void frontend_update(void)
             if (frontend_map_level[map_choice].episode_complete) {
                 frontend_advance_episode();
             } else {
-                frontend_nav_obj_disable();
-                if (
-                    !enter_level(
-                        frontend_map.map_section[map_choice]
-                    )
-                ) {
-                    frontend_start_game_menu_transition(
-                        FRONTEND_GAME_MENU_JOB_LOAD_SONG
-                    );
-                }
+                frontend_start_level_entry_transition(
+                    frontend_map.map_section[map_choice]
+                );
             }
         } else {
             frontend_start_game_menu_transition(0);

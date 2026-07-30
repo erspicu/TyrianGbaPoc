@@ -33,7 +33,12 @@ enum {
     SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 21,
     SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
     SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 57,
-    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 30,
+    /*
+     * The soft 1:1 sub-viewport reveals the authored 12-pixel margins near
+     * the player.  Two additional source enemies can therefore be presented
+     * concurrently without changing the gameplay pool or event trace.
+     */
+    SOURCE_STAGE4_EXPECTED_VISIBLE_ENEMIES = 32,
     SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS = 0,
 };
 

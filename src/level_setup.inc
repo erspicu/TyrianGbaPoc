@@ -343,6 +343,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     /* OpenTyrian JE_main() launch position before its first movement clamp. */
     player_source_x = 100;
     player_source_y = 180;
+    source_camera_reset();
     player_source_velocity_x = 0;
     player_source_velocity_y = 0;
     player_source_x_friction_ticks = 0;
@@ -610,6 +611,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_game_over_music_natural_stops = 0;
     telemetry_game_over_overlay_frames = 0;
     telemetry_game_over_exits = 0;
+    telemetry_camera_min_origin_x = (u32)(u16)source_camera_origin_x();
+    telemetry_camera_max_origin_x = (u32)(u16)source_camera_origin_x();
+    telemetry_camera_min_origin_y = (u32)(u16)source_camera_origin_y();
+    telemetry_camera_max_origin_y = (u32)(u16)source_camera_origin_y();
     last_vblank_seen = telemetry_vblank_irqs;
 
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
@@ -628,13 +633,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     REG_BG0HOFS = source_background_hofs(0);
     REG_BG1HOFS = source_background_hofs(1);
     REG_BG2HOFS = source_background_hofs(2);
-    REG_BG0VOFS = bg1_scroll_pixel & 255;
-    REG_BG1VOFS = bg2_scroll_pixel & 255;
-    REG_BG2VOFS = bg3_scroll_pixel & 255;
+    REG_BG0VOFS = source_background_vofs(0);
+    REG_BG1VOFS = source_background_vofs(1);
+    REG_BG2VOFS = source_background_vofs(2);
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
         (source_background2_present() ? BG1_ON : 0);
-    audio_load_source_song(frontend_level.source_song);
+    audio_load_level_song_fade_in(frontend_level.source_song);
     /* tyrian2.c start_level_first: soundQueue[3] = V_GOOD_LUCK. */
     source_sound_effect(33);
     game_state = STATE_PLAY;

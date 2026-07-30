@@ -57,6 +57,101 @@
 #endif
 
 /* ------------------------------------------------------------------------- */
+/* Gameplay presentation / 關卡畫面呈現                                     */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * The PC battle viewport is 264x184, while the GBA LCD is 240x160.  Keep
+ * source gameplay at 1:1 pixels and use the otherwise hidden 24-pixel slack
+ * as a soft camera.  The camera stays centred while the player is inside the
+ * dead zone, then eases toward the appropriate source edge.
+ *
+ * PC 戰鬥視野為 264x184，GBA LCD 為 240x160。遊戲仍維持 1:1 像素，
+ * 並把原本裁掉的橫向與縱向各 24 像素作為柔性鏡頭範圍。玩家位於
+ * 死區內時保持置中，接近來源視野邊緣時才平順移動裁切位置。
+ */
+#ifndef TYRIAN_GBA_SOFT_CROP_CAMERA
+#define TYRIAN_GBA_SOFT_CROP_CAMERA 1
+#endif
+
+/* PC gameplay coordinates / PC 戰鬥座標。 */
+#ifndef TYRIAN_GBA_CAMERA_SOURCE_CENTER_X
+#define TYRIAN_GBA_CAMERA_SOURCE_CENTER_X 156
+#endif
+#ifndef TYRIAN_GBA_CAMERA_SOURCE_CENTER_Y
+#define TYRIAN_GBA_CAMERA_SOURCE_CENTER_Y 92
+#endif
+
+/*
+ * Half-size of the stationary dead zone.  60x40 means a 120x80 centre zone.
+ * 靜止死區的半寬／半高；60x40 代表中央 120x80 區域。
+ */
+#ifndef TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_X
+#define TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_X 60
+#endif
+#ifndef TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_Y
+#define TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_Y 40
+#endif
+
+/*
+ * First-order smoothing divisor: 2 means 1/4 of the remaining distance per
+ * 30 Hz logic tick.  Larger values feel heavier but take longer to settle.
+ *
+ * 一階平滑位移量：2 代表每個 30 Hz 邏輯 tick 移動剩餘距離的 1/4。
+ * 數值越大越有阻尼感，但抵達目標所需時間也越長。
+ */
+#ifndef TYRIAN_GBA_CAMERA_RESPONSE_SHIFT
+#define TYRIAN_GBA_CAMERA_RESPONSE_SHIFT 2
+#endif
+
+#if TYRIAN_GBA_SOFT_CROP_CAMERA != 0 && \
+    TYRIAN_GBA_SOFT_CROP_CAMERA != 1
+#error TYRIAN_GBA_SOFT_CROP_CAMERA must be 0 or 1
+#endif
+#if TYRIAN_GBA_CAMERA_RESPONSE_SHIFT < 1 || \
+    TYRIAN_GBA_CAMERA_RESPONSE_SHIFT > 6
+#error TYRIAN_GBA_CAMERA_RESPONSE_SHIFT must be in the range 1..6
+#endif
+
+/* ------------------------------------------------------------------------- */
+/* Menu-to-level music transition / 選單進關卡音樂轉場                      */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Fade only the Maxmod module, not UI sound effects.  After the fade reaches
+ * zero, retain one silent VBlank before mmStop(), then start the level module
+ * muted and fade it in.  This avoids a discontinuity in the Direct Sound FIFO.
+ *
+ * 只淡出 Maxmod 背景模組，不切斷 UI 音效。音量歸零後保留一個靜音
+ * VBlank 才呼叫 mmStop()；關卡歌曲以零音量啟動後再淡入，避免
+ * Direct Sound FIFO 的波形不連續爆音。
+ */
+#ifndef TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS
+#define TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS 18
+#endif
+#ifndef TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS
+#define TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS 1
+#endif
+#ifndef TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
+#define TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS 30
+#endif
+
+#if TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS < 1
+#error TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS must be at least 1
+#endif
+#if TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS < 1
+#error TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS must be at least 1
+#endif
+#if TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS < 1
+#error TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS must be at least 1
+#endif
+#if TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS > 255 || \
+    TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS > 255 || \
+    TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS > 255
+#error Level music transition counts must fit in one byte
+#endif
+
+/* ------------------------------------------------------------------------- */
 /* In-level HUD and notices / 關卡內 HUD 與系統提示                          */
 /* ------------------------------------------------------------------------- */
 

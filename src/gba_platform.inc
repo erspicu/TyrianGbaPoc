@@ -72,11 +72,11 @@ static void gameplay_presentation_capture_registers(void)
     gameplay_presentation.hofs[1] = source_background_hofs(1);
     gameplay_presentation.hofs[2] = source_background_hofs(2);
     gameplay_presentation.vofs[0] =
-        bg1_presentation_scroll_pixel & 255;
+        source_background_vofs(0);
     gameplay_presentation.vofs[1] =
-        bg2_presentation_scroll_pixel & 255;
+        source_background_vofs(1);
     gameplay_presentation.vofs[2] =
-        bg3_presentation_scroll_pixel & 255;
+        source_background_vofs(2);
     gameplay_presentation.full_scroll_pixel[0] =
         bg1_presentation_scroll_pixel;
     gameplay_presentation.full_scroll_pixel[1] =
@@ -346,9 +346,9 @@ static void commit_vblank_work(void)
         REG_BG0HOFS = source_background_hofs(0);
         REG_BG1HOFS = source_background_hofs(1);
         REG_BG2HOFS = source_background_hofs(2);
-        REG_BG0VOFS = bg1_presentation_scroll_pixel & 255;
-        REG_BG1VOFS = bg2_presentation_scroll_pixel & 255;
-        REG_BG2VOFS = bg3_presentation_scroll_pixel & 255;
+        REG_BG0VOFS = source_background_vofs(0);
+        REG_BG1VOFS = source_background_vofs(1);
+        REG_BG2VOFS = source_background_vofs(2);
         REG_BG1CNT = BG_PRIORITY(background2_priority) |
                      CHAR_BASE(background_cache_char_base[1]) |
                      SCREEN_BASE(BG1_SCREEN_BLOCK) |
@@ -545,14 +545,19 @@ static void commit_vblank_work(void)
     }
 }
 
+#define AUDIO_SOURCE_MUSIC_VOLUME_MAX 896u
+
 static void audio_load_source_song_internal(
     u8 source_song,
     u8 cancel_effects,
-    mm_pmode mode
+    mm_pmode mode,
+    u16 initial_volume
 )
 {
     u16 module = source_song;
 
+    audio_level_music_fade_in_active = 0;
+    audio_level_music_fade_in_step = 0;
     mmStop();
     if (cancel_effects) mmEffectCancelAll();
     /*
@@ -589,8 +594,11 @@ static void audio_load_source_song_internal(
         }
     }
     mmStart(module, mode);
-    mmSetModuleVolume(896);
-    mmSetEffectsVolume(896);
+    if (initial_volume > AUDIO_SOURCE_MUSIC_VOLUME_MAX) {
+        initial_volume = AUDIO_SOURCE_MUSIC_VOLUME_MAX;
+    }
+    mmSetModuleVolume(initial_volume);
+    mmSetEffectsVolume(AUDIO_SOURCE_MUSIC_VOLUME_MAX);
 }
 
 static void audio_set_source_music_volume(u8 source_volume)
@@ -601,7 +609,14 @@ static void audio_set_source_music_volume(u8 source_volume)
      * source's one-unit-per-tick death fade.
      */
     mmSetModuleVolume(
-        (u16)(((u32)source_volume * 896u + 127u) / 255u)
+        (u16)(
+            (
+                (u32)source_volume *
+                    AUDIO_SOURCE_MUSIC_VOLUME_MAX +
+                127u
+            ) /
+            255u
+        )
     );
 }
 
@@ -610,7 +625,8 @@ static void audio_load_source_song(u8 source_song)
     audio_load_source_song_internal(
         source_song,
         1,
-        MM_PLAY_LOOP
+        MM_PLAY_LOOP,
+        AUDIO_SOURCE_MUSIC_VOLUME_MAX
     );
 }
 
@@ -619,7 +635,8 @@ static void audio_load_source_song_preserve_effects(u8 source_song)
     audio_load_source_song_internal(
         source_song,
         0,
-        MM_PLAY_LOOP
+        MM_PLAY_LOOP,
+        AUDIO_SOURCE_MUSIC_VOLUME_MAX
     );
 }
 
@@ -628,8 +645,62 @@ static void audio_load_source_song_once_preserve_effects(u8 source_song)
     audio_load_source_song_internal(
         source_song,
         0,
-        MM_PLAY_ONCE
+        MM_PLAY_ONCE,
+        AUDIO_SOURCE_MUSIC_VOLUME_MAX
     );
+}
+
+/*
+ * Scene entry deliberately starts the new module muted.  The main VBlank
+ * loop raises it over TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS, so the first
+ * tracker row cannot introduce a discontinuity after the silent load gap.
+ */
+static void audio_load_level_song_fade_in(u8 source_song)
+{
+    audio_load_source_song_internal(
+        source_song,
+        1,
+        MM_PLAY_LOOP,
+        0
+    );
+    if (mmActive()) {
+        audio_level_music_fade_in_active = 1;
+        audio_level_music_fade_in_step = 0;
+    }
+}
+
+static void audio_level_music_fade_in_update(void)
+{
+    u16 volume;
+
+    if (!audio_level_music_fade_in_active) return;
+    if (!mmActive()) {
+        audio_level_music_fade_in_active = 0;
+        audio_level_music_fade_in_step = 0;
+        return;
+    }
+    if (
+        audio_level_music_fade_in_step <
+            TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
+    ) {
+        audio_level_music_fade_in_step++;
+        telemetry_level_music_fade_in_steps++;
+    }
+    volume = (u16)(
+        (
+            (u32)AUDIO_SOURCE_MUSIC_VOLUME_MAX *
+                audio_level_music_fade_in_step +
+            TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS / 2u
+        ) /
+        TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
+    );
+    mmSetModuleVolume(volume);
+    if (
+        audio_level_music_fade_in_step >=
+            TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
+    ) {
+        audio_level_music_fade_in_active = 0;
+    }
 }
 
 static void audio_effect(u16 effect)

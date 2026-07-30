@@ -1604,14 +1604,160 @@ static void source_effect_cache_commit(void)
     source_effect_upload_count = 0;
 }
 
+static s16 source_camera_target_offset(
+    s16 player,
+    s16 centre,
+    s16 dead_zone_half,
+    s16 slack
+)
+{
+    s16 relative = (s16)(player - centre);
+    s16 target = 0;
+
+    if (relative > dead_zone_half) {
+        target = (s16)(relative - dead_zone_half);
+    } else if (relative < -dead_zone_half) {
+        target = (s16)(relative + dead_zone_half);
+    }
+    if (target < -slack) target = (s16)-slack;
+    if (target > slack) target = slack;
+    return target;
+}
+
+static s16 source_camera_smooth_axis(
+    s16 current_q8,
+    s16 target
+)
+{
+    s16 target_q8 = (s16)(target * 256);
+    s16 delta = (s16)(target_q8 - current_q8);
+    s16 step;
+
+    if (delta > 0) {
+        step = (s16)(delta >> TYRIAN_GBA_CAMERA_RESPONSE_SHIFT);
+        if (step == 0) step = 1;
+    } else if (delta < 0) {
+        step = (s16)(
+            -(
+                (s16)(-delta) >>
+                TYRIAN_GBA_CAMERA_RESPONSE_SHIFT
+            )
+        );
+        if (step == 0) step = -1;
+    } else {
+        return current_q8;
+    }
+    current_q8 = (s16)(current_q8 + step);
+    if (
+        (delta > 0 && current_q8 > target_q8) ||
+        (delta < 0 && current_q8 < target_q8)
+    ) {
+        current_q8 = target_q8;
+    }
+    return current_q8;
+}
+
+static s8 source_camera_q8_to_pixel(s16 value)
+{
+    if (value >= 0) {
+        return (s8)((value + 128) >> 8);
+    }
+    return (s8)(-(((-value) + 128) >> 8));
+}
+
+static void source_camera_reset(void)
+{
+    source_camera_offset_x_q8 = 0;
+    source_camera_offset_y_q8 = 0;
+    source_camera_offset_x = 0;
+    source_camera_offset_y = 0;
+}
+
+static void source_camera_update(void)
+{
+#if TYRIAN_GBA_SOFT_CROP_CAMERA
+    s16 target_x = source_camera_target_offset(
+        player_source_x,
+        TYRIAN_GBA_CAMERA_SOURCE_CENTER_X,
+        TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_X,
+        SOURCE_VIEW_CROP_X
+    );
+    s16 target_y = source_camera_target_offset(
+        player_source_y,
+        TYRIAN_GBA_CAMERA_SOURCE_CENTER_Y,
+        TYRIAN_GBA_CAMERA_DEAD_ZONE_HALF_Y,
+        SOURCE_VIEW_CROP_Y
+    );
+
+    source_camera_offset_x_q8 = source_camera_smooth_axis(
+        source_camera_offset_x_q8,
+        target_x
+    );
+    source_camera_offset_y_q8 = source_camera_smooth_axis(
+        source_camera_offset_y_q8,
+        target_y
+    );
+    source_camera_offset_x = source_camera_q8_to_pixel(
+        source_camera_offset_x_q8
+    );
+    source_camera_offset_y = source_camera_q8_to_pixel(
+        source_camera_offset_y_q8
+    );
+    if (
+        (u32)(u16)source_camera_origin_x() <
+            telemetry_camera_min_origin_x
+    ) {
+        telemetry_camera_min_origin_x =
+            (u32)(u16)source_camera_origin_x();
+    }
+    if (
+        (u32)(u16)source_camera_origin_x() >
+            telemetry_camera_max_origin_x
+    ) {
+        telemetry_camera_max_origin_x =
+            (u32)(u16)source_camera_origin_x();
+    }
+    if (
+        (u32)(u16)source_camera_origin_y() <
+            telemetry_camera_min_origin_y
+    ) {
+        telemetry_camera_min_origin_y =
+            (u32)(u16)source_camera_origin_y();
+    }
+    if (
+        (u32)(u16)source_camera_origin_y() >
+            telemetry_camera_max_origin_y
+    ) {
+        telemetry_camera_max_origin_y =
+            (u32)(u16)source_camera_origin_y();
+    }
+#else
+    source_camera_reset();
+#endif
+}
+
+static s16 source_camera_origin_x(void)
+{
+    return (s16)(
+        SOURCE_PRESENTATION_X_ORIGIN + source_camera_offset_x
+    );
+}
+
+static s16 source_camera_origin_y(void)
+{
+    return (s16)(
+        SOURCE_PRESENTATION_Y_ORIGIN + source_camera_offset_y
+    );
+}
+
 static s16 source_world_to_screen_x(s16 source_x)
 {
-    return (s16)(source_x - SOURCE_PRESENTATION_X_ORIGIN);
+    return (s16)(source_x - source_camera_origin_x());
 }
 
 static s16 source_world_to_screen_y(s16 source_y)
 {
-    return (s16)(source_y - SOURCE_PRESENTATION_Y_ORIGIN);
+    return (s16)(source_y - source_camera_origin_y());
 }
 
 static u16 source_background_hofs(u8 layer)
@@ -1625,30 +1771,51 @@ static u16 source_background_hofs(u8 layer)
      * exact source-map pixel at game_screen x=36.
      */
     if (!state->presentation_parallax_initialized) {
-        return layer == 2 ? BG3_INITIAL_HOFS : BG12_INITIAL_HOFS;
+        return (u16)(
+            (layer == 2 ? BG3_INITIAL_HOFS : BG12_INITIAL_HOFS) +
+            source_camera_offset_x
+        );
     }
     if (layer == 0) {
         return (u16)(
             SOURCE_BG12_PARALLAX_BASE_X -
-            state->presentation_map_x_offset
+            state->presentation_map_x_offset +
+            source_camera_offset_x
         );
     }
     if (layer == 1) {
         return (u16)(
             SOURCE_BG12_PARALLAX_BASE_X -
-            state->presentation_map_x2_offset
+            state->presentation_map_x2_offset +
+            source_camera_offset_x
         );
     }
     if (state->presentation_background3_x1) {
         return (u16)(
             SOURCE_BG12_PARALLAX_BASE_X -
-            state->presentation_map_x3_offset
+            state->presentation_map_x3_offset +
+            source_camera_offset_x
         );
     }
     return (u16)(
         SOURCE_BG3_PARALLAX_BASE_X -
-        state->presentation_map_x3_offset
+        state->presentation_map_x3_offset +
+        source_camera_offset_x
     );
+}
+
+static u16 source_background_vofs(u8 layer)
+{
+    u16 scroll;
+
+    if (layer == 0) {
+        scroll = bg1_presentation_scroll_pixel;
+    } else if (layer == 1) {
+        scroll = bg2_presentation_scroll_pixel;
+    } else {
+        scroll = bg3_presentation_scroll_pixel;
+    }
+    return (u16)((scroll + source_camera_offset_y) & 255);
 }
 
 static s16 source_player_screen_x(void)

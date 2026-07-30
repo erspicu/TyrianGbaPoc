@@ -230,6 +230,7 @@ int main(void)
         stress_cycle_start = stress_cycle_counter_read();
 #endif
         mmFrame();
+        audio_level_music_fade_in_update();
         if (
             game_state == STATE_PLAY ||
             game_state == STATE_GAME_OVER

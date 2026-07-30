@@ -26,7 +26,44 @@ function Get-Sha256Hex {
     }
 }
 
+function Get-ConfigureDecimalDefine {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Text,
+        [Parameter(Mandatory)]
+        [string]$Name
+    )
+
+    $pattern = (
+        "(?m)^\s*#define\s+" +
+        [Regex]::Escape($Name) +
+        "\s+([0-9]+)\s*$"
+    )
+    $match = [Regex]::Match($Text, $pattern)
+    if (-not $match.Success) {
+        throw "Configure.h decimal define is missing: $Name"
+    }
+    return [int]$match.Groups[1].Value
+}
+
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$configureText = Get-Content -LiteralPath (
+    Join-Path $projectRoot "Configure.h"
+) -Raw
+$configure = [ordered]@{
+    TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS =
+        Get-ConfigureDecimalDefine `
+            $configureText `
+            "TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS"
+    TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS =
+        Get-ConfigureDecimalDefine `
+            $configureText `
+            "TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS"
+    TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS =
+        Get-ConfigureDecimalDefine `
+            $configureText `
+            "TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS"
+}
 $vendorRoot = Join-Path $projectRoot "vendor"
 $msysRoot = Join-Path $projectRoot "tools\portable-msys2"
 $sdkRoot = Join-Path $vendorRoot "gba-sdk"
@@ -792,7 +829,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $saveBytes = [System.IO.File]::ReadAllBytes($testSave)
-if ($saveBytes.Length -lt 6436) {
+if ($saveBytes.Length -lt 6468) {
     throw "Auto-test SRAM telemetry is truncated"
 }
 $magic = [Text.Encoding]::ASCII.GetString($saveBytes, 0, 4)
@@ -1042,6 +1079,14 @@ $telemetry = [ordered]@{
     iwram_stack_canary_filled_bytes = Read-TelemetryU32 6424
     ewram_heap_used_bytes = Read-TelemetryU32 6428
     ewram_heap_remaining_bytes = Read-TelemetryU32 6432
+    camera_min_origin_x = Read-TelemetryU32 6436
+    camera_max_origin_x = Read-TelemetryU32 6440
+    camera_min_origin_y = Read-TelemetryU32 6444
+    camera_max_origin_y = Read-TelemetryU32 6448
+    level_music_transition_starts = Read-TelemetryU32 6452
+    level_music_fade_out_steps = Read-TelemetryU32 6456
+    level_music_silent_vblanks = Read-TelemetryU32 6460
+    level_music_fade_in_steps = Read-TelemetryU32 6464
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{
@@ -1262,13 +1307,16 @@ $legacyStage4TelemetryChecks = [ordered]@{
     )
     final_background_horizontal_offsets = (
         $telemetry.final_bg1_horizontal_offset -eq (
-            84 - $telemetry.final_map_x_offset
+            84 - $telemetry.final_map_x_offset +
+                ($telemetry.presentation_crop_x - 36)
         ) -and
         $telemetry.final_bg2_horizontal_offset -eq (
-            84 - $telemetry.final_map_x2_offset
+            84 - $telemetry.final_map_x2_offset +
+                ($telemetry.presentation_crop_x - 36)
         ) -and
         $telemetry.final_bg3_horizontal_offset -eq (
-            108 - $telemetry.final_map_x3_offset
+            108 - $telemetry.final_map_x3_offset +
+                ($telemetry.presentation_crop_x - 36)
         )
     )
     final_source_background_scroll = (
@@ -1276,9 +1324,26 @@ $legacyStage4TelemetryChecks = [ordered]@{
         $telemetry.final_bg2_source_scroll -eq 5225 -and
         $telemetry.final_bg3_source_scroll -eq 4198
     )
-    presentation_is_central_1to1_crop = (
-        $telemetry.presentation_crop_x -eq 36 -and
-        $telemetry.presentation_crop_y -eq 12
+    presentation_is_soft_1to1_crop = (
+        $telemetry.presentation_crop_x -ge 24 -and
+        $telemetry.presentation_crop_x -le 48 -and
+        $telemetry.presentation_crop_y -ge 0 -and
+        $telemetry.presentation_crop_y -le 24
+    )
+    soft_camera_full_slack_coverage = (
+        $telemetry.camera_min_origin_x -eq 24 -and
+        $telemetry.camera_max_origin_x -eq 48 -and
+        $telemetry.camera_min_origin_y -eq 0 -and
+        $telemetry.camera_max_origin_y -eq 24
+    )
+    level_music_click_free_envelope = (
+        $telemetry.level_music_transition_starts -eq 1 -and
+        $telemetry.level_music_fade_out_steps -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS -and
+        $telemetry.level_music_silent_vblanks -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS -and
+        $telemetry.level_music_fade_in_steps -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
     )
     layer_priority_exhaustive_checks = (
         $telemetry.layer_rule_checks -eq 252 -and
@@ -1324,7 +1389,7 @@ $expectedSourceSoundMaskLow = [Convert]::ToUInt32("E70211AC", 16)
 $expectedDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 12168 }
 $expectedBossDisplayFrames = if ($GameSpeed -eq "low") { $null } else { 439 }
 $telemetryChecks = [ordered]@{
-    schema_version = $telemetry.version -eq 27
+    schema_version = $telemetry.version -eq 28
     rom_reported_pass = $telemetry.pass -eq 1
     returned_to_game_menu = $telemetry.final_state -eq 7
     title_music_active = $telemetry.title_music_active -eq 1
@@ -1442,15 +1507,15 @@ $telemetryChecks = [ordered]@{
         $telemetry.upgrade_loadout_runtime -eq 1
     )
     # The regression-only power-11 override retains the established five-shot
-    # workload.  v40 also renders the player's HDT-selected ship through the
-    # ROMFS Sprite2 L2 and a dedicated one-frame VRAM cache, so these goldens
-    # include exact banking-frame uploads without reducing enemy capacity.
+    # workload. The soft 1:1 camera exposes the authored 12-pixel margins at
+    # the edges, so its deterministic visibility trace has its own exact
+    # Sprite2/L2 upload golden without changing gameplay event counts.
     sprite2_workload_unchanged = (
-        $telemetry.sprite2_cache_misses -eq 718 -and
-        $telemetry.sprite2_cache_evictions -eq 693 -and
-        $telemetry.sprite2_uploads -eq 718 -and
-        $telemetry.sprite2_upload_bytes -eq 726016 -and
-        $telemetry.sprite2_max_uploads_per_frame -eq 15 -and
+        $telemetry.sprite2_cache_misses -eq 724 -and
+        $telemetry.sprite2_cache_evictions -eq 699 -and
+        $telemetry.sprite2_uploads -eq 724 -and
+        $telemetry.sprite2_upload_bytes -eq 733696 -and
+        $telemetry.sprite2_max_uploads_per_frame -eq 14 -and
         $telemetry.projectile_cache_misses -eq 6
     )
     projectile_cache_accounting = (
@@ -1479,11 +1544,11 @@ $telemetryChecks = [ordered]@{
             $telemetry.sprite2_l2_slots
     )
     sprite2_l2_golden = (
-        $telemetry.sprite2_l2_hits -eq 530 -and
-        $telemetry.sprite2_l2_misses -eq 194 -and
-        $telemetry.sprite2_l2_evictions -eq 130 -and
-        $telemetry.sprite2_l2_raw_builds -eq 194 -and
-        $telemetry.sprite2_l2_max_visible_unique -eq 15
+        $telemetry.sprite2_l2_hits -eq 532 -and
+        $telemetry.sprite2_l2_misses -eq 198 -and
+        $telemetry.sprite2_l2_evictions -eq 134 -and
+        $telemetry.sprite2_l2_raw_builds -eq 198 -and
+        $telemetry.sprite2_l2_max_visible_unique -eq 14
     )
     gamepak_prefetch_waitstate = $telemetry.waitcnt -eq 0x4317
     iwram_stack_high_water = (
@@ -1510,19 +1575,19 @@ $telemetryChecks = [ordered]@{
             $telemetry.boss_perf_display_frames -eq
                 $expectedBossDisplayFrames
         ) -and
-        $telemetry.boss_perf_sprite2_misses -eq 121 -and
-        $telemetry.boss_perf_sprite2_evictions -eq 121 -and
-        $telemetry.boss_perf_sprite2_upload_bytes -eq 116992 -and
+        $telemetry.boss_perf_sprite2_misses -eq 115 -and
+        $telemetry.boss_perf_sprite2_evictions -eq 115 -and
+        $telemetry.boss_perf_sprite2_upload_bytes -eq 112384 -and
         $telemetry.boss_perf_projectile_misses -eq 0
     )
     authored_boss_perf_budget = (
         $telemetry.boss_perf_missed_vblanks -le 8
     )
     authored_boss_l2_golden = (
-        $telemetry.boss_perf_l2_hits -eq 100 -and
-        $telemetry.boss_perf_l2_misses -eq 21 -and
-        $telemetry.boss_perf_l2_evictions -eq 21 -and
-        $telemetry.boss_perf_l2_raw_builds -eq 21 -and
+        $telemetry.boss_perf_l2_hits -eq 99 -and
+        $telemetry.boss_perf_l2_misses -eq 16 -and
+        $telemetry.boss_perf_l2_evictions -eq 16 -and
+        $telemetry.boss_perf_l2_raw_builds -eq 16 -and
         $telemetry.boss_perf_l2_fallbacks -eq 0
     )
     effect_cache_accounting = (
@@ -1532,9 +1597,26 @@ $telemetryChecks = [ordered]@{
         $telemetry.effect_cache_upload_bytes -eq
             $telemetry.effect_cache_uploads * 128
     )
-    presentation_is_central_1to1_crop = (
-        $telemetry.presentation_crop_x -eq 36 -and
-        $telemetry.presentation_crop_y -eq 12
+    presentation_is_soft_1to1_crop = (
+        $telemetry.presentation_crop_x -ge 24 -and
+        $telemetry.presentation_crop_x -le 48 -and
+        $telemetry.presentation_crop_y -ge 0 -and
+        $telemetry.presentation_crop_y -le 24
+    )
+    soft_camera_full_slack_coverage = (
+        $telemetry.camera_min_origin_x -eq 24 -and
+        $telemetry.camera_max_origin_x -eq 48 -and
+        $telemetry.camera_min_origin_y -eq 0 -and
+        $telemetry.camera_max_origin_y -eq 24
+    )
+    level_music_click_free_envelope = (
+        $telemetry.level_music_transition_starts -eq 1 -and
+        $telemetry.level_music_fade_out_steps -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_FADE_OUT_VBLANKS -and
+        $telemetry.level_music_silent_vblanks -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_SILENT_VBLANKS -and
+        $telemetry.level_music_fade_in_steps -eq
+            $configure.TYRIAN_GBA_LEVEL_MUSIC_FADE_IN_VBLANKS
     )
     layer_priority_exhaustive_checks = (
         $telemetry.layer_rule_checks -eq 252 -and
@@ -2212,7 +2294,7 @@ $expectedEpisode2DisplayFrames = if ($GameSpeed -eq "low") {
 $expectedEpisode2Sprite2Hits = if ($GameSpeed -eq "low") {
     $null
 } else {
-    59460
+    59488
 }
 $episode2Checks = [ordered]@{
     schema = $episode2Telemetry.schema -eq 3
@@ -2247,22 +2329,22 @@ $episode2Checks = [ordered]@{
         (
             (
                 $GameSpeed -eq "low" -and
-                $episode2Telemetry.sprite2_cache_hits -gt 59460
+                $episode2Telemetry.sprite2_cache_hits -gt 59488
             ) -or
             $episode2Telemetry.sprite2_cache_hits -eq
                 $expectedEpisode2Sprite2Hits
         ) -and
-        $episode2Telemetry.sprite2_cache_misses -eq 3414 -and
-        $episode2Telemetry.sprite2_cache_evictions -eq 3389 -and
+        $episode2Telemetry.sprite2_cache_misses -eq 3520 -and
+        $episode2Telemetry.sprite2_cache_evictions -eq 3495 -and
         $episode2Telemetry.sprite2_cache_drops -eq 0 -and
-        $episode2Telemetry.sprite2_uploads -eq 3414
+        $episode2Telemetry.sprite2_uploads -eq 3520
     )
     sprite2_l2_accounting = (
-        $episode2Telemetry.sprite2_l2_hits -eq 2903 -and
-        $episode2Telemetry.sprite2_l2_misses -eq 518 -and
-        $episode2Telemetry.sprite2_l2_evictions -eq 454 -and
+        $episode2Telemetry.sprite2_l2_hits -eq 3014 -and
+        $episode2Telemetry.sprite2_l2_misses -eq 513 -and
+        $episode2Telemetry.sprite2_l2_evictions -eq 449 -and
         $episode2Telemetry.sprite2_l2_drops -eq 0 -and
-        $episode2Telemetry.sprite2_l2_raw_builds -eq 518 -and
+        $episode2Telemetry.sprite2_l2_raw_builds -eq 513 -and
         $episode2Telemetry.sprite2_l2_rle_fallbacks -eq 0
     )
     no_asset_or_stream_failure = (

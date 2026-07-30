@@ -1237,20 +1237,14 @@ static void update_player(void)
                 16
             );
             spawn_large_effect(
-                (s16)(explosion_x - SOURCE_PRESENTATION_X_ORIGIN),
-                (s16)(
-                    explosion_y + 7 -
-                    SOURCE_PRESENTATION_Y_ORIGIN
-                ),
+                source_world_to_screen_x(explosion_x),
+                source_world_to_screen_y((s16)(explosion_y + 7)),
                 0
             );
             telemetry_player_death_large_explosions++;
             spawn_large_effect(
-                (s16)(player_source_x - SOURCE_PRESENTATION_X_ORIGIN),
-                (s16)(
-                    player_source_y + 7 -
-                    SOURCE_PRESENTATION_Y_ORIGIN
-                ),
+                source_world_to_screen_x(player_source_x),
+                source_world_to_screen_y((s16)(player_source_y + 7)),
                 0
             );
             telemetry_player_death_large_explosions++;
@@ -1300,6 +1294,7 @@ static void update_player(void)
         ) {
             frontend_enter_level_stats(1);
         }
+        source_camera_update();
         return;
     }
 
@@ -1362,6 +1357,7 @@ static void update_player(void)
     } else if (player_source_y > SOURCE_PLAYER_MAX_Y) {
         player_source_y = SOURCE_PLAYER_MAX_Y;
     }
+    source_camera_update();
 
     ship_banking = (s16)(
         player_source_velocity_x / 2 +

@@ -660,20 +660,20 @@ _Static_assert(
 );
 _Static_assert(
     SOURCE_PLAYER_MIN_Y == 17 && SOURCE_PLAYER_MAX_Y == 152,
-    "player Y bounds must keep the source ship alpha bbox inside the crop"
+    "player movement bounds must remain independent from camera motion"
 );
 _Static_assert(
     SOURCE_PLAYER_MIN_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
         SOURCE_PRESENTATION_Y_ORIGIN - 16 +
         SOURCE_PLAYER_CONTAINER_Y + SOURCE_PLAYER_ALPHA_TOP == 0,
-    "top player bound must place the first opaque row at GBA y=0"
+    "centred crop top bound must retain its source-space safety margin"
 );
 _Static_assert(
     SOURCE_PLAYER_MAX_Y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y -
         SOURCE_PRESENTATION_Y_ORIGIN - 16 +
         SOURCE_PLAYER_CONTAINER_Y +
         SOURCE_PLAYER_ALPHA_BOTTOM_EXCLUSIVE - 1 == SCREEN_HEIGHT - 1,
-    "bottom player bound must place the last opaque row at GBA y=159"
+    "centred crop bottom bound must retain its source-space safety margin"
 );
 _Static_assert(BG_MAP_COLUMNS == 64, "background map must be 512 pixels wide");
 _Static_assert(
@@ -719,6 +719,7 @@ enum {
     FRONTEND_TRANSITION_JOB_GAME_MENU,
     FRONTEND_TRANSITION_JOB_UPGRADE_MENU,
     FRONTEND_TRANSITION_JOB_QUIT,
+    FRONTEND_TRANSITION_JOB_LEVEL_ENTRY,
 };
 
 enum {
@@ -1090,6 +1091,7 @@ static u8 frontend_transition_flags EWRAM_BSS;
 static u8 frontend_transition_failed EWRAM_BSS;
 static u8 frontend_transition_work_index EWRAM_BSS;
 static u8 frontend_transition_work_mode EWRAM_BSS;
+static u16 frontend_level_entry_section EWRAM_BSS;
 #define FRONTEND_SHIP_PANEL_CACHE_WIDTH 120u
 #define FRONTEND_SHIP_PANEL_CACHE_HEIGHT SCREEN_HEIGHT
 #define FRONTEND_SHIP_PANEL_CACHE_BYTES \
@@ -1248,6 +1250,10 @@ _Static_assert(
 /* Authoritative OpenTyrian gameplay coordinates, never GBA screen pixels. */
 static s16 player_source_x;
 static s16 player_source_y;
+static s16 source_camera_offset_x_q8;
+static s16 source_camera_offset_y_q8;
+static s8 source_camera_offset_x;
+static s8 source_camera_offset_y;
 static s8 player_source_velocity_x;
 static s8 player_source_velocity_y;
 static u8 player_source_x_friction_ticks;
@@ -1258,6 +1264,8 @@ static u8 player_exploding_ticks;
 static u8 player_death_fx_wait;
 static u8 player_death_music_volume;
 static u8 player_death_music_fade_active;
+static u8 audio_level_music_fade_in_active;
+static u8 audio_level_music_fade_in_step;
 static u8 player_armor;
 static u8 player_shield;
 static u8 player_shield_max;
@@ -1600,6 +1608,14 @@ volatile u32 telemetry_game_over_music_starts;
 volatile u32 telemetry_game_over_music_natural_stops;
 volatile u32 telemetry_game_over_overlay_frames;
 volatile u32 telemetry_game_over_exits;
+volatile u32 telemetry_level_music_transition_starts;
+volatile u32 telemetry_level_music_fade_out_steps;
+volatile u32 telemetry_level_music_silent_vblanks;
+volatile u32 telemetry_level_music_fade_in_steps;
+volatile u32 telemetry_camera_min_origin_x;
+volatile u32 telemetry_camera_max_origin_x;
+volatile u32 telemetry_camera_min_origin_y;
+volatile u32 telemetry_camera_max_origin_y;
 volatile u32 telemetry_boss_perf_started STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_completed STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_start_position STRESS_COLD_BSS;
@@ -1781,6 +1797,12 @@ static u8 autotest_screenshot_delay;
 
 static s16 source_player_screen_x(void);
 static s16 source_player_screen_y(void);
+static s16 source_camera_origin_x(void);
+static s16 source_camera_origin_y(void);
+static void source_camera_reset(void);
+static void source_camera_update(void);
+static u16 source_background_vofs(u8 layer);
+static s16 source_world_to_screen_x(s16 source_x);
 static s16 source_world_to_screen_y(s16 source_y);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);

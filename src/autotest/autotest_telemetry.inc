@@ -262,14 +262,18 @@ static void autotest_finish(void)
         telemetry_source_launch_successes == 3 &&
         telemetry_source_random_attempts == 0 &&
         telemetry_source_random_successes == 0 &&
-        source_world_to_screen_x(SOURCE_PRESENTATION_X_ORIGIN) == 0 &&
+        source_world_to_screen_x(source_camera_origin_x()) == 0 &&
         source_world_to_screen_x(
-            SOURCE_PRESENTATION_X_ORIGIN + SCREEN_WIDTH - 1
+            source_camera_origin_x() + SCREEN_WIDTH - 1
         ) == SCREEN_WIDTH - 1 &&
-        source_world_to_screen_y(SOURCE_PRESENTATION_Y_ORIGIN) == 0 &&
+        source_world_to_screen_y(source_camera_origin_y()) == 0 &&
         source_world_to_screen_y(
-            SOURCE_PRESENTATION_Y_ORIGIN + SCREEN_HEIGHT - 1
+            source_camera_origin_y() + SCREEN_HEIGHT - 1
         ) == SCREEN_HEIGHT - 1 &&
+        source_camera_offset_x >= -SOURCE_VIEW_CROP_X &&
+        source_camera_offset_x <= SOURCE_VIEW_CROP_X &&
+        source_camera_offset_y >= -SOURCE_VIEW_CROP_Y &&
+        source_camera_offset_y <= SOURCE_VIEW_CROP_Y &&
         source_background_hofs(0) < 512 &&
         source_background_hofs(1) < 512 &&
         source_background_hofs(2) < 512 &&
@@ -299,7 +303,7 @@ static void autotest_finish(void)
     sram[2] = 'B';
     sram[3] = 'A';
 #ifdef AUTOTEST_STACK_CANARY
-    sram[4] = 27;
+    sram[4] = 28;
 #else
     sram[4] = 25;
 #endif
@@ -476,8 +480,8 @@ static void autotest_finish(void)
     sram_write_u32(500, bg1_presentation_scroll_pixel);
     sram_write_u32(504, bg2_presentation_scroll_pixel);
     sram_write_u32(508, bg3_presentation_scroll_pixel);
-    sram_write_u32(512, SOURCE_PRESENTATION_X_ORIGIN);
-    sram_write_u32(516, SOURCE_PRESENTATION_Y_ORIGIN);
+    sram_write_u32(512, (u16)source_camera_origin_x());
+    sram_write_u32(516, (u16)source_camera_origin_y());
     sram_write_u32(520, telemetry_layer_rule_checks);
     sram_write_u32(524, telemetry_layer_rule_failures);
     sram_write_u32(528, source_parity_level.background2_over);
@@ -607,6 +611,14 @@ static void autotest_finish(void)
         sram_write_u32(6432, autotest_ewram_heap_remaining());
     }
 #endif
+    sram_write_u32(6436, telemetry_camera_min_origin_x);
+    sram_write_u32(6440, telemetry_camera_max_origin_x);
+    sram_write_u32(6444, telemetry_camera_min_origin_y);
+    sram_write_u32(6448, telemetry_camera_max_origin_y);
+    sram_write_u32(6452, telemetry_level_music_transition_starts);
+    sram_write_u32(6456, telemetry_level_music_fade_out_steps);
+    sram_write_u32(6460, telemetry_level_music_silent_vblanks);
+    sram_write_u32(6464, telemetry_level_music_fade_in_steps);
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);
