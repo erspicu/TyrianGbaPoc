@@ -143,6 +143,9 @@ $backupDir = Join-Path $projectRoot "Backup"
 $romfsImagePath = Join-Path $projectRoot "res\tyrian_romfs.bin"
 $romfsAuditPath = Join-Path $projectRoot "res\tyrian_romfs_audit.json"
 $assetReportPath = Join-Path $projectRoot "res\asset_report.txt"
+$musicCalibrationPath = Join-Path (
+    Join-Path $projectRoot "res"
+) "music_maxmod_calibration.json"
 $obsoleteNavPagesPath = Join-Path (
     Join-Path $projectRoot "res"
 ) "frontend_nav_bitmap_pages.bin"
@@ -286,6 +289,31 @@ if (
 if (-not (Test-Path -LiteralPath $assetReportPath -PathType Leaf)) {
     throw "Generated asset report is missing: $assetReportPath"
 }
+if (-not (Test-Path -LiteralPath $musicCalibrationPath -PathType Leaf)) {
+    throw "Generated Maxmod calibration is missing: $musicCalibrationPath"
+}
+$musicCalibration = Get-Content -LiteralPath $musicCalibrationPath -Raw |
+    ConvertFrom-Json
+if (
+    $musicCalibration.schema -ne "tyrian-gba-maxmod-calibration-v1" -or
+    $musicCalibration.profile -ne "GbaMaxmod" -or
+    $musicCalibration.maxmodOutputRate -ne 15768 -or
+    $musicCalibration.maxmodModuleVolume -ne 896 -or
+    [double]$musicCalibration.playbackReferenceGainDb -ne 3.0 -or
+    $musicCalibration.summary.trackCount -ne 41 -or
+    $musicCalibration.summary.sourceCount -ne 308 -or
+    [double]$musicCalibration.summary.gainMin -le 0.0 -or
+    [double]$musicCalibration.summary.gainMax -gt 1.075 -or
+    [double]$musicCalibration.summary.legacyMeanAbsoluteErrorDb -lt 5.0 -or
+    [double]$musicCalibration.summary.calibratedMeanAbsoluteErrorDb -gt 0.2 -or
+    $musicCalibration.summary.sampleClipCount -ne 0 -or
+    $musicCalibration.summary.peakLimitedSourceCount -ne 22 -or
+    [double]$musicCalibration.summary.maximumPeakRatio -gt 1.65 -or
+    [double]$musicCalibration.summary.percussionPeakCeilingRatio -ne 1.6 -or
+    $musicCalibration.summary.perSongMaximumNormalization -ne $false
+) {
+    throw "GBA Maxmod fixed-reference calibration audit failed"
+}
 $assetReport = [ordered]@{}
 foreach ($line in Get-Content -LiteralPath $assetReportPath) {
     $pair = $line.Split("=", 2)
@@ -294,6 +322,20 @@ foreach ($line in Get-Content -LiteralPath $assetReportPath) {
     }
 }
 if (
+    $assetReport.music_catalog_profile -ne
+        "GbaMaxmod fixed-reference tracker adapter" -or
+    $assetReport.music_calibration_source_count -ne "308" -or
+    [double]$assetReport.music_calibration_gain_min -le 0.0 -or
+    [double]$assetReport.music_calibration_gain_max -gt 1.075 -or
+    [double]$assetReport.music_calibration_legacy_mean_abs_error_db -lt 5.0 -or
+    [double]$assetReport.music_calibration_mean_abs_error_db -gt 0.2 -or
+    $assetReport.music_calibration_sample_clip_count -ne "0" -or
+    $assetReport.music_calibration_peak_limited_sources -ne "22" -or
+    [double]$assetReport.music_calibration_maximum_peak_ratio -gt 1.65 -or
+    $assetReport.music_calibration_percussion_peak_ceiling_ratio -ne "1.600" -or
+    $assetReport.music_calibration_reference_gain_db -ne "3.000" -or
+    $assetReport.music_calibration_per_song_maximum_normalization -ne "0" -or
+    $assetReport.music_calibration_reference_fold_down -ne "mono_L_plus_R" -or
     $assetReport.finite_music_cues -ne "9,10,30" -or
     $assetReport.finite_music_09_disabled_position_jumps -ne "1" -or
     $assetReport.finite_music_10_disabled_position_jumps -ne "1" -or

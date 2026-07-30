@@ -123,6 +123,14 @@ runtime tile keys，只訓練該 shape profile 未使用的 palette banks，
 資料集 coverage 與感知色差門檻由 `build.ps1` 稽核；不要以單關手工
 palette 表取代此共用流程。
 
+TYM 音樂經 `tools/music_maxmod_calibration.py` 以 GBA Maxmod 的 IT
+volume、signed 8-bit PCM 與 runtime module volume 重新量測，不得再沿用
+SNES S-DSP gain 或加入 per-song maximum normalization。逐曲結果輸出至
+`res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／308 個
+source、RMS 誤差、percussion peak ceiling 與 sample clipping。End of
+Level、Game Over、Secret Level 各自保留 loop 與 `_once` order-flow；
+mmutil 會共用相同 PCM，三個一次性 module 只增加約 4 KiB。
+
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整
 runtime 功能已由另一份嵌入資源承接時，才可從 ROMFS image 排除原始

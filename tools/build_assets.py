@@ -457,6 +457,24 @@ def load_background_palette_trainer() -> ModuleType:
     return module
 
 
+def load_music_maxmod_calibrator() -> ModuleType:
+    path = Path(__file__).with_name("music_maxmod_calibration.py")
+    module_name = "tyrian_gba_music_maxmod_calibration"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"could not load Maxmod music calibrator: {path}"
+        )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
 def read_git_head(repo: Path) -> str:
     """Read a local Git HEAD without depending on git.exe being on PATH."""
     git_dir = repo / ".git"
@@ -6245,16 +6263,15 @@ def build_sparse_tym_tracker_it(
     snes: ModuleType,
     workspace: Path,
     tym_path: Path,
+    calibration: dict[str, object],
     *,
     finite: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
-    """Use the SNES tracker writer with fewer than eight audible channels.
+    """Use the shared tracker writer with GBA-specific Maxmod calibration.
 
-    Its original calibration loader requires exactly eight non-null sources,
-    but short Tyrian cues legitimately use fewer (End of Level uses seven).
-    Preserve every calibrated source/gain pair and append sentinel sources
-    that can never match a TYM event. This changes no audible mapping while
-    satisfying the writer's fixed eight-voice interface.
+    The shared writer requires exactly eight sources.  Short Tyrian cues
+    legitimately use fewer, so append inaudible sentinels while preserving
+    every measured GBA source/gain pair.
     """
     original_loader = snes.load_snes_calibration
     original_it_builder = snes.build_it_module
@@ -6264,39 +6281,27 @@ def build_sparse_tym_tracker_it(
         inner_workspace: Path,
         track_number: int,
     ) -> tuple[list[int], list[float]]:
-        calibration_path = (
-            inner_workspace /
-            "vendor" /
-            "audio" /
-            "Music" /
-            "channel-calibration.json"
-        )
-        catalog = json.loads(
-            calibration_path.read_text(encoding="utf-8")
-        )
-        track = next(
-            item for item in catalog["tracks"]
-            if item["trackNumber"] == track_number
-        )
-        profile = next(
-            item for item in track["profiles"]
-            if item["profile"] == "SuperNintendo"
-        )
-        pairs = [
-            (int(source), 10.0 ** (float(db) / 20.0))
-            for source, db in zip(
-                profile["sourceChannels"][:8],
-                profile["gainDb"][:8],
-                strict=True,
-            )
-            if source is not None
-        ]
-        if not 1 <= len(pairs) <= 8:
+        del inner_workspace
+        if int(calibration["trackNumber"]) != track_number:
             raise ValueError(
-                f"track {track_number} has no usable SNES calibration"
+                "Maxmod calibration does not match requested TYM track"
             )
-        sources = [source for source, _ in pairs]
-        gains = [gain for _, gain in pairs]
+        sources = [
+            int(source)
+            for source in calibration["sourceChannels"]
+        ]
+        gains = [
+            float(gain)
+            for gain in calibration["gains"]
+        ]
+        if (
+            not 1 <= len(sources) <= 8 or
+            len(sources) != len(gains) or
+            len(set(sources)) != len(sources)
+        ):
+            raise ValueError(
+                f"track {track_number} has invalid Maxmod calibration"
+            )
         sentinel = 0x100
         while len(sources) < 8:
             sources.append(sentinel)
@@ -6342,6 +6347,13 @@ def build_sparse_tym_tracker_it(
         report = dict(report)
         report["finite"] = finite
         report["disabled_position_jumps"] = disabled_position_jumps
+        report["calibration_profile"] = calibration["profile"]
+        report["calibrated_mean_absolute_error_db"] = calibration[
+            "calibratedMeanAbsoluteErrorDb"
+        ]
+        report["legacy_mean_absolute_error_db"] = calibration[
+            "legacyMeanAbsoluteErrorDb"
+        ]
         if finite and disabled_position_jumps == 0:
             raise ValueError(
                 f"finite cue has no IT Bxx loop to remove: {tym_path.name}"
@@ -7864,6 +7876,26 @@ def main() -> None:
             "Tyrian TYM catalog changed: "
             f"{len(music_paths)} != {JUKEBOX_MUSIC_COUNT}"
         )
+    maxmod_calibrator = load_music_maxmod_calibrator()
+    source_calibration_path = music_root / "channel-calibration.json"
+    maxmod_calibrations: list[dict[str, object]] = []
+    for expected_number, music_path in enumerate(music_paths, start=1):
+        parsed_song = snes.parse_tym(music_path)
+        calibration = maxmod_calibrator.calibrate_track(
+            parsed_song,
+            source_calibration_path,
+            snes.synthesize_tym_sample,
+        )
+        if int(calibration["trackNumber"]) != expected_number:
+            raise ValueError(
+                "Maxmod calibration track order changed at "
+                f"{music_path.name}"
+            )
+        maxmod_calibrations.append(calibration)
+    maxmod_catalog = maxmod_calibrator.write_catalog(
+        output / "music_maxmod_calibration.json",
+        maxmod_calibrations,
+    )
     music_modules: list[bytes] = []
     music_reports: list[dict[str, object]] = []
     for source_index, music_path in enumerate(music_paths):
@@ -7877,6 +7909,7 @@ def main() -> None:
             snes,
             workspace,
             music_path,
+            maxmod_calibrations[source_index],
         )
         if int(module_report["track_number"]) != expected_number:
             raise ValueError(
@@ -7894,6 +7927,7 @@ def main() -> None:
             snes,
             workspace,
             music_paths[source_index],
+            maxmod_calibrations[source_index],
             finite=True,
         )
         (output / f"tyrian_music_{source_index:02d}_once.it").write_bytes(
@@ -8057,7 +8091,50 @@ def main() -> None:
         f"player_shot_animation_frames={player_shot_report['animation_frames']}",
         f"music_catalog_modules={len(music_modules)}",
         f"music_catalog_it_bytes={sum(map(len, music_modules))}",
-        "music_catalog_profile=SuperNintendo calibrated tracker adapter",
+        "music_catalog_profile=GbaMaxmod fixed-reference tracker adapter",
+        (
+            "music_calibration_source_count="
+            f"{maxmod_catalog['summary']['sourceCount']}"
+        ),
+        (
+            "music_calibration_gain_min="
+            f"{maxmod_catalog['summary']['gainMin']:.9f}"
+        ),
+        (
+            "music_calibration_gain_max="
+            f"{maxmod_catalog['summary']['gainMax']:.9f}"
+        ),
+        (
+            "music_calibration_legacy_mean_abs_error_db="
+            f"{maxmod_catalog['summary']['legacyMeanAbsoluteErrorDb']:.6f}"
+        ),
+        (
+            "music_calibration_mean_abs_error_db="
+            f"{maxmod_catalog['summary']['calibratedMeanAbsoluteErrorDb']:.6f}"
+        ),
+        (
+            "music_calibration_sample_clip_count="
+            f"{maxmod_catalog['summary']['sampleClipCount']}"
+        ),
+        (
+            "music_calibration_peak_limited_sources="
+            f"{maxmod_catalog['summary']['peakLimitedSourceCount']}"
+        ),
+        (
+            "music_calibration_maximum_peak_ratio="
+            f"{maxmod_catalog['summary']['maximumPeakRatio']:.6f}"
+        ),
+        (
+            "music_calibration_percussion_peak_ceiling_ratio="
+            f"{maxmod_catalog['summary']['percussionPeakCeilingRatio']:.3f}"
+        ),
+        (
+            "music_calibration_reference_gain_db="
+            f"{maxmod_catalog['playbackReferenceGainDb']:.3f}"
+        ),
+        "music_calibration_per_song_maximum_normalization=0",
+        "music_calibration_reference_fold_down=mono_L_plus_R",
+        "music_percussion_boundary=1.5ms_attack_5ms_release_DC_blocked",
         f"title_music_it_bytes={len(title_music)}",
         f"title_music_seconds={title_report['tracker_duration_seconds']:.6f}",
         f"level_music_it_bytes={len(level_music)}",

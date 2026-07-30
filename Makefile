@@ -258,6 +258,7 @@ ASSET_INPUTS := \
 	Configure.h \
 	tools/build_assets.py \
 	tools/background_palette_training.py \
+	tools/music_maxmod_calibration.py \
 	tools/frontend_native_font.txt \
 	tools/frontend_pregame_font.txt \
 	vendor/builders/snes/build_assets.py \

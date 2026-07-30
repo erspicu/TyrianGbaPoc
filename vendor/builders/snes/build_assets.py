@@ -986,7 +986,7 @@ def synthesize_tym_sample(
                 0.16
             )
         elif drum_note in (38, 40):
-            length = 768
+            length = 1536
             rate = 11_025
             time = np.arange(length, dtype=np.float64) / rate
             rng = np.random.default_rng(
@@ -994,15 +994,30 @@ def synthesize_tym_sample(
             )
             signal = (
                 rng.uniform(-1.0, 1.0, length) *
-                np.exp(-time * 35.0) *
+                np.exp(-time * 22.0) *
                 0.82 +
                 np.sin(2.0 * np.pi * 185.0 * time) *
-                np.exp(-time * 45.0) *
+                np.exp(-time * 32.0) *
                 0.28
             )
         else:
-            length = 512
             rate = 11_025
+            if drum_note in (42, 44):
+                length = 768
+                decay = 48.0
+                difference = 0.78
+            elif drum_note == 46:
+                length = 2048
+                decay = 16.0
+                difference = 0.70
+            else:
+                # Open/crash/ride cymbals in the stock catalog are sparse,
+                # long events.  Treating every one as a 46 ms closed hat
+                # forced RMS calibration to amplify its transient by several
+                # times (most visibly source 7 in track 41).
+                length = 4096
+                decay = 8.5
+                difference = 0.62
             time = np.arange(length, dtype=np.float64) / rate
             rng = np.random.default_rng(
                 0x484154 + source * 257 + instrument_index
@@ -1010,8 +1025,40 @@ def synthesize_tym_sample(
             noise = rng.uniform(-1.0, 1.0, length)
             signal = np.empty(length, dtype=np.float64)
             signal[0] = noise[0]
-            signal[1:] = noise[1:] - noise[:-1] * 0.86
-            signal *= np.exp(-time * 92.0)
+            signal[1:] = noise[1:] - noise[:-1] * difference
+            signal *= np.exp(-time * decay)
+        # The procedural one-shots are a fixed-reference PCM adapter, not a
+        # new per-song master.  Remove residual DC and make both boundaries
+        # meet silence so Maxmod retriggers/stops cannot create a click.
+        dc_blocked = np.empty_like(signal)
+        dc_blocked[0] = 0.0
+        previous_input = float(signal[0])
+        previous_output = 0.0
+        for sample_index in range(1, length):
+            current_input = float(signal[sample_index])
+            current_output = (
+                current_input -
+                previous_input +
+                0.995 * previous_output
+            )
+            dc_blocked[sample_index] = current_output
+            previous_input = current_input
+            previous_output = current_output
+        signal = dc_blocked
+        attack = min(length // 4, max(2, int(round(rate * 0.0015))))
+        attack_phase = np.linspace(0.0, 1.0, attack, endpoint=True)
+        signal[:attack] *= (
+            attack_phase *
+            attack_phase *
+            (3.0 - 2.0 * attack_phase)
+        )
+        release = min(length // 4, max(2, int(round(rate * 0.005))))
+        release_phase = np.linspace(1.0, 0.0, release, endpoint=True)
+        signal[-release:] *= (
+            release_phase *
+            release_phase *
+            (3.0 - 2.0 * release_phase)
+        )
         peak = max(1e-9, float(np.max(np.abs(signal))))
         pcm = np.clip(
             np.rint(signal / peak * 118.0 * gain_scale),
