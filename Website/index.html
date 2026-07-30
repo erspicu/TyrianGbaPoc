@@ -8,6 +8,7 @@
   <title>TyrianGbaPoc — 把 Tyrian 帶進 GBA</title>
   <link rel="icon" href="assets/brand-mark.svg" type="image/svg+xml">
   <link rel="stylesheet" href="assets/css/site.css">
+  <script src="assets/js/i18n.js" defer></script>
   <script src="assets/js/site.js" defer></script>
 </head>
 <body>
@@ -52,7 +53,7 @@
             <span class="status-dot">runtime verified</span>
           </div>
           <div class="screen screen-hero">
-            <img src="assets/images/gameplay-boss.png" alt="GBA 上的 Tyrian 第一關 Boss 與大量彈幕畫面" width="240" height="160">
+            <img src="assets/images/gallery/boss-stress-current.png" alt="GBA 上的 Tyrian 第一關 Boss 與最強武器壓力配置彈幕畫面" width="240" height="160">
           </div>
           <div class="hardware-strip" aria-label="硬體重點">
             <div class="hardware-stat"><strong>240×160</strong><span>1:1 final crop</span></div>
@@ -89,8 +90,8 @@
             </p>
             <p>
               原始 PC 戰鬥視窗不做整體縮放。264×184 gameplay space 維持原座標，
-              最終只在 GBA 端做中央 240×160 裁切，避免讓每個敵人與碰撞公式背負
-              額外縮放成本，也讓畫面密度更接近原版。
+              GBA 以 240×160 柔性視窗利用兩軸各 24 pixels 的裁切餘量；敵人與碰撞
+              公式不必背負縮放成本，玩家靠近邊界時也能平順取回原版可見範圍。
             </p>
             <blockquote class="pull-quote">
               目標不是證明 GBA「毫無限制」，而是找出在真實硬體預算內，
@@ -234,33 +235,46 @@
           </p>
         </div>
 
+        <h3 class="gallery-heading">Gameplay / live routes</h3>
         <div class="gallery">
-          <figure class="gallery-item wide reveal">
-            <div class="screenshot-card"><img src="assets/images/gameplay-cavern.png" alt="第一關多圖層岩地與冰層場景" width="240" height="160" loading="lazy"></div>
-            <figcaption><span>第一關多圖層場景</span><span>High detail / 1:1 crop</span></figcaption>
-          </figure>
-          <figure class="gallery-item wide reveal">
-            <div class="screenshot-card"><img src="assets/images/gameplay-boss.png" alt="第一關 Boss、玩家武器與彈幕" width="240" height="160" loading="lazy"></div>
-            <figcaption><span>Boss 與高密度 Sprite</span><span>128 OAM / cached Sprite2</span></figcaption>
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/episode1-multilayer-current.png" alt="目前版本第一章第一關的多圖層岩地與冰層場景" width="240" height="160" loading="lazy"></div>
+            <figcaption><span>Episode 1 多圖層場景</span><span>High detail / soft crop</span></figcaption>
           </figure>
           <figure class="gallery-item reveal">
-            <div class="screenshot-card"><img src="assets/images/title-menu.png" alt="GBA 版 Tyrian 首頁選單" width="240" height="160" loading="lazy"></div>
+            <div class="screenshot-card"><img src="assets/images/gallery/episode4-surface-current.png" alt="目前版本第四章 SURFACE 關卡的沙地與樹木場景" width="240" height="160" loading="lazy"></div>
+            <figcaption><span>Episode 4 · SURFACE</span><span>trained 4bpp palette</span></figcaption>
+          </figure>
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/boss-stress-current.png" alt="目前版本第一關 Boss、最強主副武器與全畫面特效壓力場景" width="240" height="160" loading="lazy"></div>
+            <figcaption><span>Boss 壓力配置</span><span>full loadout / 128 OAM</span></figcaption>
+          </figure>
+        </div>
+
+        <h3 class="gallery-heading">Frontend / campaign flow</h3>
+        <div class="gallery">
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/title-current.png" alt="目前版本 GBA Tyrian 首頁選單" width="240" height="160" loading="lazy"></div>
             <figcaption><span>首頁</span><span>source art / GBA layout</span></figcaption>
           </figure>
           <figure class="gallery-item reveal">
-            <div class="screenshot-card"><img src="assets/images/game-menu.png" alt="Game Menu 與玩家飛船資訊" width="240" height="160" loading="lazy"></div>
+            <div class="screenshot-card"><img src="assets/images/gallery/game-menu-current.png" alt="目前版本 Game Menu、玩家飛船與 Data Cube 資訊" width="240" height="160" loading="lazy"></div>
             <figcaption><span>Game Menu</span><span>cached static frontend</span></figcaption>
           </figure>
           <figure class="gallery-item reveal">
-            <div class="screenshot-card"><img src="assets/images/next-level.png" alt="Next Level 星球與路線畫面" width="240" height="160" loading="lazy"></div>
+            <div class="screenshot-card"><img src="assets/images/gallery/next-level-current.png" alt="目前版本 Next Level 星球與路線畫面" width="240" height="160" loading="lazy"></div>
             <figcaption><span>Next Level</span><span>hardware OBJ planet</span></figcaption>
           </figure>
-          <figure class="gallery-item wide reveal">
-            <div class="screenshot-card"><img src="assets/images/upgrade-ship.png" alt="Upgrade Ship 武器與裝備選單" width="240" height="160" loading="lazy"></div>
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/upgrade-ship-current.png" alt="目前版本 Upgrade Ship 武器與裝備選單" width="240" height="160" loading="lazy"></div>
             <figcaption><span>Upgrade Ship</span><span>stock HDT equipment</span></figcaption>
           </figure>
-          <figure class="gallery-item wide reveal">
-            <div class="screenshot-card"><img src="assets/images/boss-stats.png" alt="Boss 擊敗後的原版風格統計摘要" width="240" height="160" loading="lazy"></div>
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/data-cubes-current.png" alt="目前版本四顆 Data Cube 與資料閱讀畫面" width="240" height="160" loading="lazy"></div>
+            <figcaption><span>Data Cubes</span><span>stock cube state / reader</span></figcaption>
+          </figure>
+          <figure class="gallery-item reveal">
+            <div class="screenshot-card"><img src="assets/images/gallery/level-stats-current.png" alt="目前版本 Boss 擊敗後在持續捲動場景上的統計摘要" width="240" height="160" loading="lazy"></div>
             <figcaption><span>破關統計</span><span>pre-baked TINY_FONT OBJ</span></figcaption>
           </figure>
         </div>
@@ -298,6 +312,10 @@
           </a>
           <a class="research-link reveal" href="research/frontend.html">
             <span><strong>靜態選單的 GBA 渲染策略</strong><p>底圖、文字、動態 OBJ 與分幀轉場如何各自使用適合的硬體路徑。</p></span>
+            <span class="arrow" aria-hidden="true">↗</span>
+          </a>
+          <a class="research-link reveal" href="research/audio.html">
+            <span><strong>音樂與音效的生成、校準及轉場</strong><p>從 TYM、SND 到 Maxmod soundbank，保留聲道比例、抑制刺耳瞬態並避免切歌爆音。</p></span>
             <span class="arrow" aria-hidden="true">↗</span>
           </a>
         </div>

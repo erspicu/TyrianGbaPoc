@@ -3,6 +3,10 @@
 This directory contains the static project website. It has no package-manager
 or external runtime dependency.
 
+Every page supports English and Traditional Chinese through the shared
+`assets/js/i18n.js` catalog. English is used on first visit; a language change
+is stored in `localStorage` and follows the reader across all site pages.
+
 On Windows, double-click `Serve-Website.bat`, then open:
 
 ```text

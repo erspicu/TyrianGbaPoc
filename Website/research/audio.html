@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 如何把原版 TYM、SND 與語音轉為 GBA Maxmod soundbank，校準聲道響度、抑制刺耳瞬態並消除切歌爆音。">
+  <meta name="theme-color" content="#05070c">
+  <title>音樂與音效的生成及校準 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/i18n.js" defer></script>
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="../assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a>
+        <a href="index.html" aria-current="page">研究筆記</a>
+        <a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Audio</span></nav>
+        <p class="eyebrow">Research 08 / Audio pipeline</p>
+        <h1>不只把聲音放大，而是保留原曲內部的關係。</h1>
+        <p class="lede">
+          PC 原版的 OPL2 音樂不能原封不動交給 GBA 播放。本專案將事件、音色與
+          聲道關係轉成 Maxmod 可負擔的 tracker／PCM 表示，並以離線量測修正聲道
+          響度、鼓聲瞬態、有限提示曲與場景切換。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="sources">兩條來源路徑，一個 runtime soundbank</h2>
+          <p>
+            音樂仍由 ROMFS 的 <code>music.mus</code> 與原始 song ID 決定流程；
+            build 端使用 41 首 TYM 表示保存 LDS／OPL2 pattern、patch、note、
+            channel volume 與 carrier total-level，再轉成 Maxmod 的 IT modules。
+            音效則直接由 <code>tyrian.snd</code> 與 <code>voices.snd</code>
+            拆出原始 8-bit PCM。最後由 <code>mmutil</code> 組成同一份
+            <code>soundbank.bin</code>。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>41</strong><span>music modules</span></div>
+            <div class="metric"><strong>308</strong><span>calibrated OPL sources</span></div>
+            <div class="metric"><strong>29 + 9</strong><span>SFX + voice samples</span></div>
+          </div>
+          <div class="callout">
+            Runtime 不以「第幾個 GBA 檔案」重寫遊戲規格。關卡、Game Menu、
+            Demo、JukeBox、Boss 與提示音仍傳入原版的 song／sound ID；
+            GBA adapter 只負責找到相對應的 Maxmod module 或 sample。
+          </div>
+
+          <h2 id="calibration">為什麼不能逐曲正規化</h2>
+          <p>
+            早期轉換沿用為 SNES S-DSP／BRR 建立的 channel gain，還會把每首歌
+            最大的 voice gain 再正規化。結果是同一音色跨歌曲沒有共同響度基準，
+            而一首歌最強的聲道會連帶改變其他聲道比例。稀疏鼓聲尤其容易為了追上
+            整曲 RMS 而被放大成尖銳瞬態。
+          </p>
+          <p>
+            新流程以 <code>channel-calibration.json</code> 的完整 OPL2 stem RMS
+            作固定 reference，對 Maxmod 真正使用的 signed 8-bit sample、
+            IT volume-column 量化與 runtime module volume <code>896/1024</code>
+            重新量測。原始參考與 GBA 內建喇叭都是 mono，因此以
+            <code>L+R</code> fold-down 比對，但 IT 內的 stereo pan 仍完整保留。
+          </p>
+          <ul>
+            <li>保留 TYM event velocity 已包含的 carrier loudness；</li>
+            <li>全 catalog 只使用一次固定 +3 dB presentation gain；</li>
+            <li>不做 per-track 或 per-sample master normalization；</li>
+            <li>8-bit 量化後重新量測，clipping 或缺少 target 會讓 build 失敗。</li>
+          </ul>
+          <div class="metric-grid">
+            <div class="metric"><strong>8.572 dB</strong><span>legacy mean absolute error</span></div>
+            <div class="metric"><strong>0.154 dB</strong><span>calibrated mean absolute error</span></div>
+            <div class="metric"><strong>0</strong><span>clipped samples</span></div>
+          </div>
+
+          <h2 id="percussion">鼓聲要看 peak，不只看 RMS</h2>
+          <p>
+            短 one-shot 的平均能量很低，若只追 RMS，kick、snare、hi-hat 或
+            crash 的單一下 peak 可能被推得過高。校準器因此另以原版 peak 的
+            <code>1.60×</code> 作軟上限；22 個稀疏 percussion sources 寧可略低於
+            RMS target，也不製造刺耳爆點。
+          </p>
+          <p>
+            程序鼓聲依類型使用不同 sample length，不再共用同一段 46 ms noise。
+            每個 one-shot 使用 1.5 ms smoothstep attack 與 5 ms release，並只移除
+            極低頻 DC；沒有對全部曲目強套 120 Hz high-pass 或 8 kHz shelf，
+            避免把不同 Tyrian 音色 EQ 成同一種聲音。
+          </p>
+
+          <h2 id="effects">原版 SFX 與語音不經手工替代</h2>
+          <p>
+            <code>tyrian.snd</code> 內 29 個一般音效與 <code>voices.snd</code>
+            內 9 段語音以原始 archive offset 拆出，轉為 11,025 Hz mono 8-bit WAV。
+            與 OpenTyrian 的 <code>JE_loadSndFile()</code> 相同，每段 voice 都移除
+            尾端 100-byte 損壞資料，不只處理 Level End。遊戲中的爆炸、打擊、
+            Cube、Boss 與提示語音仍依 source sound number 呼叫。
+          </p>
+          <p>
+            極限全武器壓力測試可以選擇把密集 SFX 導向 GBA 原生 DMG square
+            channel，以隔離 sample-mixer voice pressure；這是診斷 profile，
+            一般遊戲仍使用完整 Maxmod SFX。
+          </p>
+
+          <h2 id="finite">循環曲與只播一次的提示曲</h2>
+          <p>
+            Maxmod 的 <code>MM_PLAY_ONCE</code> 只控制 order list 結束後的行為；
+            原始 IT 內若仍有 <code>Bxx</code> 跳轉，歌曲仍會無限循環。因此 End of
+            Level（09）、Game Over（10）與 Secret Level（30）各保留兩種 module：
+            一般版供 JukeBox 循環，<code>_once</code> 版只移除 Bxx，讓遊戲流程自然
+            播到結尾停止。
+          </p>
+          <p>
+            兩種檔案的 PCM payload 完全相同，Maxmod 也會全域去重相同 sample。
+            三份有限 order／pattern 只讓 soundbank 增加 4,028 bytes，換來正確的
+            勝利、死亡與秘密關卡播放語意。
+          </p>
+
+          <h2 id="transition">切歌先跨過零點</h2>
+          <p>
+            直接在 Direct Sound FIFO 還含非零波形時 <code>mmStop()</code>，
+            容易在選單進關卡的一瞬間產生爆音。現行 VBlank 狀態機只淡出背景
+            module，保留 UI 確認音效：
+          </p>
+          <ol class="process-list">
+            <li><strong>18 VBlanks 淡出。</strong>選單歌曲平順降到零。</li>
+            <li><strong>1 個完整靜音 VBlank。</strong>讓 Maxmod 送出靜音 buffer。</li>
+            <li><strong>停止並載入場景。</strong>切換 module 與關卡資料。</li>
+            <li><strong>30 VBlanks 淡入。</strong>新關卡歌曲從零開始。</li>
+          </ol>
+          <p>
+            暫停則比照來源邏輯，只把 module volume 降為一半；死亡淡出、勝利與
+            Game Over 的 natural stop 都由 telemetry 計數，避免日後又退回無限循環。
+          </p>
+
+          <h2 id="verification">把聽感變成可重建的證據</h2>
+          <p>
+            Build 會輸出逐曲、逐 source 的 gain、RMS error、peak ceiling、
+            clipping 與 track mapping 報告；回歸另驗證 41 首 catalog、三首
+            finite cues、場景淡出／靜音／淡入步數、自然停止次數與所有 source
+            SFX ID。人耳 A/B 仍不可取代，但每次修改不必再從零猜測「哪個聲道變大」。
+          </p>
+          <div class="callout warning">
+            離線量測不是宣稱已取得實機 LUFS 真值。它提供固定、可重現的比較基準；
+            最後仍要在 mGBA 與真實 GBA 輸出上檢查音樂、音效及語音的相對感受。
+          </div>
+        </article>
+
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul>
+            <li><a href="#sources">來源與 soundbank</a></li>
+            <li><a href="#calibration">聲道校準</a></li>
+            <li><a href="#percussion">鼓聲瞬態</a></li>
+            <li><a href="#effects">SFX 與語音</a></li>
+            <li><a href="#finite">有限提示曲</a></li>
+            <li><a href="#transition">無爆音轉場</a></li>
+            <li><a href="#verification">驗證</a></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>TyrianGbaPoc 技術研究 · <span data-year></span></div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="palette-training.html">上一篇：Palette training</a>
+        <a href="index.html">全部研究</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

@@ -214,6 +214,38 @@ a {
   padding: 0.58rem 0.82rem;
 }
 
+.language-switcher {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  margin-left: -0.35rem;
+}
+
+.language-switcher button {
+  min-height: 2rem;
+  border: 0;
+  padding: 0.38rem 0.58rem;
+  color: var(--dim);
+  background: transparent;
+  font: 700 0.61rem/1 var(--font-display);
+  letter-spacing: 0.035em;
+  cursor: pointer;
+}
+
+.language-switcher button + button {
+  border-left: 1px solid var(--line-strong);
+}
+
+.language-switcher button:hover {
+  color: var(--ink);
+}
+
+.language-switcher button.active {
+  color: var(--night);
+  background: var(--amber-bright);
+}
+
 main {
   overflow: clip;
 }
@@ -421,9 +453,15 @@ h3 {
   image-rendering: pixelated;
 }
 
-.screen-hero img {
+.screen-hero {
   aspect-ratio: 3 / 2;
-  object-fit: cover;
+}
+
+.screen-hero img {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: contain;
 }
 
 .hardware-strip {
@@ -647,6 +685,18 @@ h3 {
   gap: 1rem;
 }
 
+.gallery + .gallery-heading {
+  margin-top: clamp(2.5rem, 5vw, 4rem);
+}
+
+.gallery-heading {
+  margin: 0 0 1rem;
+  color: var(--amber-bright);
+  font: 700 0.78rem/1.3 var(--font-display);
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
 .gallery figure {
   margin: 0;
 }
@@ -669,14 +719,10 @@ h3 {
 
 .screenshot-card img {
   width: 100%;
+  height: auto;
   aspect-ratio: 3 / 2;
-  object-fit: cover;
+  object-fit: contain;
   image-rendering: pixelated;
-  transition: transform 260ms ease;
-}
-
-.screenshot-card:hover img {
-  transform: scale(1.018);
 }
 
 .gallery figcaption {
@@ -1126,6 +1172,11 @@ h3 {
 
   .site-nav a {
     padding: 0.55rem;
+  }
+
+  .language-switcher {
+    width: max-content;
+    margin: 0.35rem 0 0 0.55rem;
   }
 
   .site-nav a::after {

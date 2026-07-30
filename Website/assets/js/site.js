@@ -26,14 +26,17 @@ document.querySelectorAll("[data-copy]").forEach((button) => {
     if (!target) return;
 
     const text = target.textContent.trim();
+    const language = window.TyrianSiteLanguage?.getLanguage() ?? "en";
     try {
       await navigator.clipboard.writeText(text);
-      button.textContent = "已複製";
+      button.textContent = language === "zh" ? "已複製" : "Copied";
       window.setTimeout(() => {
-        button.textContent = "複製";
+        button.textContent = language === "zh" ? "複製" : "Copy";
       }, 1400);
     } catch {
-      button.textContent = "請手動複製";
+      button.textContent = language === "zh"
+        ? "請手動複製"
+        : "Copy manually";
     }
   });
 });
