@@ -41,21 +41,21 @@ _Static_assert(
     "cash HUD position must remain visible"
 );
 _Static_assert(
-    TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X >= 18 &&
-        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X <= SCREEN_WIDTH &&
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X >= 18 &&
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X <= SCREEN_WIDTH &&
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X >= 18 &&
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X <= SCREEN_WIDTH,
+    TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X <= SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X <= SCREEN_WIDTH &&
+        TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X >= 18 &&
+        TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X <= SCREEN_WIDTH,
     "energy HUD right edges must leave room for three digits"
 );
 _Static_assert(
-    TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y >= 0 &&
-        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y <= SCREEN_HEIGHT - 8 &&
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y >= 0 &&
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y <= SCREEN_HEIGHT - 8 &&
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y >= 0 &&
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y <= SCREEN_HEIGHT - 8,
+    TYRIAN_GBA_LAYOUT_SHIELD_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_SHIELD_Y <= SCREEN_HEIGHT - 8 &&
+        TYRIAN_GBA_LAYOUT_ARMOR_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_ARMOR_Y <= SCREEN_HEIGHT - 8 &&
+        TYRIAN_GBA_LAYOUT_GENERATOR_Y >= 0 &&
+        TYRIAN_GBA_LAYOUT_GENERATOR_Y <= SCREEN_HEIGHT - 8,
     "energy HUD rows must remain visible"
 );
 _Static_assert(
@@ -1108,6 +1108,10 @@ static u32 frontend_ship_panel_cache_cash EWRAM_BSS;
 static u8 frontend_ship_panel_cache_armor EWRAM_BSS;
 static u8 frontend_ship_panel_cache_valid EWRAM_BSS;
 static u8 frontend_data_cube_count EWRAM_BSS;
+static u8 frontend_data_cube_list[
+    OT_EPISODE_CUBE_CAPACITY
+] EWRAM_BSS;
+static u8 frontend_level_cube_start_count EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
@@ -1790,6 +1794,9 @@ static inline void stress_cycle_accumulate(
 #endif
 static void frontend_commit_vblank(void);
 static void frontend_campaign_apply_to_level(void);
+static void frontend_campaign_apply_level_script(
+    const OtEpisodeLevel *level
+);
 static void frontend_campaign_sync_from_level(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);

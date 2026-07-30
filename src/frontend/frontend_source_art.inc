@@ -334,21 +334,34 @@ static u8 frontend_source_colour(
     return (u8)((hue << 4) | (u8)value);
 }
 
+static s16 frontend_scale_floor(s32 numerator, s32 denominator)
+{
+    /*
+     * Python's offline 5-phase scaler uses floor division. C99 division
+     * truncates toward zero, which placed partially clipped left/top OBJ one
+     * pixel away from their pre-scaled bitmap phase. Keep both paths exact.
+     */
+    if (numerator >= 0) {
+        return (s16)(numerator / denominator);
+    }
+    return (s16)(-((-numerator + denominator - 1) / denominator));
+}
+
 static s16 frontend_source_to_screen_x(s16 source_x)
 {
-    return (s16)(
+    return frontend_scale_floor(
         (
             (s32)source_x - FRONTEND_MENU_SOURCE_CROP_X
         ) *
-        SCREEN_WIDTH /
+            SCREEN_WIDTH,
         FRONTEND_MENU_SOURCE_WIDTH
     );
 }
 
 static s16 frontend_source_to_screen_y(s16 source_y)
 {
-    return (s16)(
-        (s32)source_y * SCREEN_HEIGHT /
+    return frontend_scale_floor(
+        (s32)source_y * SCREEN_HEIGHT,
         OT_PIC_DECODED_HEIGHT
     );
 }

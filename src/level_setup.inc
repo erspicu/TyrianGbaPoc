@@ -441,6 +441,12 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
         frontend_level_ready = 0;
         return 0;
     }
+    /*
+     * Direct levelsN.dat ]?, ]! and ]+ handling. Apply the ordered source
+     * operations only after entry resources/equipment succeeded, then retain
+     * this baseline so cubes picked up in the level accumulate across maps.
+     */
+    frontend_campaign_apply_level_script(&frontend_level);
 #if TYRIAN_GBA_STRESS_LOADOUT
     stress_loadout_init();
 #else

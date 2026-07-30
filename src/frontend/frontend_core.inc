@@ -354,6 +354,12 @@ static void frontend_campaign_initialize(void)
             initial_cash[frontend_episode] :
             0;
     frontend_data_cube_count = 0;
+    memset(
+        frontend_data_cube_list,
+        0,
+        sizeof(frontend_data_cube_list)
+    );
+    frontend_level_cube_start_count = 0;
     player_armor =
         ot_data_hdt_ship_read(frontend_player_items.ship, &ship) ?
             ship.damage :
@@ -407,6 +413,63 @@ static void frontend_campaign_apply_to_level(void)
         frontend_player_items.weapon_mode;
 }
 
+static void frontend_campaign_apply_level_script(
+    const OtEpisodeLevel *level
+)
+{
+    u8 operation;
+
+    if (level == 0) return;
+    if (level->cube_list_valid) {
+        memcpy(
+            frontend_data_cube_list,
+            level->cube_list,
+            sizeof(frontend_data_cube_list)
+        );
+    }
+    for (
+        operation = 0;
+        operation < level->cube_operation_count;
+        operation++
+    ) {
+        const OtEpisodeCubeOperation *item =
+            &level->cube_operation[operation];
+
+        switch (item->type) {
+        case OT_EPISODE_CUBE_OP_CLAMP:
+            if (frontend_data_cube_count > item->value) {
+                frontend_data_cube_count = item->value;
+            }
+            break;
+        case OT_EPISODE_CUBE_OP_SET:
+            frontend_data_cube_count = item->value;
+            break;
+        case OT_EPISODE_CUBE_OP_ADD:
+            if (
+                frontend_data_cube_count <
+                    OT_EPISODE_CUBE_CAPACITY
+            ) {
+                u8 room = (u8)(
+                    OT_EPISODE_CUBE_CAPACITY -
+                    frontend_data_cube_count
+                );
+                frontend_data_cube_count = (u8)(
+                    frontend_data_cube_count +
+                    (
+                        item->value < room ?
+                            item->value :
+                            room
+                    )
+                );
+            }
+            break;
+        default:
+            break;
+        }
+    }
+    frontend_level_cube_start_count = frontend_data_cube_count;
+}
+
 static void frontend_campaign_sync_from_level(void)
 {
     if (!frontend_player_items_valid || frontend_demo_active) return;
@@ -439,10 +502,16 @@ static void frontend_campaign_sync_from_level(void)
         source_parity_level.player_sidekick_series;
     frontend_player_items.weapon_mode =
         source_parity_level.player_weapon_mode;
-    frontend_data_cube_count =
-        source_parity_level.data_cube_pickup_count > 4u ?
-            4u :
-            (u8)source_parity_level.data_cube_pickup_count;
+    {
+        u32 total =
+            frontend_level_cube_start_count +
+            source_parity_level.data_cube_pickup_count;
+
+        frontend_data_cube_count =
+            total > OT_EPISODE_CUBE_CAPACITY ?
+                OT_EPISODE_CUBE_CAPACITY :
+                (u8)total;
+    }
 }
 _Static_assert(
     FRONTEND_CUBE_BYTES ==

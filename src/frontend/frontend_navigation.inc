@@ -974,6 +974,41 @@ static void frontend_render_next_level_item(u8 selection)
     );
 }
 
+static u8 frontend_next_level_help_index(void)
+{
+    return
+        frontend_selection < frontend_next_choice_count() ?
+            17u :
+            11u;
+}
+
+static const char *frontend_next_level_help(void)
+{
+    static const char destination_fallback[] =
+        "Select this location to visit next.";
+    static const char exit_fallback[] =
+        "Return to the previous menu.";
+    u8 source_index = frontend_next_level_help_index();
+
+    if (
+        frontend_text_ready &&
+        frontend_text.main_menu_help[source_index][0] != '\0'
+    ) {
+        return frontend_text.main_menu_help[source_index];
+    }
+    return source_index == 17u ?
+        destination_fallback :
+        exit_fallback;
+}
+
+static void frontend_draw_next_level_help(void)
+{
+    frontend_draw_menu_help(
+        frontend_next_level_help_index(),
+        frontend_next_level_help()
+    );
+}
+
 static void frontend_prepare_next_level_base(void)
 {
     memcpy(
@@ -1015,6 +1050,7 @@ static void frontend_prepare_next_level_text(void)
         frontend_render_next_level_item(choice);
     }
     frontend_render_next_level_item(choice_count);
+    frontend_draw_next_level_help();
 }
 
 static void frontend_render_next_level(void)
@@ -1038,6 +1074,7 @@ static void frontend_render_next_level_selection(u8 old_selection)
     frontend_nav_set_target();
     frontend_render_next_level_item(old_selection);
     frontend_render_next_level_item(frontend_selection);
+    frontend_draw_next_level_help();
     frontend_dirty_begin();
     {
         u16 old_y =
@@ -1067,6 +1104,15 @@ static void frontend_render_next_level_selection(u8 old_selection)
             (s16)new_y,
             FRONTEND_NEXT_PANEL_WIDTH,
             FRONTEND_NEXT_ITEM_HEIGHT
+        );
+        frontend_dirty_add(
+            0,
+            (s16)frontend_menu_help_dirty_y(),
+            SCREEN_WIDTH,
+            (u16)(
+                SCREEN_HEIGHT -
+                frontend_menu_help_dirty_y()
+            )
         );
     }
     frontend_dirty_present();

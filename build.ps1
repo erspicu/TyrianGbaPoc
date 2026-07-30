@@ -473,9 +473,10 @@ function Test-GbaMemoryBudget {
     $iwramReservedAboveStack = 0x03008000L - $userStackTop
     # Static front-end transitions keep a 19.2 KiB packed ship-panel cache
     # in EWRAM. Gameplay reuses the separate Mode-4/Sprite2 union. Maxmod is
-    # the only observed heap client: AUTOTEST measures an exact 3,892-byte
-    # high-water mark and independently requires at least 8 KiB after that
-    # allocation.  A 12 KiB link floor therefore exposes another 12 KiB to
+    # the only observed heap client: AUTOTEST has measured at most 3,892
+    # bytes (the exact _sbrk delta can fall when the link-time heap start is
+    # better aligned) and independently requires at least 8 KiB after that
+    # allocation. A 12 KiB link floor therefore exposes another 12 KiB to
     # useful static caches without relying on unmeasured free space.
     #
     # libgba starts the user stack at __sp_usr (0x03007f00), not at the top of
@@ -1492,7 +1493,8 @@ $telemetryChecks = [ordered]@{
         $telemetry.iwram_stack_remaining_bytes -ge 2048
     )
     ewram_heap_high_water = (
-        $telemetry.ewram_heap_used_bytes -eq 3892 -and
+        $telemetry.ewram_heap_used_bytes -gt 0 -and
+        $telemetry.ewram_heap_used_bytes -le 3892 -and
         $telemetry.ewram_heap_remaining_bytes -ge 8192
     )
     authored_boss_perf_window = (
@@ -2728,7 +2730,8 @@ if (
     $transitionFooter.iwram_stack_canary_filled_bytes -le
         $transitionFooter.iwram_stack_remaining_bytes -or
     $transitionFooter.iwram_stack_remaining_bytes -lt 2048 -or
-    $transitionFooter.ewram_heap_used_bytes -ne 3892 -or
+    $transitionFooter.ewram_heap_used_bytes -le 0 -or
+    $transitionFooter.ewram_heap_used_bytes -gt 3892 -or
     $transitionFooter.ewram_heap_remaining_bytes -lt 8192
 ) {
     throw (

@@ -69,29 +69,63 @@
 #endif
 
 /*
- * The following three numbers are right-aligned at RIGHT_X and are ordered
- * weapon power, hull armor, reserve shield from top to bottom.
+ * The three compact PC-sidebar values are right-aligned at RIGHT_X.
+ * User-selected top-to-bottom order and source colour families:
+ *   SHIELD    - PC JE_drawShield hue 0x90 (blue)
+ *   ARMOR     - PC JE_drawArmor  hue 0xe0 (brown)
+ *   GENERATOR - PC power bar     hue 0x70 (gold)
  *
- * 下列三項以 RIGHT_X 為右邊界靠右排列，由上到下依序為：
- * 武器能源、機體耐久、備用護盾能源。
+ * 三項數值以 RIGHT_X 為右邊界靠右排列。由上到下依照使用者指定：
+ *   SHIELD    - PC JE_drawShield 的 0x90 藍色色階
+ *   ARMOR     - PC JE_drawArmor  的 0xe0 褐色色階
+ *   GENERATOR - PC Power Bar     的 0x70 金色色階
+ */
+#ifndef TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X
+#define TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X 238
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SHIELD_Y
+#define TYRIAN_GBA_LAYOUT_SHIELD_Y 128
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X
+#define TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X 238
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_ARMOR_Y
+#define TYRIAN_GBA_LAYOUT_ARMOR_Y 138
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X
+#define TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X 238
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GENERATOR_Y
+#define TYRIAN_GBA_LAYOUT_GENERATOR_Y 148
+#endif
+
+/*
+ * Backward-compatible aliases for build scripts which still override the
+ * v54 names. New code and documentation should use the semantic names above.
+ *
+ * 舊版 v54 建置參數的相容別名；新程式與文件請使用上方語意化名稱。
  */
 #ifndef TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X
-#define TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X 238
+#define TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X \
+    TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y
-#define TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y 128
+#define TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y \
+    TYRIAN_GBA_LAYOUT_GENERATOR_Y
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X
-#define TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X 238
+#define TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X \
+    TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y
-#define TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y 138
+#define TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y TYRIAN_GBA_LAYOUT_ARMOR_Y
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X
-#define TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X 238
+#define TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X \
+    TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y
-#define TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y 148
+#define TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y TYRIAN_GBA_LAYOUT_SHIELD_Y
 #endif
 
 /* Fixed gameplay notices after the 1:1 crop / 1:1 裁切後的固定提示位置。 */

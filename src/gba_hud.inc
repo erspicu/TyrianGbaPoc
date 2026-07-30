@@ -32,7 +32,12 @@ static void render_cash_counter(void)
     }
 }
 
-static inline void put_energy_hud_digit(s16 x, s16 y, u8 digit)
+static inline void put_energy_hud_digit(
+    s16 x,
+    s16 y,
+    u8 digit,
+    u8 palette_bank
+)
 {
     OBJATTR *object;
 
@@ -49,7 +54,7 @@ static inline void put_energy_hud_digit(s16 x, s16 y, u8 digit)
     object->attr2 =
         OBJ_CHAR(OBJ_TILE_SCORE_DIGITS + digit) |
         ATTR2_PRIORITY(0) |
-        ATTR2_PALETTE(OBJ_PAL_SCORE_DIGITS);
+        ATTR2_PALETTE(palette_bank);
     object->dummy = 0;
 }
 
@@ -67,7 +72,8 @@ static void render_hud_value_right(
     EnergyHudDecimalCache *cache,
     u16 value,
     s16 right_x,
-    s16 y
+    s16 y,
+    u8 palette_bank
 )
 {
     u8 hundreds = 0;
@@ -87,7 +93,7 @@ static void render_hud_value_right(
         for (index = 0; index < cache->count; index++) {
             u8 digit = cache->digits[index];
 
-            put_energy_hud_digit(x, y, digit);
+            put_energy_hud_digit(x, y, digit, palette_bank);
             x = (s16)(x + cash_digit_advances[digit]);
         }
         return;
@@ -151,7 +157,7 @@ static void render_hud_value_right(
     for (index = 0; index < cache->count; index++) {
         u8 digit = cache->digits[index];
 
-        put_energy_hud_digit(x, y, digit);
+        put_energy_hud_digit(x, y, digit, palette_bank);
         x = (s16)(x + cash_digit_advances[digit]);
     }
 }
@@ -159,27 +165,30 @@ static void render_hud_value_right(
 static void render_player_energy_status(void)
 {
     /*
-     * The removed PC sidebar exposed three live resources: shared weapon
-     * power, hull armor and shield.  Keep their source values, but present
-     * them as compact numbers in the user-configurable bottom-right stack.
+     * Preserve the PC sidebar's live values and representative hue families.
+     * The user-selected stack is shield (0x90 blue), armor (0xe0 brown), then
+     * generator/weapon power (0x70 gold).
      */
     render_hud_value_right(
         &energy_hud_decimal_cache[0],
-        player_weapon_energy,
-        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_RIGHT_X,
-        TYRIAN_GBA_LAYOUT_WEAPON_ENERGY_Y
+        player_shield,
+        TYRIAN_GBA_LAYOUT_SHIELD_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_SHIELD_Y,
+        OBJ_PAL_HUD_SHIELD
     );
     render_hud_value_right(
         &energy_hud_decimal_cache[1],
         player_armor,
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_RIGHT_X,
-        TYRIAN_GBA_LAYOUT_SHIP_ENERGY_Y
+        TYRIAN_GBA_LAYOUT_ARMOR_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_ARMOR_Y,
+        OBJ_PAL_HUD_ARMOR
     );
     render_hud_value_right(
         &energy_hud_decimal_cache[2],
-        player_shield,
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_RIGHT_X,
-        TYRIAN_GBA_LAYOUT_RESERVE_ENERGY_Y
+        player_weapon_energy,
+        TYRIAN_GBA_LAYOUT_GENERATOR_RIGHT_X,
+        TYRIAN_GBA_LAYOUT_GENERATOR_Y,
+        OBJ_PAL_HUD_GENERATOR
     );
 }
 

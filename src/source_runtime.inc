@@ -369,6 +369,10 @@ static u8 source_option_projectile_build(void)
     static const u8 expected_height[
         SOURCE_OPTION_PROJECTILE_FRAME_COUNT
     ] = {24, 28, 23};
+    static const u8 palette_slot[14] = {
+        1, 1, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15,
+    };
     OtDataView palette;
     u8 frame;
     u8 colour;
@@ -386,15 +390,28 @@ static u8 source_option_projectile_build(void)
     for (colour = 0; colour < 14; colour++) {
         SPRITE_PALETTE[
             SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 +
-            colour + 1u
+            palette_slot[colour]
         ] = title_palette_colour(
             &palette,
             (u8)(114u + colour)
         );
     }
+    /*
+     * Palette bank 12 is otherwise the persistent gold GENERATOR digit
+     * bank. Plasma Storm needs fourteen red shades, so merge only its two
+     * darkest source entries and reserve slots 2/3 for the HUD. This avoids
+     * recolouring the OSD while that source-faithful sidekick is equipped.
+     */
     SPRITE_PALETTE[
-        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 15u
-    ] = 0;
+        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 2u
+    ] = ((const u16 *)(const void *)obj_palette)[
+        OBJ_PAL_HUD_GENERATOR * 16u + 2u
+    ];
+    SPRITE_PALETTE[
+        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 3u
+    ] = ((const u16 *)(const void *)obj_palette)[
+        OBJ_PAL_HUD_GENERATOR * 16u + 3u
+    ];
     for (
         frame = 0;
         frame < SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
@@ -446,7 +463,7 @@ static u8 source_option_projectile_build(void)
                     u8 palette_index;
 
                     if (code < 114 || code > 127) return 0;
-                    palette_index = (u8)(code - 113u);
+                    palette_index = palette_slot[code - 114u];
                     target_offset =
                         (u32)(
                             (y >> 3) *

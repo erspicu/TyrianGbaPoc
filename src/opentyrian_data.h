@@ -255,6 +255,19 @@ typedef struct {
     bool episode_complete;
 } OtEpisodeMap;
 
+enum {
+    OT_EPISODE_CUBE_CAPACITY = 4,
+    OT_EPISODE_CUBE_OPERATION_CAPACITY = 16,
+    OT_EPISODE_CUBE_OP_CLAMP = 1,
+    OT_EPISODE_CUBE_OP_SET = 2,
+    OT_EPISODE_CUBE_OP_ADD = 3,
+};
+
+typedef struct {
+    uint8_t type;
+    uint8_t value;
+} OtEpisodeCubeOperation;
+
 /*
  * Result of interpreting one original levelsN.dat section. Script sections
  * are one-based and source_song is zero-based for play_song().
@@ -270,6 +283,12 @@ typedef struct {
     bool normal_bonus_level;
     bool episode_complete;
     char level_name[10];
+    uint8_t cube_list[OT_EPISODE_CUBE_CAPACITY];
+    uint8_t cube_list_count;
+    bool cube_list_valid;
+    OtEpisodeCubeOperation
+        cube_operation[OT_EPISODE_CUBE_OPERATION_CAPACITY];
+    uint8_t cube_operation_count;
 } OtEpisodeLevel;
 
 typedef struct {

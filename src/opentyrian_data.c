@@ -1256,6 +1256,64 @@ bool ot_data_episode_level_resolve(
                 } while (line[0] != '#');
                 break;
 
+            case '?': {
+                uint16_t count = script_number(line + 4);
+                uint8_t index;
+
+                if (count > OT_EPISODE_CUBE_CAPACITY) {
+                    count = OT_EPISODE_CUBE_CAPACITY;
+                }
+                resolved.cube_list_count = (uint8_t)count;
+                resolved.cube_list_valid = true;
+                memset(
+                    resolved.cube_list,
+                    0,
+                    sizeof(resolved.cube_list)
+                );
+                for (index = 0; index < count; index++) {
+                    resolved.cube_list[index] = (uint8_t)script_number(
+                        line + 3u + (uint32_t)(index + 1u) * 4u
+                    );
+                }
+                if (
+                    resolved.cube_operation_count >=
+                        OT_EPISODE_CUBE_OPERATION_CAPACITY
+                ) {
+                    return false;
+                }
+                resolved.cube_operation[
+                    resolved.cube_operation_count++
+                ] = (OtEpisodeCubeOperation){
+                    OT_EPISODE_CUBE_OP_CLAMP,
+                    (uint8_t)count,
+                };
+                break;
+            }
+
+            case '!':
+            case '+': {
+                uint16_t value = script_number(line + 4);
+
+                if (value > OT_EPISODE_CUBE_CAPACITY) {
+                    value = OT_EPISODE_CUBE_CAPACITY;
+                }
+                if (
+                    resolved.cube_operation_count >=
+                        OT_EPISODE_CUBE_OPERATION_CAPACITY
+                ) {
+                    return false;
+                }
+                resolved.cube_operation[
+                    resolved.cube_operation_count++
+                ] = (OtEpisodeCubeOperation){
+                    line[1] == '!' ?
+                        OT_EPISODE_CUBE_OP_SET :
+                        OT_EPISODE_CUBE_OP_ADD,
+                    (uint8_t)value,
+                };
+                break;
+            }
+
             case 'G': {
                 uint16_t choice_count = script_number(line + 7);
                 uint16_t choice_index;

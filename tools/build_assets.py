@@ -5273,6 +5273,31 @@ def build_cash_digits(
     )
 
 
+def build_hud_digit_palettes(
+    snes: ModuleType,
+    palette_file: Path,
+) -> tuple[bytes, bytes, bytes]:
+    """Build PC-sidebar blue, brown and gold palettes for shared digit tiles."""
+    tyrian_palette = load_tyrian_palette(palette_file)
+
+    def digit_palette(dark: int, bright: int) -> bytes:
+        return snes.snes_palette_bytes([[
+            (0, 0, 0),       # OBJ colour 0: transparent
+            (0, 0, 0),       # FULL_SHADE outline
+            tyrian_palette[dark],
+            tyrian_palette[bright],
+        ]])
+
+    # JE_dBar3 starts shield/armor at base+2 and climbs that hue ramp.
+    # The power bar uses palette 113..125. Mid/high samples keep the tiny
+    # digits legible while remaining representative of the original panel.
+    return (
+        digit_palette(0x97, 0x9B),  # shield: blue 0x90 family
+        digit_palette(0xE7, 0xEB),  # armor: brown 0xe0 family
+        digit_palette(0x77, 0x7B),  # generator: gold 0x70 family
+    )
+
+
 def build_gameplay_status_text(
     snes: ModuleType,
     image_root: Path,
@@ -5779,6 +5804,9 @@ def repack_obj_tiles(
         raise ValueError("GBA cash digit bank must contain ten advances")
     metadata["OBJ_TILE_SCORE_DIGITS"] = len(output) // 32
     metadata["OBJ_PAL_SCORE_DIGITS"] = 9
+    metadata["OBJ_PAL_HUD_SHIELD"] = 10
+    metadata["OBJ_PAL_HUD_ARMOR"] = 11
+    metadata["OBJ_PAL_HUD_GENERATOR"] = 12
     metadata["OBJ_SCORE_DIGIT_COUNT"] = len(digit_advances)
     for digit, advance in enumerate(digit_advances):
         metadata[f"OBJ_SCORE_DIGIT_ADVANCE_{digit}"] = advance
@@ -7664,6 +7692,14 @@ def main() -> None:
         digit_advances,
     ) = build_cash_digits(snes, image_root, data_root / "palette.dat")
     (
+        hud_shield_palette,
+        hud_armor_palette,
+        hud_generator_palette,
+    ) = build_hud_digit_palettes(
+        snes,
+        data_root / "palette.dat",
+    )
+    (
         pause_tiles,
         pause_palette,
         pause_preview,
@@ -7723,6 +7759,9 @@ def main() -> None:
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
     obj_palette[9 * 32 : 10 * 32] = digit_palette
+    obj_palette[10 * 32 : 11 * 32] = hud_shield_palette
+    obj_palette[11 * 32 : 12 * 32] = hud_armor_palette
+    obj_palette[12 * 32 : 13 * 32] = hud_generator_palette
     obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
     obj_palette[14 * 32 : 15 * 32] = pause_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
