@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 如何在 GBA 4bpp、每塊 tile 只有 15 個可見色的限制下，以 build-time 感知色盤訓練保留 PC 原版觀感。">
+  <meta name="theme-color" content="#05070c">
+  <title>受限色盤訓練 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="../assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a>
+        <a href="index.html" aria-current="page">研究筆記</a>
+        <a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑">
+          <a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Palette training</span>
+        </nav>
+        <p class="eyebrow">Research 07 / Palette training</p>
+        <h1>15 色之內，找回沙地與樹的關係。</h1>
+        <p class="lede">
+          GBA 不能直接顯示 Tyrian 的 256 色背景。本專案把色盤選擇變成可量測、
+          可回歸的 build-time 最佳化問題，讓有限色彩優先保住人眼真正注意的
+          色相、明暗與物件邊界。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <figure class="research-figure">
+            <div class="comparison-frame">
+              <img
+                src="../assets/images/research/episode4-palette-pc-vs-gba-v57.png"
+                alt="Episode 4 SURFACE 相同鏡位比較：左側是 PC 原始 LVL、SHP 與色盤，右側是 GBA v57 固定 4bpp 色盤結果"
+                width="1440"
+                height="512">
+            </div>
+            <figcaption>
+              <span>Episode 4 · SURFACE · 相同 camera composition</span>
+              <span>左：PC stock　右：GBA v57 4bpp</span>
+            </figcaption>
+          </figure>
+
+          <div class="callout">
+            本文的「訓練」不是在 GBA 上執行神經網路。它是離線分析原始關卡資料，
+            反覆最佳化 palette bank 並通過感知誤差門檻；ROM 執行時只讀取已完成的
+            tile 與色盤，因此不增加每幀成本。
+          </div>
+
+          <h2 id="constraint">真正的硬體邊界</h2>
+          <p>
+            Tyrian 的 PC 素材以 256 色索引表示。GBA Mode 0 的 4bpp text background
+            則要求每塊 8×8 tile 選擇一個 16-entry palette bank，其中 index 0
+            用作透明，因此一塊 tile 實際只剩 <strong>15 個可見色</strong>。
+            對單一材質不成問題，但一塊 tile 同時含綠葉、褐色樹幹與沙地時，
+            兩組色相與亮度階梯必須共享這 15 個位置。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>256</strong><span>PC source palette entries</span></div>
+            <div class="metric"><strong>8×8</strong><span>GBA background tile</span></div>
+            <div class="metric"><strong>15</strong><span>每 tile 可見色上限</span></div>
+          </div>
+
+          <h2 id="failure">綠色方塊從哪裡來</h2>
+          <p>
+            Episode 4 第一個可玩關卡 SURFACE 曾在樹木四周出現規則的綠色方塊。
+            幾何、LVL 與 SHP 都沒有讀錯；問題是這些 tile 的
+            <code>hue mask 0x0404</code> 同時包含綠色與沙褐色，舊流程卻把它們
+            指派給單純的綠色 bank。結果樹葉仍像樹葉，周圍本應是沙地的像素卻也
+            被量化成綠色，8×8 邊界因此清楚浮現。
+          </p>
+          <p>
+            舊驗收還要求「相鄰亮度 ramp 的碰撞數不得增加」。這個數字看似合理，
+            卻可能獎勵錯誤答案：多個沙色亮度映到不同的綠色，collision 很少，
+            人眼看到的色相卻完全錯誤。問題不在 GBA 少了更多顏色，而是最佳化目標
+            沒有代表真正的視覺品質。
+          </p>
+
+          <h2 id="training">從原始資料訓練，而非逐關修圖</h2>
+          <p>
+            建置工具掃描完整 LVL、shape 與原始 palette，依「實際會出現的 tile」
+            建立 source index histogram、畫面曝光量與 hue mask。這次資料集涵蓋
+            62 個實體 LVL sections、75,555 個 per-level runtime keys；
+            合併後仍有 33,360 個 profile unique keys。流程不含 Episode 4 專用
+            手工色票，後續關卡會走同一套規則。
+          </p>
+          <ol class="process-list">
+            <li><strong>建立安全 baseline。</strong>保留原始 bank 作 fallback，只在未占用 bank 訓練候選色。</li>
+            <li><strong>用感知色彩空間計分。</strong>OKLab 保持穩定的最佳化方向，CIEDE2000 檢查人眼可見差異。</li>
+            <li><strong>找出最壞反例。</strong>若 mixed-hue mask 仍有高誤差，把最大違規 key 依 histogram 與實際曝光量加權送回訓練。</li>
+            <li><strong>逐輪補強約束。</strong>反例權重隨 iteration 增加，直到共同 palette 不再犧牲其中一類真實 tile。</li>
+            <li><strong>硬性驗收。</strong>每個 key 的 OKLab、CIEDE2000 都不得退步，lightness inversion 也不得增加。</li>
+            <li><strong>烘焙並回歸。</strong>結果寫入 ROM 資產，再由實際 mGBA route 與全關 telemetry 驗證。</li>
+          </ol>
+
+          <h2 id="result">SURFACE 的實測結果</h2>
+          <p>
+            新流程把 <code>0x0404</code> 指派給可同時表達綠葉與沙地的 mixed bank 4。
+            所有 867 個 SURFACE runtime keys 在兩種感知指標中都沒有退步；樹木區域
+            的高誤差像素大幅收斂，規則綠塊也從實際 mGBA 畫面消失。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>82.25%</strong><span>全關 OKLab 誤差改善</span></div>
+            <div class="metric"><strong>31.19%</strong><span>全關 CIEDE2000 改善</span></div>
+            <div class="metric"><strong>0</strong><span>兩種指標 regressed keys</span></div>
+          </div>
+          <div class="metric-grid">
+            <div class="metric"><strong>8.77 → 1.87</strong><span>樹木區域 mean CIEDE2000</span></div>
+            <div class="metric"><strong>28.01 → 3.51</strong><span>樹木區域 P95 CIEDE2000</span></div>
+            <div class="metric"><strong>0 → 0</strong><span>lightness inversions</span></div>
+          </div>
+          <p>
+            頁首對照圖刻意使用相同 camera composition：左側直接由 stock
+            <code>tyrian4.lvl</code>、<code>shapes).dat</code> 與
+            <code>palette.dat</code> 重建；右側只替換成最終 GBA 4bpp 資產。
+            這能隔離色盤轉換本身，不讓敵人生成時機或鏡頭差異干擾判讀。
+            另外也以新 ROM 的實際 mGBA frame 確認相同缺陷已消失。
+          </p>
+
+          <h2 id="ai">AI 協作，但不用 AI 當規格</h2>
+          <p>
+            這次研究曾把硬體限制、真實 histogram、per-key 誤差與 ramp telemetry
+            交給 Gemini 3.1 Pro 複核。它指出 raw collision 不適合作 hard gate，
+            並建議先採 mask-only counterexample refinement；Codex 再依專案資料實作、
+            建置與跑完整回歸。AI 提供假說與審查角度，最後裁決仍來自
+            <strong>原始素材、數學指標與模擬器實測</strong>。
+          </p>
+
+          <h2 id="limit">不是無限色，也不是零代價</h2>
+          <p>
+            15 色同時承載兩組 hue family，仍會壓縮少量相鄰亮度層次；這是 4bpp
+            的真實邊界。新方法選擇的是「保住色相與物件關係，再犧牲較不顯眼的
+            ramp 細節」。若未來出現單一 mask 無法同時服務的情況，才會評估
+            key-specific override；在此之前維持簡單 runtime schema，更節省 ROM、
+            RAM 與 CPU，也比較容易證明所有關卡沒有回歸。
+          </p>
+          <div class="callout warning">
+            色盤訓練不是截圖濾鏡。它必須以所有可能出現的 runtime keys 驗收，
+            不能只讓一張示範圖變漂亮；否則同一關稍後的 tile 仍可能換一種方式破圖。
+          </div>
+        </article>
+
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul>
+            <li><a href="#constraint">硬體限制</a></li>
+            <li><a href="#failure">錯誤根因</a></li>
+            <li><a href="#training">訓練流程</a></li>
+            <li><a href="#result">量化結果</a></li>
+            <li><a href="#ai">AI 協作</a></li>
+            <li><a href="#limit">剩餘限制</a></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>TyrianGbaPoc 技術研究 · <span data-year></span></div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="index.html">全部研究</a>
+        <a href="rendering.html">下一篇：多圖層與裁切</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

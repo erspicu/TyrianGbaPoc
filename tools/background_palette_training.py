@@ -1792,6 +1792,374 @@ def train_profile_safe_unused(
     return words, nearest, mask_table, history
 
 
+def refine_profile_counterexamples(
+    dataset: ProfileDataset,
+    baseline_words: np.ndarray,
+    baseline_nearest: np.ndarray,
+    baseline_mask_table: np.ndarray,
+    candidate_words: np.ndarray,
+    candidate_nearest: np.ndarray,
+    candidate_mask_table: np.ndarray,
+    source_lab: np.ndarray,
+    candidate_lab: np.ndarray,
+    source_cielab: np.ndarray,
+    candidate_cielab: np.ndarray,
+    bank_iterations: int,
+    max_masks: int = 1,
+    max_constraint_iterations: int = 12,
+    minimum_ciede2000_mean: float = 10.0,
+    minimum_exposure: float = 32.0,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    list[dict[str, float | int]],
+]:
+    """Refine severe mixed-hue failures with constraint generation.
+
+    ``train_profile_safe_unused()`` deliberately keeps every baseline bank
+    available as an exact fallback.  That conservative policy used to reject
+    an otherwise excellent mixed-material bank when just one low-exposure
+    key regressed by a fraction in CIEDE2000.  More importantly, its raw
+    adjacent-ramp collision gate rewarded mapping two source hue families to
+    fifteen *wrong-hue* colours instead of quantising both families into the
+    same fifteen-colour hardware bank.
+
+    This second pass is still generic and build-only:
+
+    * consider only visibly severe, meaningfully exposed, mixed-hue masks
+      that the first pass left on their baseline bank;
+    * train in an otherwise-unused bank;
+    * add the maximum violating runtime keys back to the training histogram
+      with exponentially increasing weight;
+    * accept only a checkpoint where every real key is non-regressing in
+      both OKLab and CIEDE2000 and lightness inversions do not increase.
+
+    Raw ramp collisions remain telemetry.  They cannot be a hard gate for a
+    mixed bank: with only fifteen colours, merging nearby steps is sometimes
+    the correct trade for preserving both source hue categories.
+    """
+    words = candidate_words.copy()
+    nearest = candidate_nearest.copy()
+    mask_table = candidate_mask_table.copy()
+    history: list[dict[str, float | int]] = []
+    if (
+        max_masks <= 0 or
+        len(dataset.keys) == 0
+    ):
+        return words, nearest, mask_table, history
+
+    active_masks, inverse, mask_histograms = aggregate_mask_histograms(
+        dataset,
+        np.ones(len(dataset.keys), dtype=np.float64),
+    )
+    protected_banks = {
+        int(value)
+        for value in np.unique(
+            baseline_mask_table[active_masks]
+        )
+    }
+    reserved_trainable = {
+        int(mask_table[int(mask)])
+        for mask in active_masks
+        if (
+            int(mask_table[int(mask)]) not in protected_banks and
+            int(mask_table[int(mask)]) !=
+                int(baseline_mask_table[int(mask)])
+        )
+    }
+    available_banks = [
+        bank
+        for bank in range(PALETTE_BANKS)
+        if (
+            bank not in protected_banks and
+            bank not in reserved_trainable
+        )
+    ]
+    if not available_banks:
+        return words, nearest, mask_table, history
+
+    baseline_ok_error = palette_mapping_error(
+        baseline_words,
+        baseline_nearest,
+        source_lab,
+        candidate_lab,
+    )
+    baseline_cie_error = palette_metric_error(
+        baseline_words,
+        baseline_nearest,
+        source_cielab,
+        candidate_cielab,
+        "ciede2000",
+    )
+    targets: list[
+        tuple[float, int, float, float]
+    ] = []
+    for mask_index, mask_value in enumerate(active_masks):
+        mask = int(mask_value)
+        if (
+            mask.bit_count() < 2 or
+            int(mask_table[mask]) !=
+                int(baseline_mask_table[mask])
+        ):
+            continue
+        selected = inverse == mask_index
+        histograms = dataset.histograms[selected].astype(np.float64)
+        pixel_mass = histograms.sum(axis=1)
+        weights = dataset.weights[selected]
+        exposure = float(weights.sum())
+        baseline_bank = int(baseline_mask_table[mask])
+        key_cie = (
+            histograms @ baseline_cie_error[baseline_bank]
+        ) / pixel_mass
+        mean_cie = float(np.average(key_cie, weights=weights))
+        if (
+            exposure < minimum_exposure or
+            mean_cie < minimum_ciede2000_mean
+        ):
+            continue
+        # Mean severity is primary; log exposure prevents one ubiquitous,
+        # mildly-wrong material from hiding a conspicuous local hue failure.
+        priority = mean_cie * float(np.log1p(exposure))
+        targets.append(
+            (priority, mask_index, mean_cie, exposure)
+        )
+    targets.sort(reverse=True)
+
+    refined_masks = 0
+    for (
+        _,
+        mask_index,
+        baseline_cie_mean,
+        exposure,
+    ) in targets:
+        if (
+            refined_masks >= max_masks or
+            not available_banks
+        ):
+            break
+        mask = int(active_masks[mask_index])
+        selected = inverse == mask_index
+        histograms = dataset.histograms[selected].astype(np.float64)
+        pixel_mass = histograms.sum(axis=1)
+        weights = dataset.weights[selected]
+        baseline_bank = int(baseline_mask_table[mask])
+        baseline_key_ok = (
+            histograms @ baseline_ok_error[baseline_bank]
+        ) / pixel_mass
+        baseline_key_cie = (
+            histograms @ baseline_cie_error[baseline_bank]
+        ) / pixel_mass
+        baseline_ok_mean = max(
+            float(np.average(baseline_key_ok, weights=weights)),
+            1.0e-20,
+        )
+        baseline_cie_mean_safe = max(
+            float(np.average(baseline_key_cie, weights=weights)),
+            1.0e-20,
+        )
+        baseline_ramp = ramp_pair_counts(
+            mask,
+            baseline_bank,
+            baseline_words,
+            baseline_nearest,
+            candidate_lab,
+        )
+
+        best: tuple[
+            float,
+            int,
+            np.ndarray,
+            np.ndarray,
+            int,
+            float,
+            float,
+            tuple[int, int],
+        ] | None = None
+        attempts = 0
+        for bank in tuple(available_banks):
+            training_histogram = mask_histograms[mask_index].copy()
+            seed_codes = baseline_words[bank, 1:].copy()
+            for constraint_iteration in range(
+                max_constraint_iterations
+            ):
+                attempts += 1
+                codes = optimize_bank(
+                    training_histogram,
+                    seed_codes,
+                    source_lab,
+                    candidate_lab,
+                    bank_iterations,
+                )
+                trial_words = words.copy()
+                trial_words[bank, 1:] = codes
+                trial_nearest, _ = nearest_mapping(
+                    trial_words,
+                    source_lab,
+                    candidate_lab,
+                )
+                trial_ok_error = palette_mapping_error(
+                    trial_words,
+                    trial_nearest,
+                    source_lab,
+                    candidate_lab,
+                )
+                trial_cie_error = palette_metric_error(
+                    trial_words,
+                    trial_nearest,
+                    source_cielab,
+                    candidate_cielab,
+                    "ciede2000",
+                )
+                key_ok = (
+                    histograms @ trial_ok_error[bank]
+                ) / pixel_mass
+                key_cie = (
+                    histograms @ trial_cie_error[bank]
+                ) / pixel_mass
+                ok_violation = (
+                    key_ok > baseline_key_ok + 1.0e-12
+                )
+                cie_violation = (
+                    key_cie > baseline_key_cie + 1.0e-9
+                )
+                trial_ramp = ramp_pair_counts(
+                    mask,
+                    bank,
+                    trial_words,
+                    trial_nearest,
+                    candidate_lab,
+                )
+                if (
+                    not np.any(ok_violation) and
+                    not np.any(cie_violation) and
+                    trial_ramp[0] <= baseline_ramp[0]
+                ):
+                    ok_ratio = (
+                        float(np.average(key_ok, weights=weights)) /
+                        baseline_ok_mean
+                    )
+                    cie_ratio = (
+                        float(np.average(key_cie, weights=weights)) /
+                        baseline_cie_mean_safe
+                    )
+                    score = ok_ratio + cie_ratio
+                    if (
+                        ok_ratio < 1.0 - 1.0e-12 and
+                        cie_ratio < 1.0 - 1.0e-12 and
+                        (best is None or score < best[0])
+                    ):
+                        best = (
+                            score,
+                            bank,
+                            codes.copy(),
+                            trial_nearest[bank].copy(),
+                            constraint_iteration + 1,
+                            ok_ratio,
+                            cie_ratio,
+                            trial_ramp,
+                        )
+                    # A feasible checkpoint is enough for this seed.  More
+                    # counterexample weight would trade mean quality away.
+                    break
+
+                violating = ok_violation | cie_violation
+                if not np.any(violating):
+                    # Only an inversion gate failed; reweighting colours
+                    # cannot reliably repair ordering, so try another seed.
+                    break
+                ok_scale = np.maximum(
+                    baseline_key_ok,
+                    1.0e-6,
+                )
+                cie_scale = np.maximum(
+                    baseline_key_cie,
+                    1.0e-3,
+                )
+                severity = np.maximum(
+                    np.maximum(
+                        0.0,
+                        (key_ok - baseline_key_ok) / ok_scale,
+                    ),
+                    np.maximum(
+                        0.0,
+                        (key_cie - baseline_key_cie) / cie_scale,
+                    ),
+                )
+                maximum = float(severity[violating].max())
+                # Constraint generation: add the max-violation face rather
+                # than overfitting one arbitrarily chosen key.  The 2**k
+                # schedule reaches an effective 8x counterexample weight in
+                # four deterministic checkpoints.
+                face = violating & (
+                    severity >= maximum * (1.0 - 1.0e-9)
+                )
+                addition = np.sum(
+                    histograms[face] *
+                    (
+                        weights[face] *
+                        np.maximum(severity[face], 1.0)
+                    )[:, None],
+                    axis=0,
+                )
+                training_histogram += (
+                    (2.0 ** constraint_iteration) * addition
+                )
+
+        if best is None:
+            history.append({
+                "counterexample_mask": mask,
+                "counterexample_baseline_bank": baseline_bank,
+                "counterexample_success": 0,
+                "counterexample_attempts": attempts,
+                "counterexample_baseline_ciede2000_mean":
+                    baseline_cie_mean,
+                "counterexample_exposure": exposure,
+            })
+            continue
+        (
+            _,
+            best_bank,
+            best_codes,
+            best_nearest,
+            best_iterations,
+            best_ok_ratio,
+            best_cie_ratio,
+            best_ramp,
+        ) = best
+        words[best_bank, 1:] = best_codes
+        nearest[best_bank] = best_nearest
+        mask_table[mask] = best_bank
+        available_banks.remove(best_bank)
+        refined_masks += 1
+        history.append({
+            "counterexample_mask": mask,
+            "counterexample_baseline_bank": baseline_bank,
+            "counterexample_bank": best_bank,
+            "counterexample_success": 1,
+            "counterexample_attempts": attempts,
+            "counterexample_iterations": best_iterations,
+            "counterexample_oklab_ratio": best_ok_ratio,
+            "counterexample_ciede2000_ratio": best_cie_ratio,
+            "counterexample_baseline_ciede2000_mean":
+                baseline_cie_mean,
+            "counterexample_exposure": exposure,
+            "counterexample_ramp_inversions_before":
+                baseline_ramp[0],
+            "counterexample_ramp_inversions_after":
+                best_ramp[0],
+            "counterexample_ramp_collisions_before":
+                baseline_ramp[1],
+            "counterexample_ramp_collisions_after":
+                best_ramp[1],
+        })
+    history.append({
+        "counterexample_refined_masks": refined_masks,
+        "counterexample_candidate_masks": len(targets),
+    })
+    return words, nearest, mask_table, history
+
+
 def train_assets_safe_unused(
     datasets: dict[str, ProfileDataset],
     baseline: PaletteAssets,

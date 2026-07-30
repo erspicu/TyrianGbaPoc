@@ -5,6 +5,13 @@
 分析範圍：`ref/1.png`～`ref/6.png`、GBA runtime、build-time
 palette trainer，以及 OpenTyrian 原始流程。
 
+> **v57 更正：** 本文件第 1 節把 `tyrian4.lvl` 實體 section #1
+> 當成 Episode 4 第一個可玩關卡；實際 SURFACE 路線起點是實體
+> section #4、shape bank `shapes).dat`。因此本文件針對 `z`
+> profile 的 43.49%／17.04% 結果並沒有處理使用者在 SURFACE 看到的
+> 樹木綠色方塊。正確根因、constraint-generation 修法與新對照數據
+> 請見 `Tyrian-GBA-Episode4-Surface-Palette-v57.md`。
+
 ## 結論摘要
 
 1. **Episode 4 第一關的紅框色差不是目前技術極限。**

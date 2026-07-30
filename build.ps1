@@ -360,7 +360,7 @@ if (
     $assetReport.frontend_nav_bitmap_saved_bytes -ne "3196854" -or
     $assetReport.frontend_nav_bitmap_roundtrip_verified -ne "1" -or
     $assetReport.background_palette_mode -ne
-        "runtime-key safe-unused OKLab+CIEDE2000" -or
+        "runtime-key safe-unused + counterexample refinement" -or
     $assetReport.background_palette_shape_file_ids -ne "),w,x,y,z" -or
     $assetReport.background_palette_level_specific_tables -ne "62" -or
     $assetReport.background_palette_shape_bank_specific_tables -ne "5" -or
@@ -372,25 +372,33 @@ if (
     $assetReport.background_palette_runtime_unique_keys -ne "33360" -or
     $assetReport.background_palette_runtime_active_masks -ne "202" -or
     $assetReport.background_palette_palette_sha256 -ne
-        "a3f6d3b861e5db595f7553a9ddc7a1f311d9eed84ec7aa6690cdd64357be9f9b" -or
+        "b174339b87da97742b113179f855f6187e9ee0c5fb40a76d75bfc71c9ab4bbba" -or
     $assetReport.background_palette_nearest_sha256 -ne
-        "f80cc48287506f882cb12ba0ace095faf6c41e3522342c92acfc3d2fac54dd6a" -or
+        "144db769d5146e138b691458b2d64472c637873efa10213a85301c95517cacb1" -or
     $assetReport.background_palette_mask_sha256 -ne
-        "9a9c5463aa7888ff40f678c967bd70cc3074dc6d2722e4ba7bf45c757e92f8d0" -or
+        "01fb015defdc9f4a3b1650fbf161d0c509a8590c67e8790c255c46a7c6f6d5fa" -or
     $assetReport.background_palette_training_policy -ne
-        "preserve runtime-used v53 banks; train unused banks; accept only per-key OKLab+CIEDE2000 non-regressions" -or
+        "preserve runtime-used v53 banks; train unused banks; accept only per-key OKLab+CIEDE2000 non-regressions; constraint-generate severe mixed-hue masks; ramp collisions are telemetry, inversions are gated" -or
     $assetReport.background_palette_ciede2000_reference_vectors -ne "3" -or
-    $assetReport.background_palette_level_e4_l1_shape -ne "z" -or
-    $assetReport.background_palette_level_e4_l1_runtime_keys -ne "1957" -or
-    $assetReport.background_palette_level_e4_l1_active_masks -ne "43" -or
+    $assetReport.background_palette_level_e4_l4_shape -ne ")" -or
+    $assetReport.background_palette_level_e4_l4_runtime_keys -ne "867" -or
+    $assetReport.background_palette_level_e4_l4_active_masks -ne "9" -or
     [double](
-        $assetReport.background_palette_level_e4_l1_oklab_improvement -replace
+        $assetReport.background_palette_level_e4_l4_oklab_improvement -replace
             "%$", ""
-    ) -lt 43.0 -or
+    ) -lt 82.0 -or
     [double](
-        $assetReport.background_palette_level_e4_l1_ciede2000_improvement -replace
+        $assetReport.background_palette_level_e4_l4_ciede2000_improvement -replace
             "%$", ""
-    ) -lt 17.0 -or
+    ) -lt 31.0 -or
+    $assetReport.background_palette_level_e4_l4_counterexample_refined_masks -ne
+        "1" -or
+    $assetReport.background_palette_level_e4_l4_counterexample_mask -ne
+        "0x0404" -or
+    [double](
+        $assetReport.background_palette_level_e4_l4_counterexample_ciede2000_improvement -replace
+            "%$", ""
+    ) -lt 88.0 -or
     $assetReport["background_palette_shape_)_dataset_sha256"] -ne
         "90b1e0f9c3bc6f126353d70c345f7b1952980b0398ba76b2942adfc0157dba98" -or
     $assetReport.background_palette_shape_w_dataset_sha256 -ne

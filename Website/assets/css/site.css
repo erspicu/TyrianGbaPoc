@@ -829,6 +829,66 @@ h3 {
   color: var(--ink);
 }
 
+.research-figure {
+  margin: 0 0 2rem;
+}
+
+.comparison-frame {
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: #030405;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.34);
+}
+
+.comparison-frame img {
+  width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.research-figure figcaption {
+  display: flex;
+  padding: 0.8rem 0.15rem 0;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.research-figure figcaption span:last-child {
+  color: var(--dim);
+  font: 500 0.66rem/1.4 var(--font-display);
+  text-align: right;
+}
+
+.process-list {
+  margin: 1.5rem 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: palette-step;
+}
+
+.process-list li {
+  position: relative;
+  border-top: 1px solid var(--line);
+  padding: 1rem 0 1rem 3.25rem;
+  counter-increment: palette-step;
+}
+
+.process-list li:last-child {
+  border-bottom: 1px solid var(--line);
+}
+
+.process-list li::before {
+  position: absolute;
+  top: 1.05rem;
+  left: 0;
+  color: var(--amber);
+  content: counter(palette-step, decimal-leading-zero);
+  font: 700 0.72rem/1.4 var(--font-display);
+}
+
 .article code,
 .command {
   border: 1px solid rgba(119, 217, 215, 0.18);
@@ -1100,6 +1160,16 @@ h3 {
   .gallery-item,
   .gallery-item.wide {
     grid-column: 1 / -1;
+  }
+
+  .research-figure figcaption {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .research-figure figcaption span:last-child {
+    text-align: left;
   }
 
   .hero-actions .button,

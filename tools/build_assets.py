@@ -5152,6 +5152,26 @@ def build_background_palette_assets(
             30,
             20,
         )
+        (
+            level_words,
+            level_nearest,
+            level_mask,
+            counterexample_history,
+        ) = trainer.refine_profile_counterexamples(
+            dataset,
+            baseline_words,
+            baseline_nearest,
+            baseline_mask,
+            level_words,
+            level_nearest,
+            level_mask,
+            source_oklab,
+            candidate_oklab,
+            source_cielab,
+            candidate_cielab,
+            20,
+        )
+        level_history.extend(counterexample_history)
         if len(dataset.keys) == 0:
             oklab_regressions = 0
             cie_regressions = 0
@@ -5256,6 +5276,14 @@ def build_background_palette_assets(
             ),
             0,
         )
+        counterexample_refined_masks = next(
+            (
+                int(record["counterexample_refined_masks"])
+                for record in reversed(level_history)
+                if "counterexample_refined_masks" in record
+            ),
+            0,
+        )
         level_reports.extend((
             (
                 f"background_palette_level_e{level.episode}_"
@@ -5285,11 +5313,49 @@ def build_background_palette_assets(
                 f"l{level.level}_safe_mask_changes="
                 f"{safe_mask_changes}"
             ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_counterexample_refined_masks="
+                f"{counterexample_refined_masks}"
+            ),
         ))
-        if level.episode == 4 and level.level == 1:
+        for record in level_history:
+            if (
+                int(record.get("counterexample_success", 0)) == 0
+            ):
+                continue
+            level_reports.extend((
+                (
+                    f"background_palette_level_e{level.episode}_"
+                    f"l{level.level}_counterexample_mask="
+                    f"0x{int(record['counterexample_mask']):04x}"
+                ),
+                (
+                    f"background_palette_level_e{level.episode}_"
+                    f"l{level.level}_counterexample_bank="
+                    f"{int(record['counterexample_bank'])}"
+                ),
+                (
+                    f"background_palette_level_e{level.episode}_"
+                    f"l{level.level}_counterexample_oklab_improvement="
+                    f"{(1.0 - float(record['counterexample_oklab_ratio'])) * 100.0:.6f}%"
+                ),
+                (
+                    f"background_palette_level_e{level.episode}_"
+                    f"l{level.level}_counterexample_ciede2000_improvement="
+                    f"{(1.0 - float(record['counterexample_ciede2000_ratio'])) * 100.0:.6f}%"
+                ),
+                (
+                    f"background_palette_level_e{level.episode}_"
+                    f"l{level.level}_counterexample_ramp_collisions="
+                    f"{int(record['counterexample_ramp_collisions_before'])}->"
+                    f"{int(record['counterexample_ramp_collisions_after'])}"
+                ),
+            ))
+        if level.episode == 4 and level.level == 4:
             save_palette_preview(
                 perceptual_candidate_rgb[level_words[:, 1:]],
-                "episode4_level1",
+                "episode4_surface_physical_level4",
             )
 
     profile_variant_count = len(shape_file_ids)
@@ -5365,7 +5431,7 @@ def build_background_palette_assets(
     report = [
         (
             "background_palette_mode="
-            "runtime-key safe-unused OKLab+CIEDE2000"
+            "runtime-key safe-unused + counterexample refinement"
         ),
         f"background_palette_shape_files={shape_file_count}",
         (
@@ -5391,7 +5457,9 @@ def build_background_palette_assets(
         (
             "background_palette_training_policy="
             "preserve runtime-used v53 banks; train unused banks; "
-            "accept only per-key OKLab+CIEDE2000 non-regressions"
+            "accept only per-key OKLab+CIEDE2000 non-regressions; "
+            "constraint-generate severe mixed-hue masks; "
+            "ramp collisions are telemetry, inversions are gated"
         ),
         "background_palette_ciede2000_reference_vectors=3",
         (

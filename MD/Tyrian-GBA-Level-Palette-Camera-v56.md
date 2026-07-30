@@ -3,6 +3,13 @@
 日期：2026-07-30  
 分支：`palette-camera-data-v56`
 
+> **v57 更正：** 本文件把 `tyrian4.lvl` 的實體 section #1 誤稱為
+> Episode 4 第一個可玩關卡。真正的 Episode 4／SURFACE 路線起點是
+> 實體 section #4、shape bank `shapes).dat`。下方 1,957 keys、
+> 43 masks、43.485578%／17.043786% 的數字只描述實體 #1，不能用來
+> 證明 SURFACE 的樹木綠色方塊已修好。SURFACE 的重新診斷與修正請見
+> `Tyrian-GBA-Episode4-Surface-Palette-v57.md`。
+
 ## 逐關色盤
 
 背景仍由 runtime 直接讀取 ROMFS 的 stock LVL／MAP／SHP；build 工具
