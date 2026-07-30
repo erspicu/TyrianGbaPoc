@@ -520,11 +520,7 @@ static void frontend_draw_game_menu_item(
     u8 active_selection
 )
 {
-    u8 disabled = (
-        selection == 0 ||
-        selection == 1 ||
-        selection == 3
-    );
+    u8 disabled = selection == 3;
     u8 colour;
 
     if (disabled) {

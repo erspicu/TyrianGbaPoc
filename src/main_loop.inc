@@ -318,6 +318,34 @@ int main(void)
             ) {
                 frontend_selection = 2;
             } else if (
+                game_state == STATE_GAME_MENU &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                        STATE_DATA_CUBES ||
+                    AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                        STATE_DATA_CUBE_READER
+                )
+            ) {
+                /*
+                 * Capture a real first-Episode ROMFS cube without requiring
+                 * a complete level playthrough before the visual test.
+                 */
+                frontend_data_cube_count = 1;
+                frontend_data_cube_list[0] = 1;
+                frontend_selection = 0;
+            } else if (
+                game_state == STATE_GAME_MENU &&
+                AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                    STATE_SHIP_SPECS
+            ) {
+                frontend_selection = 1;
+            } else if (
+                game_state == STATE_DATA_CUBES &&
+                AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                    STATE_DATA_CUBE_READER
+            ) {
+                frontend_selection = 0;
+            } else if (
                 game_state == STATE_UPGRADE_MENU &&
                 AUTOTEST_FRONTEND_CAPTURE_STATE ==
                     STATE_UPGRADE_SUBMENU

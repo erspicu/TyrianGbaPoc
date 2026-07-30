@@ -354,6 +354,8 @@ static void frontend_campaign_initialize(void)
             initial_cash[frontend_episode] :
             0;
     frontend_data_cube_count = 0;
+    frontend_data_page_count = 0;
+    frontend_data_cache_valid = 0;
     memset(
         frontend_data_cube_list,
         0,
@@ -420,6 +422,7 @@ static void frontend_campaign_apply_level_script(
     u8 operation;
 
     if (level == 0) return;
+    frontend_data_cache_valid = 0;
     if (level->cube_list_valid) {
         memcpy(
             frontend_data_cube_list,
@@ -511,6 +514,7 @@ static void frontend_campaign_sync_from_level(void)
             total > OT_EPISODE_CUBE_CAPACITY ?
                 OT_EPISODE_CUBE_CAPACITY :
                 (u8)total;
+        frontend_data_cache_valid = 0;
     }
 }
 _Static_assert(
@@ -953,6 +957,7 @@ static void frontend_show_immediate(
     frontend_display_page = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_palette_pending = 0;
     frontend_dirty_count = 0;
     frontend_mode4_active = 1;
     frontend_commit_mode4_registers();
@@ -972,6 +977,7 @@ static void frontend_present(
     frontend_pending_frame = frame;
     frontend_pending_palette = palette;
     frontend_pending_kind = FRONTEND_PENDING_FULL_FRAME;
+    frontend_palette_pending = 0;
     frontend_dirty_count = 0;
     frontend_frame_pending = 1;
 }
@@ -1100,6 +1106,14 @@ static void frontend_dirty_present(void)
     frontend_pending_frame = frontend_frame_scratch;
     frontend_pending_kind = FRONTEND_PENDING_DIRTY_RECTS;
     frontend_frame_pending = 1;
+}
+
+static void frontend_dirty_present_with_palette(const u16 *palette)
+{
+    frontend_dirty_present();
+    if (palette == 0) return;
+    frontend_pending_palette = (const u8 *)(const void *)palette;
+    frontend_palette_pending = 1;
 }
 
 static void frontend_present_index(u8 frame)
@@ -1311,9 +1325,14 @@ static void frontend_commit_vblank(void)
             );
             dmaCopy(frontend_pending_palette, BG_PALETTE, 512);
             frontend_display_page = next_page;
+            frontend_palette_pending = 0;
         }
         frontend_frame_pending = 0;
         frontend_pending_kind = FRONTEND_PENDING_NONE;
+    }
+    if (frontend_palette_pending) {
+        dmaCopy(frontend_pending_palette, BG_PALETTE, 512);
+        frontend_palette_pending = 0;
     }
     frontend_commit_mode4_registers();
 }

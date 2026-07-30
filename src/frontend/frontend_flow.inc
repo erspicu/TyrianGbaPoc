@@ -427,6 +427,18 @@ static void frontend_redraw(void)
         frontend_render_quit_confirm();
         return;
     }
+    if (game_state == STATE_DATA_CUBES) {
+        frontend_render_data_cubes();
+        return;
+    }
+    if (game_state == STATE_DATA_CUBE_READER) {
+        frontend_render_data_reader();
+        return;
+    }
+    if (game_state == STATE_SHIP_SPECS) {
+        frontend_render_ship_specs();
+        return;
+    }
     frame = frontend_static_frame_for_state(
         game_state,
         frontend_selection
@@ -467,6 +479,10 @@ static void frontend_redraw_selection(u8 old_selection)
         game_state == STATE_QUIT_CONFIRM
     ) {
         frontend_redraw();
+        return;
+    }
+    if (game_state == STATE_DATA_CUBES) {
+        frontend_render_data_selection(old_selection);
         return;
     }
     if (
@@ -1540,6 +1556,8 @@ static void frontend_update(void)
         }
     }
 
+    frontend_data_animate();
+
     if (game_state == STATE_NEXT_LEVEL_MENU) {
         s16 delta_x = (s16)(
             frontend_nav_target_x - frontend_nav_x
@@ -1750,6 +1768,15 @@ static void frontend_update(void)
         case STATE_UPGRADE_SUBMENU:
             frontend_upgrade_move_submenu(-1);
             break;
+        case STATE_DATA_CUBES:
+            frontend_move_selection(
+                (u8)(frontend_data_page_count + 1u),
+                -1
+            );
+            break;
+        case STATE_DATA_CUBE_READER:
+            frontend_data_reader_scroll(-1);
+            break;
         default:
             break;
         }
@@ -1786,6 +1813,15 @@ static void frontend_update(void)
             break;
         case STATE_UPGRADE_SUBMENU:
             frontend_upgrade_move_submenu(1);
+            break;
+        case STATE_DATA_CUBES:
+            frontend_move_selection(
+                (u8)(frontend_data_page_count + 1u),
+                1
+            );
+            break;
+        case STATE_DATA_CUBE_READER:
+            frontend_data_reader_scroll(1);
             break;
         default:
             break;
@@ -1875,6 +1911,22 @@ static void frontend_update(void)
             frontend_start_quit_transition(0);
             audio_effect(SFX_CLICK);
             break;
+        case STATE_DATA_CUBES:
+            frontend_data_cache_valid = 0;
+            frontend_enter_state(STATE_GAME_MENU, 0);
+            audio_effect(SFX_SPRING);
+            break;
+        case STATE_DATA_CUBE_READER:
+            frontend_enter_state(
+                STATE_DATA_CUBES,
+                frontend_data_reader_index
+            );
+            audio_effect(SFX_SPRING);
+            break;
+        case STATE_SHIP_SPECS:
+            frontend_enter_state(STATE_GAME_MENU, 1);
+            audio_effect(SFX_SPRING);
+            break;
         default:
             break;
         }
@@ -1919,7 +1971,21 @@ static void frontend_update(void)
         );
         break;
     case STATE_GAME_MENU:
-        if (frontend_selection == 2) {
+        if (frontend_selection == 0) {
+            if (frontend_data_prepare()) {
+                audio_effect(SFX_CLICK);
+                frontend_enter_state(STATE_DATA_CUBES, 0);
+            } else {
+                audio_effect(SFX_CLINK);
+            }
+        } else if (frontend_selection == 1) {
+            if (frontend_ship_specs_prepare()) {
+                audio_effect(SFX_SPRING);
+                frontend_enter_state(STATE_SHIP_SPECS, 0);
+            } else {
+                audio_effect(SFX_CLINK);
+            }
+        } else if (frontend_selection == 2) {
             frontend_enter_state(STATE_UPGRADE_MENU, 0);
             audio_effect(SFX_CLICK);
         } else if (frontend_selection == 4) {
@@ -1947,7 +2013,33 @@ static void frontend_update(void)
              */
             audio_effect(SFX_CLINK);
         }
-        /* Data Cubes, Ship Specs and Options remain visible but disabled. */
+        /* Options remains visible but intentionally disabled. */
+        break;
+    case STATE_DATA_CUBES:
+        if (frontend_selection < frontend_data_page_count) {
+            frontend_data_reader_index = frontend_selection;
+            frontend_data_scroll_line = 0;
+            audio_effect(SFX_CLICK);
+            frontend_enter_state(
+                STATE_DATA_CUBE_READER,
+                frontend_selection
+            );
+        } else {
+            frontend_data_cache_valid = 0;
+            audio_effect(SFX_CLICK);
+            frontend_enter_state(STATE_GAME_MENU, 0);
+        }
+        break;
+    case STATE_DATA_CUBE_READER:
+        audio_effect(SFX_CLICK);
+        frontend_enter_state(
+            STATE_DATA_CUBES,
+            frontend_data_reader_index
+        );
+        break;
+    case STATE_SHIP_SPECS:
+        audio_effect(SFX_CLICK);
+        frontend_enter_state(STATE_GAME_MENU, 1);
         break;
     case STATE_UPGRADE_MENU:
         if (frontend_selection == FRONTEND_UPGRADE_DONE) {

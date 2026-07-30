@@ -30,6 +30,8 @@ enum {
     ROMFS_MATRIX_FAIL_SPRITE2_L2_PARITY = 24,
     ROMFS_MATRIX_FAIL_BACKGROUND_SENTINEL = 25,
     ROMFS_MATRIX_FAIL_ITEM_DATABASE = 26,
+    ROMFS_MATRIX_FAIL_DATA_CUBE = 27,
+    ROMFS_MATRIX_FAIL_SHIP_INFO = 28,
 };
 
 typedef struct {
@@ -972,6 +974,81 @@ static void romfs_matrix_validate_routes(
     }
 }
 
+static void romfs_matrix_validate_frontend_documents(
+    RomfsMatrixTelemetry *telemetry
+)
+{
+    /*
+     * Episode 4 begins with three deliberately empty marker slots whose
+     * following record cannot fit cube_struct.header.  They are never
+     * referenced as documents by the stock script.  Validate a real
+     * representative document from each file instead of redefining those
+     * source placeholders as errors.
+     */
+    static const u8 representative_cube[OT_EPISODE_COUNT] = {
+        1, 1, 1, 4,
+    };
+    OtDataCube cube;
+    OtShipInfo ship_info;
+    u8 episode;
+    u8 ship;
+
+    for (episode = 1; episode <= OT_EPISODE_COUNT; episode++) {
+        u8 cube_index = representative_cube[episode - 1u];
+
+        if (
+            !ot_data_cube_read(
+                episode,
+                cube_index,
+                &cube
+            ) ||
+            cube.title[0] == '\0' ||
+            cube.header[0] == '\0' ||
+            cube.last_line == 0
+        ) {
+            romfs_matrix_fail(
+                telemetry,
+                ROMFS_MATRIX_FAIL_DATA_CUBE,
+                episode,
+                0,
+                cube_index,
+                0
+            );
+            continue;
+        }
+        telemetry->matrix_checksum = romfs_matrix_hash(
+            telemetry->matrix_checksum,
+            ((u32)episode << 24) |
+                ((u32)cube_index << 16) |
+                ((u32)(u8)cube.title[0] << 8) |
+                cube.last_line
+        );
+    }
+    for (ship = 1; ship <= OT_SHIP_INFO_COUNT; ship++) {
+        if (
+            !ot_data_ship_info_read(ship, &ship_info) ||
+            ship_info.paragraph[0][0] == '\0' ||
+            ship_info.paragraph[1][0] == '\0'
+        ) {
+            romfs_matrix_fail(
+                telemetry,
+                ROMFS_MATRIX_FAIL_SHIP_INFO,
+                0,
+                0,
+                ship,
+                0
+            );
+            break;
+        }
+        telemetry->matrix_checksum = romfs_matrix_hash(
+            telemetry->matrix_checksum,
+            ((u32)ship << 24) |
+                ((u32)(u8)ship_info.paragraph[0][0] << 8) |
+                (u8)ship_info.paragraph[1][0]
+        );
+    }
+}
+
 static void autotest_romfs_level_matrix(void)
 {
     RomfsMatrixTelemetry telemetry = {0};
@@ -1001,6 +1078,7 @@ static void autotest_romfs_level_matrix(void)
             0
         );
     }
+    romfs_matrix_validate_frontend_documents(&telemetry);
 
     for (episode = 1; episode <= OT_EPISODE_COUNT; episode++) {
         u16 level_count;

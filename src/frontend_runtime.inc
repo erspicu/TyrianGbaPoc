@@ -7,5 +7,6 @@
 #include "frontend/frontend_core.inc"
 #include "frontend/frontend_source_art.inc"
 #include "frontend/frontend_menus.inc"
+#include "frontend/frontend_data_specs.inc"
 #include "frontend/frontend_navigation.inc"
 #include "frontend/frontend_flow.inc"

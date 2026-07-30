@@ -707,6 +707,9 @@ enum {
     STATE_UPGRADE_MENU = 12,
     STATE_UPGRADE_SUBMENU = 13,
     STATE_QUIT_CONFIRM = 14,
+    STATE_DATA_CUBES = 15,
+    STATE_DATA_CUBE_READER = 16,
+    STATE_SHIP_SPECS = 17,
 };
 
 enum {
@@ -1070,6 +1073,7 @@ static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;
 static u8 frontend_pending_kind EWRAM_BSS;
+static u8 frontend_palette_pending EWRAM_BSS;
 static u8 frontend_patch_state EWRAM_BSS;
 static u8 frontend_patch_old_selection EWRAM_BSS;
 static u8 frontend_patch_new_selection EWRAM_BSS;
@@ -1112,6 +1116,14 @@ static u8 frontend_data_cube_list[
     OT_EPISODE_CUBE_CAPACITY
 ] EWRAM_BSS;
 static u8 frontend_level_cube_start_count EWRAM_BSS;
+static u8 frontend_data_page_count EWRAM_BSS;
+static u8 frontend_data_cache_valid EWRAM_BSS;
+static u8 frontend_data_reader_index EWRAM_BSS;
+static u8 frontend_data_scroll_line EWRAM_BSS;
+static s8 frontend_data_glow EWRAM_BSS;
+static s8 frontend_data_glow_delta EWRAM_BSS;
+static u8 frontend_data_glow_wait EWRAM_BSS;
+static OtShipDefinition frontend_ship_specs_ship EWRAM_BSS;
 /*
  * Mode-4 menus and gameplay never execute concurrently.  Share their largest
  * transient buffers so the 64 KiB Sprite2 L2 fits without reducing the
@@ -1139,6 +1151,34 @@ static FrontendGameplayArena frontend_gameplay_arena
     ((u16 *)(void *)( \
         (u8 *)(void *)&frontend_gameplay_arena + \
         FRONTEND_FRAME_BYTES \
+    ))
+#define FRONTEND_COLD_PAGE_CACHE_OFFSET \
+    ( \
+        FRONTEND_FRAME_BYTES + \
+        OT_SPRITE2_FRAME_PIXELS * sizeof(u16) \
+    )
+/*
+ * Datacube pages and the quit dialog are mutually exclusive.  Reuse the
+ * shared arena tail for the four decrypted stock cube records and their
+ * temporary face palette rather than reserving another ~14 KiB of EWRAM.
+ * Ship Specs aliases the first cube slot because it likewise cannot be open
+ * at the same time as Data.
+ */
+#define frontend_data_cube_cache \
+    ((OtDataCube *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_COLD_PAGE_CACHE_OFFSET \
+    ))
+#define frontend_data_face_palette \
+    ((u16 *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_COLD_PAGE_CACHE_OFFSET + \
+        sizeof(OtDataCube) * OT_EPISODE_CUBE_CAPACITY \
+    ))
+#define frontend_ship_info_cache \
+    ((OtShipInfo *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_COLD_PAGE_CACHE_OFFSET \
     ))
 #define FRONTEND_QUIT_CHOICE_CACHE_X 32u
 #define FRONTEND_QUIT_CHOICE_CACHE_Y \
@@ -1177,6 +1217,18 @@ _Static_assert(
         OT_SPRITE2_FRAME_PIXELS * sizeof(u16) <=
         sizeof(FrontendGameplayArena),
     "frontend Sprite2 decode canvas must fit the shared arena tail"
+);
+_Static_assert(
+    FRONTEND_COLD_PAGE_CACHE_OFFSET +
+        sizeof(OtDataCube) * OT_EPISODE_CUBE_CAPACITY +
+        OT_PALETTE_COLOUR_COUNT * sizeof(u16) <=
+        sizeof(FrontendGameplayArena),
+    "datacube records and face palette must fit the shared arena tail"
+);
+_Static_assert(
+    FRONTEND_COLD_PAGE_CACHE_OFFSET + sizeof(OtShipInfo) <=
+        sizeof(FrontendGameplayArena),
+    "Ship Specs text must fit the shared arena tail"
 );
 _Static_assert(
     FRONTEND_FRAME_BYTES +

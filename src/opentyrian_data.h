@@ -348,9 +348,54 @@ typedef struct {
     char gameplay_name[5][26];
 } OtFrontendText;
 
+enum {
+    OT_DATA_CUBE_TEXT_LINE_COUNT = 90,
+    OT_DATA_CUBE_TEXT_LINE_BYTES = 36,
+    OT_DATA_CUBE_TITLE_BYTES = 81,
+    OT_DATA_CUBE_HEADER_BYTES = 13,
+    OT_SHIP_INFO_COUNT = 13,
+    OT_SHIP_INFO_PARAGRAPH_COUNT = 2,
+    OT_SHIP_INFO_PARAGRAPH_BYTES = 256,
+};
+
+/*
+ * Direct ROMFS form of OpenTyrian game_menu.c's cube_struct.  Text is
+ * decrypted and wrapped with the original 35-character/150-pixel rules;
+ * no GBA-specific datacube catalog is generated at build time.
+ */
+typedef struct {
+    char title[OT_DATA_CUBE_TITLE_BYTES];
+    char header[OT_DATA_CUBE_HEADER_BYTES];
+    int16_t face_sprite;
+    char text[
+        OT_DATA_CUBE_TEXT_LINE_COUNT
+    ][OT_DATA_CUBE_TEXT_LINE_BYTES];
+    uint8_t last_line;
+} OtDataCube;
+
+/*
+ * The two stock description paragraphs read from tyrian.hdt for one ship.
+ * Keeping this an on-demand view avoids permanently retaining the complete
+ * 13-ship, 6.5 KiB table in EWRAM.
+ */
+typedef struct {
+    char paragraph[
+        OT_SHIP_INFO_PARAGRAPH_COUNT
+    ][OT_SHIP_INFO_PARAGRAPH_BYTES];
+} OtShipInfo;
+
 bool ot_data_init(void);
 const OtDataCatalog *ot_data_catalog(void);
 bool ot_data_frontend_text_load(OtFrontendText *text);
+bool ot_data_cube_read(
+    uint8_t episode,
+    uint8_t cube_index,
+    OtDataCube *cube
+);
+bool ot_data_ship_info_read(
+    uint8_t ship_id,
+    OtShipInfo *info
+);
 
 /*
  * Interpret the stock encrypted levelsN.dat script without a generated

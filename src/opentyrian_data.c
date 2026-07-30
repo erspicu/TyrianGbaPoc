@@ -861,6 +861,345 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
     return hdt_pascal_skip(&position);
 }
 
+/*
+ * OpenTyrian fonthand.c fontMap, expressed as a compact mapping routine for
+ * the byte ranges used by the encrypted datacube text.  This keeps wrapping
+ * tied to the widths in stock tyrian.shp table 2 instead of a host-authored
+ * approximation.
+ */
+static int16_t cube_tiny_font_sprite(uint8_t character)
+{
+    static const int8_t punctuation[16] = {
+        26, 33, 60, 61, 62, -1, 32, 64,
+        65, 63, 84, 29, 83, 28, 80, 79,
+    };
+    static const int8_t digit_and_punctuation[16] = {
+        79, 70, 71, 72, 73, 74, 75, 76,
+        77, 78, 31, 30, -1, 85, -1, 27,
+    };
+
+    if (character >= 33 && character <= 47) {
+        return punctuation[character - 33];
+    }
+    if (character >= '0' && character <= '?') {
+        return digit_and_punctuation[character - '0'];
+    }
+    if (character >= 'A' && character <= 'Z') {
+        return (int16_t)(character - 'A');
+    }
+    if (character == '[') return 68;
+    if (character == '\\') return 82;
+    if (character == ']') return 69;
+    if (character >= 'a' && character <= 'z') {
+        return (int16_t)(34 + character - 'a');
+    }
+    if (character == '{') return 66;
+    if (character == '|') return 81;
+    if (character == '}') return 67;
+    if (character >= 128 && character <= 168) {
+        return (int16_t)(86 + character - 128);
+    }
+    return -1;
+}
+
+static uint8_t cube_tiny_font_character_width(
+    uint8_t character,
+    uint8_t width_cache[256]
+)
+{
+    uint8_t cached = width_cache[character];
+    int16_t sprite_id;
+    OtShpSprite sprite;
+
+    if (cached != UINT8_MAX) return cached;
+    if (character == ' ') {
+        width_cache[character] = 6;
+        return 6;
+    }
+    sprite_id = cube_tiny_font_sprite(character);
+    if (
+        sprite_id >= 0 &&
+        ot_data_shp_sprite_read(2, (uint16_t)sprite_id, &sprite) &&
+        sprite.populated &&
+        sprite.width < UINT8_MAX
+    ) {
+        cached = (uint8_t)(sprite.width + 1u);
+    } else {
+        /* '~' changes brightness in the source font and has zero advance. */
+        cached = 0;
+    }
+    width_cache[character] = cached;
+    return cached;
+}
+
+static uint16_t cube_tiny_font_text_width(
+    const char *text,
+    uint8_t width_cache[256]
+)
+{
+    uint16_t width = 0;
+
+    while (text != 0 && *text != '\0') {
+        width = (uint16_t)(
+            width +
+            cube_tiny_font_character_width(
+                (uint8_t)*text++,
+                width_cache
+            )
+        );
+    }
+    return width;
+}
+
+bool ot_data_cube_read(
+    uint8_t episode,
+    uint8_t cube_index,
+    OtDataCube *cube
+)
+{
+    OtRomFsStat file;
+    char filename[] = "cubetxt1.dat";
+    char buffer[256];
+    uint8_t width_cache[256];
+    uint32_t position = 0;
+    uint16_t line = 0;
+    uint16_t line_chars = 0;
+    uint16_t line_width = 0;
+    uint16_t face_number;
+
+    if (
+        cube == 0 ||
+        episode == 0 ||
+        episode > OT_EPISODE_COUNT ||
+        cube_index == 0
+    ) {
+        return false;
+    }
+    filename[7] = (char)('0' + episode);
+    if (!stat_data_file(filename, &file)) return false;
+    memset(cube, 0, sizeof(*cube));
+    memset(width_cache, UINT8_MAX, sizeof(width_cache));
+
+    /*
+     * load_cube() seeks by counting '*' records.  The marker itself also
+     * carries the one-based face number at offset four.
+     */
+    while (cube_index != 0) {
+        if (!encrypted_pascal_read(
+                &file,
+                &position,
+                buffer,
+                sizeof(buffer)
+            )) {
+            return false;
+        }
+        if (buffer[0] == '*') cube_index--;
+    }
+    face_number = script_number(buffer + 4);
+    cube->face_sprite =
+        face_number == 0 ? -1 : (int16_t)(face_number - 1u);
+    if (
+        !encrypted_pascal_read(
+            &file,
+            &position,
+            cube->title,
+            sizeof(cube->title)
+        ) ||
+        !encrypted_pascal_read(
+            &file,
+            &position,
+            cube->header,
+            sizeof(cube->header)
+        )
+    ) {
+        return false;
+    }
+
+    for (;;) {
+        uint16_t word_start;
+        uint16_t index;
+        uint16_t buffer_length;
+
+        if (!encrypted_pascal_read(
+                &file,
+                &position,
+                buffer,
+                sizeof(buffer)
+            )) {
+            return false;
+        }
+        if (buffer[0] == '*') break;
+        if (buffer[0] == '\0') {
+            line = (uint16_t)(
+                line + (line_chars == 0 ? 4u : 1u)
+            );
+            line_chars = 0;
+            line_width = 0;
+            continue;
+        }
+
+        buffer_length = (uint16_t)strlen(buffer);
+        word_start = 0;
+        for (index = 0; index <= buffer_length; index++) {
+            bool end_of_line = buffer[index] == '\0';
+            bool end_of_word =
+                end_of_line || buffer[index] == ' ';
+
+            if (end_of_word) {
+                char *word;
+                uint16_t word_chars;
+                uint16_t word_width;
+                bool prepend_space = true;
+
+                buffer[index] = '\0';
+                word = buffer + word_start;
+                word_start = (uint16_t)(index + 1u);
+                word_chars = (uint16_t)strlen(word);
+                word_width = cube_tiny_font_text_width(
+                    word,
+                    width_cache
+                );
+                if (
+                    word_chars >
+                        OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
+                    word_width > 150
+                ) {
+                    break;
+                }
+                line_chars = (uint16_t)(
+                    line_chars + word_chars + 1u
+                );
+                line_width = (uint16_t)(
+                    line_width + word_width + 6u
+                );
+                if (
+                    line_chars >
+                        OT_DATA_CUBE_TEXT_LINE_BYTES - 1u ||
+                    line_width > 150
+                ) {
+                    line++;
+                    line_chars = word_chars;
+                    line_width = word_width;
+                    prepend_space = false;
+                }
+                if (
+                    line < OT_DATA_CUBE_TEXT_LINE_COUNT &&
+                    word_chars != 0
+                ) {
+                    size_t used = strlen(cube->text[line]);
+
+                    if (
+                        prepend_space &&
+                        used + 1u <
+                            OT_DATA_CUBE_TEXT_LINE_BYTES
+                    ) {
+                        cube->text[line][used++] = ' ';
+                        cube->text[line][used] = '\0';
+                    }
+                    if (
+                        used + word_chars <
+                        OT_DATA_CUBE_TEXT_LINE_BYTES
+                    ) {
+                        memcpy(
+                            cube->text[line] + used,
+                            word,
+                            word_chars + 1u
+                        );
+                        cube->last_line = (uint8_t)(line + 1u);
+                    }
+                }
+            }
+            if (end_of_line) break;
+        }
+    }
+    return true;
+}
+
+bool ot_data_ship_info_read(
+    uint8_t ship_id,
+    OtShipInfo *info
+)
+{
+    uint32_t position = 4;
+    uint8_t index;
+
+    if (!initialization_attempted) ot_data_init();
+    if (
+        !catalog.hdt_valid ||
+        info == 0 ||
+        ship_id == 0 ||
+        ship_id > OT_SHIP_INFO_COUNT
+    ) {
+        return false;
+    }
+    memset(info, 0, sizeof(*info));
+
+    /*
+     * Follow JE_loadHelpText()'s on-disk group order.  Every skipped group
+     * includes its opening and closing Pascal labels.
+     */
+    if (
+        !hdt_group_skip(&position, 39) || /* Online Help */
+        !hdt_group_skip(&position, 21) || /* Planet names */
+        !hdt_group_skip(&position, 68) || /* Misc text */
+        !hdt_group_skip(&position, 5) ||  /* Little misc */
+        !hdt_group_skip(&position, 11) || /* Key names */
+        !hdt_group_skip(&position, 7) ||  /* Main menu */
+        !hdt_group_skip(&position, 9) ||  /* Event text */
+        !hdt_group_skip(&position, 6) ||  /* Help topics */
+        !hdt_group_skip(&position, 34) || /* Main menu help */
+        !hdt_group_skip(&position, 7) ||  /* Menu 1 */
+        !hdt_group_skip(&position, 9) ||  /* Menu 2 */
+        !hdt_group_skip(&position, 8) ||  /* Menu 3 */
+        !hdt_group_skip(&position, 6) ||  /* In-game menu */
+        !hdt_group_skip(&position, 6) ||  /* Detail levels */
+        !hdt_group_skip(&position, 5) ||  /* Game speeds */
+        !hdt_group_skip(&position, 6) ||  /* Episode names */
+        !hdt_group_skip(&position, 7) ||  /* Difficulties */
+        !hdt_group_skip(&position, 5) ||  /* Gameplay modes */
+        !hdt_group_skip(&position, 6) ||  /* Menu 10 */
+        !hdt_group_skip(&position, 3) ||  /* Input devices */
+        !hdt_group_skip(&position, 4) ||  /* Network text */
+        !hdt_group_skip(&position, 4) ||  /* Menu 11 */
+        !hdt_group_skip(&position, 11) || /* Score difficulties */
+        !hdt_group_skip(&position, 6) ||  /* Menu 12 */
+        !hdt_group_skip(&position, 7) ||  /* Menu 13 */
+        !hdt_group_skip(&position, 5) ||  /* Joystick buttons */
+        !hdt_group_skip(&position, 11) || /* Super ships */
+        !hdt_group_skip(&position, 9) ||  /* Secret names */
+        !hdt_group_skip(&position, 25) || /* Destruct help */
+        !hdt_group_skip(&position, 17) || /* Destruct weapons */
+        !hdt_group_skip(&position, 5) ||  /* Destruct modes */
+        !hdt_pascal_skip(&position)       /* Ship-info label */
+    ) {
+        return false;
+    }
+    for (index = 1; index <= OT_SHIP_INFO_COUNT; index++) {
+        if (index == ship_id) {
+            if (
+                !hdt_pascal_read(
+                    &position,
+                    info->paragraph[0],
+                    sizeof(info->paragraph[0])
+                ) ||
+                !hdt_pascal_read(
+                    &position,
+                    info->paragraph[1],
+                    sizeof(info->paragraph[1])
+                )
+            ) {
+                return false;
+            }
+        } else if (!hdt_pascal_skip_many(
+            &position,
+            OT_SHIP_INFO_PARAGRAPH_COUNT
+        )) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static bool pic_stream_is_valid(const OtDataView *view)
 {
     uint32_t source_offset = 0;
