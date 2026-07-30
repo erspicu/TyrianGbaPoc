@@ -24,6 +24,11 @@ Build-GBA-ROM.bat
 5. 把舊 ROM 移至 `Backup/`，並讓 `build/` 最後只保留
    `TyrianGBA.gba`。
 
+首頁左下角會由建置工具自動寫入
+`AprTyrianGba-<7 位 Git short hash>`；若工作樹含尚未提交的追蹤檔
+修改，開發 ROM 會在 hash 後加上 `+`。此文字由
+`tools/write_build_version.py` 產生，不應手動修改 `res/build_version.h`。
+
 可選參數範例：
 
 ```powershell
@@ -74,6 +79,18 @@ presentation，但不改變關卡時間、碰撞、RNG 或遊戲邏輯節奏，�
 差異通常不影響實際體驗。調整回歸門檻前仍須先重跑、定位並記錄數據。
 這項容許不適用於前端卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的
 負載。
+
+## SRAM 存檔
+
+release ROM 內含標準 `SRAM_V121` 標記，模擬器應建立 32 KiB SRAM。
+Game Menu 的 Options 提供 Load、Save、Done，並沿用 PC 單人模式的
+11 個存檔槽與 14 字元名稱。存檔採兩個 4 KiB bank、CRC32 與最後寫入
+commit byte；每個 VBlank 最多寫 64 bytes，寫入中斷時仍可回退到上一個
+完整 bank。
+
+首頁的 `Load Game` 目前依需求只顯示為停用項目；實際讀檔入口是
+`Game Menu > Options > Load`。格式、欄位、手把命名操作與自動測試詳見
+`MD/Tyrian-GBA-Save-Load-Build-ID-v61.md`。
 
 ## 目錄配置
 

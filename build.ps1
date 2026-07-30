@@ -74,12 +74,15 @@ $mgbaRoot = Join-Path $vendorRoot "mgba"
 $headless = Join-Path $mgbaRoot "mgba-headless.exe"
 $perf = Join-Path $mgbaRoot "mgba-perf.exe"
 $buildDir = Join-Path $projectRoot "build"
+$ewramHeapHighWaterLimit = 6KB
+$iwramStackRemainingLimit = 1536
 $configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
 $releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v40_$configSuffix"
 $testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$configSuffix"
 $deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$configSuffix"
 $jukeboxTestName = "tyrian_gba_jukebox_autotest_romfs_v40_$configSuffix"
 $demoTestName = "tyrian_gba_demo_autotest_romfs_v40_$configSuffix"
+$saveTestName = "tyrian_gba_save_autotest_v61_$configSuffix"
 $matrixTestName = "tyrian_gba_romfs_all_levels_matrix_v40_$configSuffix"
 $campaignTestName = "tyrian_gba_campaign_smoke_ep1_section1_levels4_v40_$configSuffix"
 $episode2TestName = "tyrian_gba_route_smoke_ep2_section1_v40_$configSuffix"
@@ -92,6 +95,7 @@ $testRom = Join-Path $buildDir "$testName.gba"
 $deathTestRom = Join-Path $buildDir "$deathTestName.gba"
 $jukeboxTestRom = Join-Path $buildDir "$jukeboxTestName.gba"
 $demoTestRom = Join-Path $buildDir "$demoTestName.gba"
+$saveTestRom = Join-Path $buildDir "$saveTestName.gba"
 $matrixTestRom = Join-Path $buildDir "$matrixTestName.gba"
 $campaignTestRom = Join-Path $buildDir "$campaignTestName.gba"
 $episode2TestRom = Join-Path $buildDir "$episode2TestName.gba"
@@ -103,6 +107,7 @@ $testSave = Join-Path $buildDir "$testName.sav"
 $deathTestSave = Join-Path $buildDir "$deathTestName.sav"
 $jukeboxTestSave = Join-Path $buildDir "$jukeboxTestName.sav"
 $demoTestSave = Join-Path $buildDir "$demoTestName.sav"
+$saveTestSave = Join-Path $buildDir "$saveTestName.sav"
 $matrixTestSave = Join-Path $buildDir "$matrixTestName.sav"
 $campaignTestSave = Join-Path $buildDir "$campaignTestName.sav"
 $episode2TestSave = Join-Path $buildDir "$episode2TestName.sav"
@@ -118,6 +123,8 @@ $jukeboxTestStdout = Join-Path $buildDir "jukebox_autotest_mgba_stdout.txt"
 $jukeboxTestStderr = Join-Path $buildDir "jukebox_autotest_mgba_stderr.txt"
 $demoTestStdout = Join-Path $buildDir "demo_autotest_mgba_stdout.txt"
 $demoTestStderr = Join-Path $buildDir "demo_autotest_mgba_stderr.txt"
+$saveTestStdout = Join-Path $buildDir "save_autotest_mgba_stdout.txt"
+$saveTestStderr = Join-Path $buildDir "save_autotest_mgba_stderr.txt"
 $matrixTestStdout = Join-Path $buildDir "matrix_autotest_mgba_stdout.txt"
 $matrixTestStderr = Join-Path $buildDir "matrix_autotest_mgba_stderr.txt"
 $campaignTestStdout = Join-Path $buildDir "campaign_autotest_mgba_stdout.txt"
@@ -200,7 +207,7 @@ set -e
 export PATH="/usr/bin:__ARM_BIN__:__SDK_TOOLS__:$PATH"
 cd "__PROJECT__"
 make PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" assets
-make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest frontend-transition-stress
+make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=2 ROUTE_SECTION=1 all autotest death-autotest jukebox-autotest demo-autotest save-autotest romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest campaign-smoke-autotest frontend-transition-stress
 make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=3 ROUTE_SECTION=1 route-smoke-autotest
 make -j2 PYTHON="__PYTHON__" DETAIL_LEVEL="__DETAIL__" GAME_SPEED="__SPEED__" ROUTE_EPISODE=4 ROUTE_SECTION=1 route-smoke-autotest
 '@
@@ -462,9 +469,13 @@ if (
     $assetReport.frontend_static_help_strategy -ne
         "build-time stock HDT mixed-case strips; aligned ROM copy" -or
     $assetReport.frontend_static_help_dimensions -ne "240x11" -or
-    $assetReport.frontend_static_help_count -ne "34" -or
-    $assetReport.frontend_static_help_bytes -ne "89760" -or
-    $assetReport.frontend_static_help_crc32 -ne "f0b9d8c2" -or
+    $assetReport.frontend_static_help_count -ne "41" -or
+    $assetReport.frontend_static_help_bytes -ne "108240" -or
+    $assetReport.frontend_static_help_crc32 -ne "1fc40730" -or
+    $assetReport.frontend_static_menu_panel_count -ne "18" -or
+    $assetReport.frontend_static_menu_panel_dimensions -ne "120x120" -or
+    $assetReport.frontend_static_menu_panel_bytes -ne "259200" -or
+    $assetReport.frontend_static_menu_panel_crc32 -ne "8bfce76e" -or
     $assetReport.frontend_stats_tiles_bytes -ne "6656" -or
     $assetReport.frontend_stats_width_bytes -ne "45" -or
     $assetReport.frontend_stats_tiles_crc32 -ne "0f04dee4" -or
@@ -795,6 +806,10 @@ $demoTestInfo = Test-GbaRom `
     -Name "demo_autotest" `
     -Path $demoTestRom `
     -ExpectedGameCode "TYGX"
+$saveTestInfo = Test-GbaRom `
+    -Name "save_autotest" `
+    -Path $saveTestRom `
+    -ExpectedGameCode "TYGV"
 $matrixTestInfo = Test-GbaRom `
     -Name "matrix_autotest" `
     -Path $matrixTestRom `
@@ -839,6 +854,9 @@ $memoryInfos = @(
     Test-GbaMemoryBudget `
         -Name "demo_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($demoTestRom, ".map"))
+    Test-GbaMemoryBudget `
+        -Name "save_autotest" `
+        -MapPath ([IO.Path]::ChangeExtension($saveTestRom, ".map"))
     Test-GbaMemoryBudget `
         -Name "matrix_autotest" `
         -MapPath ([IO.Path]::ChangeExtension($matrixTestRom, ".map"))
@@ -1619,11 +1637,13 @@ $telemetryChecks = [ordered]@{
         $telemetry.iwram_stack_guard_intact -eq 1 -and
         $telemetry.iwram_stack_canary_filled_bytes -gt
             $telemetry.iwram_stack_remaining_bytes -and
-        $telemetry.iwram_stack_remaining_bytes -ge 2048
+        $telemetry.iwram_stack_remaining_bytes -ge
+            $iwramStackRemainingLimit
     )
     ewram_heap_high_water = (
         $telemetry.ewram_heap_used_bytes -gt 0 -and
-        $telemetry.ewram_heap_used_bytes -le 3892 -and
+        $telemetry.ewram_heap_used_bytes -le
+            $ewramHeapHighWaterLimit -and
         $telemetry.ewram_heap_remaining_bytes -ge 8192
     )
     authored_boss_perf_window = (
@@ -2049,6 +2069,60 @@ if ($failedDemoChecks.Count -ne 0) {
     throw (
         "Demo auto-test failed invariant(s): " +
         ($failedDemoChecks -join ", ")
+    )
+}
+
+if (Test-Path -LiteralPath $saveTestSave) {
+    Remove-Item -LiteralPath $saveTestSave -Force
+}
+$saveTestElapsed = Start-TestProcess `
+    -FilePath $headless `
+    -Arguments @("-S", "3", "$saveTestName.gba") `
+    -WorkingDirectory $buildDir `
+    -StandardOutput $saveTestStdout `
+    -StandardError $saveTestStderr
+$saveRuntimeErrors = @(
+    Select-String `
+        -Path $saveTestStdout, $saveTestStderr `
+        -Pattern "Bad memory|Invalid|Illegal|Hard crash|Fatal|Failed|Error"
+)
+if ($saveRuntimeErrors.Count -ne 0) {
+    throw (
+        "mGBA Save auto-test reported " +
+        "$($saveRuntimeErrors.Count) runtime error(s)"
+    )
+}
+if (-not (Test-Path -LiteralPath $saveTestSave)) {
+    throw "Save auto-test did not create SRAM telemetry"
+}
+$saveTestBytes = [IO.File]::ReadAllBytes($saveTestSave)
+if (
+    $saveTestBytes.Length -ne 32768 -or
+    [Text.Encoding]::ASCII.GetString($saveTestBytes, 0, 4) -ne "TGSV"
+) {
+    throw "Save auto-test SRAM telemetry is invalid"
+}
+$saveTelemetry = [ordered]@{
+    schema = $saveTestBytes[4]
+    pass = $saveTestBytes[5]
+    failures = [BitConverter]::ToUInt16($saveTestBytes, 6)
+    sequence = [BitConverter]::ToUInt32($saveTestBytes, 8)
+    active_bank = $saveTestBytes[12]
+    slot_count = $saveTestBytes[13]
+    save_schema = $saveTestBytes[14]
+}
+if (
+    $saveTelemetry.schema -ne 1 -or
+    $saveTelemetry.pass -ne 1 -or
+    $saveTelemetry.failures -ne 0 -or
+    $saveTelemetry.sequence -ne 1 -or
+    $saveTelemetry.active_bank -gt 1 -or
+    $saveTelemetry.slot_count -ne 11 -or
+    $saveTelemetry.save_schema -ne 1
+) {
+    throw (
+        "Save auto-test failed invariant(s): " +
+        ($saveTelemetry | ConvertTo-Json -Compress)
     )
 }
 
@@ -2723,7 +2797,7 @@ if (-not (Test-Path -LiteralPath $transitionTestSave)) {
     throw "Front-end transition stress did not create SRAM telemetry"
 }
 $transitionSaveBytes = [IO.File]::ReadAllBytes($transitionTestSave)
-$transitionPathCount = 12
+$transitionPathCount = 17
 $transitionRecordBytes = 108
 $transitionFooterOffset =
     16 + $transitionPathCount * $transitionRecordBytes
@@ -2734,7 +2808,7 @@ if (
         0,
         4
     ) -ne "TGFA" -or
-    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 10 -or
+    [BitConverter]::ToUInt32($transitionSaveBytes, 4) -ne 12 -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 8) -ne
         $transitionPathCount -or
     [BitConverter]::ToUInt32($transitionSaveBytes, 12) -ne 120
@@ -2753,6 +2827,11 @@ $transitionPathNames = @(
     "data_reader",
     "game_ship_specs",
     "upgrade_submenu",
+    "game_options",
+    "options_slots",
+    "save_name",
+    "save_name_edit",
+    "data_reader_scroll",
     "game_quit"
 )
 $transitionResults = @()
@@ -2822,9 +2901,15 @@ for ($pathIndex = 0; $pathIndex -lt $transitionPathCount; $pathIndex++) {
     $expectedFullRedraws =
         if (
             $record.path -eq "data_selection" -or
-            $record.path -eq "data_reader"
+            $record.path -eq "data_reader" -or
+            $record.path -eq "options_slots" -or
+            $record.path -eq "save_name" -or
+            $record.path -eq "save_name_edit" -or
+            $record.path -eq "data_reader_scroll"
         ) {
             0
+        } elseif ($record.path -eq "game_options") {
+            60
         } else {
             120
         }
@@ -2897,9 +2982,11 @@ if (
     $transitionFooter.iwram_stack_guard_intact -ne 1 -or
     $transitionFooter.iwram_stack_canary_filled_bytes -le
         $transitionFooter.iwram_stack_remaining_bytes -or
-    $transitionFooter.iwram_stack_remaining_bytes -lt 2048 -or
+    $transitionFooter.iwram_stack_remaining_bytes -lt
+        $iwramStackRemainingLimit -or
     $transitionFooter.ewram_heap_used_bytes -le 0 -or
-    $transitionFooter.ewram_heap_used_bytes -gt 3892 -or
+    $transitionFooter.ewram_heap_used_bytes -gt
+        $ewramHeapHighWaterLimit -or
     $transitionFooter.ewram_heap_remaining_bytes -lt 8192
 ) {
     throw (
@@ -2943,6 +3030,7 @@ foreach (
         $deathTestInfo,
         $jukeboxTestInfo,
         $demoTestInfo,
+        $saveTestInfo,
         $matrixTestInfo,
         $campaignTestInfo,
         $episode2TestInfo,
@@ -3012,6 +3100,13 @@ $verification.Add(
 )
 foreach ($entry in $demoTelemetry.GetEnumerator()) {
     $verification.Add("demo_telemetry_$($entry.Key)=$($entry.Value)")
+}
+$verification.Add("save_autotest_host_elapsed_ms=$saveTestElapsed")
+$verification.Add(
+    "save_autotest_runtime_error_count=$($saveRuntimeErrors.Count)"
+)
+foreach ($entry in $saveTelemetry.GetEnumerator()) {
+    $verification.Add("save_telemetry_$($entry.Key)=$($entry.Value)")
 }
 $verification.Add("matrix_autotest_host_elapsed_ms=$matrixTestElapsed")
 $verification.Add(

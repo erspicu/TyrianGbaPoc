@@ -398,7 +398,7 @@ static u16 autotest_jukebox_input(void)
     }
     if (game_state == STATE_TITLE) {
         if (autotest_jukebox_entered) return 0;
-        return frontend_selection < 2 ? KEY_DOWN : KEY_A;
+        return frontend_selection < 3 ? KEY_DOWN : KEY_A;
     }
     if (game_state != STATE_JUKEBOX) return 0;
 
@@ -505,7 +505,7 @@ static u16 autotest_demo_input(void)
         game_state == STATE_TITLE &&
         autotest_demo_phase == 1
     ) {
-        return frontend_selection == 0 ? KEY_DOWN : KEY_A;
+        return frontend_selection < 2 ? KEY_DOWN : KEY_A;
     }
     return 0;
 }

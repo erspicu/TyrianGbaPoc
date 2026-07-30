@@ -4,6 +4,7 @@
 
 #include "Configure.h"
 #include "res/asset_meta.h"
+#include "res/build_version.h"
 #include "res/soundbank.h"
 #include "res/sprite2_raw_meta.h"
 #include "res/tyrian_romfs_meta.h"
@@ -727,6 +728,9 @@ enum {
     STATE_DATA_CUBES = 15,
     STATE_DATA_CUBE_READER = 16,
     STATE_SHIP_SPECS = 17,
+    STATE_OPTIONS_MENU = 18,
+    STATE_SAVE_SLOTS = 19,
+    STATE_SAVE_NAME = 20,
 };
 
 enum {
@@ -1100,6 +1104,7 @@ static u16 frontend_stats_obj_palette[48] EWRAM_BSS;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;
+static u8 frontend_title_brand_pending EWRAM_BSS;
 static u8 frontend_pending_kind EWRAM_BSS;
 static u8 frontend_palette_pending EWRAM_BSS;
 static u8 frontend_patch_state EWRAM_BSS;
@@ -1633,6 +1638,12 @@ volatile u32 telemetry_end_level_music_natural_stops;
 volatile u32 telemetry_end_level_initial_warp;
 volatile u32 telemetry_end_level_trail_max;
 volatile u32 telemetry_level_complete_voice_starts;
+/*
+ * Emulator and flash-cart save-type scanners look for this exact marker in
+ * the ROM.  It belongs in release builds as well as telemetry builds.
+ */
+static const char save_type_marker[] __attribute__((used)) = "SRAM_V121";
+
 #ifdef AUTOTEST
 volatile u32 telemetry_source_sound_mask_low;
 volatile u32 telemetry_source_sound_mask_high;
@@ -1795,7 +1806,6 @@ static u8 autotest_unlimited_weapon_energy = 1;
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
 static u8 autotest_frontend_transition_ready;
 #endif
-static const char save_type_marker[] __attribute__((used)) = "SRAM_V121";
 static void autotest_finish(void);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
 #if AUTOTEST_CAMPAIGN_LEVEL_COUNT < 1 || AUTOTEST_CAMPAIGN_LEVEL_COUNT > 16

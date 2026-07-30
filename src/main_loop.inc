@@ -97,6 +97,9 @@ int main(void)
     telemetry_state_transitions = 0;
     hide_all_sprites();
     frontend_begin();
+#ifdef AUTOTEST_SAVE_FLOW
+    autotest_save_flow();
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     /*
      * Visual/test-only direct route entry.  Release builds always traverse

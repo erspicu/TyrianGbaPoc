@@ -207,22 +207,23 @@ static void frontend_draw_game_menu_dynamic(u8 selection)
 
 static const char *frontend_pre_game_title_label(u8 selection)
 {
-    static const char *const fallback[3] = {
+    static const char *const fallback[4] = {
         "Start New Game",
+        "Load Game",
         "Demo",
         "Jukebox",
     };
-    static const u8 source_index[3] = {0, 5, 0xff};
+    static const u8 source_index[4] = {0, 1, 5, 0xff};
 
     if (
-        selection < 3 &&
+        selection < 4 &&
         source_index[selection] != 0xff &&
         frontend_text_ready &&
         frontend_text.title_menu[source_index[selection]][0] != '\0'
     ) {
         return frontend_text.title_menu[source_index[selection]];
     }
-    return fallback[selection < 3 ? selection : 0];
+    return fallback[selection < 4 ? selection : 0];
 }
 
 static const char *frontend_pre_game_header(u8 state)
@@ -251,6 +252,7 @@ static u8 frontend_pre_game_item_count(u8 state)
 {
     switch (state) {
     case STATE_TITLE:
+        return 4;
     case STATE_DIFFICULTY_MENU:
         return 3;
     case STATE_PLAY_MODE_MENU:
@@ -357,7 +359,13 @@ static void frontend_draw_pre_game_item(
     const char *label =
         frontend_pre_game_item_label(state, selection);
     s16 y = frontend_pre_game_item_y(state, selection);
-    u8 colour = selection == active_selection ? 0xfeu : 0xfau;
+    u8 colour;
+
+    if (state == STATE_TITLE && selection == 1) {
+        colour = selection == active_selection ? 0xf8u : 0xf4u;
+    } else {
+        colour = selection == active_selection ? 0xfeu : 0xfau;
+    }
 
     if (state == STATE_EPISODE_MENU) {
         frontend_draw_pregame_text_clipped(
@@ -413,10 +421,53 @@ static void frontend_render_pre_game_menu(void)
         static_base + frontend_selection <
             FRONTEND_STATIC_PRE_GAME_FRAME_COUNT
     ) {
-        frontend_present(
+        const u8 *static_frame =
             frontend_static_pre_game_frames +
-                (u32)(static_base + frontend_selection) *
-                    FRONTEND_FRAME_BYTES,
+            (u32)(static_base + frontend_selection) *
+                FRONTEND_FRAME_BYTES;
+
+        if (game_state == STATE_TITLE) {
+            u8 first_row = (u8)(
+                TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y > 0 ?
+                    TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y - 1 :
+                    0
+            );
+            u8 row_count = (u8)(SCREEN_HEIGHT - first_row);
+            u8 row;
+
+            /*
+             * Present the immutable build-time title immediately.  Prepare
+             * only the tiny version strip in EWRAM and patch it on the next
+             * VBlank; copying all 38.4 KiB merely to add one line caused the
+             * old title transition to miss a frame.
+             */
+            for (row = 0; row < row_count; row++) {
+                memcpy(
+                    frontend_frame_scratch +
+                        (u32)(first_row + row) * SCREEN_WIDTH,
+                    static_frame +
+                        (u32)(first_row + row) * SCREEN_WIDTH,
+                    SCREEN_WIDTH
+                );
+            }
+            frontend_draw_small_mixed_text_clipped_colours(
+                frontend_frame_scratch,
+                TYRIAN_GBA_BUILD_LABEL,
+                TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
+                TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
+                SCREEN_WIDTH,
+                0xecu,
+                0xe2u
+            );
+            frontend_present(
+                static_frame,
+                frontend_palette_address(base_frame)
+            );
+            frontend_title_brand_pending = 1;
+            return;
+        }
+        frontend_present(
+            static_frame,
             frontend_palette_address(base_frame)
         );
         return;
@@ -442,6 +493,18 @@ static void frontend_render_pre_game_menu(void)
             selection,
             frontend_selection
         );
+    }
+    if (game_state == STATE_TITLE) {
+        frontend_draw_small_mixed_text_clipped_colours(
+            frontend_frame_scratch,
+            TYRIAN_GBA_BUILD_LABEL,
+            TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
+            TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
+            SCREEN_WIDTH,
+            0xecu,
+            0xe2u
+        );
+        frontend_title_brand_pending = 0;
     }
     frontend_present(
         frontend_frame_scratch,
@@ -520,7 +583,7 @@ static void frontend_draw_game_menu_item(
     u8 active_selection
 )
 {
-    u8 disabled = selection == 3;
+    u8 disabled = 0;
     u8 colour;
 
     if (disabled) {

@@ -1049,6 +1049,193 @@ static void frontend_data_reader_draw_glyph(
     }
 }
 
+static void frontend_data_draw_reader_chrome(void);
+
+static void frontend_data_reader_draw_line(u8 source_line, s16 y)
+{
+    const OtDataCube *cube =
+        &frontend_data_cube_cache[frontend_data_reader_index];
+    const char *text;
+    s16 x = FRONTEND_DATA_READER_X;
+
+    if (source_line >= cube->last_line) return;
+    text = cube->text[source_line];
+    while (*text != '\0' && x < SCREEN_WIDTH) {
+        u8 tile = frontend_pregame_font_tile(*text++);
+        u8 width =
+            tile == 0 ?
+                2 :
+                frontend_data_reader_font_width[tile];
+
+        if (x + width > SCREEN_WIDTH) break;
+        if (tile != 0) {
+            frontend_data_reader_draw_glyph(tile, x, y);
+        }
+        x = (s16)(x + width);
+    }
+}
+
+static void frontend_data_reader_clear_text_rows(s16 y, s16 height)
+{
+    const s16 top = frontend_source_to_screen_y(49);
+    const s16 bottom = frontend_source_to_screen_y(157);
+    s16 end = (s16)(y + height);
+
+    if (y < top) y = top;
+    if (end > bottom) end = bottom;
+    while (y < end) {
+        memset(
+            frontend_frame_scratch +
+                (u32)y * SCREEN_WIDTH +
+                FRONTEND_DATA_RIGHT_X,
+            228,
+            SCREEN_WIDTH - FRONTEND_DATA_RIGHT_X
+        );
+        y++;
+    }
+}
+
+static void frontend_data_reader_shift_text_rows(s8 direction)
+{
+    const s16 top = frontend_source_to_screen_y(49);
+    const s16 bottom = frontend_source_to_screen_y(157);
+    const u16 width = SCREEN_WIDTH - FRONTEND_DATA_RIGHT_X;
+
+    if (direction < 0) {
+        s16 y;
+
+        for (y = top; y + 1 < bottom; y++) {
+            memcpy(
+                frontend_frame_scratch +
+                    (u32)y * SCREEN_WIDTH +
+                    FRONTEND_DATA_RIGHT_X,
+                frontend_frame_scratch +
+                    (u32)(y + 1) * SCREEN_WIDTH +
+                    FRONTEND_DATA_RIGHT_X,
+                width
+            );
+        }
+        frontend_data_reader_clear_text_rows((s16)(bottom - 1), 1);
+    } else if (direction > 0) {
+        s16 y;
+
+        for (y = (s16)(bottom - 1); y > top; y--) {
+            memcpy(
+                frontend_frame_scratch +
+                    (u32)y * SCREEN_WIDTH +
+                    FRONTEND_DATA_RIGHT_X,
+                frontend_frame_scratch +
+                    (u32)(y - 1) * SCREEN_WIDTH +
+                    FRONTEND_DATA_RIGHT_X,
+                width
+            );
+        }
+        frontend_data_reader_clear_text_rows(top, 1);
+    }
+}
+
+/*
+ * The PC reader scrolls one source pixel at a time.  Rebuilding all ten text
+ * rows for each pixel caused the long-cube audio stutter.  Most projected
+ * glyph rows move by the same one-pixel delta, so shift the solid text pane
+ * in EWRAM and redraw only the minority whose 4/5 scaling phase differs.
+ * Header/footer masking remains the exact source operation.
+ */
+static void frontend_data_reader_scroll_incremental(
+    u16 old_scroll,
+    u16 new_scroll
+)
+{
+    const OtDataCube *cube =
+        &frontend_data_cube_cache[frontend_data_reader_index];
+    const s16 top = frontend_source_to_screen_y(49);
+    const s16 bottom = frontend_source_to_screen_y(157);
+    u8 first =
+        (u8)(
+            (
+                old_scroll < new_scroll ?
+                    old_scroll :
+                    new_scroll
+            ) / 12u
+        );
+    u8 last =
+        (u8)(
+            (
+                old_scroll > new_scroll ?
+                    old_scroll :
+                    new_scroll
+            ) / 12u +
+            FRONTEND_DATA_READER_VISIBLE_LINES +
+            2u
+        );
+    u8 stationary = 0;
+    u8 moved = 0;
+    s8 common_delta;
+    u8 line;
+
+    if (first > 0) first--;
+    if (last > cube->last_line) last = cube->last_line;
+    for (line = first; line < last; line++) {
+        s16 old_y = frontend_source_to_screen_y(
+            (s16)(50 + (u16)line * 12u - old_scroll)
+        );
+        s16 new_y = frontend_source_to_screen_y(
+            (s16)(50 + (u16)line * 12u - new_scroll)
+        );
+
+        if (
+            old_y + 6 <= top ||
+            old_y >= bottom
+        ) {
+            if (new_y + 6 <= top || new_y >= bottom) continue;
+        }
+        if (new_y == old_y) {
+            stationary++;
+        } else {
+            moved++;
+        }
+    }
+    if (moved > stationary) {
+        common_delta = new_scroll > old_scroll ? -1 : 1;
+    } else {
+        common_delta = 0;
+    }
+    frontend_data_reader_shift_text_rows(common_delta);
+    for (line = first; line < last; line++) {
+        s16 old_y = frontend_source_to_screen_y(
+            (s16)(50 + (u16)line * 12u - old_scroll)
+        );
+        s16 new_y = frontend_source_to_screen_y(
+            (s16)(50 + (u16)line * 12u - new_scroll)
+        );
+        s16 shifted_y = (s16)(old_y + common_delta);
+        u8 old_visible = old_y + 6 > top && old_y < bottom;
+        u8 new_visible = new_y + 6 > top && new_y < bottom;
+
+        if (
+            new_y - old_y == common_delta &&
+            old_visible == new_visible
+        ) {
+            continue;
+        }
+        {
+            s16 clear_y =
+                shifted_y < new_y ? shifted_y : new_y;
+            s16 clear_end =
+                shifted_y > new_y ? shifted_y : new_y;
+
+            frontend_data_reader_clear_text_rows(
+                clear_y,
+                (s16)(clear_end - clear_y + 6)
+            );
+        }
+        if (new_visible) {
+            frontend_data_reader_draw_line(line, new_y);
+        }
+    }
+    frontend_data_draw_reader_chrome();
+}
+
 static void frontend_data_reader_panel_job_begin(void)
 {
     frontend_data_reader_font_prepare();
@@ -1300,6 +1487,8 @@ static void frontend_data_reader_scroll(s8 direction)
 
 static void frontend_data_reader_animate(void)
 {
+    u16 old_scroll;
+
     if (
         game_state != STATE_DATA_CUBE_READER ||
         frontend_frame_pending ||
@@ -1307,13 +1496,17 @@ static void frontend_data_reader_animate(void)
     ) {
         return;
     }
+    old_scroll = frontend_data_scroll_pixel;
     if (frontend_data_scroll_pixel < frontend_data_scroll_target) {
         frontend_data_scroll_pixel++;
     } else {
         frontend_data_scroll_pixel--;
     }
     {
-        frontend_data_draw_reader_panel();
+        frontend_data_reader_scroll_incremental(
+            old_scroll,
+            frontend_data_scroll_pixel
+        );
         frontend_dirty_begin();
         frontend_dirty_add(
             FRONTEND_DATA_RIGHT_X,

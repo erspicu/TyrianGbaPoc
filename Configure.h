@@ -420,6 +420,59 @@
 #define TYRIAN_GBA_LAYOUT_GAME_MENU_CASH_RIGHT 116
 #endif
 
+/*
+ * Options and Load/Save pages reuse the Game Menu chrome and the cached ship
+ * panel.  These are final 240x160 coordinates.  Keep the slot step at least
+ * 8 pixels so the compact mixed-case rows never overlap.
+ *
+ * Options 與讀檔／存檔頁沿用 Game Menu 底圖及快取好的船體面板。下列為
+ * 最終 240x160 座標；存檔槽列距請至少保留 8 像素，避免小字互相重疊。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X
+#define TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X 180
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y
+#define TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y 6
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_OPTIONS_CENTER_X
+#define TYRIAN_GBA_LAYOUT_OPTIONS_CENTER_X 180
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_OPTIONS_FIRST_Y
+#define TYRIAN_GBA_LAYOUT_OPTIONS_FIRST_Y 38
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_OPTIONS_ROW_STEP
+#define TYRIAN_GBA_LAYOUT_OPTIONS_ROW_STEP 24
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_X
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_X 124
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT 239
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y 18
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP 9
+#endif
+
+/*
+ * Build identity in the lower-left corner of the title screen.
+ * 首頁左下角的專案名稱、Git short hash 顯示位置。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_TITLE_BUILD_X
+#define TYRIAN_GBA_LAYOUT_TITLE_BUILD_X 2
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y
+#define TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y 151
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_X
+#define TYRIAN_GBA_LAYOUT_SAVE_NAME_X 126
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_NAME_Y 62
+#endif
+
 /* Upgrade Ship category panel / Upgrade Ship 分類面板。 */
 #ifndef TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X
 #define TYRIAN_GBA_LAYOUT_UPGRADE_TITLE_CENTER_X 176

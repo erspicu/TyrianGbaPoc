@@ -91,7 +91,7 @@ _Static_assert(
     "Mode 4 frame must be exactly 240x160 bytes"
 );
 _Static_assert(
-    FRONTEND_FRAME_COUNT == 34,
+    FRONTEND_FRAME_COUNT == 35,
     "generated front-end state atlas changed"
 );
 _Static_assert(
@@ -155,9 +155,24 @@ _Static_assert(
         FRONTEND_STATIC_UPGRADE_MENU_COUNT == 8 &&
         FRONTEND_STATIC_UPGRADE_MENU_BASE ==
             FRONTEND_STATIC_GAME_MENU_COUNT &&
+        FRONTEND_STATIC_OPTIONS_MENU_COUNT == 1 &&
+        FRONTEND_STATIC_OPTIONS_MENU_BASE ==
+            FRONTEND_STATIC_UPGRADE_MENU_BASE +
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT &&
+        FRONTEND_STATIC_SAVE_MENU_COUNT == 2 &&
+        FRONTEND_STATIC_SAVE_MENU_BASE ==
+            FRONTEND_STATIC_OPTIONS_MENU_BASE +
+                FRONTEND_STATIC_OPTIONS_MENU_COUNT &&
+        FRONTEND_STATIC_SAVE_NAME_MENU_COUNT == 1 &&
+        FRONTEND_STATIC_SAVE_NAME_MENU_BASE ==
+            FRONTEND_STATIC_SAVE_MENU_BASE +
+                FRONTEND_STATIC_SAVE_MENU_COUNT &&
         FRONTEND_STATIC_MENU_PANEL_COUNT ==
             FRONTEND_STATIC_GAME_MENU_COUNT +
-                FRONTEND_STATIC_UPGRADE_MENU_COUNT &&
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT +
+                FRONTEND_STATIC_OPTIONS_MENU_COUNT +
+                FRONTEND_STATIC_SAVE_MENU_COUNT +
+                FRONTEND_STATIC_SAVE_NAME_MENU_COUNT &&
         FRONTEND_STATIC_MENU_PANELS_BYTES ==
             FRONTEND_STATIC_MENU_PANEL_COUNT *
                 FRONTEND_STATIC_MENU_PANEL_BYTES,
@@ -165,14 +180,14 @@ _Static_assert(
 );
 _Static_assert(
     FRONTEND_STATIC_PRE_GAME_TITLE_BASE == 0 &&
-        FRONTEND_STATIC_PRE_GAME_TITLE_COUNT == 3 &&
-        FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE == 3 &&
+        FRONTEND_STATIC_PRE_GAME_TITLE_COUNT == 4 &&
+        FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE == 4 &&
         FRONTEND_STATIC_PRE_GAME_PLAY_MODE_COUNT == 2 &&
-        FRONTEND_STATIC_PRE_GAME_EPISODE_BASE == 5 &&
+        FRONTEND_STATIC_PRE_GAME_EPISODE_BASE == 6 &&
         FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT == 4 &&
-        FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE == 9 &&
+        FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE == 10 &&
         FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT == 3 &&
-        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 12 &&
+        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 13 &&
         FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES ==
             FRONTEND_STATIC_PRE_GAME_FRAME_COUNT *
                 FRONTEND_FRAME_BYTES,
@@ -258,6 +273,10 @@ static s16 frontend_nav_presented_y EWRAM_BSS;
 static void frontend_redraw(void);
 static void frontend_enter_state(u8 state, u8 selection);
 static void frontend_start_game_menu_transition(u8 flags);
+static void frontend_start_game_menu_transition_selected(
+    u8 flags,
+    u8 selection
+);
 static void frontend_start_upgrade_menu_transition(u8 selection);
 static void frontend_start_quit_transition(u8 enter_dialog);
 static void frontend_render_upgrade_submenu_update(
@@ -552,7 +571,24 @@ _Static_assert(
     "generated OPTION_SHAPES cube stamp changed"
 );
 _Static_assert(
-    FRONTEND_STATIC_HELP_STRIP_COUNT == 34 &&
+    FRONTEND_STATIC_SOURCE_HELP_STRIP_BASE == 0 &&
+        FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT == 34 &&
+        FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE ==
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT &&
+        FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT == 3 &&
+        FRONTEND_STATIC_SAVE_HELP_STRIP_BASE ==
+            FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE +
+                FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT &&
+        FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT == 2 &&
+        FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_BASE ==
+            FRONTEND_STATIC_SAVE_HELP_STRIP_BASE +
+                FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT &&
+        FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT == 2 &&
+        FRONTEND_STATIC_HELP_STRIP_COUNT ==
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT &&
         FRONTEND_STATIC_HELP_STRIP_Y ==
             TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y - 1 &&
         FRONTEND_STATIC_HELP_STRIP_WIDTH == SCREEN_WIDTH &&

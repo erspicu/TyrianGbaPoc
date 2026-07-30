@@ -219,7 +219,19 @@ FRONTEND_STATIC_MENU_PANEL_BYTES = (
 )
 FRONTEND_STATIC_GAME_MENU_COUNT = 6
 FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
-FRONTEND_STATIC_HELP_STRIP_COUNT = 34
+FRONTEND_STATIC_OPTIONS_MENU_COUNT = 1
+FRONTEND_STATIC_SAVE_MENU_COUNT = 2
+FRONTEND_STATIC_SAVE_NAME_MENU_COUNT = 1
+FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT = 34
+FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT = 3
+FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT = 2
+FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT = 2
+FRONTEND_STATIC_HELP_STRIP_COUNT = (
+    FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
+    FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT +
+    FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT +
+    FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT
+)
 FRONTEND_SOURCE_STAMP_SCALE_PHASES = 5
 FRONTEND_SOURCE_STAMP_PHASE_COUNT = (
     FRONTEND_SOURCE_STAMP_SCALE_PHASES *
@@ -2730,16 +2742,26 @@ def build_frontend_static_menu_panels(
         )
 
     title_menu = source.text["title_menu"]
-    title_fallback = ("Start New Game", "Demo", "Jukebox")
-    for selection in range(3):
+    title_fallback = (
+        "Start New Game",
+        "Load Game",
+        "Demo",
+        "Jukebox",
+    )
+    for selection in range(4):
         frame = source.picture_frame(4)
         source.draw_logo(frame)
         labels = (
             title_menu[0] or title_fallback[0],
-            title_menu[5] or title_fallback[1],
-            title_fallback[2],
+            title_menu[1] or title_fallback[1],
+            title_menu[5] or title_fallback[2],
+            title_fallback[3],
         )
         for index, label in enumerate(labels):
+            if index == 1:
+                colour = 0xf8 if index == selection else 0xf4
+            else:
+                colour = 0xfe if index == selection else 0xfa
             draw_pregame_centered(
                 frame,
                 label,
@@ -2747,7 +2769,7 @@ def build_frontend_static_menu_panels(
                 layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_FIRST_Y"] +
                     index *
                     layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_ROW_STEP"],
-                0xfe if index == selection else 0xfa,
+                colour,
             )
         add_pre_game(f"title_{selection}", frame, 8)
 
@@ -2853,7 +2875,7 @@ def build_frontend_static_menu_panels(
             0xfb,
         )
         for index in range(FRONTEND_STATIC_GAME_MENU_COUNT):
-            disabled = index in (0, 1, 3)
+            disabled = False
             colour = (
                 0xf8 if index == selection else 0xf4
             ) if disabled else (
@@ -2913,6 +2935,81 @@ def build_frontend_static_menu_panels(
             )
         add(f"upgrade_menu_{selection}", frame)
 
+    # Options and save-slot screens use one immutable right-panel base each,
+    # then overlay only the active row and occupied slot names at runtime.
+    # This preserves the proven static-panel transition cost without storing
+    # dozens of near-identical selection variants in ROM.
+    frame = menu_chrome.copy()
+    draw_menu_centered(
+        frame,
+        "Options",
+        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
+        0xfb,
+    )
+    for index, label in enumerate(("Load", "Save", "Done")):
+        draw_menu_centered(
+            frame,
+            label,
+            layout["TYRIAN_GBA_LAYOUT_OPTIONS_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_OPTIONS_FIRST_Y"] +
+                index * layout["TYRIAN_GBA_LAYOUT_OPTIONS_ROW_STEP"],
+            0xfa,
+        )
+    add("options_menu_base", frame)
+
+    for mode, title in enumerate(("Load Game", "Save Game")):
+        frame = menu_chrome.copy()
+        draw_menu_centered(
+            frame,
+            title,
+            layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
+            0xfb,
+        )
+        for index in range(11):
+            draw_small_mixed_text(
+                frame,
+                f"{index + 1} Empty",
+                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_X"],
+                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y"] +
+                    index *
+                    layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP"],
+                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT"],
+                0xf4 if mode == 0 else 0xfa,
+                0xe2,
+            )
+        add(
+            "save_slots_load_base" if mode == 0 else
+                "save_slots_save_base",
+            frame,
+        )
+
+    frame = menu_chrome.copy()
+    draw_menu_centered(
+        frame,
+        "Save Name",
+        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
+        0xfb,
+    )
+    for text, y, colour in (
+        ("Up/Down: letter", 86, 0xea),
+        ("R+Up/Down: CAPITAL", 94, 0xea),
+        ("A/Right: next  B: erase", 102, 0xea),
+        ("START: save", 110, 0xfe),
+    ):
+        draw_small_mixed_text(
+            frame,
+            text,
+            126,
+            y,
+            239,
+            colour,
+            0xe2,
+        )
+    add("save_name_base", frame)
+
     # Every mainMenuHelp string is immutable stock HDT text.  Baking the
     # final 240-pixel strip avoids thousands of runtime glyph divisions on
     # ARM7TDMI and keeps page changes inside one VBlank/audio budget.
@@ -2923,7 +3020,7 @@ def build_frontend_static_menu_panels(
     help_strip_height = FRONTEND_FRAME_HEIGHT - help_strip_y
     help_strips: list[np.ndarray] = []
     main_menu_help = source.text["main_menu_help"]
-    if len(main_menu_help) != FRONTEND_STATIC_HELP_STRIP_COUNT:
+    if len(main_menu_help) != FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT:
         raise ValueError(
             "stock main-menu help count changed: "
             f"{len(main_menu_help)}"
@@ -2940,6 +3037,29 @@ def build_frontend_static_menu_panels(
             0xE2,
         )
         help_strips.append(frame[help_strip_y:, :].copy())
+    custom_help = (
+        "Load a saved campaign.",
+        "Save the current campaign.",
+        "Return to Game Menu.",
+        "A: Load   B: Back",
+        "A: Name and save   B: Back",
+        "Hold SELECT to clear the name.",
+        "Saving... Do not turn off power.",
+    )
+    for text in custom_help:
+        frame = menu_chrome.copy()
+        draw_small_mixed_text(
+            frame,
+            text,
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT"],
+            0xEA,
+            0xE2,
+        )
+        help_strips.append(frame[help_strip_y:, :].copy())
+    if len(help_strips) != FRONTEND_STATIC_HELP_STRIP_COUNT:
+        raise AssertionError("static help strip catalog changed")
     help_strip_bytes = b"".join(
         strip.tobytes() for strip in help_strips
     )
@@ -3193,8 +3313,44 @@ def build_frontend_static_menu_panels(
             FRONTEND_STATIC_GAME_MENU_COUNT,
         "FRONTEND_STATIC_UPGRADE_MENU_COUNT":
             FRONTEND_STATIC_UPGRADE_MENU_COUNT,
+        "FRONTEND_STATIC_OPTIONS_MENU_BASE":
+            FRONTEND_STATIC_GAME_MENU_COUNT +
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT,
+        "FRONTEND_STATIC_OPTIONS_MENU_COUNT":
+            FRONTEND_STATIC_OPTIONS_MENU_COUNT,
+        "FRONTEND_STATIC_SAVE_MENU_BASE":
+            FRONTEND_STATIC_GAME_MENU_COUNT +
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT +
+                FRONTEND_STATIC_OPTIONS_MENU_COUNT,
+        "FRONTEND_STATIC_SAVE_MENU_COUNT":
+            FRONTEND_STATIC_SAVE_MENU_COUNT,
+        "FRONTEND_STATIC_SAVE_NAME_MENU_BASE":
+            FRONTEND_STATIC_GAME_MENU_COUNT +
+                FRONTEND_STATIC_UPGRADE_MENU_COUNT +
+                FRONTEND_STATIC_OPTIONS_MENU_COUNT +
+                FRONTEND_STATIC_SAVE_MENU_COUNT,
+        "FRONTEND_STATIC_SAVE_NAME_MENU_COUNT":
+            FRONTEND_STATIC_SAVE_NAME_MENU_COUNT,
         "FRONTEND_STATIC_HELP_STRIP_COUNT":
             FRONTEND_STATIC_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_SOURCE_HELP_STRIP_BASE": 0,
+        "FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT":
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE":
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT":
+            FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_SAVE_HELP_STRIP_BASE":
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT":
+            FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_BASE":
+            FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT +
+                FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT,
+        "FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT":
+            FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT,
         "FRONTEND_STATIC_HELP_STRIP_Y": help_strip_y,
         "FRONTEND_STATIC_HELP_STRIP_WIDTH": FRONTEND_FRAME_WIDTH,
         "FRONTEND_STATIC_HELP_STRIP_HEIGHT": help_strip_height,
@@ -3204,12 +3360,12 @@ def build_frontend_static_menu_panels(
         "FRONTEND_STATIC_MENU_PANEL_COUNT": len(panels),
         "FRONTEND_STATIC_MENU_PANELS_BYTES": len(panel_bytes),
         "FRONTEND_STATIC_PRE_GAME_TITLE_BASE": 0,
-        "FRONTEND_STATIC_PRE_GAME_TITLE_COUNT": 3,
-        "FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE": 3,
+        "FRONTEND_STATIC_PRE_GAME_TITLE_COUNT": 4,
+        "FRONTEND_STATIC_PRE_GAME_PLAY_MODE_BASE": 4,
         "FRONTEND_STATIC_PRE_GAME_PLAY_MODE_COUNT": 2,
-        "FRONTEND_STATIC_PRE_GAME_EPISODE_BASE": 5,
+        "FRONTEND_STATIC_PRE_GAME_EPISODE_BASE": 6,
         "FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT": 4,
-        "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE": 9,
+        "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE": 10,
         "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT": 3,
         "FRONTEND_STATIC_PRE_GAME_FRAME_COUNT": len(pre_game_frames),
         "FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES": len(pre_game_bytes),
@@ -3451,18 +3607,23 @@ def build_frontend_mode4_assets(
 
     def render_title(selection: int) -> np.ndarray:
         frame = render_title_chrome()
-        source.draw_text(
-            frame, "Start New Game", 160, 108, 1, "center",
-            15, -1 if selection == 0 else -4, 2,
-        )
-        source.draw_text(
-            frame, "Demo", 160, 120, 1, "center",
-            15, -2 if selection == 1 else -5, 2,
-        )
-        source.draw_text(
-            frame, "JukeBox", 160, 132, 1, "center",
-            15, -6 if selection == 2 else -8, 2,
-        )
+        labels = ("Start New Game", "Load Game", "Demo", "JukeBox")
+        for index, label in enumerate(labels):
+            if index == 1:
+                brightness = -7 if selection == index else -9
+            else:
+                brightness = -1 if selection == index else -4
+            source.draw_text(
+                frame,
+                label,
+                160,
+                108 + index * 12,
+                1,
+                "center",
+                15,
+                brightness,
+                2,
+            )
         return frame
 
     def render_select_menu(
@@ -3613,7 +3774,7 @@ def build_frontend_mode4_assets(
     metadata["FRONTEND_MENU_SOURCE_WIDTH"] = FRONTEND_MENU_SOURCE_WIDTH
     metadata["FRONTEND_NEXT_LEVEL_PALETTE_INDEX"] = 17
     metadata["FRONTEND_FRAME_TITLE_BASE"] = len(frames)
-    for selection in range(3):
+    for selection in range(4):
         add(f"title_{selection}", render_title(selection), 4)
 
     metadata["FRONTEND_FRAME_PLAY_MODE_BASE"] = len(frames)
@@ -3788,7 +3949,7 @@ def build_frontend_mode4_assets(
 
     selection_groups = (
         (
-            "title", metadata["FRONTEND_FRAME_TITLE_BASE"], 3,
+            "title", metadata["FRONTEND_FRAME_TITLE_BASE"], 4,
             lambda selection: (
                 0, (108 + selection * 12) * 160 // 200, 240, 12
             ),

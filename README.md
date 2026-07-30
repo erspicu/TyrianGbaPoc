@@ -17,7 +17,8 @@ longer designed as a throwaway demo.
 
 ## What already works
 
-- Original logo, new-game setup, Game Menu, Next Level, Demo and JukeBox flow.
+- Original logo, new-game setup, Game Menu, Options, eleven-slot SRAM
+  Save/Load, Next Level, Demo and JukeBox flow.
 - Stock MUS/SHP/PIC/HDT/LVL data loaded from a cartridge ROMFS.
 - Source-driven level events, four enemy pools, movement, projectiles,
   collision, damage, linked destruction, rewards, bosses and end-level flow.
@@ -62,6 +63,19 @@ directly in the bilingual [Configure.h](Configure.h).
 - D-pad during play: move
 - A or B during play: fire
 - Start during play: pause/resume
+
+Save-name editor:
+
+- Up/Down: cycle the current character
+- Hold R while pressing Up/Down: choose an uppercase letter
+- A or Right: advance the cursor
+- Left: move the cursor back
+- B: erase; at the first character, return without saving
+- Start: save
+- Hold Select: clear the whole name
+
+`Load Game` is visible but intentionally disabled on the title page. Campaign
+saves are loaded from `Game Menu > Options > Load`.
 
 ## Downloads
 

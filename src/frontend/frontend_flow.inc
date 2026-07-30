@@ -439,6 +439,18 @@ static void frontend_redraw(void)
         frontend_render_ship_specs();
         return;
     }
+    if (game_state == STATE_OPTIONS_MENU) {
+        frontend_render_options_menu();
+        return;
+    }
+    if (game_state == STATE_SAVE_SLOTS) {
+        frontend_render_save_slots();
+        return;
+    }
+    if (game_state == STATE_SAVE_NAME) {
+        frontend_render_save_name();
+        return;
+    }
     frame = frontend_static_frame_for_state(
         game_state,
         frontend_selection
@@ -505,6 +517,9 @@ static void frontend_enter_state(u8 state, u8 selection)
 {
     u8 old_state = game_state;
 
+    if (state != STATE_TITLE) {
+        frontend_title_brand_pending = 0;
+    }
     if (
         old_state == STATE_NEXT_LEVEL_MENU &&
         state != STATE_NEXT_LEVEL_MENU
@@ -849,6 +864,7 @@ static void frontend_begin(void)
     frontend_demo_active = 0;
     frontend_demo_eof = 0;
     frontend_demo_input_guard = 0;
+    frontend_save_initialize();
     frontend_timer = 200;
     frontend_stats_stage = FRONTEND_STATS_STAGE_COMPLETED;
     frontend_stats_cube_visible_count = 0;
@@ -866,6 +882,7 @@ static void frontend_begin(void)
     frontend_nav_obj_dot_tiles_pending = 0;
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
+    frontend_title_brand_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
     frontend_transition_job = FRONTEND_TRANSITION_JOB_NONE;
     frontend_transition_phase = 0;
@@ -2283,6 +2300,27 @@ static void frontend_update(void)
         return;
     }
 
+    if (
+        game_state == STATE_TITLE &&
+        frontend_title_brand_pending &&
+        !frontend_frame_pending
+    ) {
+        u16 first_row = TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y > 0 ?
+            TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y - 1u :
+            0u;
+
+        frontend_dirty_begin();
+        frontend_dirty_add(
+            0,
+            first_row,
+            SCREEN_WIDTH,
+            (u16)(SCREEN_HEIGHT - first_row)
+        );
+        frontend_dirty_present();
+        frontend_title_brand_pending = 0;
+        return;
+    }
+
     if (game_state == STATE_TITLE) {
         if (pad_now != 0 || pad_pressed != 0) {
             frontend_title_idle_frames = 0;
@@ -2298,6 +2336,7 @@ static void frontend_update(void)
 
     frontend_data_animate();
     frontend_data_reader_animate();
+    if (frontend_save_frontend_update()) return;
 
     if (game_state == STATE_NEXT_LEVEL_MENU) {
         s16 delta_x = (s16)(
@@ -2480,7 +2519,7 @@ static void frontend_update(void)
     if (pad_pressed & KEY_UP) {
         switch (game_state) {
         case STATE_TITLE:
-            frontend_move_selection(3, -1);
+            frontend_move_selection(4, -1);
             break;
         case STATE_PLAY_MODE_MENU:
             frontend_move_selection(2, -1);
@@ -2523,7 +2562,7 @@ static void frontend_update(void)
     if (pad_pressed & KEY_DOWN) {
         switch (game_state) {
         case STATE_TITLE:
-            frontend_move_selection(3, 1);
+            frontend_move_selection(4, 1);
             break;
         case STATE_PLAY_MODE_MENU:
             frontend_move_selection(2, 1);
@@ -2671,12 +2710,16 @@ static void frontend_update(void)
 
     switch (game_state) {
     case STATE_TITLE:
-        audio_effect(SFX_SELECT);
         if (frontend_selection == 0) {
+            audio_effect(SFX_SELECT);
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
         } else if (frontend_selection == 1) {
+            audio_effect(SFX_CLINK);
+        } else if (frontend_selection == 2) {
+            audio_effect(SFX_SELECT);
             (void)frontend_demo_start(0);
         } else {
+            audio_effect(SFX_SELECT);
             jukebox_enter();
         }
         break;
@@ -2719,6 +2762,9 @@ static void frontend_update(void)
         } else if (frontend_selection == 2) {
             frontend_start_upgrade_menu_transition(0);
             audio_effect(SFX_CLICK);
+        } else if (frontend_selection == 3) {
+            frontend_enter_state(STATE_OPTIONS_MENU, 0);
+            audio_effect(SFX_CLICK);
         } else if (frontend_selection == 4) {
             audio_effect(SFX_CLICK);
             if (
@@ -2736,15 +2782,7 @@ static void frontend_update(void)
             frontend_quit_yes = 1;
             audio_effect(SFX_CLICK);
             frontend_start_quit_transition(1);
-        } else {
-            /*
-             * These PC menu entries remain visible while their GBA pages
-             * are intentionally unavailable.  Acknowledge the disabled
-             * action with the source S_CLINK instead of failing silently.
-             */
-            audio_effect(SFX_CLINK);
         }
-        /* Options remains visible but intentionally disabled. */
         break;
     case STATE_DATA_CUBES:
         if (frontend_selection < frontend_data_page_count) {

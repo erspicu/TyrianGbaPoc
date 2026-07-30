@@ -17,6 +17,11 @@ enum {
     FRONTEND_TRANSITION_PATH_DATA_READER,
     FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS,
     FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU,
+    FRONTEND_TRANSITION_PATH_GAME_OPTIONS,
+    FRONTEND_TRANSITION_PATH_OPTIONS_SLOTS,
+    FRONTEND_TRANSITION_PATH_SAVE_NAME,
+    FRONTEND_TRANSITION_PATH_SAVE_NAME_EDIT,
+    FRONTEND_TRANSITION_PATH_DATA_READER_SCROLL,
     FRONTEND_TRANSITION_PATH_GAME_QUIT,
     FRONTEND_TRANSITION_PATH_COUNT,
     FRONTEND_TRANSITION_ITERATIONS =
@@ -98,6 +103,7 @@ static u8 autotest_frontend_transition_start_state(u8 path)
     case FRONTEND_TRANSITION_PATH_GAME_NEXT:
     case FRONTEND_TRANSITION_PATH_GAME_DATA:
     case FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS:
+    case FRONTEND_TRANSITION_PATH_GAME_OPTIONS:
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         return STATE_GAME_MENU;
     case FRONTEND_TRANSITION_PATH_TITLE_PLAY_MODE:
@@ -111,6 +117,14 @@ static u8 autotest_frontend_transition_start_state(u8 path)
     case FRONTEND_TRANSITION_PATH_DATA_SELECTION:
     case FRONTEND_TRANSITION_PATH_DATA_READER:
         return STATE_DATA_CUBES;
+    case FRONTEND_TRANSITION_PATH_OPTIONS_SLOTS:
+        return STATE_OPTIONS_MENU;
+    case FRONTEND_TRANSITION_PATH_SAVE_NAME:
+        return STATE_SAVE_SLOTS;
+    case FRONTEND_TRANSITION_PATH_SAVE_NAME_EDIT:
+        return STATE_SAVE_NAME;
+    case FRONTEND_TRANSITION_PATH_DATA_READER_SCROLL:
+        return STATE_DATA_CUBE_READER;
     default:
         return STATE_GAME_MENU;
     }
@@ -130,6 +144,8 @@ static u8 autotest_frontend_transition_start_selection(u8 path)
         return 1;
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         return 5;
+    case FRONTEND_TRANSITION_PATH_GAME_OPTIONS:
+        return 3;
     case FRONTEND_TRANSITION_PATH_DATA_SELECTION:
     case FRONTEND_TRANSITION_PATH_DATA_READER:
         return 0;
@@ -144,6 +160,67 @@ static void autotest_frontend_transition_prepare_path(u8 path)
     u8 selection =
         autotest_frontend_transition_start_selection(path);
 
+    if (
+        path == FRONTEND_TRANSITION_PATH_SAVE_NAME ||
+        path == FRONTEND_TRANSITION_PATH_SAVE_NAME_EDIT
+    ) {
+        frontend_save_slot_mode = FRONTEND_SAVE_MODE_SAVE;
+        if (path == FRONTEND_TRANSITION_PATH_SAVE_NAME) {
+            if (
+                game_state != STATE_SAVE_SLOTS ||
+                frontend_selection != 0
+            ) {
+                frontend_enter_state(STATE_SAVE_SLOTS, 0);
+            }
+        } else if (game_state != STATE_SAVE_NAME) {
+            frontend_save_name_begin(0);
+        }
+        return;
+    }
+    if (path == FRONTEND_TRANSITION_PATH_DATA_READER_SCROLL) {
+        if (
+            game_state == STATE_DATA_CUBE_READER &&
+            frontend_data_cube_cache[frontend_data_reader_index].last_line >
+                FRONTEND_DATA_READER_VISIBLE_LINES
+        ) {
+            return;
+        }
+        if (
+            game_state == STATE_DATA_CUBES &&
+            frontend_data_cache_valid &&
+            frontend_data_page_count != 0
+        ) {
+            u8 index;
+            u8 longest = 0;
+
+            for (index = 1; index < frontend_data_page_count; index++) {
+                if (
+                    frontend_data_cube_cache[index].last_line >
+                    frontend_data_cube_cache[longest].last_line
+                ) {
+                    longest = index;
+                }
+            }
+            if (
+                frontend_data_cube_cache[longest].last_line <=
+                    FRONTEND_DATA_READER_VISIBLE_LINES
+            ) {
+                autotest_frontend_transition_failures++;
+                return;
+            }
+            frontend_start_data_reader_transition(longest);
+            return;
+        }
+        if (game_state != STATE_GAME_MENU) {
+            frontend_enter_state(STATE_GAME_MENU, 0);
+        }
+        frontend_start_data_cubes_transition(
+            0,
+            FRONTEND_DATA_JOB_RELOAD |
+                FRONTEND_DATA_JOB_FULL_FRAME
+        );
+        return;
+    }
     if (
         path == FRONTEND_TRANSITION_PATH_DATA_SELECTION ||
         path == FRONTEND_TRANSITION_PATH_DATA_READER
@@ -315,6 +392,61 @@ static void autotest_frontend_transition_step(u8 path)
         }
         break;
 
+    case FRONTEND_TRANSITION_PATH_GAME_OPTIONS:
+        if (game_state == STATE_GAME_MENU) {
+            frontend_enter_state(STATE_OPTIONS_MENU, 0);
+        } else {
+            frontend_start_game_menu_transition_selected(0, 3);
+        }
+        break;
+
+    case FRONTEND_TRANSITION_PATH_OPTIONS_SLOTS:
+        if (game_state == STATE_OPTIONS_MENU) {
+            frontend_save_slot_mode = FRONTEND_SAVE_MODE_LOAD;
+            frontend_enter_state(STATE_SAVE_SLOTS, 0);
+        } else {
+            frontend_enter_state(STATE_OPTIONS_MENU, 0);
+        }
+        break;
+
+    case FRONTEND_TRANSITION_PATH_SAVE_NAME:
+        if (game_state == STATE_SAVE_SLOTS) {
+            frontend_save_name_begin(0);
+        } else if (game_state == STATE_SAVE_NAME) {
+            frontend_enter_state(STATE_SAVE_SLOTS, 0);
+        } else {
+            autotest_frontend_transition_failures++;
+        }
+        break;
+
+    case FRONTEND_TRANSITION_PATH_SAVE_NAME_EDIT:
+        if (game_state != STATE_SAVE_NAME) {
+            autotest_frontend_transition_failures++;
+            break;
+        }
+        frontend_save_name_cycle(
+            (autotest_frontend_transition_count & 1u) == 0 ?
+                1 :
+                -1
+        );
+        break;
+
+    case FRONTEND_TRANSITION_PATH_DATA_READER_SCROLL:
+        if (game_state != STATE_DATA_CUBE_READER) {
+            autotest_frontend_transition_failures++;
+            break;
+        }
+        /*
+         * One source pixel per stress operation exercises the incremental
+         * renderer 120 times without inflating this suite by 1,440 display
+         * frames.  Playable input still advances the stock 12-pixel row.
+         */
+        frontend_data_scroll_target =
+            (autotest_frontend_transition_count & 1u) == 0 ?
+                (u16)(frontend_data_scroll_pixel + 1u) :
+                (u16)(frontend_data_scroll_pixel - 1u);
+        break;
+
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         if (game_state == STATE_GAME_MENU) {
             frontend_quit_yes = 1;
@@ -375,7 +507,7 @@ static void autotest_frontend_transition_finish(void)
     sram[1] = 'G';
     sram[2] = 'F';
     sram[3] = 'A';
-    sram_write_u32(4, 10);
+    sram_write_u32(4, 12);
     sram_write_u32(8, FRONTEND_TRANSITION_PATH_COUNT);
     sram_write_u32(12, FRONTEND_TRANSITION_ITERATIONS);
     for (path = 0; path < FRONTEND_TRANSITION_PATH_COUNT; path++) {
@@ -481,7 +613,11 @@ static void autotest_frontend_transition_update(u32 current_vblank)
         if (frontend_frame_pending) return;
         if (
             game_state != expected_state ||
-            frontend_selection != expected_selection
+            (
+                autotest_frontend_transition_path !=
+                    FRONTEND_TRANSITION_PATH_DATA_READER_SCROLL &&
+                frontend_selection != expected_selection
+            )
         ) {
             autotest_frontend_transition_prepare_path(
                 autotest_frontend_transition_path

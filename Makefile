@@ -196,6 +196,7 @@ TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$(CONFIG_SUFFI
 DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$(CONFIG_SUFFIX)
 JUKEBOX_TEST_TARGET := tyrian_gba_jukebox_autotest_romfs_v40_$(CONFIG_SUFFIX)
 DEMO_TEST_TARGET := tyrian_gba_demo_autotest_romfs_v40_$(CONFIG_SUFFIX)
+SAVE_TEST_TARGET := tyrian_gba_save_autotest_v61_$(CONFIG_SUFFIX)
 ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v40_$(CONFIG_SUFFIX)
 ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v40_$(CONFIG_SUFFIX)
 ARCADE_ROUTE_TEST_TARGET := tyrian_gba_arcade_route_smoke_ep1_section1_v40_$(CONFIG_SUFFIX)
@@ -243,6 +244,7 @@ LINKFLAGS := $(ARCH) -B$(GBA_CRT)/ -specs=$(GBA_CRT)/gba.specs \
 	-L$(GBA_CRT) -L$(LIBGBA)/lib -L$(MAXMOD)/lib
 
 ASSET_STAMP := $(RES)/assets.stamp
+BUILD_VERSION_HEADER := $(RES)/build_version.h
 VFS_SOURCE_ROOT := vendor/tyrian/data
 VFS_MANIFEST := vfs/manifest.json
 VFS_IMAGE := $(RES)/tyrian_romfs.bin
@@ -374,15 +376,19 @@ STRESS_COMMON_OBJECTS := \
 	$(filter-out $(BUILD)/opentyrian_level_port.o,$(COMMON_OBJECTS)) \
 	$(STRESS_LEVEL_OBJECT)
 
-MAIN_INCLUDES := Configure.h $(wildcard src/*.inc src/*/*.inc)
+MAIN_INCLUDES := \
+	Configure.h \
+	$(BUILD_VERSION_HEADER) \
+	$(wildcard src/*.inc src/*/*.inc)
 
 .PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
+	save-autotest \
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
 	frontend-menu-stress frontend-nav-stress frontend-nav-camera-stress \
 	frontend-transition-stress \
-	assets clean distclean
+	assets clean distclean FORCE
 
 all: $(BUILD)/$(TARGET).gba
 
@@ -393,6 +399,8 @@ death-autotest: $(BUILD)/$(DEATH_TEST_TARGET).gba
 jukebox-autotest: $(BUILD)/$(JUKEBOX_TEST_TARGET).gba
 
 demo-autotest: $(BUILD)/$(DEMO_TEST_TARGET).gba
+
+save-autotest: $(BUILD)/$(SAVE_TEST_TARGET).gba
 
 romfs-matrix-autotest: $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba
 
@@ -421,6 +429,13 @@ assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
 $(BUILD) $(BUILD)/preview $(RES):
 	mkdir -p $@
 
+FORCE:
+
+$(BUILD_VERSION_HEADER): FORCE tools/write_build_version.py | $(RES)
+	$(PYTHON) tools/write_build_version.py \
+		--project-root "$(PROJECT_ROOT)" \
+		--output "$(CURDIR)/$(BUILD_VERSION_HEADER)"
+
 $(ASSET_STAMP): $(ASSET_INPUTS) | $(BUILD)/preview
 	$(PYTHON) tools/build_assets.py \
 		--project-root "$(PROJECT_ROOT)" \
@@ -448,14 +463,14 @@ $(BUILD)/main_release_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_STACK_CANARY \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
@@ -465,7 +480,7 @@ $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FORCE_PLAYER_DEATH \
 		-DAUTOTEST_DEATH_FLOW \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0 \
@@ -475,7 +490,7 @@ $(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_JUKEBOX_FLOW \
 		-MMD -MP -c $< -o $@
 
@@ -483,8 +498,16 @@ $(BUILD)/main_demo_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_DEMO_FLOW \
+		-MMD -MP -c $< -o $@
+
+$(BUILD)/main_save_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_SAVE_FLOW \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
@@ -676,6 +699,12 @@ $(BUILD)/$(DEMO_TEST_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(SAVE_TEST_TARGET).elf: \
+		$(BUILD)/main_save_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(SAVE_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf: \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o $(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).map $^ \
@@ -772,6 +801,10 @@ $(BUILD)/$(DEMO_TEST_TARGET).gba: $(BUILD)/$(DEMO_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN DEMO" -cTYGX -m00
 
+$(BUILD)/$(SAVE_TEST_TARGET).gba: $(BUILD)/$(SAVE_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYRIAN SAVE" -cTYGV -m00
+
 $(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba: \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
@@ -836,6 +869,8 @@ clean:
 		$(BUILD)/main_jukebox_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_demo_test_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_save_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_save_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).o \
