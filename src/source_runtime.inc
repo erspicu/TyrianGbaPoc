@@ -1689,20 +1689,32 @@ static void source_camera_update(void)
         SOURCE_VIEW_CROP_Y
     );
 
-    source_camera_offset_x_q8 = source_camera_smooth_axis(
+    s16 next_x_q8 = source_camera_smooth_axis(
         source_camera_offset_x_q8,
         target_x
     );
-    source_camera_offset_y_q8 = source_camera_smooth_axis(
+    s16 next_y_q8 = source_camera_smooth_axis(
         source_camera_offset_y_q8,
         target_y
     );
-    source_camera_offset_x = source_camera_q8_to_pixel(
-        source_camera_offset_x_q8
-    );
-    source_camera_offset_y = source_camera_q8_to_pixel(
-        source_camera_offset_y_q8
-    );
+    s8 next_y = source_camera_q8_to_pixel(next_y_q8);
+
+    source_camera_offset_x_q8 = next_x_q8;
+    source_camera_offset_x = source_camera_q8_to_pixel(next_x_q8);
+    /*
+     * A vertical offset is visible in the same VBlank as the row DMA.  Do
+     * not advance the camera until every active background layer can install
+     * the newly exposed source row; otherwise VOFS would sample stale ring
+     * entries at the top or bottom edge.
+     */
+    if (background_schedule_presentation_window(next_y)) {
+        source_camera_offset_y_q8 = next_y_q8;
+        source_camera_offset_y = next_y;
+    } else {
+        (void)background_schedule_presentation_window(
+            source_camera_offset_y
+        );
+    }
     if (
         (u32)(u16)source_camera_origin_x() <
             telemetry_camera_min_origin_x
@@ -1806,16 +1818,13 @@ static u16 source_background_hofs(u8 layer)
 
 static u16 source_background_vofs(u8 layer)
 {
-    u16 scroll;
-
-    if (layer == 0) {
-        scroll = bg1_presentation_scroll_pixel;
-    } else if (layer == 1) {
-        scroll = bg2_presentation_scroll_pixel;
-    } else {
-        scroll = bg3_presentation_scroll_pixel;
-    }
-    return (u16)((scroll + source_camera_offset_y) & 255);
+    return (u16)(
+        background_presentation_scroll_pixel(
+            layer,
+            source_camera_offset_y
+        ) &
+        255u
+    );
 }
 
 static s16 source_player_screen_x(void)
@@ -2165,7 +2174,13 @@ static void source_apply_background_state(void)
         !source_background2_enabled &&
         source_parity_level.background2_over == 3
     ) {
-        if (background_prepare_layer(1, bg2_scroll_pixel >> 3)) {
+        if (background_prepare_layer(
+                1,
+                background_presentation_scroll_pixel(
+                    1,
+                    source_camera_offset_y
+                ) >> 3
+            )) {
             source_background2_enabled = 1;
             source_background2_upload_pending = 1;
         }

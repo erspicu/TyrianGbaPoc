@@ -78,11 +78,20 @@ static void gameplay_presentation_capture_registers(void)
     gameplay_presentation.vofs[2] =
         source_background_vofs(2);
     gameplay_presentation.full_scroll_pixel[0] =
-        bg1_presentation_scroll_pixel;
+        background_presentation_scroll_pixel(
+            0,
+            source_camera_offset_y
+        );
     gameplay_presentation.full_scroll_pixel[1] =
-        bg2_presentation_scroll_pixel;
+        background_presentation_scroll_pixel(
+            1,
+            source_camera_offset_y
+        );
     gameplay_presentation.full_scroll_pixel[2] =
-        bg3_presentation_scroll_pixel;
+        background_presentation_scroll_pixel(
+            2,
+            source_camera_offset_y
+        );
     gameplay_presentation.bg1cnt =
         BG_PRIORITY(background2_priority) |
         CHAR_BASE(background_cache_char_base[1]) |
@@ -297,7 +306,10 @@ static void commit_vblank_work(void)
          */
         background_commit_full_layer(
             1,
-            bg2_scroll_pixel >> 3,
+            background_presentation_scroll_pixel(
+                1,
+                source_camera_offset_y
+            ) >> 3,
             BG1_SCREEN_BLOCK
         );
         bg2_row_pending = 0;

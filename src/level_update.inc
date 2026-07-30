@@ -1,6 +1,6 @@
 /* Legacy background, boss and frame update orchestration. */
 
-static void schedule_row(
+static u8 schedule_row(
     u8 layer,
     u16 row,
     u16 screen_block,
@@ -11,7 +11,7 @@ static void schedule_row(
 {
     if (*pending) {
         telemetry_stream_drops++;
-        return;
+        return 0;
     }
     if (!background_schedule_row(
             layer,
@@ -21,16 +21,153 @@ static void schedule_row(
             target
         )) {
         telemetry_stream_drops++;
-        return;
+        return 0;
     }
     *pending = 1;
     telemetry_map_rows++;
+    return 1;
+}
+
+static u16 background_presentation_scroll_pixel(
+    u8 layer,
+    s8 camera_offset_y
+)
+{
+    s32 scroll;
+    s32 maximum;
+
+    if (layer == 0) {
+        scroll = bg1_presentation_scroll_pixel;
+    } else if (layer == 1) {
+        scroll = bg2_presentation_scroll_pixel;
+    } else {
+        scroll = bg3_presentation_scroll_pixel;
+    }
+    scroll += camera_offset_y;
+    maximum =
+        (s32)background_canvas_rows[layer] * 8 -
+        SCREEN_HEIGHT;
+    if (maximum < 0) maximum = 0;
+    if (scroll < 0) scroll = 0;
+    if (scroll > maximum) scroll = maximum;
+    return (u16)scroll;
+}
+
+static u8 background_layer_missing_presentation_row(
+    u8 layer,
+    s8 camera_offset_y,
+    u16 *missing_row
+)
+{
+    BackgroundLayerCache *cache =
+        &background_layer_cache[layer];
+    u16 top = (u16)(
+        background_presentation_scroll_pixel(
+            layer,
+            camera_offset_y
+        ) >> 3
+    );
+    u16 last = (u16)(top + BACKGROUND_VISIBLE_TILE_ROWS);
+    u16 row;
+    u8 missing_count = 0;
+
+    if (last > background_canvas_rows[layer]) {
+        last = background_canvas_rows[layer];
+    }
+    for (row = top; row < last; row++) {
+        if (
+            cache->ring_source_row[row & (MAP_RING_ROWS - 1u)] !=
+                row
+        ) {
+            *missing_row = row;
+            missing_count++;
+            if (missing_count > 1) return missing_count;
+        }
+    }
+    return missing_count;
+}
+
+/*
+ * Keep the 21-row ownership window synchronized with the exact VOFS that
+ * will be committed.  Camera motion and map scrolling are independent, so
+ * checking only the map's raw 8-pixel boundary can leave the newly exposed
+ * top/bottom row absent.  Preflight all visible layers before installing any
+ * row; if a layer already owns a different VBlank upload, the camera simply
+ * holds its previous sub-pixel target for one logic tick.
+ */
+static u8 background_schedule_presentation_window(
+    s8 camera_offset_y
+)
+{
+    u16 missing[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
+    u8 count[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
+    u8 active[BACKGROUND_LAYER_COUNT] = {
+        1,
+        (
+            source_background2_enabled &&
+            !source_background2_upload_pending
+        ),
+        1,
+    };
+    u8 layer;
+
+    if (!background_runtime_valid) return 1;
+    for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        u8 pending;
+
+        if (!active[layer]) continue;
+        count[layer] = background_layer_missing_presentation_row(
+            layer,
+            camera_offset_y,
+            &missing[layer]
+        );
+        if (count[layer] > 1) return 0;
+        pending =
+            layer == 0 ? bg1_row_pending :
+            layer == 1 ? bg2_row_pending :
+                bg3_row_pending;
+        if (count[layer] != 0 && pending) return 0;
+    }
+    for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        if (!active[layer] || count[layer] == 0) continue;
+        if (layer == 0) {
+            if (!schedule_row(
+                    0,
+                    missing[0],
+                    BG0_SCREEN_BLOCK,
+                    &bg1_row_pending,
+                    &bg1_row_source,
+                    &bg1_row_target
+                )) {
+                return 0;
+            }
+        } else if (layer == 1) {
+            if (!schedule_row(
+                    1,
+                    missing[1],
+                    BG1_SCREEN_BLOCK,
+                    &bg2_row_pending,
+                    &bg2_row_source,
+                    &bg2_row_target
+                )) {
+                return 0;
+            }
+        } else if (!schedule_row(
+                2,
+                missing[2],
+                BG2_SCREEN_BLOCK,
+                &bg3_row_pending,
+                &bg3_row_source,
+                &bg3_row_target
+            )) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 static void advance_backgrounds(void)
 {
-    u16 old_row;
-    u16 new_row;
     u8 move1 = 0;
     u8 move2 = 0;
 
@@ -41,7 +178,10 @@ static void advance_backgrounds(void)
      */
     background_retain_visible_rows(
         0,
-        bg1_scroll_pixel >> 3
+        background_presentation_scroll_pixel(
+            0,
+            source_camera_offset_y
+        ) >> 3
     );
     if (
         source_background2_enabled &&
@@ -49,12 +189,18 @@ static void advance_backgrounds(void)
     ) {
         background_retain_visible_rows(
             1,
-            bg2_scroll_pixel >> 3
+            background_presentation_scroll_pixel(
+                1,
+                source_camera_offset_y
+            ) >> 3
         );
     }
     background_retain_visible_rows(
         2,
-        bg3_scroll_pixel >> 3
+        background_presentation_scroll_pixel(
+            2,
+            source_camera_offset_y
+        ) >> 3
     );
 
     bg1_step = 0;
@@ -74,7 +220,6 @@ static void advance_backgrounds(void)
         bg1_scroll_delay = bg1_scroll_delay_max;
         move1 = bg1_scroll_speed;
     }
-    old_row = bg1_scroll_pixel >> 3;
     if (bg1_scroll_pixel >= move1) {
         bg1_scroll_pixel -= move1;
         bg1_step = move1;
@@ -82,21 +227,12 @@ static void advance_backgrounds(void)
         bg1_step = (u8)bg1_scroll_pixel;
         bg1_scroll_pixel = 0;
     }
-    new_row = bg1_scroll_pixel >> 3;
-    if (new_row != old_row) {
-        schedule_row(
-            0, new_row, BG0_SCREEN_BLOCK,
-            &bg1_row_pending, &bg1_row_source, &bg1_row_target
-        );
-    }
-
     if (bg2_scroll_delay > 1) {
         bg2_scroll_delay--;
     } else {
         bg2_scroll_delay = bg2_scroll_delay_max;
         move2 = bg2_scroll_speed;
     }
-    old_row = bg2_scroll_pixel >> 3;
     if (bg2_scroll_pixel >= move2) {
         bg2_scroll_pixel -= move2;
         bg2_step = move2;
@@ -104,19 +240,6 @@ static void advance_backgrounds(void)
         bg2_step = (u8)bg2_scroll_pixel;
         bg2_scroll_pixel = 0;
     }
-    new_row = bg2_scroll_pixel >> 3;
-    if (
-        new_row != old_row &&
-        source_background2_enabled &&
-        !source_background2_upload_pending
-    ) {
-        schedule_row(
-            1, new_row, BG1_SCREEN_BLOCK,
-            &bg2_row_pending, &bg2_row_source, &bg2_row_target
-        );
-    }
-
-    old_row = bg3_scroll_pixel >> 3;
     if (bg3_scroll_pixel >= bg3_scroll_speed) {
         bg3_scroll_pixel -= bg3_scroll_speed;
         bg3_step = bg3_scroll_speed;
@@ -124,15 +247,11 @@ static void advance_backgrounds(void)
         bg3_step = (u8)bg3_scroll_pixel;
         bg3_scroll_pixel = 0;
     }
-    new_row = bg3_scroll_pixel >> 3;
-    if (new_row != old_row) {
-        schedule_row(
-            2, new_row, BG2_SCREEN_BLOCK,
-            &bg3_row_pending, &bg3_row_source, &bg3_row_target
-        );
-    }
     /* draw_background_3 advances backPos3 before it blits. */
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
+    (void)background_schedule_presentation_window(
+        source_camera_offset_y
+    );
 }
 
 static u8 source_enemy_on_screen_count(void)

@@ -1801,6 +1801,13 @@ static s16 source_camera_origin_x(void);
 static s16 source_camera_origin_y(void);
 static void source_camera_reset(void);
 static void source_camera_update(void);
+static u16 background_presentation_scroll_pixel(
+    u8 layer,
+    s8 camera_offset_y
+);
+static u8 background_schedule_presentation_window(
+    s8 camera_offset_y
+);
 static u16 source_background_vofs(u8 layer);
 static s16 source_world_to_screen_x(s16 source_x);
 static s16 source_world_to_screen_y(s16 source_y);

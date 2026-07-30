@@ -159,6 +159,8 @@ static u8 background_palette_nearest
     [BACKGROUND_PALETTE_BANKS][OT_PALETTE_COLOUR_COUNT]
     EWRAM_BSS __attribute__((aligned(4)));
 static const u8 *background_palette_mask_active;
+static const u8 *background_palette_level_mask_active;
+static const u8 *background_palette_mask_id_active;
 /*
  * palette.dat uses the low nibble as brightness, but an RGB-energy lookup is
  * a better generic tie-breaker for special banks.  Keep this tiny hot table
@@ -332,12 +334,63 @@ static u8 background_palette_variant(char shape_file_id)
     }
 }
 
-static u8 background_setup_palette(char shape_file_id)
+static u8 background_palette_level_variant(
+    u8 episode,
+    u16 lvl_file_number
+)
 {
-    u8 variant = background_palette_variant(shape_file_id);
+    u16 offset;
+    u16 count;
+
+    switch (episode) {
+    case 1:
+        offset = BACKGROUND_PALETTE_EPISODE_1_OFFSET;
+        count = BACKGROUND_PALETTE_EPISODE_1_COUNT;
+        break;
+    case 2:
+        offset = BACKGROUND_PALETTE_EPISODE_2_OFFSET;
+        count = BACKGROUND_PALETTE_EPISODE_2_COUNT;
+        break;
+    case 3:
+        offset = BACKGROUND_PALETTE_EPISODE_3_OFFSET;
+        count = BACKGROUND_PALETTE_EPISODE_3_COUNT;
+        break;
+    case 4:
+        offset = BACKGROUND_PALETTE_EPISODE_4_OFFSET;
+        count = BACKGROUND_PALETTE_EPISODE_4_COUNT;
+        break;
+    default:
+        return UINT8_MAX;
+    }
+    if (
+        lvl_file_number == 0 ||
+        lvl_file_number > count
+    ) {
+        return UINT8_MAX;
+    }
+    return (u8)(offset + lvl_file_number - 1u);
+}
+
+static u8 background_setup_palette(
+    char shape_file_id,
+    u8 episode,
+    u16 lvl_file_number
+)
+{
+    u8 profile_variant =
+        background_palette_variant(shape_file_id);
+    u8 level_variant = background_palette_level_variant(
+        episode,
+        lvl_file_number
+    );
+    u8 palette_variant;
 
     _Static_assert(
-        BACKGROUND_PALETTE_VARIANT_COUNT == 5 &&
+        BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT == 5 &&
+            BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT == 62 &&
+            BACKGROUND_PALETTE_VARIANT_COUNT ==
+                BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT +
+                    BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT &&
             BACKGROUND_GBA_PALETTE_VARIANT_BYTES == 512 &&
             BACKGROUND_GBA_PALETTE_BYTES ==
                 BACKGROUND_PALETTE_VARIANT_COUNT *
@@ -349,27 +402,75 @@ static u8 background_setup_palette(char shape_file_id)
                 BACKGROUND_PALETTE_VARIANT_COUNT *
                     BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES &&
             BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES == 65536 &&
+            BACKGROUND_PALETTE_MASK_ID_OFFSET ==
+                BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT *
+                    BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES &&
+            BACKGROUND_PALETTE_LEVEL_MASK_BANK_OFFSET ==
+                BACKGROUND_PALETTE_MASK_ID_OFFSET + 65536 &&
+            BACKGROUND_PALETTE_LEVEL_MASK_BANK_VARIANT_BYTES ==
+                BACKGROUND_PALETTE_ACTIVE_MASK_COUNT &&
             BACKGROUND_PALETTE_MASK_BANK_BYTES ==
-                BACKGROUND_PALETTE_VARIANT_COUNT *
-                    BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES,
+                BACKGROUND_PALETTE_LEVEL_MASK_BANK_OFFSET +
+                    BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT *
+                        BACKGROUND_PALETTE_ACTIVE_MASK_COUNT &&
+            BACKGROUND_PALETTE_EPISODE_1_OFFSET == 0 &&
+            BACKGROUND_PALETTE_EPISODE_2_OFFSET ==
+                BACKGROUND_PALETTE_EPISODE_1_COUNT &&
+            BACKGROUND_PALETTE_EPISODE_3_OFFSET ==
+                BACKGROUND_PALETTE_EPISODE_2_OFFSET +
+                    BACKGROUND_PALETTE_EPISODE_2_COUNT &&
+            BACKGROUND_PALETTE_EPISODE_4_OFFSET ==
+                BACKGROUND_PALETTE_EPISODE_3_OFFSET +
+                    BACKGROUND_PALETTE_EPISODE_3_COUNT &&
+            BACKGROUND_PALETTE_EPISODE_4_OFFSET +
+                BACKGROUND_PALETTE_EPISODE_4_COUNT ==
+                    BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT,
         "generated background palette adapter changed"
     );
-    if (variant >= BACKGROUND_PALETTE_VARIANT_COUNT) return 0;
+    if (
+        profile_variant >=
+            BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT
+    ) {
+        return 0;
+    }
+    palette_variant = profile_variant;
+    background_palette_level_mask_active = 0;
+    background_palette_mask_id_active = 0;
+    if (
+        level_variant <
+            BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT
+    ) {
+        palette_variant = (u8)(
+            BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT +
+            level_variant
+        );
+        background_palette_mask_id_active =
+            background_palette_mask_bank +
+            BACKGROUND_PALETTE_MASK_ID_OFFSET;
+        background_palette_level_mask_active =
+            background_palette_mask_bank +
+            BACKGROUND_PALETTE_LEVEL_MASK_BANK_OFFSET +
+            (u32)level_variant *
+                BACKGROUND_PALETTE_ACTIVE_MASK_COUNT;
+    }
     dmaCopy(
         background_gba_palette +
-            (u32)variant * BACKGROUND_GBA_PALETTE_VARIANT_BYTES,
+            (u32)palette_variant *
+                BACKGROUND_GBA_PALETTE_VARIANT_BYTES,
         BG_PALETTE,
         BACKGROUND_GBA_PALETTE_VARIANT_BYTES
     );
     memcpy(
         background_palette_nearest,
         background_palette_nearest_asset +
-            (u32)variant * BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES,
+            (u32)palette_variant *
+                BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES,
         BACKGROUND_PALETTE_NEAREST_VARIANT_BYTES
     );
     background_palette_mask_active =
         background_palette_mask_bank +
-        (u32)variant * BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES;
+        (u32)profile_variant *
+            BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES;
     return 1;
 }
 
@@ -404,7 +505,15 @@ static u8 background_bind_selected_level(void)
             return 0;
         }
     }
-    if (!background_setup_palette(level_info.shape_file)) return 0;
+    if (
+        !background_setup_palette(
+            level_info.shape_file,
+            level_info.episode,
+            level_info.lvl_file_number
+        )
+    ) {
+        return 0;
+    }
     background_cache_approximations = 0;
     background_cache_evictions = 0;
     background_cache_uploads = 0;
@@ -578,7 +687,20 @@ static IWRAM_CODE ARM_CODE void background_render_tile(
          * in ROM, so a miss still performs one O(1) bank read plus the same
          * 64 source-pixel pass as before.
          */
-        best_bank = background_palette_mask_active[hue_mask];
+        if (
+            background_palette_level_mask_active != 0 &&
+            background_palette_mask_id_active != 0
+        ) {
+            u8 mask_id =
+                background_palette_mask_id_active[hue_mask];
+
+            best_bank =
+                mask_id < BACKGROUND_PALETTE_ACTIVE_MASK_COUNT ?
+                    background_palette_level_mask_active[mask_id] :
+                    background_palette_mask_active[hue_mask];
+        } else {
+            best_bank = background_palette_mask_active[hue_mask];
+        }
     }
     for (y = 0; y < 8; y++) {
         u8 pair;
@@ -1525,16 +1647,25 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
         }
         if (used >= miss_budget) break;
         if (layer == 0) {
-            row = bg1_scroll_pixel >> 3;
+            row = background_presentation_scroll_pixel(
+                0,
+                source_camera_offset_y
+            ) >> 3;
             active = bg1_scroll_speed != 0;
         } else if (layer == 1) {
-            row = bg2_scroll_pixel >> 3;
+            row = background_presentation_scroll_pixel(
+                1,
+                source_camera_offset_y
+            ) >> 3;
             active =
                 source_background2_enabled &&
                 !source_background2_upload_pending &&
                 bg2_scroll_speed != 0;
         } else {
-            row = bg3_scroll_pixel >> 3;
+            row = background_presentation_scroll_pixel(
+                2,
+                source_camera_offset_y
+            ) >> 3;
             active = bg3_scroll_speed != 0;
         }
         if (!active || row == 0) continue;

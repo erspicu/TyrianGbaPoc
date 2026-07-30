@@ -313,16 +313,134 @@ def render_key(key: int, shapes: np.ndarray) -> np.ndarray:
     return source
 
 
+def level_runtime_counter(
+    level: LevelData,
+    shapes: np.ndarray,
+) -> tuple[collections.Counter[int], int]:
+    """Reconstruct every runtime background key used by one LVL section."""
+    counter: collections.Counter[int] = collections.Counter()
+    shape_present = np.any(shapes, axis=(1, 2))
+    map_tiles = 0
+
+    for layer in range(3):
+        tile_columns = LAYER_COLUMNS[layer] * SHAPE_WIDTH // 8
+        canvas_rows = (
+            (
+                LAYER_ROWS[layer] -
+                LAYER_FIRST_ROWS[layer]
+            ) * SHAPE_HEIGHT + 7
+        ) // 8
+        shape_for_map_index = np.zeros(256, dtype=np.uint16)
+        for map_index in range(LAYER_SHAPE_SLOTS[layer]):
+            shape_number = int(level.lookups[layer][map_index])
+            if (
+                shape_number != 0 and
+                shape_number <= SHAPE_COUNT and
+                shape_present[shape_number - 1]
+            ):
+                shape_for_map_index[map_index] = shape_number
+        shape_map = shape_for_map_index[level.maps[layer]]
+        tile_x = np.arange(tile_columns, dtype=np.uint16)
+        map_columns = (tile_x * 8 // SHAPE_WIDTH).astype(np.uint8)
+        sub_x = ((tile_x * 8 % SHAPE_WIDTH) // 8).astype(np.uint32)
+        for tile_y in range(canvas_rows):
+            canvas_y = tile_y * 8
+            map_row = (
+                LAYER_FIRST_ROWS[layer] +
+                canvas_y // SHAPE_HEIGHT
+            )
+            phase = canvas_y % SHAPE_HEIGHT
+            top_shape = shape_map[map_row, map_columns].astype(
+                np.uint32
+            )
+            if (
+                phase + 7 >= SHAPE_HEIGHT and
+                map_row + 1 < LAYER_ROWS[layer]
+            ):
+                bottom_shape = shape_map[
+                    map_row + 1,
+                    map_columns,
+                ].astype(np.uint32)
+            else:
+                bottom_shape = np.zeros_like(top_shape)
+            packed = (
+                top_shape |
+                (bottom_shape << 10) |
+                np.uint32((phase // 4) << 20) |
+                (sub_x << 23)
+            )
+            row_keys = packed + 1
+            row_keys[
+                (top_shape == 0) & (bottom_shape == 0)
+            ] = 1
+            counter.update(int(value) for value in row_keys)
+            map_tiles += tile_columns
+    return counter, map_tiles
+
+
+def dataset_from_counter(
+    profile_id: str,
+    counter: collections.Counter[int],
+    shapes: np.ndarray,
+    level_count: int,
+) -> ProfileDataset:
+    counter = counter.copy()
+    counter.pop(1, None)
+    rendered = [
+        (key, render_key(int(key), shapes))
+        for key in sorted(counter)
+    ]
+    rendered = [
+        (key, pixels)
+        for key, pixels in rendered
+        if np.any(pixels)
+    ]
+    keys = np.asarray(
+        [key for key, _ in rendered],
+        dtype=np.uint32,
+    )
+    histograms = np.zeros(
+        (len(keys), SOURCE_COLOURS),
+        dtype=np.uint8,
+    )
+    masks = np.zeros(len(keys), dtype=np.uint16)
+    weights = np.asarray(
+        [counter[int(key)] for key in keys],
+        dtype=np.float64,
+    )
+    for index, (_, rendered_pixels) in enumerate(rendered):
+        pixels = rendered_pixels.reshape(-1)
+        nonzero = pixels[pixels != 0]
+        histograms[index] = np.bincount(
+            nonzero,
+            minlength=SOURCE_COLOURS,
+        )
+        mask = 0
+        for hue in np.unique(nonzero >> 4):
+            mask |= 1 << int(hue)
+        masks[index] = mask
+    digest = hashlib.sha256()
+    digest.update(keys.tobytes())
+    digest.update(histograms.tobytes())
+    digest.update(weights.astype("<u8").tobytes())
+    return ProfileDataset(
+        profile_id=profile_id,
+        keys=keys,
+        histograms=histograms,
+        masks=masks,
+        weights=weights,
+        level_count=level_count,
+        map_tile_count=int(weights.sum()),
+        checksum=digest.hexdigest(),
+    )
+
+
 def build_runtime_datasets(
     data_root: Path,
 ) -> tuple[dict[str, ProfileDataset], dict[str, np.ndarray], dict[str, int]]:
     shapes_by_profile = {
         profile: load_shapes(data_root / f"shapes{profile}.dat")
         for profile in PROFILE_IDS
-    }
-    shape_present = {
-        profile: np.any(shapes, axis=(1, 2))
-        for profile, shapes in shapes_by_profile.items()
     }
     counters = {
         profile: collections.Counter()
@@ -339,113 +457,19 @@ def build_runtime_datasets(
         profile = level.shape_file
         level_sets[profile].add((level.episode, level.level))
         shapes = shapes_by_profile[profile]
-        for layer in range(3):
-            tile_columns = LAYER_COLUMNS[layer] * SHAPE_WIDTH // 8
-            canvas_rows = (
-                (
-                    LAYER_ROWS[layer] -
-                    LAYER_FIRST_ROWS[layer]
-                ) * SHAPE_HEIGHT + 7
-            ) // 8
-            shape_for_map_index = np.zeros(256, dtype=np.uint16)
-            for map_index in range(LAYER_SHAPE_SLOTS[layer]):
-                shape_number = int(level.lookups[layer][map_index])
-                if (
-                    shape_number != 0 and
-                    shape_number <= SHAPE_COUNT and
-                    shape_present[profile][shape_number - 1]
-                ):
-                    shape_for_map_index[map_index] = shape_number
-            shape_map = shape_for_map_index[level.maps[layer]]
-            tile_x = np.arange(tile_columns, dtype=np.uint16)
-            map_columns = (tile_x * 8 // SHAPE_WIDTH).astype(np.uint8)
-            sub_x = ((tile_x * 8 % SHAPE_WIDTH) // 8).astype(np.uint32)
-            for tile_y in range(canvas_rows):
-                canvas_y = tile_y * 8
-                map_row = (
-                    LAYER_FIRST_ROWS[layer] +
-                    canvas_y // SHAPE_HEIGHT
-                )
-                phase = canvas_y % SHAPE_HEIGHT
-                top_shape = shape_map[map_row, map_columns].astype(
-                    np.uint32
-                )
-                if (
-                    phase + 7 >= SHAPE_HEIGHT and
-                    map_row + 1 < LAYER_ROWS[layer]
-                ):
-                    bottom_shape = shape_map[
-                        map_row + 1,
-                        map_columns,
-                    ].astype(np.uint32)
-                else:
-                    bottom_shape = np.zeros_like(top_shape)
-                packed = (
-                    top_shape |
-                    (bottom_shape << 10) |
-                    np.uint32((phase // 4) << 20) |
-                    (sub_x << 23)
-                )
-                row_keys = packed + 1
-                row_keys[
-                    (top_shape == 0) & (bottom_shape == 0)
-                ] = 1
-                counters[profile].update(
-                    int(value)
-                    for value in row_keys
-                )
-                map_tiles += tile_columns
+        level_counter, level_map_tiles = level_runtime_counter(
+            level,
+            shapes,
+        )
+        counters[profile].update(level_counter)
+        map_tiles += level_map_tiles
     datasets: dict[str, ProfileDataset] = {}
     for profile in PROFILE_IDS:
-        counter = counters[profile]
-        counter.pop(1, None)
-        shapes = shapes_by_profile[profile]
-        rendered = [
-            (key, render_key(int(key), shapes))
-            for key in sorted(counter)
-        ]
-        rendered = [
-            (key, pixels)
-            for key, pixels in rendered
-            if np.any(pixels)
-        ]
-        keys = np.asarray(
-            [key for key, _ in rendered],
-            dtype=np.uint32,
-        )
-        histograms = np.zeros(
-            (len(keys), SOURCE_COLOURS),
-            dtype=np.uint8,
-        )
-        masks = np.zeros(len(keys), dtype=np.uint16)
-        weights = np.asarray(
-            [counter[int(key)] for key in keys],
-            dtype=np.float64,
-        )
-        for index, (_, rendered_pixels) in enumerate(rendered):
-            pixels = rendered_pixels.reshape(-1)
-            nonzero = pixels[pixels != 0]
-            histograms[index] = np.bincount(
-                nonzero,
-                minlength=SOURCE_COLOURS,
-            )
-            mask = 0
-            for hue in np.unique(nonzero >> 4):
-                mask |= 1 << int(hue)
-            masks[index] = mask
-        digest = hashlib.sha256()
-        digest.update(keys.tobytes())
-        digest.update(histograms.tobytes())
-        digest.update(weights.astype("<u8").tobytes())
-        datasets[profile] = ProfileDataset(
+        datasets[profile] = dataset_from_counter(
             profile_id=profile,
-            keys=keys,
-            histograms=histograms,
-            masks=masks,
-            weights=weights,
+            counter=counters[profile],
+            shapes=shapes_by_profile[profile],
             level_count=len(level_sets[profile]),
-            map_tile_count=int(weights.sum()),
-            checksum=digest.hexdigest(),
         )
     metadata = {
         "logical_levels": logical_levels,
@@ -463,6 +487,50 @@ def build_runtime_datasets(
         ),
     }
     return datasets, shapes_by_profile, metadata
+
+
+def build_level_runtime_datasets(
+    data_root: Path,
+    shapes_by_profile: dict[str, np.ndarray] | None = None,
+) -> tuple[
+    list[tuple[LevelData, ProfileDataset]],
+    dict[str, np.ndarray],
+    dict[str, int],
+]:
+    """Build the exact runtime-key distribution for every stock LVL section."""
+    if shapes_by_profile is None:
+        shapes_by_profile = {
+            profile: load_shapes(data_root / f"shapes{profile}.dat")
+            for profile in PROFILE_IDS
+        }
+    result: list[tuple[LevelData, ProfileDataset]] = []
+    map_tiles = 0
+    active_masks: set[int] = set()
+
+    for level in iter_levels(data_root):
+        counter, level_map_tiles = level_runtime_counter(
+            level,
+            shapes_by_profile[level.shape_file],
+        )
+        dataset = dataset_from_counter(
+            profile_id=level.shape_file,
+            counter=counter,
+            shapes=shapes_by_profile[level.shape_file],
+            level_count=1,
+        )
+        result.append((level, dataset))
+        map_tiles += level_map_tiles
+        active_masks.update(int(mask) for mask in dataset.masks)
+    metadata = {
+        "logical_levels": len(result),
+        "map_tiles_including_blank": map_tiles,
+        "unique_nonblank_keys": sum(
+            len(dataset.keys)
+            for _, dataset in result
+        ),
+        "active_masks": len(active_masks),
+    }
+    return result, shapes_by_profile, metadata
 
 
 def srgb_to_linear(values: np.ndarray) -> np.ndarray:
@@ -959,6 +1027,24 @@ def optimize_bank(
             seeds.append(code)
             if len(seeds) == PALETTE_COLOURS - 1:
                 break
+        # A small per-level mask can expose fewer than fifteen source
+        # indices. Keep filling otherwise-unused centres with the next
+        # closest distinct RGB555 codes; they do not affect the active
+        # objective, but optimize_bank() must retain a complete 15-colour
+        # bank for runtime and for later assignment candidates.
+        while len(seeds) < PALETTE_COLOURS - 1:
+            source_index = int(
+                residual_order[
+                    len(seeds) % len(residual_order)
+                ]
+            )
+            seeds.append(
+                choose_unique_candidate(
+                    source_lab[source_index],
+                    candidate_lab,
+                    set(seeds),
+                )
+            )
         codes = np.asarray(seeds[: PALETTE_COLOURS - 1], dtype=np.uint16)
     for _ in range(max_iterations):
         centre_lab = candidate_lab[codes]
@@ -1390,6 +1476,19 @@ def train_profile_safe_unused(
         dataset,
         np.ones(len(dataset.keys), dtype=np.float64),
     )
+    if active_masks.size == 0:
+        return (
+            baseline_words.copy(),
+            baseline_nearest.copy(),
+            baseline_mask_table.copy(),
+            [{
+                "protected_banks": 0,
+                "trainable_banks": 0,
+                "pareto_protected_banks": 0,
+                "safe_active_mask_changes": 0,
+                "active_masks": 0,
+            }],
+        )
     protected_banks = np.unique(
         baseline_mask_table[active_masks]
     ).astype(np.uint8)

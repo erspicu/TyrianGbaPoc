@@ -522,6 +522,8 @@ static bool select_lvl(uint8_t episode, uint16_t lvl_file_number)
     }
 
     level_info = (OtLevelInfo){0};
+    level_info.episode = episode;
+    level_info.lvl_file_number = lvl_file_number;
     level_info.map_file = (char)source[offset];
     level_info.shape_file = (char)source[offset + 1];
     level_info.map_x = read_u16(source + offset + 2);

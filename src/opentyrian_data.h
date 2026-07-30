@@ -219,6 +219,8 @@ typedef struct {
 } OtOptionDefinition;
 
 typedef struct {
+    uint8_t episode;
+    uint16_t lvl_file_number;
     char map_file;
     char shape_file;
     uint16_t map_x;

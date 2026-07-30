@@ -4864,7 +4864,7 @@ def build_background_palette_assets(
     )
     (
         runtime_datasets,
-        _,
+        runtime_shapes,
         runtime_dataset_metadata,
     ) = trainer.build_runtime_datasets(data_root)
     perceptual_source_rgb = trainer.load_source_rgb(data_root)
@@ -5066,7 +5066,246 @@ def build_background_palette_assets(
             shape_file_id,
         )
 
-    variant_count = len(shape_file_ids)
+    profile_palette_bytes = palette_bytes
+    profile_nearest_bytes = nearest_bytes
+    profile_mask_bytes = mask_bytes
+    (
+        level_datasets,
+        _,
+        level_dataset_metadata,
+    ) = trainer.build_level_runtime_datasets(
+        data_root,
+        runtime_shapes,
+    )
+    all_active_masks = sorted({
+        int(mask)
+        for _, dataset in level_datasets
+        for mask in dataset.masks
+    })
+    if (
+        len(level_datasets) !=
+            runtime_dataset_metadata["logical_levels"] or
+        len(all_active_masks) !=
+            runtime_dataset_metadata["active_masks"] or
+        len(all_active_masks) >= 0xff
+    ):
+        raise ValueError(
+            "compact per-level palette index coverage changed: "
+            f"levels={len(level_datasets)}, masks={len(all_active_masks)}"
+        )
+    active_mask_index = np.full(
+        BACKGROUND_PALETTE_MASK_COUNT,
+        0xff,
+        dtype=np.uint8,
+    )
+    for index, mask in enumerate(all_active_masks):
+        active_mask_index[mask] = index
+
+    level_palette_variants: list[bytes] = []
+    level_nearest_variants: list[bytes] = []
+    level_mask_variants: list[bytes] = []
+    level_reports: list[str] = []
+    episode_offsets: list[int] = []
+    episode_counts: list[int] = []
+    level_cursor = 0
+    for episode in range(1, 5):
+        episode_levels = [
+            record
+            for record in level_datasets
+            if record[0].episode == episode
+        ]
+        if (
+            not episode_levels or
+            [record[0].level for record in episode_levels] !=
+                list(range(1, len(episode_levels) + 1))
+        ):
+            raise ValueError(
+                f"non-contiguous palette level catalog: episode {episode}"
+            )
+        episode_offsets.append(level_cursor)
+        episode_counts.append(len(episode_levels))
+        level_cursor += len(episode_levels)
+
+    for level, dataset in level_datasets:
+        profile_index = shape_file_ids.index(level.shape_file)
+        baseline_words = trained.assets.words[profile_index]
+        baseline_nearest = trained.assets.nearest[profile_index]
+        baseline_mask = trained.assets.mask_bank[profile_index]
+        (
+            level_words,
+            level_nearest,
+            level_mask,
+            level_history,
+        ) = trainer.train_profile_safe_unused(
+            dataset,
+            baseline_words,
+            baseline_nearest,
+            baseline_mask,
+            source_oklab,
+            candidate_oklab,
+            source_cielab,
+            candidate_cielab,
+            30,
+            20,
+        )
+        if len(dataset.keys) == 0:
+            oklab_regressions = 0
+            cie_regressions = 0
+            oklab_improvement = 0.0
+            cie_improvement = 0.0
+        else:
+            baseline_ok = trainer.evaluate_profile(
+                dataset,
+                baseline_words,
+                baseline_nearest,
+                baseline_mask,
+                source_oklab,
+                candidate_oklab,
+            )
+            candidate_ok = trainer.evaluate_profile(
+                dataset,
+                level_words,
+                level_nearest,
+                level_mask,
+                source_oklab,
+                candidate_oklab,
+            )
+            baseline_cie_error = trainer.palette_metric_error(
+                baseline_words,
+                baseline_nearest,
+                source_cielab,
+                candidate_cielab,
+                "ciede2000",
+            )
+            candidate_cie_error = trainer.palette_metric_error(
+                level_words,
+                level_nearest,
+                source_cielab,
+                candidate_cielab,
+                "ciede2000",
+            )
+            baseline_cie = trainer.evaluate_profile_error(
+                dataset,
+                baseline_mask,
+                baseline_cie_error,
+            )
+            candidate_cie = trainer.evaluate_profile_error(
+                dataset,
+                level_mask,
+                candidate_cie_error,
+            )
+            oklab_regressions = int(np.count_nonzero(
+                candidate_ok.key_errors >
+                    baseline_ok.key_errors + 1.0e-12
+            ))
+            cie_regressions = int(np.count_nonzero(
+                candidate_cie.key_errors >
+                    baseline_cie.key_errors + 1.0e-8
+            ))
+            oklab_improvement = trainer.improvement_percent(
+                baseline_ok.mean_squared,
+                candidate_ok.mean_squared,
+            )
+            cie_improvement = trainer.improvement_percent(
+                baseline_cie.mean_squared,
+                candidate_cie.mean_squared,
+            )
+        if (
+            oklab_regressions != 0 or
+            cie_regressions != 0 or
+            oklab_improvement < -1.0e-8 or
+            cie_improvement < -1.0e-8
+        ):
+            raise ValueError(
+                "per-level background palette non-regression failed: "
+                f"E{level.episode}L{level.level}: "
+                f"OKLab={oklab_improvement:.6f}%/{oklab_regressions}, "
+                f"CIEDE2000={cie_improvement:.6f}%/{cie_regressions}"
+            )
+        active_set = {
+            int(mask)
+            for mask in dataset.masks
+        }
+        compact_mask_banks = np.asarray(
+            [
+                (
+                    level_mask[mask]
+                    if mask in active_set
+                    else baseline_mask[mask]
+                )
+                for mask in all_active_masks
+            ],
+            dtype=np.uint8,
+        )
+        level_palette_variants.append(
+            level_words.astype("<u2", copy=False).tobytes()
+        )
+        level_nearest_variants.append(
+            level_nearest.astype(np.uint8, copy=False).tobytes()
+        )
+        level_mask_variants.append(compact_mask_banks.tobytes())
+        safe_mask_changes = next(
+            (
+                int(record["safe_active_mask_changes"])
+                for record in reversed(level_history)
+                if "safe_active_mask_changes" in record
+            ),
+            0,
+        )
+        level_reports.extend((
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_shape={level.shape_file}"
+            ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_runtime_keys={len(dataset.keys)}"
+            ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_active_masks="
+                f"{len(active_set)}"
+            ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_oklab_improvement="
+                f"{oklab_improvement:.6f}%"
+            ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_ciede2000_improvement="
+                f"{cie_improvement:.6f}%"
+            ),
+            (
+                f"background_palette_level_e{level.episode}_"
+                f"l{level.level}_safe_mask_changes="
+                f"{safe_mask_changes}"
+            ),
+        ))
+        if level.episode == 4 and level.level == 1:
+            save_palette_preview(
+                perceptual_candidate_rgb[level_words[:, 1:]],
+                "episode4_level1",
+            )
+
+    profile_variant_count = len(shape_file_ids)
+    level_variant_count = len(level_datasets)
+    variant_count = profile_variant_count + level_variant_count
+    level_palette_bytes = b"".join(level_palette_variants)
+    level_nearest_bytes = b"".join(level_nearest_variants)
+    level_mask_bank_bytes = b"".join(level_mask_variants)
+    palette_bytes = profile_palette_bytes + level_palette_bytes
+    nearest_bytes = profile_nearest_bytes + level_nearest_bytes
+    mask_id_offset = len(profile_mask_bytes)
+    level_mask_bank_offset = (
+        mask_id_offset + active_mask_index.nbytes
+    )
+    mask_bytes = (
+        profile_mask_bytes +
+        active_mask_index.tobytes() +
+        level_mask_bank_bytes
+    )
+
     if tuple(shape_file_ids) != tuple(trainer.PROFILE_IDS):
         raise ValueError(
             "palette trainer profile ordering changed: "
@@ -5087,6 +5326,10 @@ def build_background_palette_assets(
 
     metadata = {
         "BACKGROUND_PALETTE_VARIANT_COUNT": variant_count,
+        "BACKGROUND_PALETTE_PROFILE_VARIANT_COUNT":
+            profile_variant_count,
+        "BACKGROUND_PALETTE_LEVEL_VARIANT_COUNT":
+            level_variant_count,
         "BACKGROUND_GBA_PALETTE_VARIANT_BYTES":
             BACKGROUND_PALETTE_BANK_COUNT *
             BACKGROUND_PALETTE_COLOURS_PER_BANK * 2,
@@ -5098,6 +5341,21 @@ def build_background_palette_assets(
         "BACKGROUND_PALETTE_MASK_BANK_VARIANT_BYTES":
             BACKGROUND_PALETTE_MASK_COUNT,
         "BACKGROUND_PALETTE_MASK_BANK_BYTES": len(mask_bytes),
+        "BACKGROUND_PALETTE_MASK_ID_OFFSET": mask_id_offset,
+        "BACKGROUND_PALETTE_LEVEL_MASK_BANK_OFFSET":
+            level_mask_bank_offset,
+        "BACKGROUND_PALETTE_ACTIVE_MASK_COUNT":
+            len(all_active_masks),
+        "BACKGROUND_PALETTE_LEVEL_MASK_BANK_VARIANT_BYTES":
+            len(all_active_masks),
+        "BACKGROUND_PALETTE_EPISODE_1_OFFSET": episode_offsets[0],
+        "BACKGROUND_PALETTE_EPISODE_1_COUNT": episode_counts[0],
+        "BACKGROUND_PALETTE_EPISODE_2_OFFSET": episode_offsets[1],
+        "BACKGROUND_PALETTE_EPISODE_2_COUNT": episode_counts[1],
+        "BACKGROUND_PALETTE_EPISODE_3_OFFSET": episode_offsets[2],
+        "BACKGROUND_PALETTE_EPISODE_3_COUNT": episode_counts[2],
+        "BACKGROUND_PALETTE_EPISODE_4_OFFSET": episode_offsets[3],
+        "BACKGROUND_PALETTE_EPISODE_4_COUNT": episode_counts[3],
         "BACKGROUND_PALETTE_CRITICAL_BANK": critical_banks[0],
     }
     report = [
@@ -5150,8 +5408,24 @@ def build_background_palette_assets(
             + "->"
             + ",".join(f"bank{bank}" for bank in critical_banks)
         ),
-        "background_palette_level_specific_tables=0",
+        (
+            "background_palette_level_specific_tables="
+            f"{level_variant_count}"
+        ),
         "background_palette_shape_bank_specific_tables=5",
+        (
+            "background_palette_level_active_masks="
+            f"{len(all_active_masks)}"
+        ),
+        (
+            "background_palette_level_compact_bytes="
+            f"{len(level_palette_bytes) + len(level_nearest_bytes) + len(level_mask_bank_bytes) + active_mask_index.nbytes}"
+        ),
+        (
+            "background_palette_level_dataset_unique_keys="
+            f"{level_dataset_metadata['unique_nonblank_keys']}"
+        ),
+        *level_reports,
         *runtime_reports,
         *variant_reports,
     ]
