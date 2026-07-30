@@ -755,6 +755,7 @@ enum {
 enum {
     FRONTEND_DATA_JOB_RELOAD = 1u << 0,
     FRONTEND_DATA_JOB_FULL_FRAME = 1u << 1,
+    FRONTEND_DATA_JOB_SELECTION = 1u << 2,
 };
 
 enum {

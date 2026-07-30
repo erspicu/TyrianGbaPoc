@@ -1038,6 +1038,35 @@ static void frontend_start_data_cubes_transition(
     );
 }
 
+static void frontend_start_data_selection_transition(s8 direction)
+{
+    u8 item_count = (u8)(frontend_data_page_count + 1u);
+    u8 old_selection = frontend_selection;
+
+    if (direction < 0) {
+        frontend_selection =
+            frontend_selection == 0 ?
+                (u8)(item_count - 1u) :
+                (u8)(frontend_selection - 1u);
+    } else {
+        frontend_selection =
+            frontend_selection + 1u >= item_count ?
+                0 :
+                (u8)(frontend_selection + 1u);
+    }
+    frontend_patch_old_selection = old_selection;
+    frontend_transition_job =
+        FRONTEND_TRANSITION_JOB_DATA_CUBES;
+    frontend_transition_phase = 0;
+    frontend_transition_flags = FRONTEND_DATA_JOB_SELECTION;
+    frontend_transition_failed = 0;
+    frontend_transition_work_index = 0;
+    frontend_transition_work_mode = 0;
+    frontend_data_stamp_job.active = 0;
+    frontend_data_text_job.active = 0;
+    source_sound_effect(28); /* OpenTyrian S_CURSOR. */
+}
+
 static void frontend_start_data_reader_transition(u8 selection)
 {
     frontend_data_reader_index = selection;
@@ -1595,6 +1624,17 @@ static void frontend_transition_update(void)
     case FRONTEND_TRANSITION_JOB_DATA_CUBES:
         switch (frontend_transition_phase) {
         case 0:
+            if (
+                frontend_transition_flags &
+                    FRONTEND_DATA_JOB_SELECTION
+            ) {
+                frontend_transition_work_index = 0;
+                frontend_transition_work_mode = 0;
+                frontend_data_stamp_job.active = 0;
+                frontend_data_text_job.active = 0;
+                frontend_transition_phase = 14;
+                break;
+            }
             if (!frontend_data_cache_valid) {
                 frontend_transition_flags |=
                     FRONTEND_DATA_JOB_RELOAD |
@@ -1692,7 +1732,7 @@ static void frontend_transition_update(void)
             break;
         case 5:
             frontend_data_draw_portrait_frame();
-            frontend_transition_phase = 6;
+            frontend_transition_phase = 15;
             break;
         case 6:
             frontend_data_draw_selected_portrait();
@@ -1879,6 +1919,107 @@ static void frontend_transition_update(void)
             frontend_data_prepare_palette();
             frontend_transition_phase = 13;
             break;
+        case 14:
+            switch (frontend_transition_work_mode) {
+            case 0:
+                if (!frontend_data_portrait_base_restore()) {
+                    frontend_data_draw_portrait_frame();
+                    frontend_data_portrait_base_capture();
+                }
+                frontend_transition_work_index = 0;
+                frontend_transition_work_mode = 1;
+                break;
+            case 1:
+                if (!frontend_data_stamp_job.active) {
+                    s8 started =
+                        frontend_data_selected_face_job_begin();
+
+                    if (started <= 0) {
+                        if (started < 0) {
+                            frontend_data_draw_selected_face();
+                        }
+                        frontend_transition_work_index = 0;
+                        frontend_transition_work_mode = 2;
+                        break;
+                    }
+                }
+                {
+                    s8 result = frontend_source_stamp_job_step(
+                        &frontend_data_stamp_job,
+                        FRONTEND_DATA_SELECTION_STAMP_RUNS_PER_STEP
+                    );
+
+                    if (result != 0) {
+                        if (result < 0) {
+                            frontend_data_draw_selected_face();
+                        }
+                        frontend_transition_work_index = 0;
+                        frontend_transition_work_mode = 2;
+                    }
+                }
+                break;
+            case 2:
+                if (frontend_transition_work_index == 0) {
+                    frontend_data_selected_header_job_begin();
+                    frontend_transition_work_index = 1;
+                }
+                if (frontend_wrapped_text_job_step(
+                        &frontend_data_text_job
+                    )) {
+                    frontend_transition_work_index = 0;
+                    frontend_transition_work_mode = 3;
+                }
+                break;
+            case 3:
+                if (frontend_data_selection_item_job_step(
+                        frontend_patch_old_selection
+                    )) {
+                    frontend_transition_work_index = 0;
+                    frontend_data_stamp_job.active = 0;
+                    frontend_data_text_job.active = 0;
+                    frontend_transition_work_mode = 4;
+                }
+                break;
+            case 4:
+                if (frontend_data_selection_item_job_step(
+                        frontend_selection
+                    )) {
+                    frontend_transition_work_index = 0;
+                    frontend_data_stamp_job.active = 0;
+                    frontend_data_text_job.active = 0;
+                    frontend_transition_work_mode = 5;
+                }
+                break;
+            case 5:
+                frontend_data_prepare_palette();
+                frontend_transition_work_mode = 6;
+                break;
+            default:
+                frontend_dirty_begin();
+                frontend_dirty_add(
+                    FRONTEND_DATA_LEFT_X,
+                    FRONTEND_DATA_LEFT_Y,
+                    FRONTEND_DATA_LEFT_WIDTH,
+                    FRONTEND_DATA_LEFT_HEIGHT
+                );
+                frontend_dirty_add(
+                    FRONTEND_DATA_RIGHT_X,
+                    FRONTEND_DATA_RIGHT_Y,
+                    FRONTEND_DATA_RIGHT_WIDTH,
+                    FRONTEND_DATA_RIGHT_HEIGHT
+                );
+                frontend_dirty_present_with_palette(
+                    frontend_data_face_palette
+                );
+                frontend_transition_job =
+                    FRONTEND_TRANSITION_JOB_NONE;
+                break;
+            }
+            break;
+        case 15:
+            frontend_data_portrait_base_capture();
+            frontend_transition_phase = 6;
+            break;
         default:
             frontend_dirty_begin();
             frontend_dirty_add(
@@ -1897,10 +2038,29 @@ static void frontend_transition_update(void)
         break;
 
     case FRONTEND_TRANSITION_JOB_DATA_READER:
-        if (frontend_transition_phase == 0) {
-            frontend_data_draw_reader_panel();
+        switch (frontend_transition_phase) {
+        case 0:
+            if (!frontend_data_reader_font_prepare_step(8)) {
+                break;
+            }
             frontend_transition_phase = 1;
-        } else {
+            break;
+        case 1:
+            frontend_data_reader_panel_job_begin();
+            frontend_transition_phase = 2;
+            break;
+        case 2:
+            if (frontend_data_reader_panel_job_step(
+                    FRONTEND_DATA_READER_GLYPHS_PER_STEP
+                )) {
+                frontend_transition_phase = 3;
+            }
+            break;
+        case 3:
+            frontend_data_draw_reader_chrome();
+            frontend_transition_phase = 4;
+            break;
+        default:
             frontend_dirty_begin();
             frontend_dirty_add(
                 FRONTEND_DATA_RIGHT_X,
@@ -1911,6 +2071,7 @@ static void frontend_transition_update(void)
             frontend_dirty_present();
             frontend_transition_job =
                 FRONTEND_TRANSITION_JOB_NONE;
+            break;
         }
         break;
 
@@ -2349,10 +2510,7 @@ static void frontend_update(void)
             frontend_upgrade_move_submenu(-1);
             break;
         case STATE_DATA_CUBES:
-            frontend_move_selection(
-                (u8)(frontend_data_page_count + 1u),
-                -1
-            );
+            frontend_start_data_selection_transition(-1);
             break;
         case STATE_DATA_CUBE_READER:
             frontend_data_reader_scroll(-1);
@@ -2395,10 +2553,7 @@ static void frontend_update(void)
             frontend_upgrade_move_submenu(1);
             break;
         case STATE_DATA_CUBES:
-            frontend_move_selection(
-                (u8)(frontend_data_page_count + 1u),
-                1
-            );
+            frontend_start_data_selection_transition(1);
             break;
         case STATE_DATA_CUBE_READER:
             frontend_data_reader_scroll(1);

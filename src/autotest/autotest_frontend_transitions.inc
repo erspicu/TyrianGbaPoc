@@ -1,5 +1,10 @@
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
 
+/* Keep the release gate exhaustive while permitting short local smoke runs. */
+#ifndef AUTOTEST_FRONTEND_TRANSITION_ITERATIONS
+#define AUTOTEST_FRONTEND_TRANSITION_ITERATIONS 120
+#endif
+
 enum {
     FRONTEND_TRANSITION_PATH_GAME_UPGRADE = 0,
     FRONTEND_TRANSITION_PATH_TITLE_PLAY_MODE,
@@ -8,11 +13,14 @@ enum {
     FRONTEND_TRANSITION_PATH_DIFFICULTY_GAME,
     FRONTEND_TRANSITION_PATH_GAME_NEXT,
     FRONTEND_TRANSITION_PATH_GAME_DATA,
+    FRONTEND_TRANSITION_PATH_DATA_SELECTION,
+    FRONTEND_TRANSITION_PATH_DATA_READER,
     FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS,
     FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU,
     FRONTEND_TRANSITION_PATH_GAME_QUIT,
     FRONTEND_TRANSITION_PATH_COUNT,
-    FRONTEND_TRANSITION_ITERATIONS = 120,
+    FRONTEND_TRANSITION_ITERATIONS =
+        AUTOTEST_FRONTEND_TRANSITION_ITERATIONS,
 };
 
 typedef struct {
@@ -68,6 +76,18 @@ static void autotest_frontend_transition_counters_reset(
     autotest_frontend_transition_vblank_start =
         telemetry_vblank_irqs;
     last_vblank_seen = current_vblank;
+    if (
+        autotest_frontend_transition_path ==
+            FRONTEND_TRANSITION_PATH_DATA_READER
+    ) {
+        /*
+         * Exercise the first reader open as well as its warm path.  A real
+         * player can confirm immediately after entering Data, before the
+         * list's idle-time font preparation has completed.
+         */
+        frontend_data_reader_font_ready = 0;
+        frontend_data_reader_font_prepare_index = 0;
+    }
 }
 
 static u8 autotest_frontend_transition_start_state(u8 path)
@@ -88,6 +108,9 @@ static u8 autotest_frontend_transition_start_state(u8 path)
         return STATE_EPISODE_MENU;
     case FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU:
         return STATE_UPGRADE_MENU;
+    case FRONTEND_TRANSITION_PATH_DATA_SELECTION:
+    case FRONTEND_TRANSITION_PATH_DATA_READER:
+        return STATE_DATA_CUBES;
     default:
         return STATE_GAME_MENU;
     }
@@ -107,6 +130,9 @@ static u8 autotest_frontend_transition_start_selection(u8 path)
         return 1;
     case FRONTEND_TRANSITION_PATH_GAME_QUIT:
         return 5;
+    case FRONTEND_TRANSITION_PATH_DATA_SELECTION:
+    case FRONTEND_TRANSITION_PATH_DATA_READER:
+        return 0;
     default:
         return 0;
     }
@@ -118,6 +144,28 @@ static void autotest_frontend_transition_prepare_path(u8 path)
     u8 selection =
         autotest_frontend_transition_start_selection(path);
 
+    if (
+        path == FRONTEND_TRANSITION_PATH_DATA_SELECTION ||
+        path == FRONTEND_TRANSITION_PATH_DATA_READER
+    ) {
+        if (
+            game_state == STATE_DATA_CUBES &&
+            frontend_selection == selection &&
+            frontend_data_cache_valid &&
+            frontend_data_page_count == 4
+        ) {
+            return;
+        }
+        if (game_state != STATE_GAME_MENU) {
+            frontend_enter_state(STATE_GAME_MENU, 0);
+        }
+        frontend_start_data_cubes_transition(
+            selection,
+            FRONTEND_DATA_JOB_RELOAD |
+                FRONTEND_DATA_JOB_FULL_FRAME
+        );
+        return;
+    }
     if (game_state != state || frontend_selection != selection) {
         frontend_enter_state(state, selection);
     }
@@ -211,6 +259,35 @@ static void autotest_frontend_transition_step(u8 path)
         }
         break;
 
+    case FRONTEND_TRANSITION_PATH_DATA_SELECTION:
+        if (
+            game_state != STATE_DATA_CUBES ||
+            frontend_data_page_count != 4
+        ) {
+            autotest_frontend_transition_failures++;
+            break;
+        }
+        frontend_start_data_selection_transition(1);
+        break;
+
+    case FRONTEND_TRANSITION_PATH_DATA_READER:
+        if (game_state == STATE_DATA_CUBES) {
+            if (frontend_selection >= frontend_data_page_count) {
+                frontend_selection = 0;
+            }
+            frontend_start_data_reader_transition(
+                frontend_selection
+            );
+        } else if (game_state == STATE_DATA_CUBE_READER) {
+            frontend_start_data_cubes_transition(
+                frontend_data_reader_index,
+                0
+            );
+        } else {
+            autotest_frontend_transition_failures++;
+        }
+        break;
+
     case FRONTEND_TRANSITION_PATH_GAME_SHIP_SPECS:
         if (game_state == STATE_GAME_MENU) {
             frontend_start_ship_specs_transition();
@@ -298,7 +375,7 @@ static void autotest_frontend_transition_finish(void)
     sram[1] = 'G';
     sram[2] = 'F';
     sram[3] = 'A';
-    sram_write_u32(4, 9);
+    sram_write_u32(4, 10);
     sram_write_u32(8, FRONTEND_TRANSITION_PATH_COUNT);
     sram_write_u32(12, FRONTEND_TRANSITION_ITERATIONS);
     for (path = 0; path < FRONTEND_TRANSITION_PATH_COUNT; path++) {

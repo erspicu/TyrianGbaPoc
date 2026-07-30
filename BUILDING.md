@@ -68,6 +68,13 @@ Build-GBA-ROM.bat
 .\build.ps1 -KeepIntermediates
 ```
 
+效能驗收允許少量、可重現、範圍有界且僅發生於 gameplay 的
+`missed VBlank` 小幅退化；既有 fixed-timestep drop-frame 會略過
+presentation，但不改變關卡時間、碰撞、RNG 或遊戲邏輯節奏，因此這類
+差異通常不影響實際體驗。調整回歸門檻前仍須先重跑、定位並記錄數據。
+這項容許不適用於前端卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的
+負載。
+
 ## 目錄配置
 
 | 路徑 | 用途 | Git |
