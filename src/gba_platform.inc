@@ -4,6 +4,26 @@
  * object after the shared runtime state is encapsulated.
  */
 
+static void audio_mix_physical_frame(void)
+{
+    u16 interrupt_master_enable = REG_IME;
+
+    /*
+     * Maxmod's GBA mixer advances an EWRAM output cursor while mmFrame()
+     * runs.  mmVBlank() resets that cursor every second physical VBlank.
+     * A late recovery pass can otherwise be interrupted between the cursor
+     * load and store, resume with the stale address, and write PCM over the
+     * adjacent module-channel array.  Keep only this mixer transaction
+     * atomic; a pending VBlank remains latched in REG_IF and is dispatched
+     * immediately when IME is restored.
+     */
+    REG_IME = 0;
+    __asm__ volatile("" ::: "memory");
+    mmFrame();
+    __asm__ volatile("" ::: "memory");
+    REG_IME = interrupt_master_enable;
+}
+
 static void vblank_handler(void)
 {
 #if TYRIAN_GBA_PERF_TIMER
@@ -544,7 +564,22 @@ static void commit_vblank_work(void)
         source_enemy_cache_commit();
         source_projectile_cache_commit();
         source_effect_cache_commit();
+        source_effect_restore_shared_tiles_if_needed();
     }
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (game_paused) {
+        /*
+         * The split Sprite2 overflow slot time-shares characters 598..613.
+         * Restore the six authored PAUSED glyphs after all gameplay cache
+         * DMAs, before the shadow OAM that references them becomes visible.
+         */
+        dmaCopy(
+            obj_tiles + OBJ_TILE_PAUSE_TEXT * 32u,
+            (u8 *)OBJ_BASE_ADR + OBJ_TILE_PAUSE_TEXT * 32u,
+            OBJ_PAUSE_GLYPH_COUNT * 2u * 32u
+        );
+    }
+#endif
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;

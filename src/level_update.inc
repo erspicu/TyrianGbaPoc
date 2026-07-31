@@ -408,6 +408,9 @@ static void source_update_secret_level_display(void)
 static void update_logic(void)
 {
     u8 end_level_before = source_parity_level.end_level;
+#ifdef AUTOTEST_ROUTE_PERF
+    u32 route_stage_start = stress_cycle_counter_read();
+#endif
 
     level_tick++;
     telemetry_logic_updates++;
@@ -420,6 +423,12 @@ static void update_logic(void)
     if (!source_parity_level.end_level) {
         source_player_energy_update();
     }
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_PLAYER_ENERGY
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     /*
      * Stage 4 makes the direct OpenTyrian event/enemy runtime authoritative
      * for the first-level body.  The keypad adapter also stores the player in
@@ -431,6 +440,12 @@ static void update_logic(void)
         player_source_x,
         player_source_y
     );
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_LEVEL_PORT
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     if (source_parity_level.cur_loc != level_position) {
         level_position = source_parity_level.cur_loc;
     }
@@ -444,7 +459,19 @@ static void update_logic(void)
     }
     source_update_secret_level_display();
     source_sync_runtime_telemetry();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_SOURCE_SYNC
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     advance_backgrounds();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_BACKGROUND
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
 
     level_position += bg1_step;
     /*
@@ -454,6 +481,12 @@ static void update_logic(void)
      * travelling and damaging an enemy in its creation tick.
      */
     update_shots();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_PLAYER_SHOTS
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     /*
      * Advance existing explosions before collision handling so a newly
      * spawned effect renders source frame 122 for one complete tick.
@@ -471,13 +504,36 @@ static void update_logic(void)
     if (level_tick == 2) spawn_reward(112, 70, 1);
 #endif
     update_rewards();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_EFFECTS_REWARDS
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     if (player_alive && !source_parity_level.end_level) {
         source_process_player_collisions();
     }
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_PLAYER_COLLISION
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     source_resume_group_stopped_backgrounds();
     update_player();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_PLAYER_UPDATE
+    ] += stress_cycle_counter_read() - route_stage_start;
+    route_stage_start = stress_cycle_counter_read();
+#endif
     if (game_state != STATE_PLAY) {
         source_play_frame_weapon_sounds();
+#ifdef AUTOTEST_ROUTE_PERF
+        route_perf_current_logic_stage[
+            ROUTE_PERF_LOGIC_STAGE_ENEMY_SHOTS_TAIL
+        ] += stress_cycle_counter_read() - route_stage_start;
+#endif
         return;
     }
     if (player_alive) {
@@ -486,4 +542,9 @@ static void update_logic(void)
     source_update_end_level_condition();
     source_update_boss_bar_colour();
     source_play_frame_weapon_sounds();
+#ifdef AUTOTEST_ROUTE_PERF
+    route_perf_current_logic_stage[
+        ROUTE_PERF_LOGIC_STAGE_ENEMY_SHOTS_TAIL
+    ] += stress_cycle_counter_read() - route_stage_start;
+#endif
 }

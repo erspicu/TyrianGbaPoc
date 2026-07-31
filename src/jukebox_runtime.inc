@@ -77,32 +77,32 @@ _Static_assert(
     JUKEBOX_SHARED_BYTES <= sizeof(FrontendGameplayArena),
     "Jukebox transient state must fit the shared frontend/gameplay arena"
 );
-static u32 jukebox_rng_state;
-static u16 jukebox_setup_timer;
-static u16 jukebox_scroll_phase;
-static u16 jukebox_phase;
-static u16 jukebox_last_order;
-static u8 jukebox_setup;
-static u8 jukebox_song;
-static u8 jukebox_source_volume;
-static u8 jukebox_fading_song;
-static u8 jukebox_hide_text;
-static u8 jukebox_quitting;
-static u8 jukebox_fade_level;
-static u8 jukebox_palette_phase;
-static u8 jukebox_text_map_dirty;
-static u8 jukebox_palette_dirty;
+static u32 jukebox_rng_state EWRAM_BSS;
+static u16 jukebox_setup_timer EWRAM_BSS;
+static u16 jukebox_scroll_phase EWRAM_BSS;
+static u16 jukebox_phase EWRAM_BSS;
+static u16 jukebox_last_order EWRAM_BSS;
+static u8 jukebox_setup EWRAM_BSS;
+static u8 jukebox_song EWRAM_BSS;
+static u8 jukebox_source_volume EWRAM_BSS;
+static u8 jukebox_fading_song EWRAM_BSS;
+static u8 jukebox_hide_text EWRAM_BSS;
+static u8 jukebox_quitting EWRAM_BSS;
+static u8 jukebox_fade_level EWRAM_BSS;
+static u8 jukebox_palette_phase EWRAM_BSS;
+static u8 jukebox_text_map_dirty EWRAM_BSS;
+static u8 jukebox_palette_dirty EWRAM_BSS;
 
-volatile u32 telemetry_jukebox_frames STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_track_changes STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_previous_wraps STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_next_wraps STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_text_toggles STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_text_map_commits STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_palette_commits STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_natural_advances STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_max_oam STRESS_COLD_BSS;
-volatile u32 telemetry_jukebox_exits STRESS_COLD_BSS;
+volatile u32 telemetry_jukebox_frames EWRAM_BSS;
+volatile u32 telemetry_jukebox_track_changes EWRAM_BSS;
+volatile u32 telemetry_jukebox_previous_wraps EWRAM_BSS;
+volatile u32 telemetry_jukebox_next_wraps EWRAM_BSS;
+volatile u32 telemetry_jukebox_text_toggles EWRAM_BSS;
+volatile u32 telemetry_jukebox_text_map_commits EWRAM_BSS;
+volatile u32 telemetry_jukebox_palette_commits EWRAM_BSS;
+volatile u32 telemetry_jukebox_natural_advances EWRAM_BSS;
+volatile u32 telemetry_jukebox_max_oam EWRAM_BSS;
+volatile u32 telemetry_jukebox_exits EWRAM_BSS;
 
 _Static_assert(
     JUKEBOX_STAR_COUNT < HARDWARE_OAM_ENTRIES,

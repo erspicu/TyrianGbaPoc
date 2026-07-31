@@ -3143,7 +3143,9 @@ static void frontend_autotest_record_campaign_level(u8 completed)
     }
     if (
         telemetry_sprite2_cache_drops != 0 ||
-        telemetry_sprite2_uploads !=
+        telemetry_sprite2_uploads +
+                telemetry_sprite2_upload_coalesces +
+                source_sprite2_pending_upload_count() !=
             telemetry_sprite2_cache_misses ||
         telemetry_sprite2_compact_uploads >
             telemetry_sprite2_uploads ||

@@ -80,6 +80,7 @@ _Static_assert(
 
 #if defined(AUTOTEST_FULL_LOADOUT_STRESS) || \
     defined(AUTOTEST_FRONTEND_TRANSITION_STRESS) || \
+    defined(AUTOTEST_ROUTE_PERF) || \
     TYRIAN_GBA_DYNAMIC_FRAME_DROP
 #define TYRIAN_GBA_PERF_TIMER 1
 #else
@@ -204,7 +205,7 @@ enum {
 
 /*
  * GBA has 128 hardware OBJ entries and substantially more CPU time than the
- * NES/SNES low-detail proofs.  These pools intentionally raise the first
+ * early low-detail proofs.  These pools intentionally raise the first
  * level's concurrency while staying under a conservative scanline budget.
  */
 /* OpenTyrian shots.h MAX_PWEAPON. */
@@ -362,9 +363,18 @@ enum {
         SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT)
 #define SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT 2
-#define SOURCE_ENEMY_CACHE_SLOT_COUNT \
+#if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_ENEMY_CACHE_SPLIT_SLOT_COUNT 0
+#else
+#define SOURCE_ENEMY_CACHE_SPLIT_SLOT_COUNT 1
+#endif
+#define SOURCE_ENEMY_CACHE_SPLIT_SLOT \
     (SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + \
         SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT)
+#define SOURCE_ENEMY_CACHE_SLOT_COUNT \
+    (SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + \
+        SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT + \
+        SOURCE_ENEMY_CACHE_SPLIT_SLOT_COUNT)
 #define SOURCE_ENEMY_COMPACT_FRAME_BYTES 256
 #define SOURCE_ENEMY_COMPACT_TILES_PER_SLOT 8
 #define SOURCE_PROJECTILE_TILES_PER_SLOT 8
@@ -441,19 +451,57 @@ enum {
 /*
  * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
  * atlas.  Active 16x16 explosion frames are therefore streamed into a 4bpp
- * cache at the original explosion base.  Stress builds retain all 32 slots;
- * release builds reserve the unused four-slot tail for two Episode 4
- * projectile frames.
+ * cache at the original explosion base.  Stress builds retain all 32 slots.
+ * Release telemetry reaches 27 unique frames in Episode 3. Keep 24 in the
+ * contiguous explosion bank, place one overflow frame in the four-tile
+ * alignment gap between the generated static OBJ bank and the upper Sprite2
+ * cache, time-share one more with the boss-bar tiles only while no boss bar
+ * is active, and reclaim the final frame of the legacy POC reward atlas for
+ * ordinary source-parity play. The next four contiguous frame slots remain
+ * available to the fragmented 32x32 Sprite2 overflow canvas required by
+ * Episode 4/SAVARA.
  */
 #define SOURCE_EFFECT_CACHE_TILE_BASE OBJ_TILE_EXPLOSION
 #if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 32
 #define SOURCE_EFFECT_CACHE_SLOT_COUNT 32
 #else
-#define SOURCE_EFFECT_CACHE_SLOT_COUNT 28
+#define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 24
+#define SOURCE_EFFECT_CACHE_SLOT_COUNT 27
+#define SOURCE_EFFECT_CACHE_OVERFLOW_SLOT \
+    SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT
+#define SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE OBJ_STATIC_TILE_COUNT
+#define SOURCE_EFFECT_CACHE_BOSS_SLOT \
+    (SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT + 1u)
+#define SOURCE_EFFECT_CACHE_BOSS_TILE_BASE OBJ_TILE_BOSS_BAR
+#define SOURCE_EFFECT_CACHE_REWARD_SLOT \
+    (SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT + 2u)
+#define SOURCE_EFFECT_CACHE_REWARD_TILE_BASE \
+    (OBJ_TILE_REWARD + \
+        (REWARD_SEQUENCE_COUNT * REWARD_FRAME_COUNT - 1u) * \
+            REWARD_TILES_PER_FRAME)
 #endif
 #define SOURCE_EFFECT_TILES_PER_SLOT EXPLOSION_TILES_PER_FRAME
 #define SOURCE_EFFECT_FRAME_BYTES \
     (SOURCE_EFFECT_TILES_PER_SLOT * 32)
+#if !TYRIAN_GBA_STRESS_LOADOUT
+/*
+ * SAVARA can request 24 full 32x32 Sprite2 canvases plus two compact frames
+ * in one presentation scene.  OBJ VRAM has no free contiguous 1 KiB bank,
+ * so present the 24th full canvas as two hardware-native 32x16 wide OBJs.
+ * Its top half occupies the released explosion-cache tail; its bottom half
+ * time-shares PAUSED plus the unused legacy player-shot characters.  Pause
+ * reserves this slot and restores its glyph bank during VBlank.
+ */
+#define SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES 16
+#define SOURCE_ENEMY_CACHE_SPLIT_HALF_BYTES \
+    (SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES * 32)
+#define SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE \
+    (SOURCE_EFFECT_CACHE_TILE_BASE + \
+        SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT * \
+            SOURCE_EFFECT_TILES_PER_SLOT)
+#define SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE OBJ_TILE_PAUSE_TEXT
+#endif
 
 _Static_assert(
     EXPLOSION_FRAME_COUNT == OBJ_EXPLOSION_FRAME_COUNT,
@@ -654,7 +702,7 @@ _Static_assert(
 );
 _Static_assert(
     SOURCE_EFFECT_CACHE_TILE_BASE +
-        SOURCE_EFFECT_CACHE_SLOT_COUNT *
+        SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT *
             SOURCE_EFFECT_TILES_PER_SLOT <=
 #if TYRIAN_GBA_STRESS_LOADOUT
         SOURCE_ENEMY_CACHE_LOWER_TILE_BASE,
@@ -663,6 +711,48 @@ _Static_assert(
 #endif
     "explosion and enemy caches overlap"
 );
+#if !TYRIAN_GBA_STRESS_LOADOUT
+_Static_assert(
+    SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE == OBJ_STATIC_TILE_COUNT &&
+        SOURCE_EFFECT_TILES_PER_SLOT == 4 &&
+        (SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE & 3u) == 0 &&
+        SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE +
+                SOURCE_EFFECT_TILES_PER_SLOT <=
+            SOURCE_ENEMY_CACHE_UPPER_TILE_BASE,
+    "effect overflow must fit the aligned OBJ tile 636..639 gap"
+);
+_Static_assert(
+    SOURCE_EFFECT_CACHE_BOSS_SLOT ==
+            SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT + 1u &&
+        SOURCE_EFFECT_CACHE_BOSS_TILE_BASE == OBJ_TILE_BOSS_BAR,
+    "boss overflow effect slot must time-share the boss-bar OBJ tiles"
+);
+_Static_assert(
+    SOURCE_EFFECT_CACHE_REWARD_SLOT + 1u ==
+            SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+        SOURCE_EFFECT_CACHE_REWARD_TILE_BASE +
+                SOURCE_EFFECT_TILES_PER_SLOT ==
+            OBJ_TILE_SCORE_DIGITS,
+    "final effect slot must reclaim only the last legacy reward frame"
+);
+_Static_assert(
+    SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE +
+        SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES <=
+        SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE,
+    "split Sprite2 top half overlaps the Episode 4 projectile cache"
+);
+_Static_assert(
+    SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE +
+        SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES <=
+        SOURCE_PROJECTILE_CACHE_UPPER_TILE_BASE,
+    "split Sprite2 bottom half overlaps the live projectile cache"
+);
+_Static_assert(
+    (SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE & 1) == 0 &&
+        (SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE & 1) == 0,
+    "split 8bpp Sprite2 halves must use even character indices"
+);
+#endif
 _Static_assert(
     SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT * 16 ==
         16 * SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT,
@@ -898,6 +988,7 @@ typedef struct {
     u8 sequence;
 } Effect;
 
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
 typedef struct {
     u8 active;
     s16 x;
@@ -907,6 +998,7 @@ typedef struct {
     u8 phase;
     u16 value;
 } Reward;
+#endif
 
 /*
  * OpenTyrian stores pickup value labels in the ordinary Explosion pool with
@@ -925,11 +1017,15 @@ typedef struct {
 
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
+#endif
 static PickupExplosion pickup_explosions[MAX_PICKUP_EXPLOSIONS] EWRAM_DATA;
 static u8 active_effect_count;
 static u8 effect_slot_high_water;
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
 static u8 active_reward_count;
+#endif
 static u8 active_pickup_explosion_count;
 static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
 
@@ -937,11 +1033,10 @@ static OBJATTR oam_shadow[HARDWARE_OAM_ENTRIES] EWRAM_DATA;
 static const u16 reward_value_table[REWARD_SEQUENCE_COUNT + 1] = {
     0, 25, 50, 75, 100, 250,
 };
-#endif
-
 static const u8 reward_frame_delay_table[REWARD_SEQUENCE_COUNT] = {
     2, 2, 2, 5, 5,
 };
+#endif
 
 static const u8 cash_digit_advances[OBJ_SCORE_DIGIT_COUNT] = {
     OBJ_SCORE_DIGIT_ADVANCE_0,
@@ -1564,6 +1659,8 @@ volatile u32 telemetry_sprite2_cache_drops;
 volatile u32 telemetry_sprite2_uploads;
 volatile u32 telemetry_sprite2_upload_bytes;
 volatile u32 telemetry_sprite2_compact_uploads;
+volatile u32 telemetry_sprite2_split_uploads;
+volatile u32 telemetry_sprite2_upload_coalesces EWRAM_BSS;
 volatile u32 telemetry_sprite2_max_uploads;
 volatile u32 telemetry_sprite2_max_visible_unique;
 volatile u32 telemetry_projectile_cache_hits;
@@ -1571,6 +1668,7 @@ volatile u32 telemetry_projectile_cache_misses;
 volatile u32 telemetry_projectile_cache_evictions;
 volatile u32 telemetry_projectile_cache_drops;
 volatile u32 telemetry_projectile_cache_uploads;
+volatile u32 telemetry_projectile_cache_upload_coalesces EWRAM_BSS;
 volatile u32 telemetry_projectile_cache_max_uploads;
 volatile u32 telemetry_projectile_cache_max_visible_unique;
 volatile u32 telemetry_player_shot_spawns;
@@ -1598,6 +1696,7 @@ volatile u32 telemetry_effect_cache_evictions;
 volatile u32 telemetry_effect_cache_drops;
 volatile u32 telemetry_effect_cache_uploads;
 volatile u32 telemetry_effect_cache_upload_bytes;
+volatile u32 telemetry_effect_cache_upload_coalesces EWRAM_BSS;
 volatile u32 telemetry_effect_cache_max_uploads;
 volatile u32 telemetry_effect_cache_max_visible_unique;
 volatile u32 telemetry_state_transitions;
@@ -1618,6 +1717,79 @@ volatile u32 telemetry_missed_vblanks_transition;
 volatile u32 telemetry_missed_vblanks_frontend_other;
 volatile u32 telemetry_missed_vblank_transition_job_last;
 volatile u32 telemetry_missed_vblank_transition_phase_next;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+enum {
+    ROUTE_MISSED_VBLANK_POSITION_BUCKET_SHIFT = 9,
+    ROUTE_MISSED_VBLANK_POSITION_BUCKET_COUNT = 16,
+};
+volatile u32 telemetry_route_first_missed_vblank_position;
+volatile u32 telemetry_route_last_missed_vblank_position;
+volatile u32 telemetry_route_missed_vblank_position_bucket[
+    ROUTE_MISSED_VBLANK_POSITION_BUCKET_COUNT
+];
+#ifdef AUTOTEST_ROUTE_PERF
+enum {
+    ROUTE_PERF_MISSED_RECORD_COUNT = 16,
+    ROUTE_PERF_LOGIC_STAGE_PLAYER_ENERGY = 0,
+    ROUTE_PERF_LOGIC_STAGE_LEVEL_PORT = 1,
+    ROUTE_PERF_LOGIC_STAGE_SOURCE_SYNC = 2,
+    ROUTE_PERF_LOGIC_STAGE_BACKGROUND = 3,
+    ROUTE_PERF_LOGIC_STAGE_PLAYER_SHOTS = 4,
+    ROUTE_PERF_LOGIC_STAGE_EFFECTS_REWARDS = 5,
+    ROUTE_PERF_LOGIC_STAGE_PLAYER_COLLISION = 6,
+    ROUTE_PERF_LOGIC_STAGE_PLAYER_UPDATE = 7,
+    ROUTE_PERF_LOGIC_STAGE_ENEMY_SHOTS_TAIL = 8,
+    ROUTE_PERF_LOGIC_STAGE_COUNT = 9,
+};
+
+typedef struct {
+    u32 level_position;
+    u32 missed_count;
+    u32 loop_cycles;
+    u32 prelogic_cycles;
+    u32 logic_cycles;
+    u32 render_cycles;
+    u32 prefetch_cycles;
+    u32 background_tile_renders;
+    u32 sprite2_misses;
+    u32 projectile_misses;
+    u32 effect_misses;
+    u32 oam_count;
+    u32 active_enemies;
+    u32 active_enemy_shots;
+    u32 logic_updated;
+    u32 rendered;
+} RoutePerfMissedRecord;
+
+static RoutePerfMissedRecord route_perf_missed_record[
+    ROUTE_PERF_MISSED_RECORD_COUNT
+] EWRAM_BSS;
+static u8 route_perf_missed_record_count;
+static u32 route_perf_previous_loop_cycles;
+static u32 route_perf_previous_prelogic_cycles;
+static u32 route_perf_previous_logic_cycles;
+static u32 route_perf_previous_render_cycles;
+static u32 route_perf_previous_prefetch_cycles;
+static u32 route_perf_previous_background_tile_renders;
+static u32 route_perf_previous_sprite2_misses;
+static u32 route_perf_previous_projectile_misses;
+static u32 route_perf_previous_effect_misses;
+static u32 route_perf_previous_oam_count;
+static u32 route_perf_previous_active_enemies;
+static u32 route_perf_previous_active_enemy_shots;
+static u32 route_perf_previous_logic_updated;
+static u32 route_perf_previous_rendered;
+static u32 route_perf_current_logic_stage[
+    ROUTE_PERF_LOGIC_STAGE_COUNT
+];
+static u32 route_perf_previous_logic_stage[
+    ROUTE_PERF_LOGIC_STAGE_COUNT
+];
+static u32 route_perf_missed_logic_stage[
+    ROUTE_PERF_MISSED_RECORD_COUNT
+][ROUTE_PERF_LOGIC_STAGE_COUNT] EWRAM_BSS;
+#endif
+#endif
 volatile u32 telemetry_frontend_nav_bitmap_redraws;
 volatile u32 telemetry_frontend_nav_obj_updates;
 volatile u32 telemetry_frontend_nav_obj_uploads;
@@ -1743,12 +1915,13 @@ volatile u32 telemetry_frontend_quit_choices_cycles_max;
 #endif
 #endif
 
-static u32 boss_perf_start_display_frames STRESS_COLD_BSS;
-static u32 boss_perf_start_missed_vblanks STRESS_COLD_BSS;
-static u32 boss_perf_start_sprite2_misses STRESS_COLD_BSS;
-static u32 boss_perf_start_sprite2_evictions STRESS_COLD_BSS;
-static u32 boss_perf_start_sprite2_upload_bytes STRESS_COLD_BSS;
-static u32 boss_perf_start_projectile_misses STRESS_COLD_BSS;
+/* Cold boss-interval snapshots buy back 24 bytes of user stack in IWRAM. */
+static u32 boss_perf_start_display_frames EWRAM_BSS;
+static u32 boss_perf_start_missed_vblanks EWRAM_BSS;
+static u32 boss_perf_start_sprite2_misses EWRAM_BSS;
+static u32 boss_perf_start_sprite2_evictions EWRAM_BSS;
+static u32 boss_perf_start_sprite2_upload_bytes EWRAM_BSS;
+static u32 boss_perf_start_projectile_misses EWRAM_BSS;
 static u32 boss_perf_start_l2_hits STRESS_COLD_BSS;
 static u32 boss_perf_start_l2_misses STRESS_COLD_BSS;
 static u32 boss_perf_start_l2_evictions STRESS_COLD_BSS;
@@ -1941,6 +2114,10 @@ static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
 static void jukebox_update(void);
 static void jukebox_render(void);
+#ifdef AUTOTEST
+static u32 source_sprite2_pending_upload_count(void);
+#endif
+static void source_effect_restore_shared_tiles_if_needed(void);
 #include "src/background_runtime.inc"
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"

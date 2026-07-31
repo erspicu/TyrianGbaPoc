@@ -35,7 +35,9 @@ static u16 autotest_aim_keys(s16 target_x, s16 target_y)
 
 static u16 autotest_input(void)
 {
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     u8 reward_index;
+#endif
     u8 source_index;
     u16 phase = (level_tick >> 5) & 3;
     u16 keys = KEY_A;
@@ -162,6 +164,7 @@ static u16 autotest_input(void)
      * Follow the first authored score item long enough to exercise the
      * physical pickup path. The release build has no attraction or assist.
      */
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     for (reward_index = 0; reward_index < MAX_REWARDS; reward_index++) {
         if (!rewards[reward_index].active) continue;
         if (player_screen_x + 16 < rewards[reward_index].x + 8) {
@@ -178,6 +181,7 @@ static u16 autotest_input(void)
         }
         return keys;
     }
+#endif
     for (source_index = 0; source_index < OT_ENEMY_COUNT; source_index++) {
         const OtEnemy *enemy = &source_parity_level.enemy[source_index];
         s16 reward_x;
@@ -235,9 +239,11 @@ static u8 autotest_reward_visible(void)
             return 1;
         }
     }
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     for (index = 0; index < MAX_REWARDS; index++) {
         if (rewards[index].active) return 1;
     }
+#endif
     for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
         if (pickup_explosions[index].active) return 1;
     }

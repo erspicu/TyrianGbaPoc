@@ -1628,6 +1628,7 @@ static void update_shots(void)
 
 static void update_rewards(void)
 {
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     u8 index;
     Reward *reward;
     for (index = 0; index < MAX_REWARDS; index++) {
@@ -1661,6 +1662,7 @@ static void update_rewards(void)
             audio_effect(SFX_ITEM);
         }
     }
+#endif
 }
 
 static void update_effects(void)

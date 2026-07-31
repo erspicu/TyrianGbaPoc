@@ -2,6 +2,82 @@ static void telemetry_record_missed_vblank_state(u32 count)
 {
     if (game_state == STATE_PLAY) {
         telemetry_missed_vblanks_play += count;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+        {
+            u16 bucket = (u16)(
+                level_position >>
+                    ROUTE_MISSED_VBLANK_POSITION_BUCKET_SHIFT
+            );
+
+            if (
+                bucket >=
+                ROUTE_MISSED_VBLANK_POSITION_BUCKET_COUNT
+            ) {
+                bucket =
+                    ROUTE_MISSED_VBLANK_POSITION_BUCKET_COUNT - 1;
+            }
+            if (
+                telemetry_route_first_missed_vblank_position == 0
+            ) {
+                telemetry_route_first_missed_vblank_position =
+                    level_position;
+            }
+            telemetry_route_last_missed_vblank_position =
+                level_position;
+            telemetry_route_missed_vblank_position_bucket[bucket] +=
+                count;
+#ifdef AUTOTEST_ROUTE_PERF
+            if (
+                route_perf_missed_record_count <
+                ROUTE_PERF_MISSED_RECORD_COUNT
+            ) {
+                u8 record_index =
+                    route_perf_missed_record_count++;
+                RoutePerfMissedRecord *record =
+                    &route_perf_missed_record[
+                        record_index
+                    ];
+                u8 stage;
+
+                record->level_position = level_position;
+                record->missed_count = count;
+                record->loop_cycles = route_perf_previous_loop_cycles;
+                record->prelogic_cycles =
+                    route_perf_previous_prelogic_cycles;
+                record->logic_cycles =
+                    route_perf_previous_logic_cycles;
+                record->render_cycles =
+                    route_perf_previous_render_cycles;
+                record->prefetch_cycles =
+                    route_perf_previous_prefetch_cycles;
+                record->background_tile_renders =
+                    route_perf_previous_background_tile_renders;
+                record->sprite2_misses =
+                    route_perf_previous_sprite2_misses;
+                record->projectile_misses =
+                    route_perf_previous_projectile_misses;
+                record->effect_misses =
+                    route_perf_previous_effect_misses;
+                record->oam_count = route_perf_previous_oam_count;
+                record->active_enemies =
+                    route_perf_previous_active_enemies;
+                record->active_enemy_shots =
+                    route_perf_previous_active_enemy_shots;
+                record->logic_updated =
+                    route_perf_previous_logic_updated;
+                record->rendered = route_perf_previous_rendered;
+                for (
+                    stage = 0;
+                    stage < ROUTE_PERF_LOGIC_STAGE_COUNT;
+                    stage++
+                ) {
+                    route_perf_missed_logic_stage[record_index][stage] =
+                        route_perf_previous_logic_stage[stage];
+                }
+            }
+#endif
+        }
+#endif
     } else if (game_state == STATE_GAME_OVER) {
         telemetry_missed_vblanks_game_over += count;
     } else {
@@ -34,10 +110,24 @@ int main(void)
 #if TYRIAN_GBA_RECOVER_MISSED_VBLANK
     u32 observed_vblank;
     u32 vblank_irq_latch_consumed = 0;
+    u32 audio_vblank_seen;
 #endif
 #if TYRIAN_GBA_PERF_TIMER
     u32 stress_cycle_start;
     u32 perf_frame_cycle_start;
+#endif
+#ifdef AUTOTEST_ROUTE_PERF
+    u32 route_perf_loop_start;
+    u32 route_perf_phase_start;
+    u32 route_perf_background_render_start;
+    u32 route_perf_sprite2_miss_start;
+    u32 route_perf_projectile_miss_start;
+    u32 route_perf_effect_miss_start;
+    u32 route_perf_current_prelogic_cycles;
+    u32 route_perf_current_logic_cycles;
+    u32 route_perf_current_render_cycles;
+    u32 route_perf_current_prefetch_cycles;
+    u8 route_perf_stage_index;
 #endif
     uint32_t romfs_passed_checks = 0;
     uint32_t romfs_failed_checks = 0;
@@ -97,8 +187,34 @@ int main(void)
     telemetry_state_transitions = 0;
     hide_all_sprites();
     frontend_begin();
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+    /*
+     * mmVBlank() owns the physical double-buffer cadence.  Recovery may run
+     * several logical main-loop iterations after one already-observed IRQ,
+     * but mmFrame() must never be replayed for those synthetic iterations:
+     * doing so advances the mixer write pointer beyond its two buffers and
+     * eventually overwrites Maxmod channel/instrument state.
+     */
+    audio_vblank_seen = telemetry_vblank_irqs;
+#endif
 #ifdef AUTOTEST_SAVE_FLOW
     autotest_save_flow();
+#endif
+#ifdef AUTOTEST_LOAD_SAVE_SLOT
+    /*
+     * Diagnostic route entry may reuse a real adjacent emulator SRAM file.
+     * Loading through the production decoder/apply path keeps equipment,
+     * campaign state and player resources identical to the reported save.
+     */
+    if (!frontend_save_apply_slot((u8)AUTOTEST_LOAD_SAVE_SLOT)) {
+        volatile u8 *failure_sram = (volatile u8 *)0x0e000000;
+
+        failure_sram[0] = 'T';
+        failure_sram[1] = 'G';
+        failure_sram[2] = 'S';
+        failure_sram[3] = 'F';
+        __asm__ volatile("swi 3");
+    }
 #endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     /*
@@ -126,8 +242,10 @@ int main(void)
          * A heavy logic/render pass can finish after one or more VBlank IRQs
          * have already run.  Do not call VBlankIntrWait() in that case: SWI 5
          * discards the latched IRQ and would sleep through one extra frame.
-         * Consume one counted LCD period per loop so mmFrame(), input and the
-         * wall-clock logic accumulator all recover at the correct 59.73 Hz.
+         * Consume one counted LCD period per loop so input and the wall-clock
+         * logic accumulator recover at the correct 59.73 Hz.  Maxmod remains
+         * tied to the newest physical IRQ and is deliberately not replayed
+         * for these synthetic catch-up iterations.
          *
          * Active-display recovery loops must not DMA pending rows/OAM.  The
          * next genuinely waited VBlank commits the newest complete scene.
@@ -211,6 +329,30 @@ int main(void)
 #endif
         stress_cycle_start = stress_cycle_counter_read();
 #endif
+#ifdef AUTOTEST_ROUTE_PERF
+        route_perf_loop_start = stress_cycle_counter_read();
+        route_perf_background_render_start =
+            background_tile_render_count;
+        route_perf_sprite2_miss_start =
+            telemetry_sprite2_cache_misses;
+        route_perf_projectile_miss_start =
+            telemetry_projectile_cache_misses;
+        route_perf_effect_miss_start =
+            telemetry_effect_cache_misses;
+        route_perf_current_prelogic_cycles = 0;
+        route_perf_current_logic_cycles = 0;
+        route_perf_current_render_cycles = 0;
+        route_perf_current_prefetch_cycles = 0;
+        for (
+            route_perf_stage_index = 0;
+            route_perf_stage_index < ROUTE_PERF_LOGIC_STAGE_COUNT;
+            route_perf_stage_index++
+        ) {
+            route_perf_current_logic_stage[
+                route_perf_stage_index
+            ] = 0;
+        }
+#endif
         if (commit_vblank_now) {
             commit_vblank_work();
         }
@@ -232,7 +374,26 @@ int main(void)
 #if TYRIAN_GBA_PERF_TIMER
         stress_cycle_start = stress_cycle_counter_read();
 #endif
-        mmFrame();
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+        if (observed_vblank != audio_vblank_seen) {
+            /*
+             * At most one mix pass is useful after a newly observed physical
+             * VBlank.  If several IRQs elapsed while a heavy frame ran, the
+             * missed audio buffers are already in the past; trying to replay
+             * them now overruns Maxmod's live double buffer.
+             */
+            audio_vblank_seen = observed_vblank;
+            audio_mix_physical_frame();
+            audio_level_music_fade_in_update();
+            if (
+                game_state == STATE_PLAY ||
+                game_state == STATE_GAME_OVER
+            ) {
+                telemetry_audio_frames++;
+            }
+        }
+#else
+        audio_mix_physical_frame();
         audio_level_music_fade_in_update();
         if (
             game_state == STATE_PLAY ||
@@ -240,6 +401,7 @@ int main(void)
         ) {
             telemetry_audio_frames++;
         }
+#endif
 
         scanKeys();
         pad_now = keysHeld();
@@ -270,6 +432,9 @@ int main(void)
             ) {
                 telemetry_perf_prelogic_cycles_max = prelogic_elapsed;
             }
+#ifdef AUTOTEST_ROUTE_PERF
+            route_perf_current_prelogic_cycles = prelogic_elapsed;
+#endif
         }
 #endif
 #ifdef AUTOTEST
@@ -431,7 +596,16 @@ int main(void)
                 ) {
                     logic_accumulator -=
                         TYRIAN_GBA_LOGIC_DENOMINATOR;
+#ifdef AUTOTEST_ROUTE_PERF
+                    route_perf_phase_start =
+                        stress_cycle_counter_read();
+#endif
                     update_logic();
+#ifdef AUTOTEST_ROUTE_PERF
+                    route_perf_current_logic_cycles +=
+                        stress_cycle_counter_read() -
+                            route_perf_phase_start;
+#endif
                     game_over_logic_updates++;
                 }
                 render_game();
@@ -1135,7 +1309,16 @@ int main(void)
                         presentation_release_held_window = 1;
                     }
 #endif
+#ifdef AUTOTEST_ROUTE_PERF
+                    route_perf_phase_start =
+                        stress_cycle_counter_read();
+#endif
                     update_logic();
+#ifdef AUTOTEST_ROUTE_PERF
+                    route_perf_current_logic_cycles +=
+                        stress_cycle_counter_read() -
+                            route_perf_phase_start;
+#endif
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
                     stress_cycle_accumulate(
                         stress_cycle_start,
@@ -1168,7 +1351,16 @@ int main(void)
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
                         stress_cycle_start = stress_cycle_counter_read();
 #endif
+#ifdef AUTOTEST_ROUTE_PERF
+                        route_perf_phase_start =
+                            stress_cycle_counter_read();
+#endif
                         render_game();
+#ifdef AUTOTEST_ROUTE_PERF
+                        route_perf_current_render_cycles +=
+                            stress_cycle_counter_read() -
+                                route_perf_phase_start;
+#endif
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
                         render_elapsed =
                             stress_cycle_counter_read() -
@@ -1309,11 +1501,19 @@ int main(void)
 #endif
             }
             if (game_state == STATE_PLAY) {
+#ifdef AUTOTEST_ROUTE_PERF
+                route_perf_phase_start = stress_cycle_counter_read();
+#endif
                 background_prefetch_step(
                     logic_updated || rendered_this_loop ?
                         0 :
                         BACKGROUND_PREFETCH_IDLE_MISSES
                 );
+#ifdef AUTOTEST_ROUTE_PERF
+                route_perf_current_prefetch_cycles =
+                    stress_cycle_counter_read() -
+                        route_perf_phase_start;
+#endif
             }
             telemetry_display_frames++;
 #ifdef AUTOTEST
@@ -1342,6 +1542,49 @@ int main(void)
             }
 #endif
         }
+#ifdef AUTOTEST_ROUTE_PERF
+        route_perf_previous_loop_cycles =
+            stress_cycle_counter_read() - route_perf_loop_start;
+        route_perf_previous_prelogic_cycles =
+            route_perf_current_prelogic_cycles;
+        route_perf_previous_logic_cycles =
+            route_perf_current_logic_cycles;
+        route_perf_previous_render_cycles =
+            route_perf_current_render_cycles;
+        route_perf_previous_prefetch_cycles =
+            route_perf_current_prefetch_cycles;
+        route_perf_previous_background_tile_renders =
+            background_tile_render_count -
+                route_perf_background_render_start;
+        route_perf_previous_sprite2_misses =
+            telemetry_sprite2_cache_misses -
+                route_perf_sprite2_miss_start;
+        route_perf_previous_projectile_misses =
+            telemetry_projectile_cache_misses -
+                route_perf_projectile_miss_start;
+        route_perf_previous_effect_misses =
+            telemetry_effect_cache_misses -
+                route_perf_effect_miss_start;
+        route_perf_previous_oam_count = previous_oam_count;
+        route_perf_previous_active_enemies =
+            source_parity_level.active_enemy_count;
+        route_perf_previous_active_enemy_shots =
+            source_parity_level.enemy_shot_active_count;
+        route_perf_previous_logic_updated = logic_updated;
+        route_perf_previous_rendered =
+            route_perf_current_render_cycles != 0;
+        for (
+            route_perf_stage_index = 0;
+            route_perf_stage_index < ROUTE_PERF_LOGIC_STAGE_COUNT;
+            route_perf_stage_index++
+        ) {
+            route_perf_previous_logic_stage[
+                route_perf_stage_index
+            ] = route_perf_current_logic_stage[
+                route_perf_stage_index
+            ];
+        }
+#endif
 #ifdef AUTOTEST_JUKEBOX_FLOW
         autotest_jukebox_maybe_finish();
 #endif

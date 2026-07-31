@@ -73,12 +73,16 @@ Build-GBA-ROM.bat
 .\build.ps1 -KeepIntermediates
 ```
 
-效能驗收允許少量、可重現、範圍有界且僅發生於 gameplay 的
-`missed VBlank` 小幅退化；既有 fixed-timestep drop-frame 會略過
-presentation，但不改變關卡時間、碰撞、RNG 或遊戲邏輯節奏，因此這類
-差異通常不影響實際體驗。調整回歸門檻前仍須先重跑、定位並記錄數據。
-這項容許不適用於前端卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的
-負載。
+正式效能驗收允許少量、可重現、範圍有界且僅發生於 gameplay 的
+`missed VBlank`；完整關卡 route 的上限為 display frames 的 **1%**。
+既有 fixed-timestep drop-frame 只略過 presentation，不改變關卡時間、
+碰撞、RNG、音訊更新或遊戲邏輯節奏，因此門檻內的退化通常無法由遊玩
+感受到。前端、摘要、死亡與轉場仍要求 0 missed VBlank；1% 容許也不
+適用於卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的負載。調整門檻
+前仍須先重跑、定位並記錄數據。
+
+目前獨立化音訊與 presentation 改善、記憶體配置及最新實測數據詳見
+`MD/Tyrian-GBA-Standalone-Audio-Presentation-v64.md`。
 
 ## SRAM 存檔
 
@@ -101,9 +105,10 @@ commit byte；每個 VBlank 最多寫 64 bytes，寫入中斷時仍可回退到�
 | `vendor/tyrian/image/` | 建置使用的原始圖像工作資料 | 提交 |
 | `vendor/opentyrian/` | 固定 revision 的 OpenTyrian 參考 source | 提交 |
 | `vendor/audio/Music/` | Tyrian tracker 音樂與校準資料 | 提交 |
-| `vendor/builders/` | 共用、可重現的資源轉換程式 | 提交 |
 | `vendor/gba-sdk/` | libgba、Maxmod、GBA CRT 與資源工具 | 提交 |
 | `vendor/mgba/` | headless/perf 回歸測試 runtime | 提交 |
+| `tools/gba_*` | GBA 原生圖形、音樂與資源轉換程式 | 提交 |
+| `tools/templates/` | GBA Maxmod 建置所需的本專案 template | 提交 |
 | `tools/portable-msys2/` | 建置所需的最小 Bash/Make runtime | 提交 |
 | `.toolchain/` | 官方 Arm 編譯器與下載快取 | 不提交 |
 | `.venv/` | Python 套件隔離環境 | 不提交 |
@@ -148,8 +153,10 @@ runtime tile keys，只訓練該 shape profile 未使用的 palette banks，
 palette 表取代此共用流程。
 
 TYM 音樂經 `tools/music_maxmod_calibration.py` 以 GBA Maxmod 的 IT
-volume、signed 8-bit PCM 與 runtime module volume 重新量測，不得再沿用
-SNES S-DSP gain 或加入 per-song maximum normalization。逐曲結果輸出至
+volume、signed 8-bit PCM 與 runtime module volume 重新量測。八聲道取捨
+由 GBA 專屬規則直接依原始 OPL stem 選出：先保留打擊聲道，再依完整
+循環 RMS 選擇其餘聲道；不得引用其他主機的 voice map、mixer gain，亦
+不得加入 per-song maximum normalization。逐曲結果輸出至
 `res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／308 個
 source、RMS 誤差、percussion peak ceiling 與 sample clipping。End of
 Level、Game Over、Secret Level 各自保留 loop 與 `_once` order-flow；

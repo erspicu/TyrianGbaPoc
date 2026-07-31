@@ -88,6 +88,32 @@ static void put_sprite_8bpp_16(
     object->dummy = 0;
 }
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void put_sprite_8bpp_32x16(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 priority
+)
+{
+    OBJATTR *object;
+
+    if (oam_count >= SPRITE_LIMIT) return;
+    if (
+        x <= -32 || x >= SCREEN_WIDTH ||
+        y <= -16 || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 = (y & 0x00ff) | ATTR0_NORMAL |
+                    ATTR0_COLOR_256 | ATTR0_WIDE;
+    object->attr1 = (x & 0x01ff) | ATTR1_SIZE_32;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(priority);
+    object->dummy = 0;
+}
+#endif
+
 #if TYRIAN_GBA_STRESS_LOADOUT && \
     !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
 static void put_sprite_8bpp_64_blended(

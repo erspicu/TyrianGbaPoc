@@ -7,7 +7,9 @@ static void clear_entities(void)
         player_shots[index].active = 0;
     }
     for (index = 0; index < MAX_EFFECTS; index++) effects[index].active = 0;
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     for (index = 0; index < MAX_REWARDS; index++) rewards[index].active = 0;
+#endif
     for (
         index = 0;
         index < MAX_PICKUP_EXPLOSIONS;
@@ -17,7 +19,9 @@ static void clear_entities(void)
     }
     active_effect_count = 0;
     effect_slot_high_water = 0;
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     active_reward_count = 0;
+#endif
     active_pickup_explosion_count = 0;
 }
 
@@ -466,6 +470,12 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_collision_count = 0;
     telemetry_map_rows = 0;
     telemetry_missed_vblanks = 0;
+    telemetry_missed_vblanks_play = 0;
+    telemetry_missed_vblanks_frontend = 0;
+    telemetry_missed_vblanks_game_over = 0;
+    telemetry_missed_vblanks_stats = 0;
+    telemetry_missed_vblanks_transition = 0;
+    telemetry_missed_vblanks_frontend_other = 0;
     telemetry_stream_drops = 0;
     telemetry_max_enemies = 0;
     telemetry_max_oam = 0;
@@ -525,6 +535,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_projectile_cache_evictions = 0;
     telemetry_projectile_cache_drops = 0;
     telemetry_projectile_cache_uploads = 0;
+    telemetry_projectile_cache_upload_coalesces = 0;
     telemetry_projectile_cache_max_uploads = 0;
     telemetry_projectile_cache_max_visible_unique = 0;
     telemetry_player_shot_spawns = 0;

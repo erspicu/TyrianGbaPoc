@@ -61,6 +61,32 @@
 /* ------------------------------------------------------------------------- */
 
 /*
+ * 1: release gameplay uses the measured whole-scene presentation scheduler.
+ *    Source logic follows wall-clock time and Maxmod is serviced once per LCD
+ *    VBlank, while a scene that cannot safely meet the next deadline keeps the
+ *    previous complete frame.  No partial OAM/VRAM scene is ever presented.
+ * 0: render every source logic tick directly; intended only for controlled
+ *    performance A/B tests because an over-budget tick causes real slowdown.
+ *
+ * 1：正式版啟用已量測的「完整場景」動態掉幀。遊戲邏輯維持真實時間節奏，
+ *    Maxmod 每個 LCD VBlank 仍更新一次；若新場景無法安全趕上期限，就保留
+ *    上一張完整畫面，不會送出半套 OAM／VRAM 資料。
+ * 0：每個來源邏輯 tick 都直接渲染；只建議用於受控 A/B，超時會造成真實慢動作。
+ */
+#ifndef TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#define TYRIAN_GBA_DYNAMIC_FRAME_DROP 1
+#endif
+
+/*
+ * Keep source logic tied to elapsed LCD periods when presentation drops a
+ * frame.  This must remain enabled with the release drop-frame scheduler.
+ * 掉幀時仍依 LCD 經過時間追上來源邏輯；正式版動態掉幀必須搭配開啟。
+ */
+#ifndef TYRIAN_GBA_WALL_CLOCK_LOGIC
+#define TYRIAN_GBA_WALL_CLOCK_LOGIC TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#endif
+
+/*
  * The PC battle viewport is 264x184, while the GBA LCD is 240x160.  Keep
  * source gameplay at 1:1 pixels and use the otherwise hidden 24-pixel slack
  * as a soft camera.  The camera stays centred while the player is inside the

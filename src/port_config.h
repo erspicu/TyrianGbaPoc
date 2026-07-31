@@ -55,9 +55,10 @@
 #endif
 
 /*
- * Presentation-only deadline recovery.  The ordinary source-parity release
- * leaves it disabled; the deliberately overcommitted full-loadout study can
- * enable it without changing OpenTyrian's logic rate.
+ * Presentation-only deadline recovery.  Configure.h enables the measured
+ * whole-scene scheduler for release builds; command-line diagnostics may
+ * still override it for controlled A/B without changing OpenTyrian's logic
+ * rate.
  */
 #ifndef TYRIAN_GBA_DYNAMIC_FRAME_DROP
 #define TYRIAN_GBA_DYNAMIC_FRAME_DROP 0
@@ -82,8 +83,10 @@
  * an overrun that would make the main loop wait through one additional LCD
  * period, and Maxmod's required once-per-frame mmFrame() call would fall
  * progressively behind.  Dynamic builds instead consume every VBlank IRQ
- * counted by the handler: overdue periods run an audio/input/logic recovery
- * iteration without attempting an unsafe active-display VRAM commit.
+ * counted by the handler: overdue periods run an input/logic recovery
+ * iteration without attempting an unsafe active-display VRAM commit. Audio
+ * mixing remains one transaction per newly observed physical IRQ and is
+ * protected against a mid-mix mmVBlank cursor reset.
  */
 #ifndef TYRIAN_GBA_RECOVER_MISSED_VBLANK
 #define TYRIAN_GBA_RECOVER_MISSED_VBLANK TYRIAN_GBA_WALL_CLOCK_LOGIC

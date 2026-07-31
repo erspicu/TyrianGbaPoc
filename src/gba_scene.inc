@@ -400,6 +400,7 @@ static void render_effect_sprites(u8 priority)
 
 static void render_legacy_rewards(u8 priority)
 {
+#ifdef AUTOTEST_REWARD_VISUAL_TEST
     s16 index;
 
     for (index = MAX_REWARDS - 1; index >= 0; index--) {
@@ -412,6 +413,50 @@ static void render_legacy_rewards(u8 priority)
                     rewards[index].frame
                 ) * REWARD_TILES_PER_FRAME,
             OBJ_PAL_REWARD, ATTR1_SIZE_16, priority
+        );
+    }
+#else
+    (void)priority;
+#endif
+}
+
+static void render_source_enemy_cached_sprite(
+    s16 screen_x,
+    s16 screen_y,
+    u16 tile,
+    u8 priority
+)
+{
+    if (source_enemy_cache_tile_is_split(tile)) {
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        /* A fragmented canvas is one scene object: submit both halves or 0. */
+        if (oam_count + 2u > SPRITE_LIMIT) return;
+        put_sprite_8bpp_32x16(
+            screen_x,
+            screen_y,
+            SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE,
+            priority
+        );
+        put_sprite_8bpp_32x16(
+            screen_x,
+            (s16)(screen_y + 16),
+            SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE,
+            priority
+        );
+#endif
+    } else if (source_enemy_cache_tile_is_compact(tile)) {
+        put_sprite_8bpp_16(
+            screen_x + 8,
+            screen_y + 8,
+            tile,
+            priority
+        );
+    } else {
+        put_sprite_8bpp_32(
+            screen_x,
+            screen_y,
+            tile,
+            priority
         );
     }
 }
@@ -439,21 +484,12 @@ static void render_source_pickup_explosions(u8 priority)
         };
         tile = source_enemy_cache_acquire(&draw);
         if (tile == 0xffff) continue;
-        if (source_enemy_cache_tile_is_compact(tile)) {
-            put_sprite_8bpp_16(
-                source_enemy_draw_screen_x(&draw) + 8,
-                source_enemy_draw_screen_y(&draw) + 8,
-                tile,
-                priority
-            );
-        } else {
-            put_sprite_8bpp_32(
-                source_enemy_draw_screen_x(&draw),
-                source_enemy_draw_screen_y(&draw),
-                tile,
-                priority
-            );
-        }
+        render_source_enemy_cached_sprite(
+            source_enemy_draw_screen_x(&draw),
+            source_enemy_draw_screen_y(&draw),
+            tile,
+            priority
+        );
     }
 }
 
@@ -490,21 +526,12 @@ static void render_source_enemy_pool(
         (*visible_source_enemies)++;
         tile = source_enemy_cache_acquire(draw);
         if (tile == 0xffff) continue;
-        if (source_enemy_cache_tile_is_compact(tile)) {
-            put_sprite_8bpp_16(
-                screen_x + 8,
-                screen_y + 8,
-                tile,
-                priority
-            );
-        } else {
-            put_sprite_8bpp_32(
-                screen_x,
-                screen_y,
-                tile,
-                priority
-            );
-        }
+        render_source_enemy_cached_sprite(
+            screen_x,
+            screen_y,
+            tile,
+            priority
+        );
     }
 }
 

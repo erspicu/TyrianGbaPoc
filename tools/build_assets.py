@@ -17,7 +17,10 @@ from pathlib import Path
 from types import ModuleType
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
+
+import gba_asset_support as gba_assets
+import gba_music_builder as gba_music
 
 
 SCREEN_WIDTH = 240
@@ -441,22 +444,6 @@ def enemy_frame_palette_bank(key: tuple[int, int, int]) -> int:
     return ENEMY_FRAME_PALETTE_GROUPS[key[0]]
 
 
-def load_snes_builder(project_root: Path) -> ModuleType:
-    path = (
-        project_root /
-        "vendor" /
-        "builders" /
-        "snes" /
-        "build_assets.py"
-    )
-    spec = importlib.util.spec_from_file_location("tyrian_snes_assets_for_gba", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"could not load SNES asset builder: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def load_background_palette_trainer() -> ModuleType:
     path = Path(__file__).with_name("background_palette_training.py")
     module_name = "tyrian_gba_background_palette_training"
@@ -800,72 +787,51 @@ def encode_gba_4bpp(values: np.ndarray) -> bytes:
     return bytes(output)
 
 
-def decode_snes_4bpp(tile: bytes) -> np.ndarray:
+def decode_gba_4bpp(tile: bytes) -> np.ndarray:
     if len(tile) != 32:
-        raise ValueError("SNES 4bpp tile must be 32 bytes")
+        raise ValueError("GBA 4bpp tile must be 32 bytes")
     values = np.zeros((8, 8), dtype=np.uint8)
     for y in range(8):
-        p0, p1 = tile[y * 2 : y * 2 + 2]
-        p2, p3 = tile[16 + y * 2 : 18 + y * 2]
-        for x in range(8):
-            bit = 7 - x
-            values[y, x] = (
-                ((p0 >> bit) & 1)
-                | (((p1 >> bit) & 1) << 1)
-                | (((p2 >> bit) & 1) << 2)
-                | (((p3 >> bit) & 1) << 3)
-            )
+        for pair in range(4):
+            packed = tile[y * 4 + pair]
+            values[y, pair * 2] = packed & 0x0F
+            values[y, pair * 2 + 1] = packed >> 4
     return values
 
 
-def convert_tile_bank(snes_tiles: bytes) -> bytes:
-    if len(snes_tiles) % 32:
-        raise ValueError("SNES tile bank is not tile aligned")
-    output = bytearray()
-    for offset in range(0, len(snes_tiles), 32):
-        output.extend(encode_gba_4bpp(decode_snes_4bpp(snes_tiles[offset : offset + 32])))
-    return bytes(output)
+def build_title(image_root: Path) -> Image.Image:
+    """Build the GBA preview title directly from project-local PC artwork."""
+    planet = Image.open(image_root / "pics" / "pic_04.png").convert("RGB")
+    planet = planet.resize(
+        (SCREEN_WIDTH, 113),
+        Image.Resampling.LANCZOS,
+    )
+    logo = Image.open(
+        image_root / "sprites" / "03_planet" / "146.png"
+    ).convert("RGBA")
+    logo.thumbnail((224, 72), Image.Resampling.LANCZOS)
 
-
-def convert_tilemap(snes_map: bytes, palette_base: int = 0) -> bytes:
-    if len(snes_map) % 2:
-        raise ValueError("SNES tilemap is not word aligned")
-    words = np.frombuffer(snes_map, dtype="<u2")
-    output = np.empty(len(words), dtype="<u2")
-    for index, source_word in enumerate(words):
-        word = int(source_word)
-        tile = word & 0x03FF
-        palette = palette_base + ((word >> 10) & 0x07)
-        if palette > 15:
-            raise ValueError(f"GBA palette index exceeds 15: {palette}")
-        horizontal_flip = (word >> 14) & 1
-        vertical_flip = (word >> 15) & 1
-        output[index] = (
-            tile
-            | (horizontal_flip << 10)
-            | (vertical_flip << 11)
-            | (palette << 12)
-        )
-    return output.tobytes()
-
-
-def build_title(nes: ModuleType, image_root: Path) -> Image.Image:
-    source = nes.build_title(image_root).crop((0, 8, 256, 174)).convert("RGB")
-    top = source.resize((SCREEN_WIDTH, 113), Image.Resampling.LANCZOS)
     output = Image.new("RGB", (SCREEN_WIDTH, SCREEN_HEIGHT), (0, 0, 0))
-    output.paste(top, (0, 0))
-
+    output.paste(planet, (0, 0))
+    output.paste(logo, ((SCREEN_WIDTH - logo.width) // 2, 6), logo)
     draw = ImageDraw.Draw(output)
-    draw.rectangle((0, 108, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1), fill=(0, 0, 0))
+    draw.rectangle(
+        (0, 108, SCREEN_WIDTH - 1, SCREEN_HEIGHT - 1),
+        fill=(0, 0, 0),
+    )
 
-    def centred(y: int, text: str, size: int, colour: tuple[int, int, int]) -> None:
-        font = nes.find_font(size)
+    def centred(
+        y: int,
+        text: str,
+        colour: tuple[int, int, int],
+    ) -> None:
+        font = ImageFont.load_default()
         box = draw.textbbox((0, 0), text, font=font)
         width = box[2] - box[0]
         draw.text(((SCREEN_WIDTH - width) // 2, y), text, font=font, fill=colour)
 
-    centred(116, "PRESS START", 15, (255, 255, 255))
-    centred(145, "GBA LEVEL 1 HARDWARE DEMO", 8, (104, 208, 255))
+    centred(116, "PRESS START", (255, 255, 255))
+    centred(145, "APR TYRIAN GBA", (104, 208, 255))
     return output
 
 
@@ -4365,13 +4331,13 @@ def gba_colour(rgb: tuple[int, int, int]) -> int:
 
 
 def preserve_sprite_canvas(
-    snes: ModuleType,
+    gba: ModuleType,
     image: Image.Image,
     size: tuple[int, int],
     offset: tuple[int, int] = (0, 0),
 ) -> Image.Image:
     """Place a sprite without cropping away its source-space anchor."""
-    source = snes.normalize_sprite(image)
+    source = gba.normalize_sprite(image)
     x, y = offset
     if (
         x < 0
@@ -4404,7 +4370,7 @@ def compose_sprite_2x2(directory: Path, start: int) -> Image.Image:
 
 
 def quantize_sprite_frames(
-    snes: ModuleType,
+    gba: ModuleType,
     frames: list[Image.Image],
 ) -> tuple[bytes, bytes]:
     """Quantize equally sized RGBA frames to one GBA 4bpp OBJ palette."""
@@ -4421,7 +4387,7 @@ def quantize_sprite_frames(
         axis=0,
     )
     opaque = rgba[:, :, :, 3] >= 80
-    colours = snes.adaptive_palette(rgba[:, :, :, :3][opaque])
+    colours = gba.adaptive_palette(rgba[:, :, :, :3][opaque])
     palette = [(0, 0, 0)] + colours
     palette_array = np.asarray(palette[1:], dtype=np.int32)
 
@@ -4450,11 +4416,11 @@ def quantize_sprite_frames(
                         ]
                     )
                 )
-    return bytes(tile_data), snes.snes_palette_bytes([palette])
+    return bytes(tile_data), gba.gba_palette_bytes([palette])
 
 
 def build_explosion_animation(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
 ) -> tuple[bytes, bytes, Image.Image, Image.Image]:
     """Build Tyrian's small and four-quadrant air/ground explosions."""
@@ -4478,13 +4444,13 @@ def build_explosion_animation(
         # y - 14 / y.  The native 12-pixel width and top-left anchor therefore
         # make the quadrants meet exactly.  Cropping each alpha bbox and
         # centring it in a 16x16 OBJ introduced the visible cross-shaped gap.
-        frames.append(preserve_sprite_canvas(snes, source, (16, 16)))
+        frames.append(preserve_sprite_canvas(gba, source, (16, 16)))
     rgba = np.stack(
         [np.asarray(frame, dtype=np.uint8) for frame in frames],
         axis=0,
     )
     opaque = rgba[:, :, :, 3] >= 80
-    colours = snes.adaptive_palette(rgba[:, :, :, :3][opaque])
+    colours = gba.adaptive_palette(rgba[:, :, :, :3][opaque])
     palette = [(0, 0, 0)] + colours
     palette_array = np.asarray(palette[1:], dtype=np.int32)
 
@@ -4556,14 +4522,14 @@ def build_explosion_animation(
 
     return (
         bytes(tile_data),
-        snes.snes_palette_bytes([palette]),
+        gba.gba_palette_bytes([palette]),
         preview,
         composite,
     )
 
 
 def build_reward_animation(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
 ) -> tuple[bytes, bytes, Image.Image]:
     """Build unmodified spriteSheet11 coin animations for rewards."""
@@ -4590,7 +4556,7 @@ def build_reward_animation(
                     f"{source_id} is {source.size}, expected 12x<=14"
                 )
             source = preserve_sprite_canvas(
-                snes, source, (16, 16), (2, 1)
+                gba, source, (16, 16), (2, 1)
             )
             # Keep the PC sprite's alpha edge and colours intact.  The older
             # GBA conversion added a pale one-pixel readability outline here,
@@ -4601,7 +4567,7 @@ def build_reward_animation(
                 frame,
                 (frame_index * 16, sequence_index * 16),
             )
-    tile_data, palette = quantize_sprite_frames(snes, frames)
+    tile_data, palette = quantize_sprite_frames(gba, frames)
     return tile_data, palette, preview
 
 
@@ -5680,7 +5646,7 @@ def build_background_palette_assets(
 
 
 def build_boss_bar_assets(
-    snes: ModuleType,
+    gba: ModuleType,
     palette_file: Path,
 ) -> tuple[bytes, bytes, Image.Image, tuple[tuple[int, int, int], ...]]:
     """Build the PC 51x6 boss-bar shading as reusable 8x8 OBJ segments.
@@ -5733,11 +5699,11 @@ def build_boss_bar_assets(
         )
         for flash in range(7)
     )
-    return tiles, snes.snes_palette_bytes([palette]), preview, flash_colours
+    return tiles, gba.gba_palette_bytes([palette]), preview, flash_colours
 
 
 def build_cash_digits(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
     palette_file: Path,
 ) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
@@ -5800,21 +5766,21 @@ def build_cash_digits(
                     preview_pixels[digit * 8 + x, y] = (*colour, 255)
     return (
         bytes(tile_data),
-        snes.snes_palette_bytes([palette]),
+        gba.gba_palette_bytes([palette]),
         preview,
         tuple(advances),
     )
 
 
 def build_hud_digit_palettes(
-    snes: ModuleType,
+    gba: ModuleType,
     palette_file: Path,
 ) -> tuple[bytes, bytes, bytes]:
     """Build PC-sidebar blue, brown and gold palettes for shared digit tiles."""
     tyrian_palette = load_tyrian_palette(palette_file)
 
     def digit_palette(dark: int, bright: int) -> bytes:
-        return snes.snes_palette_bytes([[
+        return gba.gba_palette_bytes([[
             (0, 0, 0),       # OBJ colour 0: transparent
             (0, 0, 0),       # FULL_SHADE outline
             tyrian_palette[dark],
@@ -5832,7 +5798,7 @@ def build_hud_digit_palettes(
 
 
 def build_gameplay_status_text(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
     palette_file: Path,
     text: str,
@@ -5914,7 +5880,7 @@ def build_gameplay_status_text(
         shadow.alpha_composite(foreground, (0, 0))
         frames.append(shadow)
 
-    tile_data, palette = quantize_sprite_frames(snes, frames)
+    tile_data, palette = quantize_sprite_frames(gba, frames)
     preview = Image.new(
         "RGBA",
         (sum(advances), 16),
@@ -5933,7 +5899,7 @@ def build_gameplay_status_text(
 
 
 def build_secret_level_status(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
     palette_file: Path,
 ) -> tuple[bytes, bytes, Image.Image, tuple[int, ...]]:
@@ -6045,7 +6011,7 @@ def build_secret_level_status(
             ]
             for nibble in ordered_nibbles
         )
-        palette_data.extend(snes.snes_palette_bytes([palette]))
+        palette_data.extend(gba.gba_palette_bytes([palette]))
         if brightness == -3:
             preview_palette = palette
 
@@ -6077,7 +6043,7 @@ def build_secret_level_status(
 
 
 def build_enemy_projectiles(
-    snes: ModuleType,
+    gba: ModuleType,
     image_root: Path,
 ) -> tuple[bytes, bytes, Image.Image, tuple[dict[str, int], ...]]:
     """Pack the exact PC projectile graphics used by level 1 and its boss.
@@ -6131,13 +6097,13 @@ def build_enemy_projectiles(
                 f"projectile palette {palette_bank} needs "
                 f"{len(unique_colours)} opaque colours"
             )
-        colours = snes.adaptive_palette(np.concatenate(opaque_colours, axis=0))
+        colours = gba.adaptive_palette(np.concatenate(opaque_colours, axis=0))
         palette = [(0, 0, 0)] + colours
         palette_arrays[palette_bank] = np.asarray(
             palette[1:],
             dtype=np.int32,
         )
-        palette_data.extend(snes.snes_palette_bytes([palette]))
+        palette_data.extend(gba.gba_palette_bytes([palette]))
     if set(source_palette_banks) != set(ENEMY_PROJECTILE_SOURCE_IDS):
         raise ValueError("enemy projectile palette groups are incomplete")
 
@@ -6208,7 +6174,7 @@ def build_enemy_projectiles(
 
 
 def repack_obj_tiles(
-    snes_tiles: bytes,
+    gba_tiles: bytes,
     source_metadata: dict[str, int],
     explosion_tiles: bytes,
     reward_tiles: bytes,
@@ -6224,9 +6190,9 @@ def repack_obj_tiles(
     insert_coin_advances: tuple[int, ...],
     boss_bar_tiles: bytes,
 ) -> tuple[bytes, dict[str, int]]:
-    source_count = len(snes_tiles) // 32
+    source_count = len(gba_tiles) // 32
     decoded = [
-        decode_snes_4bpp(snes_tiles[index * 32 : index * 32 + 32])
+        decode_gba_4bpp(gba_tiles[index * 32 : index * 32 + 32])
         for index in range(source_count)
     ]
     output = bytearray()
@@ -6511,7 +6477,7 @@ def pack_pc_background_layer(
 
 
 def quantize_gba_background_layer(
-    snes: ModuleType,
+    gba: ModuleType,
     image: Image.Image,
     palette_count: int,
 ) -> tuple[
@@ -6538,7 +6504,7 @@ def quantize_gba_background_layer(
         (0, image.height),
     )
     tiles, stacked_map, palettes, report, assignments = (
-        snes.quantize_mode1_layer(stacked, palette_count, 0)
+        gba.quantize_mode1_layer(stacked, palette_count, 0)
     )
     rows = image.height // 8
     halves = np.frombuffer(stacked_map, dtype="<u2").reshape(rows * 2, 32)
@@ -6710,7 +6676,7 @@ def build_it_module_with_segmented_patterns(
     tempo: int = 125,
     channel_pans: list[int] | None = None,
 ) -> bytes:
-    """Adapt the shared SNES writer when a TYM intro exceeds 200 rows.
+    """Adapt the shared GBA writer when a TYM intro exceeds 200 rows.
 
     The IT format limits a pattern to 200 rows.  The shared writer already
     segments loop bodies, but represents the complete pre-loop introduction
@@ -6775,54 +6741,36 @@ def build_it_module_with_segmented_patterns(
 
 
 def build_sparse_tym_tracker_it(
-    snes: ModuleType,
+    music: ModuleType,
     workspace: Path,
     tym_path: Path,
     calibration: dict[str, object],
     *,
     finite: bool = False,
 ) -> tuple[bytes, dict[str, object]]:
-    """Use the shared tracker writer with GBA-specific Maxmod calibration.
+    """Build a GBA Maxmod module with the measured per-track calibration.
 
-    The shared writer requires exactly eight sources.  Short Tyrian cues
+    The tracker writer accepts up to eight sources.  Short Tyrian cues
     legitimately use fewer, so append inaudible sentinels while preserving
     every measured GBA source/gain pair.
     """
-    original_loader = snes.load_snes_calibration
-    original_it_builder = snes.build_it_module
+    original_it_builder = music.build_it_module
     disabled_position_jumps = 0
-
-    def load_sparse_calibration(
-        inner_workspace: Path,
-        track_number: int,
-    ) -> tuple[list[int], list[float]]:
-        del inner_workspace
-        if int(calibration["trackNumber"]) != track_number:
-            raise ValueError(
-                "Maxmod calibration does not match requested TYM track"
-            )
-        sources = [
-            int(source)
-            for source in calibration["sourceChannels"]
-        ]
-        gains = [
-            float(gain)
-            for gain in calibration["gains"]
-        ]
-        if (
-            not 1 <= len(sources) <= 8 or
-            len(sources) != len(gains) or
-            len(set(sources)) != len(sources)
-        ):
-            raise ValueError(
-                f"track {track_number} has invalid Maxmod calibration"
-            )
-        sentinel = 0x100
-        while len(sources) < 8:
-            sources.append(sentinel)
-            gains.append(1.0)
-            sentinel += 1
-        return sources, gains
+    sources = [int(source) for source in calibration["sourceChannels"]]
+    gains = [float(gain) for gain in calibration["gains"]]
+    if (
+        not 1 <= len(sources) <= 8
+        or len(sources) != len(gains)
+        or len(set(sources)) != len(sources)
+    ):
+        raise ValueError(
+            f"track {calibration['trackNumber']} has invalid Maxmod calibration"
+        )
+    sentinel = 0x100
+    while len(sources) < 8:
+        sources.append(sentinel)
+        gains.append(1.0)
+        sentinel += 1
 
     def build_segmented_it(
         inner_workspace: Path,
@@ -6855,28 +6803,28 @@ def build_sparse_tym_tracker_it(
             channel_pans,
         )
 
-    snes.load_snes_calibration = load_sparse_calibration
-    snes.build_it_module = build_segmented_it
-    try:
-        module, report = snes.build_tym_tracker_it(workspace, tym_path)
-        report = dict(report)
-        report["finite"] = finite
-        report["disabled_position_jumps"] = disabled_position_jumps
-        report["calibration_profile"] = calibration["profile"]
-        report["calibrated_mean_absolute_error_db"] = calibration[
-            "calibratedMeanAbsoluteErrorDb"
-        ]
-        report["legacy_mean_absolute_error_db"] = calibration[
-            "legacyMeanAbsoluteErrorDb"
-        ]
-        if finite and disabled_position_jumps == 0:
-            raise ValueError(
-                f"finite cue has no IT Bxx loop to remove: {tym_path.name}"
-            )
-        return module, report
-    finally:
-        snes.load_snes_calibration = original_loader
-        snes.build_it_module = original_it_builder
+    module, report = music.build_tym_tracker_it(
+        workspace,
+        tym_path,
+        sources,
+        gains,
+        module_builder=build_segmented_it,
+    )
+    report = dict(report)
+    report["finite"] = finite
+    report["disabled_position_jumps"] = disabled_position_jumps
+    report["calibration_profile"] = calibration["profile"]
+    report["calibrated_mean_absolute_error_db"] = calibration[
+        "calibratedMeanAbsoluteErrorDb"
+    ]
+    report["legacy_mean_absolute_error_db"] = calibration[
+        "legacyMeanAbsoluteErrorDb"
+    ]
+    if finite and disabled_position_jumps == 0:
+        raise ValueError(
+            f"finite cue has no IT Bxx loop to remove: {tym_path.name}"
+        )
+    return module, report
 
 
 def load_default_player_shot(
@@ -6963,1054 +6911,6 @@ def write_meta_header(
     (output / "asset_meta.h").write_text("\n".join(lines), encoding="ascii")
 
 
-def hdt_enemy_table_offset(data: bytes) -> int:
-    offset = struct.unpack_from("<i", data, 0)[0] + 14
-    for count, record_size in (
-        (781, 80),  # weapons
-        (43, 82),   # ports
-        (47, 37),   # specials
-        (7, 37),    # power systems
-        (14, 41),   # ships
-        (31, 86),   # options
-        (11, 37),   # shields
-    ):
-        offset += count * record_size
-    if offset + 851 * 77 != len(data):
-        raise ValueError("unexpected tyrian.hdt item/enemy table layout")
-    return offset
-
-
-def read_hdt_enemy_for_frames(
-    data: bytes,
-    enemy_table: int,
-    enemy_id: int,
-) -> dict[str, int | tuple[int, ...]]:
-    if not 0 <= enemy_id < 851:
-        raise ValueError(f"enemy definition outside HDT: {enemy_id}")
-    record = data[
-        enemy_table + enemy_id * 77 :
-        enemy_table + (enemy_id + 1) * 77
-    ]
-    return {
-        "id": enemy_id,
-        "animation": record[0],
-        "size": record[20],
-        "graphics": struct.unpack_from("<20H", record, 21),
-        "shape_table": record[63],
-        "damaged_graphic": struct.unpack_from("<H", record, 66)[0],
-        "launch_type": struct.unpack_from("<H", record, 71)[0] % 1000,
-        "value": struct.unpack_from("<h", record, 73)[0],
-        "enemy_die": struct.unpack_from("<H", record, 75)[0],
-    }
-
-
-def first_level_random_enemy_ids(level_path: Path) -> tuple[int, ...]:
-    data = level_path.read_bytes()
-    # OpenTyrian lvlPos[(lvlFileNum - 1) * 2], with first level file number 9.
-    table_index = (9 - 1) * 2
-    table_offset = 2 + table_index * 4
-    if table_offset + 4 > len(data):
-        raise ValueError("tyrian1.lvl offset table is truncated")
-    level_offset = struct.unpack_from("<I", data, table_offset)[0]
-    if level_offset + 10 > len(data):
-        raise ValueError("tyrian1.lvl first-level section is truncated")
-    enemy_count = struct.unpack_from("<H", data, level_offset + 8)[0]
-    start = level_offset + 10
-    end = start + enemy_count * 2
-    if end > len(data):
-        raise ValueError("tyrian1.lvl random enemy pool is truncated")
-    return struct.unpack_from(f"<{enemy_count}H", data, start)
-
-
-def collect_first_level_enemy_definitions(
-    nes: ModuleType,
-    events: list[tuple[int, int, int, int, int, int, int, int]],
-    level_path: Path,
-    hdt_data: bytes,
-    enemy_table: int,
-) -> tuple[list[dict[str, int | tuple[int, ...]]], list[tuple[int, int, int]]]:
-    """Close every first-level spawn, launch and death edge over HDT.
-
-    This deliberately scans all 1,009 source records, not only the current
-    position-5400 handoff.  The resulting catalog therefore already contains
-    the source boss/end-section graphics needed by the next direct-port step.
-    """
-    enemy_ids = set(first_level_random_enemy_ids(level_path))
-    for event in events:
-        _, event_type, event_data, _, _, _, _, _ = event
-        if event_type in nes.LEVEL_SPAWN_TYPES:
-            if event_type == 12:
-                enemy_ids.update(event_data + offset for offset in range(4))
-            else:
-                enemy_ids.add(event_data)
-        elif event_type == 33:
-            enemy_ids.add(event_data)
-            if event_data == 533:
-                enemy_ids.update(range(829, 835))
-
-    queue = list(enemy_ids)
-    definitions: dict[int, dict[str, int | tuple[int, ...]]] = {}
-    while queue:
-        enemy_id = queue.pop()
-        if not 0 <= enemy_id < 851 or enemy_id in definitions:
-            continue
-        definition = read_hdt_enemy_for_frames(
-            hdt_data, enemy_table, enemy_id
-        )
-        definitions[enemy_id] = definition
-        for child_key in ("launch_type", "enemy_die"):
-            child = int(definition[child_key])
-            if child and child not in definitions:
-                enemy_ids.add(child)
-                queue.append(child)
-
-    frame_keys: set[tuple[int, int, int]] = set()
-    for definition in definitions.values():
-        shape_table = int(definition["shape_table"])
-        size = int(definition["size"])
-        for graphic in definition["graphics"]:
-            graphic = int(graphic)
-            if graphic not in (0, 999):
-                frame_keys.add((shape_table, graphic, size))
-        damaged = int(definition["damaged_graphic"])
-        if damaged not in (0, 999):
-            frame_keys.add((shape_table, damaged, size))
-    return (
-        [definitions[key] for key in sorted(definitions)],
-        sorted(frame_keys),
-    )
-
-
-def enemy_component_path(
-    image_root: Path,
-    shape_table: int,
-    graphic: int,
-) -> Path:
-    if shape_table == 21:
-        directory = image_root / "sheets" / "11_coins_cubes"
-    elif shape_table == 26:
-        directory = image_root / "sheets" / "10_powerups"
-    else:
-        if not 1 <= shape_table <= len(SHAPE_TABLE_CHARACTERS):
-            raise ValueError(f"shape table outside OpenTyrian table: {shape_table}")
-        character = SHAPE_TABLE_CHARACTERS[shape_table - 1].lower()
-        directory = image_root / "sheets_newsh" / f"newsh_{character}"
-    path = directory / f"{graphic:03d}.png"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"source Sprite2 component is missing: table={shape_table}, "
-            f"graphic={graphic}, path={path}"
-        )
-    return path
-
-
-def compose_exact_enemy_frame(
-    snes: ModuleType,
-    image_root: Path,
-    shape_table: int,
-    graphic: int,
-    size: int,
-) -> Image.Image:
-    """Translate JE_drawEnemy()/blit_enemy's exact Sprite2 composition."""
-    if size == 1:
-        frame = Image.new("RGBA", (24, 28), (0, 0, 0, 0))
-        for component, x, y in (
-            (graphic, 0, 0),
-            (graphic + 1, 12, 0),
-            (graphic + 19, 0, 14),
-            (graphic + 20, 12, 14),
-        ):
-            source = snes.normalize_sprite(
-                Image.open(
-                    enemy_component_path(
-                        image_root, shape_table, component
-                    )
-                ).convert("RGBA")
-            )
-            frame.alpha_composite(source, (x, y))
-        container_offset = (4, 2)
-    else:
-        frame = snes.normalize_sprite(
-            Image.open(
-                enemy_component_path(image_root, shape_table, graphic)
-            ).convert("RGBA")
-        )
-        if frame.width > 12 or frame.height > 14:
-            raise ValueError(
-                "single Sprite2 component exceeds its PC source cell: "
-                f"table={shape_table}, graphic={graphic}, size={frame.size}"
-            )
-        container_offset = (10, 9)
-    # A 32x32 GBA OBJ is only the presentation container.  Preserve the
-    # complete 24x28 or 12x14 source cell at a fixed offset: cropping each
-    # alpha bbox would move transparent source margins and make animation
-    # frames jitter even though their OpenTyrian ex/ey is unchanged.
-    return preserve_sprite_canvas(
-        snes,
-        frame,
-        (32, 32),
-        container_offset,
-    )
-
-
-def build_exact_enemy_frame_catalog(
-    snes: ModuleType,
-    nes: ModuleType,
-    events: list[tuple[int, int, int, int, int, int, int, int]],
-    level_path: Path,
-    hdt_path: Path,
-    palette_path: Path,
-    image_root: Path,
-) -> tuple[
-    bytes,
-    bytes,
-    dict[int, bytes],
-    list[str],
-    Image.Image,
-]:
-    hdt_data = hdt_path.read_bytes()
-    enemy_table = hdt_enemy_table_offset(hdt_data)
-    definitions, frame_keys = collect_first_level_enemy_definitions(
-        nes, events, level_path, hdt_data, enemy_table
-    )
-    unsupported_tables = sorted(
-        {
-            shape_table
-            for shape_table, _, _ in frame_keys
-            if shape_table not in ENEMY_FRAME_PALETTE_GROUPS
-        }
-    )
-    if unsupported_tables:
-        raise ValueError(
-            f"first-level frame palette mapping is missing: {unsupported_tables}"
-        )
-
-    images = {
-        key: compose_exact_enemy_frame(snes, image_root, *key)
-        for key in frame_keys
-    }
-    grouped_pixels: dict[int, list[np.ndarray]] = collections.defaultdict(list)
-    for key, image in images.items():
-        palette_bank = enemy_frame_palette_bank(key)
-        rgba = np.asarray(image, dtype=np.uint8)
-        mask = rgba[:, :, 3] >= 80
-        if mask.any():
-            grouped_pixels[palette_bank].append(rgba[mask, :3])
-
-    palette_colours: dict[int, list[tuple[int, int, int]]] = {}
-    palette_bytes: dict[int, bytes] = {}
-    if not ENEMY_STRUCTURE_FRAME_KEYS.issubset(images):
-        missing = sorted(ENEMY_STRUCTURE_FRAME_KEYS.difference(images))
-        raise ValueError(
-            f"destructible structure palette frames are missing: {missing}"
-        )
-    for palette_bank in sorted(grouped_pixels):
-        pixels = np.concatenate(grouped_pixels[palette_bank], axis=0)
-        colours = snes.adaptive_palette(pixels)
-        palette = ([(0, 0, 0)] + colours)[:16]
-        palette.extend([(0, 0, 0)] * (16 - len(palette)))
-        palette_colours[palette_bank] = palette
-        palette_bytes[palette_bank] = snes.snes_palette_bytes([palette])
-
-    tyrian_palette = load_tyrian_palette(palette_path)
-    filter_palette = [
-        (0, 0, 0),
-        *[tyrian_palette[0x70 | index] for index in range(1, 16)],
-    ]
-    palette_bytes[ENEMY_FILTER_PALETTE_BANK] = (
-        snes.snes_palette_bytes([filter_palette])
-    )
-
-    structure_pixels = np.concatenate(
-        grouped_pixels[ENEMY_STRUCTURE_PALETTE_BANK],
-        axis=0,
-    ).astype(np.float32)
-    legacy_table1_pixels = np.concatenate(
-        [
-            np.asarray(image, dtype=np.uint8)[
-                np.asarray(image, dtype=np.uint8)[:, :, 3] >= 80,
-                :3,
-            ]
-            for key, image in images.items()
-            if key[0] == 1
-        ],
-        axis=0,
-    )
-    legacy_table1_colours = snes.adaptive_palette(
-        legacy_table1_pixels
-    )
-
-    def palette_rgb_rmse(
-        pixels: np.ndarray,
-        colours: list[tuple[int, int, int]],
-    ) -> float:
-        palette_array = np.asarray(colours, dtype=np.float32)
-        squared_error = (
-            (pixels[:, None, :] - palette_array[None, :, :]) ** 2
-        ).sum(axis=2)
-        return float(np.sqrt(squared_error.min(axis=1).mean() / 3.0))
-
-    structure_palette_rmse = palette_rgb_rmse(
-        structure_pixels,
-        palette_colours[ENEMY_STRUCTURE_PALETTE_BANK][1:],
-    )
-    legacy_structure_palette_rmse = palette_rgb_rmse(
-        structure_pixels,
-        legacy_table1_colours,
-    )
-    if structure_palette_rmse >= legacy_structure_palette_rmse:
-        raise ValueError(
-            "dedicated structure palette did not improve PC-source colour "
-            f"error: dedicated={structure_palette_rmse:.4f}, "
-            f"shared={legacy_structure_palette_rmse:.4f}"
-        )
-
-    tiles = bytearray()
-    records = bytearray()
-    quantized_previews: list[Image.Image] = []
-    audit = [
-        "OpenTyrian first-level exact enemy frame catalog",
-        f"source_commit={OPENTYRIAN_SOURCE_COMMIT}",
-        f"enemy_definitions={len(definitions)}",
-        f"frame_count={len(frame_keys)}",
-        (
-            "structure_palette_dedicated_rgb_rmse="
-            f"{structure_palette_rmse:.4f}"
-        ),
-        (
-            "structure_palette_legacy_shared_rgb_rmse="
-            f"{legacy_structure_palette_rmse:.4f}"
-        ),
-        "frame_index,shape_table,graphic,size,palette_bank",
-    ]
-    for frame_index, key in enumerate(frame_keys):
-        shape_table, graphic, size = key
-        palette_bank = enemy_frame_palette_bank(key)
-        palette = palette_colours[palette_bank]
-        palette_array = np.asarray(palette[1:], dtype=np.int32)
-        rgba = np.asarray(images[key], dtype=np.uint8)
-        mask = rgba[:, :, 3] >= 80
-        values = np.zeros((32, 32), dtype=np.uint8)
-        if mask.any():
-            pixels = rgba[mask, :3].astype(np.int32)
-            values[mask] = (
-                ((pixels[:, None, :] - palette_array[None, :, :]) ** 2)
-                .sum(axis=2)
-                .argmin(axis=1)
-                .astype(np.uint8)
-                + 1
-            )
-        for tile_y in range(4):
-            for tile_x in range(4):
-                tiles.extend(
-                    encode_gba_4bpp(
-                        values[
-                            tile_y * 8 : tile_y * 8 + 8,
-                            tile_x * 8 : tile_x * 8 + 8,
-                        ]
-                    )
-                )
-        preview = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
-        preview_pixels = preview.load()
-        for y in range(32):
-            for x in range(32):
-                value = int(values[y, x])
-                if value:
-                    preview_pixels[x, y] = (*palette[value], 255)
-        quantized_previews.append(preview)
-        records.extend(
-            struct.pack(
-                "<BBHBBH",
-                shape_table,
-                size,
-                graphic,
-                palette_bank,
-                0,
-                frame_index,
-            )
-        )
-        audit.append(
-            f"{frame_index},{shape_table},{graphic},{size},{palette_bank}"
-        )
-
-    if len(tiles) != len(frame_keys) * ENEMY_FRAME_BYTES:
-        raise AssertionError("exact enemy frame tile packing changed")
-    header = struct.pack(
-        "<4sHHHHI",
-        ENEMY_FRAME_MAGIC,
-        ENEMY_FRAME_VERSION,
-        len(frame_keys),
-        ENEMY_FRAME_RECORD_BYTES,
-        ENEMY_FRAME_TILES,
-        len(tiles),
-    )
-    catalog = header + bytes(records)
-
-    columns = 8
-    rows = (len(frame_keys) + columns - 1) // columns
-    preview_sheet = Image.new(
-        "RGBA", (columns * 64, rows * 48), (16, 16, 20, 255)
-    )
-    draw = ImageDraw.Draw(preview_sheet)
-    for index, (key, preview) in enumerate(
-        zip(frame_keys, quantized_previews, strict=True)
-    ):
-        x = (index % columns) * 64
-        y = (index // columns) * 48
-        preview_sheet.alpha_composite(preview, (x + 16, y))
-        draw.text(
-            (x + 1, y + 33),
-            f"{key[0]}:{key[1]}/{key[2]}",
-            fill=(220, 220, 224, 255),
-        )
-    return bytes(tiles), catalog, palette_bytes, audit, preview_sheet
-
-
-def reward_code_for_value(value: int) -> int:
-    try:
-        return REWARD_VALUES.index(value) + 1
-    except ValueError:
-        return 0
-
-
-def encode_gba_level_events(
-    nes: ModuleType,
-    snes: ModuleType,
-    events: list[tuple[int, int, int, int, int, int, int, int]],
-    hdt_path: Path,
-) -> tuple[bytes, int, int, dict[str, int | str], list[str]]:
-    """Add source-HDT cash, reward and three-slot weapon data to GBA spawns.
-
-    OpenTyrian credits each destroyed enemy's positive ``value`` directly,
-    and uses ``eenemydie`` only where a separate physical score item is
-    authored. Preserve both fields independently. First-level event type 33
-    overrides ``eenemydie`` dynamically and is merged in a later pass.
-
-    The old POC discarded ``tur[3]``/``freq[3]`` and replaced them with one
-    hand-authored downward shot. Preserve all six HDT bytes per spawn and all
-    three frequency bytes from event type 31 so the runtime can execute the PC
-    firing slots without guessing.
-    """
-    source_enemy_ids: list[int] = []
-    spawn_specs: list[dict[str, int]] = []
-    original_archetype = nes.enemy_archetype
-
-    def mapped_archetype(enemy_id: int) -> int:
-        source_enemy_ids.append(enemy_id)
-        return snes.SNES_ENEMY_ARCHETYPE.get(enemy_id, 0)
-
-    nes.enemy_archetype = mapped_archetype
-    try:
-        encoded, spawn_count, control_count = nes.encode_level_events(events)
-    finally:
-        nes.enemy_archetype = original_archetype
-    if len(source_enemy_ids) != spawn_count:
-        raise ValueError(
-            "source enemy/reward audit does not match encoded spawn count: "
-            f"{len(source_enemy_ids)} != {spawn_count}"
-        )
-
-    hdt = hdt_path.read_bytes()
-    enemy_table = hdt_enemy_table_offset(hdt)
-
-    def scaled_x(value: int) -> int:
-        return max(4, min(236, (value * 4 + 2) // 5))
-
-    for (
-        event_time,
-        event_type,
-        event_data,
-        event_data_2,
-        event_data_3,
-        event_data_5,
-        event_data_6,
-        event_data_4,
-    ) in events:
-        if event_time >= 4900:
-            break
-        if event_type not in nes.LEVEL_SPAWN_TYPES:
-            continue
-
-        pool = {
-            6: 1,
-            7: 2,
-            10: 3,
-            15: 0,
-            17: 1,
-            18: 0,
-            23: 2,
-            32: 2,
-            49: 1,
-            50: 0,
-            51: 2,
-            52: 3,
-            56: 3,
-        }.get(event_type, 0)
-        fixed_move = event_data_6
-
-        if event_type == 12:
-            pool = {
-                0: 1,
-                1: 1,
-                2: 0,
-                3: 2,
-                4: 3,
-            }.get(event_data_6, 1)
-            fixed_move = 0
-            base_x = scaled_x(event_data_2)
-            for enemy_offset, x_add, y_add in (
-                (0, 0, 0),
-                (1, 24, 0),
-                (2, 0, -28),
-                (3, 24, -28),
-            ):
-                spawn_specs.append({
-                    "enemy_id": event_data + enemy_offset,
-                    "x": base_x + x_add,
-                    "y": -28 + event_data_5 + y_add,
-                    "pool": pool,
-                    "y_speed": event_data_3,
-                    "fixed_move": fixed_move,
-                    "link": event_data_4,
-                })
-            continue
-
-        x = scaled_x(event_data_2)
-        # IDs 6/7/8/9 and 13/14 are authored as 24-pixel left/right halves
-        # of the first-level small tanks.  Scaling each centre independently
-        # compressed the pair to 19 pixels and visibly split both tank rows.
-        if event_data in (7, 9, 14):
-            x = scaled_x(event_data_2 - 24) + 24
-
-        if event_type in (17, 18):
-            y = 190 + event_data_5
-        elif event_type == 23:
-            y = 180 + event_data_5
-        elif event_type in (32, 56):
-            y = 190
-        else:
-            y = -28 + event_data_5
-        spawn_specs.append({
-            "enemy_id": event_data,
-            "x": x,
-            "y": y,
-            "pool": pool,
-            "y_speed": event_data_3,
-            "fixed_move": fixed_move,
-            "link": event_data_4,
-        })
-
-    if [spec["enemy_id"] for spec in spawn_specs] != source_enemy_ids:
-        raise ValueError("GBA world-coordinate spawn expansion changed source order")
-
-    def enemy_fields(
-        enemy_id: int,
-    ) -> tuple[
-        int,
-        int,
-        int,
-        tuple[int, ...],
-        tuple[int, ...],
-        int,
-        int,
-    ]:
-        if not 0 <= enemy_id < 851:
-            raise ValueError(f"enemy ID outside tyrian.hdt: {enemy_id}")
-        offset = enemy_table + enemy_id * 77
-        armor = hdt[offset + 19]
-        value = struct.unpack_from("<h", hdt, offset + 73)[0]
-        enemy_die = struct.unpack_from("<H", hdt, offset + 75)[0]
-        turrets = tuple(hdt[offset + 1 : offset + 4])
-        frequencies = tuple(hdt[offset + 4 : offset + 7])
-        x_move = struct.unpack_from("<b", hdt, offset + 7)[0]
-        y_move = struct.unpack_from("<b", hdt, offset + 8)[0]
-        return (
-            armor,
-            value,
-            enemy_die,
-            turrets,
-            frequencies,
-            x_move,
-            y_move,
-        )
-
-    fire_overrides = [
-        (
-            max(0, min(255, event_data)),
-            max(0, min(255, event_data_2)),
-            max(0, min(255, event_data_3)),
-            event_data_4 & 0xFF,
-        )
-        for (
-            event_time,
-            event_type,
-            event_data,
-            event_data_2,
-            event_data_3,
-            _,
-            _,
-            event_data_4,
-        ) in events
-        if event_time < 4900 and event_type == 31
-    ]
-
-    output = bytearray()
-    cursor = 0
-    spawn_index = 0
-    fire_override_index = 0
-    reward_counts = [0] * (len(REWARD_VALUES) + 1)
-    explicit_hdt_drops = 0
-    direct_value_records = 0
-    direct_value_authored_total = 0
-    used_weapon_ids: set[int] = set()
-    while cursor + 1 < len(encoded):
-        delta = encoded[cursor]
-        opcode = encoded[cursor + 1]
-        output.extend((delta, opcode))
-        if opcode == nes.EVENT_END:
-            cursor += 2
-            break
-        if opcode == nes.EVENT_WAIT:
-            cursor += 2
-            continue
-        if opcode < 24:
-            if cursor + 5 > len(encoded):
-                raise ValueError("truncated shared spawn command")
-            enemy_id = source_enemy_ids[spawn_index]
-            (
-                source_armor,
-                source_value,
-                enemy_die,
-                turrets,
-                frequencies,
-                x_move,
-                y_move,
-            ) = enemy_fields(enemy_id)
-            spec = spawn_specs[spawn_index]
-            reward_code = 0
-            kill_value = (
-                source_value if 0 < source_value < 10000 else 0
-            )
-            if kill_value:
-                direct_value_records += 1
-                direct_value_authored_total += kill_value
-            if enemy_die:
-                target_armor, target_value, _, _, _, _, _ = enemy_fields(
-                    enemy_die
-                )
-                if target_armor == 0 and target_value != 0:
-                    reward_code = reward_code_for_value(target_value)
-                    if reward_code:
-                        explicit_hdt_drops += 1
-            output.extend(struct.pack(
-                "<hhBbbbBBBH",
-                spec["x"],
-                spec["y"],
-                spec["pool"],
-                x_move,
-                max(-128, min(127, y_move + spec["y_speed"])),
-                spec["fixed_move"],
-                source_armor if source_armor else 255,
-                spec["link"],
-                reward_code,
-                kill_value,
-            ))
-            output.extend(turrets)
-            output.extend(frequencies)
-            used_weapon_ids.update(weapon for weapon in turrets if weapon)
-            reward_counts[reward_code] += 1
-            spawn_index += 1
-            cursor += 5
-            continue
-        if opcode == nes.EVENT_FIRE:
-            if fire_override_index >= len(fire_overrides):
-                raise ValueError("more encoded fire overrides than source records")
-            freq1, freq2, freq3, source_link = fire_overrides[
-                fire_override_index
-            ]
-            encoded_link = encoded[cursor + 2]
-            if encoded_link != source_link:
-                raise ValueError(
-                    "fire override link mismatch: "
-                    f"encoded={encoded_link}, source={source_link}"
-                )
-            output.extend((encoded_link, freq1, freq2, freq3))
-            fire_override_index += 1
-            cursor += 4
-            continue
-        if opcode in (
-            nes.EVENT_MOVE,
-            nes.EVENT_ACCEL,
-            nes.EVENT_REVERSE,
-        ):
-            length = 4
-        elif opcode == nes.EVENT_FOREGROUND:
-            length = 2
-        else:
-            raise ValueError(f"unknown shared level opcode 0x{opcode:02X}")
-        output.extend(encoded[cursor + 2 : cursor + length])
-        cursor += length
-
-    if (
-        cursor != len(encoded)
-        or spawn_index != spawn_count
-        or fire_override_index != len(fire_overrides)
-    ):
-        raise ValueError(
-            "GBA HDT bytecode conversion did not consume its source: "
-            f"cursor={cursor}/{len(encoded)}, spawns={spawn_index}/{spawn_count}, "
-            f"fire={fire_override_index}/{len(fire_overrides)}"
-        )
-    report = {
-        "eligible": sum(reward_counts[1:]),
-        "value_25": reward_counts[1],
-        "value_50": reward_counts[2],
-        "value_75": reward_counts[3],
-        "value_100": reward_counts[4],
-        "value_250": reward_counts[5],
-        "explicit_hdt": explicit_hdt_drops,
-        "direct_value_records": direct_value_records,
-        "direct_value_authored_total": direct_value_authored_total,
-        "weapon_records": ",".join(str(value) for value in sorted(used_weapon_ids)),
-        "fire_override_records": len(fire_overrides),
-        "world_spawn_records": len(spawn_specs),
-        "destructible_assemblies": sum(
-            1
-            for event in events
-            if event[0] < 4900 and event[1] == 12
-        ),
-        "tank_component_records": sum(
-            1
-            for spec in spawn_specs
-            if spec["enemy_id"] in (6, 7, 8, 9, 13, 14)
-        ),
-    }
-    spawn_counts = collections.Counter(source_enemy_ids)
-    audit_lines = [
-        "Tyrian GBA first-level enemy projectile audit",
-        "enemy_id,spawn_count,tur1,tur2,tur3,freq1,freq2,freq3",
-    ]
-    for enemy_id in sorted(spawn_counts):
-        _, _, _, turrets, frequencies, _, _ = enemy_fields(enemy_id)
-        audit_lines.append(
-            f"{enemy_id},{spawn_counts[enemy_id]},"
-            + ",".join(str(value) for value in (*turrets, *frequencies))
-        )
-    audit_lines.extend((
-        "",
-        "projectile_graphics=runtime ROMFS tyrian.shp sections 8/12",
-        "enemy_weapon_records="
-        + ",".join(str(value) for value in sorted(used_weapon_ids)),
-        f"event31_three_slot_records={len(fire_overrides)}",
-    ))
-    return bytes(output), spawn_count, control_count, report, audit_lines
-
-
-def add_background_motion_events(
-    nes: ModuleType,
-    encoded: bytes,
-    source_events: list[tuple[int, int, int, int, int, int, int, int]],
-    hdt_path: Path,
-) -> tuple[bytes, int, dict[str, int | str]]:
-    """Merge PC layer motion and dynamic ``enemydie`` controls in source order."""
-    event_scroll = 0x85
-    event_reward = 0x86
-    records: list[tuple[int, int, int, int, bytes]] = []
-    cursor = 0
-    absolute_time = 0
-    encoded_record_index = 0
-
-    source_record_orders: list[tuple[int, int, int]] = []
-    for source_index, source_event in enumerate(source_events):
-        event_time, event_type = source_event[:2]
-        if event_time >= 4900:
-            break
-        if event_type in nes.LEVEL_SPAWN_TYPES:
-            repeat = 4 if event_type == 12 else 1
-            source_record_orders.extend(
-                (event_time, source_index, sub_order)
-                for sub_order in range(repeat)
-            )
-        elif event_type in nes.LEVEL_CONTROL_TYPES:
-            source_record_orders.append((event_time, source_index, 0))
-
-    while cursor + 1 < len(encoded):
-        delta = encoded[cursor]
-        opcode = encoded[cursor + 1]
-        absolute_time += delta
-        if opcode == nes.EVENT_END:
-            break
-        if opcode == nes.EVENT_WAIT:
-            cursor += 2
-            continue
-        if encoded_record_index >= len(source_record_orders):
-            raise ValueError("encoded event stream has extra source records")
-        source_time, source_index, sub_order = source_record_orders[
-            encoded_record_index
-        ]
-        if source_time != absolute_time:
-            raise ValueError(
-                "encoded/source event time mismatch: "
-                f"{absolute_time} != {source_time}"
-            )
-        if opcode < 24:
-            length = 21
-        elif opcode in (
-            nes.EVENT_MOVE,
-            nes.EVENT_ACCEL,
-            nes.EVENT_REVERSE,
-        ):
-            length = 4
-        elif opcode == nes.EVENT_FIRE:
-            length = 6
-        elif opcode == nes.EVENT_FOREGROUND:
-            length = 2
-        else:
-            raise ValueError(f"unknown shared level opcode 0x{opcode:02X}")
-        records.append(
-            (
-                absolute_time,
-                source_index,
-                sub_order,
-                opcode,
-                encoded[cursor + 2 : cursor + length],
-            )
-        )
-        encoded_record_index += 1
-        cursor += length
-    if encoded_record_index != len(source_record_orders):
-        raise ValueError(
-            "encoded event stream is missing source records: "
-            f"{encoded_record_index} != {len(source_record_orders)}"
-        )
-
-    hdt = hdt_path.read_bytes()
-    enemy_table = hdt_enemy_table_offset(hdt)
-
-    def reward_target(enemy_id: int) -> tuple[int, int, int]:
-        if not 0 <= enemy_id < 851:
-            raise ValueError(f"event 33 target outside tyrian.hdt: {enemy_id}")
-        offset = enemy_table + enemy_id * 77
-        armor = hdt[offset + 19]
-        value = struct.unpack_from("<h", hdt, offset + 73)[0]
-        code = reward_code_for_value(value) if armor == 0 else 0
-        return code, armor, value
-
-    motion_records: list[tuple[int, int, int, int, bytes]] = []
-    reward_records: list[tuple[int, int, int, int, bytes]] = []
-    reward_target_counts: collections.Counter[int] = collections.Counter()
-    cash_reward_records = 0
-    reward_audit_lines = [
-        "Tyrian GBA first-level dynamic reward audit",
-        "event_time,link,target_enemy_id,target_armor,target_value,reward_code",
-    ]
-    for source_index, (
-        event_time,
-        event_type,
-        event_data,
-        event_data_2,
-        event_data_3,
-        _,
-        _,
-        event_data_4,
-    ) in enumerate(source_events):
-        if event_time >= 4900:
-            break
-        if event_type in (2, 30):
-            speeds = (
-                max(0, min(7, event_data)),
-                max(0, min(7, event_data_2)),
-                max(0, min(7, event_data_3)),
-            )
-            delays = (1, 1)
-        elif event_type == 3:
-            speeds = (1, 1, 1)
-            delays = (3, 2)
-        else:
-            speeds = None
-        if speeds is not None:
-            motion_records.append((
-                event_time,
-                source_index,
-                0,
-                event_scroll,
-                bytes((*speeds, *delays)),
-            ))
-        if event_type == 33:
-            code, armor, value = reward_target(event_data)
-            reward_records.append((
-                event_time,
-                source_index,
-                0,
-                event_reward,
-                bytes((event_data_4 & 0xFF, code)),
-            ))
-            reward_target_counts[value] += 1
-            if code:
-                cash_reward_records += 1
-            reward_audit_lines.append(
-                f"{event_time},{event_data_4},{event_data},"
-                f"{armor},{value},{code}"
-            )
-
-    merged = motion_records + reward_records + records
-    merged.sort(key=lambda record: (record[0], record[1], record[2]))
-    output = bytearray()
-    time_cursor = 0
-    for event_time, _, _, opcode, payload in merged:
-        delta = event_time - time_cursor
-        while delta > 254:
-            output.extend((254, nes.EVENT_WAIT))
-            time_cursor += 254
-            delta -= 254
-        output.extend((delta, opcode))
-        output.extend(payload)
-        time_cursor = event_time
-    output.extend((0, nes.EVENT_END))
-    reward_report: dict[str, int | str] = {
-        "dynamic_records": len(reward_records),
-        "dynamic_cash_records": cash_reward_records,
-        "dynamic_non_cash_records": len(reward_records) - cash_reward_records,
-        "dynamic_value_25": reward_target_counts[25],
-        "dynamic_value_50": reward_target_counts[50],
-        "dynamic_value_75": reward_target_counts[75],
-        "dynamic_value_100": reward_target_counts[100],
-        "dynamic_value_250": reward_target_counts[250],
-        "audit": "\n".join(reward_audit_lines) + "\n",
-    }
-    return bytes(output), len(motion_records), reward_report
-
-
-def audit_opentyrian_level1_source_data(
-    nes: ModuleType,
-    events: list[tuple[int, int, int, int, int, int, int, int]],
-    hdt_path: Path,
-) -> tuple[bytes, bytes, dict[str, int | str], list[str]]:
-    """Audit the unmodified first-level records used by the direct C port.
-
-    The returned byte strings exist only long enough to produce deterministic
-    hashes and human-readable dependency reports.  v15 no longer writes or
-    embeds them: the source-parity runtime reads the same records directly
-    from ROMFS tyrian1.lvl and tyrian.hdt.
-    """
-    event_record_bytes = 11
-    packed_events = bytearray(b"OTL1")
-    packed_events.extend(struct.pack("<HBB", len(events), event_record_bytes, 1))
-    event_audit = [
-        "index,eventtime,eventtype,eventdat,eventdat2,"
-        "eventdat3,eventdat5,eventdat6,eventdat4"
-    ]
-    for index, event in enumerate(events):
-        (
-            event_time,
-            event_type,
-            event_data,
-            event_data_2,
-            event_data_3,
-            event_data_5,
-            event_data_6,
-            event_data_4,
-        ) = event
-        packed_events.extend(struct.pack(
-            "<HBhhbbbB",
-            event_time,
-            event_type,
-            event_data,
-            event_data_2,
-            event_data_3,
-            event_data_5,
-            event_data_6,
-            event_data_4,
-        ))
-        event_audit.append(
-            f"{index},{event_time},{event_type},{event_data},{event_data_2},"
-            f"{event_data_3},{event_data_5},{event_data_6},{event_data_4}"
-        )
-
-    hdt = hdt_path.read_bytes()
-    enemy_table = hdt_enemy_table_offset(hdt)
-    enemy_ids: set[int] = set()
-    for event in events:
-        event_type = event[1]
-        enemy_id = event[2]
-        if event_type in nes.LEVEL_SPAWN_TYPES:
-            if event_type == 12:
-                enemy_ids.update(range(enemy_id, enemy_id + 4))
-            elif event_type not in (49, 50, 51, 52):
-                enemy_ids.add(enemy_id)
-        elif event_type == 33:
-            enemy_ids.add(enemy_id)
-
-    # Follow the two source-level enemy references.  This includes physical
-    # score items, launched enemies and their transitive dependencies.
-    pending = list(enemy_ids)
-    while pending:
-        enemy_id = pending.pop()
-        if not 0 <= enemy_id < 851:
-            raise ValueError(f"first-level enemy dependency outside HDT: {enemy_id}")
-        offset = enemy_table + enemy_id * 77
-        launch_frequency = hdt[offset + 70]
-        launch_type = struct.unpack_from("<H", hdt, offset + 71)[0]
-        enemy_die = struct.unpack_from("<H", hdt, offset + 75)[0]
-        dependencies = (
-            launch_type if launch_frequency else 0,
-            enemy_die,
-        )
-        for dependency in dependencies:
-            if dependency and dependency not in enemy_ids:
-                enemy_ids.add(dependency)
-                pending.append(dependency)
-
-    enemy_record_bytes = 79
-    packed_enemies = bytearray(b"OTE1")
-    packed_enemies.extend(struct.pack(
-        "<HBB", len(enemy_ids), enemy_record_bytes, 77
-    ))
-    enemy_audit = [
-        "enemy_id,ani,tur1,tur2,tur3,freq1,freq2,freq3,armor,esize,"
-        "shapebank,launchfreq,launchtype,value,enemydie"
-    ]
-    for enemy_id in sorted(enemy_ids):
-        offset = enemy_table + enemy_id * 77
-        record = hdt[offset : offset + 77]
-        packed_enemies.extend(struct.pack("<H", enemy_id))
-        packed_enemies.extend(record)
-        enemy_audit.append(
-            f"{enemy_id},{record[0]},"
-            + ",".join(str(value) for value in record[1:7])
-            + f",{record[19]},{record[20]},{record[63]},{record[70]},"
-            + f"{struct.unpack_from('<H', record, 71)[0]},"
-            + f"{struct.unpack_from('<h', record, 73)[0]},"
-            + f"{struct.unpack_from('<H', record, 75)[0]}"
-        )
-
-    report: dict[str, int | str] = {
-        "event_count": len(events),
-        "event_record_bytes": event_record_bytes,
-        "event_bytes": len(packed_events),
-        "event_before_legacy_cutoff": sum(
-            event[0] < 4900 for event in events
-        ),
-        "event_sha256": hashlib.sha256(packed_events).hexdigest(),
-        "enemy_count": len(enemy_ids),
-        "enemy_record_bytes": enemy_record_bytes,
-        "enemy_bytes": len(packed_enemies),
-        "enemy_sha256": hashlib.sha256(packed_enemies).hexdigest(),
-    }
-    audit_lines = [
-        "OpenTyrian source-parity first-level export",
-        f"source_commit={OPENTYRIAN_SOURCE_COMMIT}",
-        *(f"{key}={value}" for key, value in report.items()),
-        "",
-        "[events]",
-        *event_audit,
-        "",
-        "[enemy_dependencies]",
-        *enemy_audit,
-    ]
-    return bytes(packed_events), bytes(packed_enemies), report, audit_lines
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--project-root", type=Path, required=True)
@@ -8028,8 +6928,7 @@ def main() -> None:
     # incremental build tree cannot misleadingly retain both representations.
     (output / "frontend_nav_bitmap_pages.bin").unlink(missing_ok=True)
 
-    snes = load_snes_builder(workspace)
-    nes = snes.load_nes_asset_module(workspace)
+    gba = gba_assets
     image_root = workspace / "vendor" / "tyrian" / "image"
     data_root = workspace / "vendor" / "tyrian" / "data"
     opentyrian_root = workspace / "vendor" / "opentyrian"
@@ -8161,7 +7060,7 @@ def main() -> None:
     for name, data in jukebox_assets.items():
         (output / name).write_bytes(data)
 
-    title = build_title(nes, image_root)
+    title = build_title(image_root)
     title.save(preview / "title_gba.png")
 
     sprite2_raw, sprite2_raw_report = build_sprite2_raw_components(
@@ -8198,8 +7097,8 @@ def main() -> None:
                 f"graphic={graphic}, actual={actual_box}, "
                 f"expected={expected_box}"
             )
-    snes_obj_tiles, obj_palette, source_metadata, obj_preview = (
-        snes.build_obj_assets(nes, image_root, player_shot_source)
+    gba_obj_tiles, obj_palette, source_metadata, obj_preview = (
+        gba.build_obj_assets(image_root, player_shot_source)
     )
     (
         explosion_tiles,
@@ -8207,23 +7106,23 @@ def main() -> None:
         explosion_preview,
         explosion_composite_preview,
     ) = (
-        build_explosion_animation(snes, image_root)
+        build_explosion_animation(gba, image_root)
     )
     reward_tiles, reward_palette, reward_preview = build_reward_animation(
-        snes, image_root
+        gba, image_root
     )
     (
         digit_tiles,
         digit_palette,
         digit_preview,
         digit_advances,
-    ) = build_cash_digits(snes, image_root, data_root / "palette.dat")
+    ) = build_cash_digits(gba, image_root, data_root / "palette.dat")
     (
         hud_shield_palette,
         hud_armor_palette,
         hud_generator_palette,
     ) = build_hud_digit_palettes(
-        snes,
+        gba,
         data_root / "palette.dat",
     )
     (
@@ -8232,7 +7131,7 @@ def main() -> None:
         pause_preview,
         pause_advances,
     ) = build_gameplay_status_text(
-        snes,
+        gba,
         image_root,
         data_root / "palette.dat",
         PAUSE_TEXT,
@@ -8244,7 +7143,7 @@ def main() -> None:
         game_over_preview,
         game_over_advances,
     ) = build_gameplay_status_text(
-        snes,
+        gba,
         image_root,
         data_root / "palette.dat",
         GAME_OVER_TEXT,
@@ -8258,7 +7157,7 @@ def main() -> None:
         secret_level_preview,
         secret_level_advances,
     ) = build_secret_level_status(
-        snes,
+        gba,
         image_root,
         data_root / "palette.dat",
     )
@@ -8268,7 +7167,7 @@ def main() -> None:
         insert_coin_preview,
         insert_coin_advances,
     ) = build_gameplay_status_text(
-        snes,
+        gba,
         image_root,
         data_root / "palette.dat",
         INSERT_COIN_UNIQUE_TEXT,
@@ -8281,7 +7180,7 @@ def main() -> None:
         boss_bar_palette,
         boss_bar_preview,
         boss_bar_flash_colours,
-    ) = build_boss_bar_assets(snes, data_root / "palette.dat")
+    ) = build_boss_bar_assets(gba, data_root / "palette.dat")
     obj_palette = bytearray(obj_palette).ljust(512, b"\0")
     obj_palette[7 * 32 : 8 * 32] = explosion_palette
     obj_palette[8 * 32 : 9 * 32] = reward_palette
@@ -8292,7 +7191,7 @@ def main() -> None:
     obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
     obj_palette[14 * 32 : 15 * 32] = pause_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
-        snes_obj_tiles,
+        gba_obj_tiles,
         source_metadata,
         explosion_tiles,
         reward_tiles,
@@ -8392,14 +7291,14 @@ def main() -> None:
             f"{len(music_paths)} != {JUKEBOX_MUSIC_COUNT}"
         )
     maxmod_calibrator = load_music_maxmod_calibrator()
-    source_calibration_path = music_root / "channel-calibration.json"
+    source_calibration_path = music_root / "gba-opl-reference.json"
     maxmod_calibrations: list[dict[str, object]] = []
     for expected_number, music_path in enumerate(music_paths, start=1):
-        parsed_song = snes.parse_tym(music_path)
+        parsed_song = gba_music.parse_tym(music_path)
         calibration = maxmod_calibrator.calibrate_track(
             parsed_song,
             source_calibration_path,
-            snes.synthesize_tym_sample,
+            gba_music.synthesize_tym_sample,
         )
         if int(calibration["trackNumber"]) != expected_number:
             raise ValueError(
@@ -8421,7 +7320,7 @@ def main() -> None:
                 f"{music_path.name}"
             )
         module, module_report = build_sparse_tym_tracker_it(
-            snes,
+            gba_music,
             workspace,
             music_path,
             maxmod_calibrations[source_index],
@@ -8439,7 +7338,7 @@ def main() -> None:
     finite_cue_reports: dict[int, dict[str, object]] = {}
     for source_index in (9, 10, 30):
         module, module_report = build_sparse_tym_tracker_it(
-            snes,
+            gba_music,
             workspace,
             music_paths[source_index],
             maxmod_calibrations[source_index],

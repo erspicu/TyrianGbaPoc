@@ -77,7 +77,10 @@ static void autotest_finish(void)
         telemetry_source_enemy_shot_drops == 0 &&
         telemetry_sprite2_decode_failures == 0 &&
         telemetry_sprite2_cache_drops == 0 &&
-        telemetry_sprite2_uploads ==
+        telemetry_sprite2_uploads +
+            telemetry_sprite2_upload_coalesces +
+            source_enemy_upload_count +
+            (source_player_upload_pending ? 1u : 0u) ==
             telemetry_sprite2_cache_misses &&
         telemetry_sprite2_compact_uploads <=
             telemetry_sprite2_uploads &&
@@ -203,7 +206,10 @@ static void autotest_finish(void)
             SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
         telemetry_sprite2_decode_failures == 0 &&
         telemetry_sprite2_cache_drops == 0 &&
-        telemetry_sprite2_uploads ==
+        telemetry_sprite2_uploads +
+            telemetry_sprite2_upload_coalesces +
+            source_enemy_upload_count +
+            (source_player_upload_pending ? 1u : 0u) ==
             telemetry_sprite2_cache_misses &&
         telemetry_sprite2_compact_uploads <=
             telemetry_sprite2_uploads &&
@@ -219,7 +225,9 @@ static void autotest_finish(void)
         telemetry_sprite2_max_visible_unique <=
             SOURCE_ENEMY_CACHE_SLOT_COUNT &&
         telemetry_effect_cache_drops == 0 &&
-        telemetry_effect_cache_uploads ==
+        telemetry_effect_cache_uploads +
+            telemetry_effect_cache_upload_coalesces +
+            source_effect_upload_count ==
             telemetry_effect_cache_misses &&
         telemetry_effect_cache_upload_bytes ==
             telemetry_effect_cache_uploads *
@@ -303,7 +311,7 @@ static void autotest_finish(void)
     sram[2] = 'B';
     sram[3] = 'A';
 #ifdef AUTOTEST_STACK_CANARY
-    sram[4] = 28;
+        sram[4] = 29;
 #else
     sram[4] = 25;
 #endif
@@ -619,7 +627,137 @@ static void autotest_finish(void)
     sram_write_u32(6456, telemetry_level_music_fade_out_steps);
     sram_write_u32(6460, telemetry_level_music_silent_vblanks);
     sram_write_u32(6464, telemetry_level_music_fade_in_steps);
+#ifdef AUTOTEST_LOAD_SAVE_SLOT
+    sram_write_u32(6468, AUTOTEST_LOAD_SAVE_SLOT);
+    sram_write_u32(6472, source_parity_level.player_ship);
+    sram_write_u32(6476, source_parity_level.player_generator);
+    sram_write_u32(6480, source_parity_level.player_shield_item);
+    sram_write_u32(6484, source_parity_level.player_sidekick[0]);
+    sram_write_u32(6488, source_parity_level.player_sidekick[1]);
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+    sram_write_u32(
+        6492,
+        telemetry_route_first_missed_vblank_position
+    );
+    sram_write_u32(
+        6496,
+        telemetry_route_last_missed_vblank_position
+    );
+    for (
+        u8 bucket = 0;
+        bucket < ROUTE_MISSED_VBLANK_POSITION_BUCKET_COUNT;
+        bucket++
+    ) {
+        sram_write_u32(
+            6500u + (u32)bucket * 4u,
+            telemetry_route_missed_vblank_position_bucket[bucket]
+        );
+    }
+    for (u8 layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        sram_write_u32(
+            6564u + (u32)layer * 4u,
+            background_prefetch_late_columns_layer[layer]
+        );
+        sram_write_u32(
+            6576u + (u32)layer * 4u,
+            background_prefetch_late_events_layer[layer]
+        );
+        sram_write_u32(
+            6588u + (u32)layer * 4u,
+            background_rows_synchronous_layer[layer]
+        );
+        sram_write_u32(
+            6600u + (u32)layer * 4u,
+            background_first_late_position_layer[layer]
+        );
+        sram_write_u32(
+            6612u + (u32)layer * 4u,
+            background_last_late_position_layer[layer]
+        );
+        sram_write_u32(
+            6624u + (u32)layer * 4u,
+            background_first_synchronous_position_layer[layer]
+        );
+        sram_write_u32(
+            6636u + (u32)layer * 4u,
+            background_last_synchronous_position_layer[layer]
+        );
+    }
+    sram_write_u32(6648, source_enemy_cache_drop_record_count);
+    for (
+        u8 record_index = 0;
+        record_index < source_enemy_cache_drop_record_count;
+        record_index++
+    ) {
+        const SourceEnemyCacheDropRecord *record =
+            &source_enemy_cache_drop_record[record_index];
+        u32 offset = 6652u + (u32)record_index * 64u;
+
+        sram_write_u32(offset + 0, record->reason);
+        sram_write_u32(offset + 4, record->level_position);
+        sram_write_u32(offset + 8, record->shape_table);
+        sram_write_u32(offset + 12, record->graphic);
+        sram_write_u32(offset + 16, record->size);
+        sram_write_u32(offset + 20, record->filter);
+        sram_write_u32(offset + 24, record->pool);
+        sram_write_u32(offset + 28, record->source_index);
+        sram_write_u32(offset + 32, record->definition_id);
+        sram_write_u32(offset + 36, (u32)record->x);
+        sram_write_u32(offset + 40, (u32)record->y);
+        sram_write_u32(offset + 44, record->enemy_cycle);
+        sram_write_u32(offset + 48, record->upload_count);
+        sram_write_u32(offset + 52, record->active_slots);
+        sram_write_u32(offset + 56, record->active_full_slots);
+        sram_write_u32(offset + 60, record->active_compact_slots);
+    }
+#ifdef AUTOTEST_ROUTE_PERF
+    sram_write_u32(6920, route_perf_missed_record_count);
+    for (
+        u8 record_index = 0;
+        record_index < route_perf_missed_record_count;
+        record_index++
+    ) {
+        const RoutePerfMissedRecord *record =
+            &route_perf_missed_record[record_index];
+        u32 offset = 6924u + (u32)record_index * 64u;
+
+        sram_write_u32(offset + 0, record->level_position);
+        sram_write_u32(offset + 4, record->missed_count);
+        sram_write_u32(offset + 8, record->loop_cycles);
+        sram_write_u32(offset + 12, record->prelogic_cycles);
+        sram_write_u32(offset + 16, record->logic_cycles);
+        sram_write_u32(offset + 20, record->render_cycles);
+        sram_write_u32(offset + 24, record->prefetch_cycles);
+        sram_write_u32(
+            offset + 28,
+            record->background_tile_renders
+        );
+        sram_write_u32(offset + 32, record->sprite2_misses);
+        sram_write_u32(offset + 36, record->projectile_misses);
+        sram_write_u32(offset + 40, record->effect_misses);
+        sram_write_u32(offset + 44, record->oam_count);
+        sram_write_u32(offset + 48, record->active_enemies);
+        sram_write_u32(offset + 52, record->active_enemy_shots);
+        sram_write_u32(offset + 56, record->logic_updated);
+        sram_write_u32(offset + 60, record->rendered);
+        for (
+            u8 stage = 0;
+            stage < ROUTE_PERF_LOGIC_STAGE_COUNT;
+            stage++
+        ) {
+            sram_write_u32(
+                7952u +
+                    (
+                        (u32)record_index *
+                            ROUTE_PERF_LOGIC_STAGE_COUNT +
+                        stage
+                    ) * 4u,
+                route_perf_missed_logic_stage[record_index][stage]
+            );
+        }
+    }
+#endif
     sram_write_u32(720, AUTOTEST_FRONTEND_ROUTE_EPISODE);
     sram_write_u32(724, AUTOTEST_FRONTEND_ROUTE_SECTION);
     sram_write_u32(728, frontend_level.lvl_file_number);
@@ -748,6 +886,40 @@ static void autotest_finish(void)
         sram_write_u32(740, active_count);
     }
 #endif
+    /*
+     * Keep the release scheduler and deferred-upload contract observable in
+     * every ordinary autotest, not only direct route diagnostics. These
+     * offsets are above all historical report blocks.
+     */
+    sram_write_u32(8600, TYRIAN_GBA_DYNAMIC_FRAME_DROP);
+    sram_write_u32(8604, TYRIAN_GBA_WALL_CLOCK_LOGIC);
+    sram_write_u32(8608, TYRIAN_GBA_RECOVER_MISSED_VBLANK);
+    sram_write_u32(8612, TYRIAN_GBA_PRESENTATION_DEFER);
+    sram_write_u32(8616, TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER);
+    sram_write_u32(8620, telemetry_presentation_render_attempts);
+    sram_write_u32(8624, telemetry_presentation_render_completed);
+    sram_write_u32(8628, telemetry_presentation_render_deferred);
+    sram_write_u32(8632, telemetry_presentation_render_forced);
+    sram_write_u32(8636, telemetry_presentation_superseded);
+    sram_write_u32(8640, telemetry_presentation_pending_logic_max);
+    sram_write_u32(8644, telemetry_presentation_estimate_max);
+    sram_write_u32(8648, telemetry_presentation_deadline_elapsed_max);
+    sram_write_u32(8652, telemetry_logic_catchup_updates);
+    sram_write_u32(8656, telemetry_logic_updates_per_loop_max);
+    sram_write_u32(8660, telemetry_logic_backlog_frames_max);
+    sram_write_u32(8664, telemetry_background_held_rows_max);
+    sram_write_u32(8668, telemetry_vblank_recovery_loops);
+    sram_write_u32(8672, telemetry_audio_frames);
+    sram_write_u32(8676, telemetry_sprite2_split_uploads);
+    sram_write_u32(8680, telemetry_sprite2_upload_coalesces);
+    sram_write_u32(8684, telemetry_projectile_cache_upload_coalesces);
+    sram_write_u32(8688, telemetry_effect_cache_upload_coalesces);
+    sram_write_u32(
+        8692,
+        source_sprite2_pending_upload_count()
+    );
+    sram_write_u32(8696, source_projectile_upload_count);
+    sram_write_u32(8700, source_effect_upload_count);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;

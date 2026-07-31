@@ -38,7 +38,12 @@
 #define TYRIAN_GBA_COLLISION_LAZY_RESULT 1
 #endif
 #ifndef TYRIAN_GBA_COLLISION_PACKED_CALL
-#define TYRIAN_GBA_COLLISION_PACKED_CALL 0
+/*
+ * Pass damage and optional radii in one ARM register.  The exact SAVARA
+ * save/loadout A/B retained every route invariant, reduced linked text by
+ * 72 bytes and reduced deterministic missed VBlanks from 32 to 30.
+ */
+#define TYRIAN_GBA_COLLISION_PACKED_CALL 1
 #endif
 #if TYRIAN_GBA_COLLISION_UNSIGNED_RANGE != 0 && \
     TYRIAN_GBA_COLLISION_UNSIGNED_RANGE != 1

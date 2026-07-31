@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Calibrate Tyrian's TYM voices for the GBA Maxmod IT adapter.
 
-The stock channel-calibration catalog measures every original OPL2 stem over
-one complete loop.  The old GBA asset path reused gains measured through the
-SNES S-DSP adapter and then renormalized each song independently.  Those gains
-do not describe Maxmod's 8-bit PCM mixer and they make cross-song loudness
-dependent on whichever voice happens to be loudest in that song.
+The project-local GBA OPL reference measures every original OPL2 stem over
+one complete loop.  This module independently selects the eight voices that
+fit Maxmod's GBA budget, preserving authored percussion first and then the
+highest-energy active tonal sources.  No other console's voice map or mixer
+gain is used as an input.
 
 This module measures the actual synthesized PCM/IT event model, solves one
 fixed gain per selected OPL source, and verifies the quantized 8-bit result.
@@ -29,7 +29,8 @@ PROFILE_DESCRIPTION = (
     "GBA Maxmod 15.768 kHz IT adapter; exact TYM event-volume timeline, "
     "quantized signed 8-bit synthesized samples, fixed OPL stem RMS target, "
     "mono L+R reference, one catalog-wide +3 dB presentation gain, and no "
-    "per-song maximum-gain normalization"
+    "per-song maximum-gain normalization; GBA-owned eight-voice selection "
+    "preserves percussion then ranks active tonal stems by source RMS"
 )
 MAXMOD_OUTPUT_RATE = 15_768
 MAXMOD_MODULE_VOLUME = 896
@@ -232,38 +233,44 @@ def calibrate_track(
         raise TypeError("TYM metadata must be an object")
     track_number = int(metadata["trackNumber"])
     reference = _load_track(calibration_path, track_number)
-    snes_profile = next(
-        profile
-        for profile in reference["profiles"]
-        if profile["profile"] == "SuperNintendo"
-    )
-    pairs = [
-        (
-            int(source),
-            10.0 ** (float(gain_db) / 20.0),
-        )
-        for source, gain_db in zip(
-            snes_profile["sourceChannels"][:8],
-            snes_profile["gainDb"][:8],
-            strict=True,
-        )
-        if source is not None
-    ]
-    if not 1 <= len(pairs) <= 8:
-        raise ValueError(
-            f"track {track_number} has no usable eight-voice mapping"
-        )
-    sources = [source for source, _ in pairs]
-    legacy_unnormalized = [gain for _, gain in pairs]
-    legacy_maximum = max(1.0, max(legacy_unnormalized))
-    legacy_gains = [
-        gain / legacy_maximum
-        for gain in legacy_unnormalized
-    ]
     percussion_sources = {
         int(source)
         for source in metadata["arrangement"]["percussionSources"]
     }
+    events = song["events"]
+    if not isinstance(events, list):
+        raise TypeError("TYM event collection must be a list")
+    reference_rms = [
+        float(value) for value in reference["originalChannelRms"]
+    ]
+    active_sources = {
+        int(source)
+        for _, changes in events
+        for source, state in changes.items()
+        if state[0] != -32768 and reference_rms[int(source)] > 0.0
+    }
+    required = sorted(
+        active_sources.intersection(percussion_sources),
+        key=lambda source: (-reference_rms[source], source),
+    )
+    if len(required) > 8:
+        required = required[:8]
+    tonal = sorted(
+        active_sources.difference(required),
+        key=lambda source: (-reference_rms[source], source),
+    )
+    selected = set(required + tonal[: 8 - len(required)])
+    sources = sorted(
+        selected,
+        key=lambda source: (-reference_rms[source], source),
+    )
+    if not 1 <= len(sources) <= 8:
+        raise ValueError(
+            f"track {track_number} has no usable eight-voice mapping"
+        )
+    # The comparison baseline is the former GBA Maxmod unity adapter, not a
+    # profile, gain table, or mixer model from another console.
+    legacy_gains = [1.0] * len(sources)
 
     source_reports: list[dict[str, object]] = []
     gains: list[float] = []

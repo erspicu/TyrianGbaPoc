@@ -11,6 +11,10 @@
  * prefetch row covers the next upward-scroll boundary.
  */
 
+#ifndef TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES
+#define TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES 6
+#endif
+
 enum {
     BACKGROUND_LAYER_COUNT = 3,
     /*
@@ -63,7 +67,8 @@ enum {
      * Six misses leaves headroom on an idle ARM7 frame while keeping the
      * three scrolling layers ahead of their next eight-pixel boundary.
      */
-    BACKGROUND_PREFETCH_IDLE_MISSES = 6,
+    BACKGROUND_PREFETCH_IDLE_MISSES =
+        TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES,
     BACKGROUND_PC_PALETTE_INDEX = 0,
 };
 
@@ -185,6 +190,29 @@ static u32 background_prefetch_late_columns;
 static u32 background_tile_render_count;
 static u8 background_runtime_valid;
 static u8 background_prefetch_round_robin;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+static u32 background_prefetch_late_columns_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_prefetch_late_events_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_rows_synchronous_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_first_late_position_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_last_late_position_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_first_synchronous_position_layer[
+    BACKGROUND_LAYER_COUNT
+];
+static u32 background_last_synchronous_position_layer[
+    BACKGROUND_LAYER_COUNT
+];
+#endif
 
 /*
  * A full-source scan of all 62 logical levels found per-layer 22-row maxima
@@ -1390,8 +1418,21 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
         cache->prefetch_row == row &&
         !cache->prefetch_ready
     ) {
-        background_prefetch_late_columns +=
+        u32 late_columns =
             BACKGROUND_ROW_TILES - cache->prefetch_column;
+
+        background_prefetch_late_columns += late_columns;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+        background_prefetch_late_columns_layer[layer] +=
+            late_columns;
+        background_prefetch_late_events_layer[layer]++;
+        if (background_first_late_position_layer[layer] == 0) {
+            background_first_late_position_layer[layer] =
+                level_position;
+        }
+        background_last_late_position_layer[layer] =
+            level_position;
+#endif
         background_prefetch_layer(
             layer,
             row,
@@ -1426,6 +1467,17 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
     } else {
         background_build_ring_row(layer, row, 1);
         background_rows_synchronous++;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+        background_rows_synchronous_layer[layer]++;
+        if (
+            background_first_synchronous_position_layer[layer] == 0
+        ) {
+            background_first_synchronous_position_layer[layer] =
+                level_position;
+        }
+        background_last_synchronous_position_layer[layer] =
+            level_position;
+#endif
     }
     *source = (const u8 *)cache->ring_word[row & 31u];
     *target =

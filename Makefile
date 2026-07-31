@@ -4,6 +4,7 @@ DETAIL_LEVEL ?= high
 GAME_SPEED ?= normal
 ROUTE_EPISODE ?= 1
 ROUTE_SECTION ?= 5
+ROUTE_FRONT_WEAPON_POWER ?= 11
 CAMPAIGN_EPISODE ?= 1
 CAMPAIGN_SECTION ?= 1
 CAMPAIGN_LEVELS ?= 4
@@ -11,6 +12,7 @@ STRESS_DIAGNOSTIC ?= active_mask
 CAPTURE_STATE ?= 7
 CAPTURE_SELECTION ?=
 CAPTURE_SECTION ?=
+AUTOTEST_DIAGNOSTIC_FLAGS ?=
 
 ifeq ($(DETAIL_LEVEL),low)
 DETAIL_LEVEL_VALUE := 0
@@ -191,6 +193,26 @@ else
 $(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cull, active_mask, active_mask_range, active_mask_fast, active_mask_fast_lazy, active_mask_fast_lazy_no_recovery, active_mask_fast_lazy_packed, active_mask_fast_defer, active_mask_fast_wall, active_mask_fast_wall_lazy, active_mask_fast_wall_lazy_packed, active_mask_fast_wall_full, active_mask_fast_wall_bg_live or active_mask_range_fast)
 endif
 
+# Release-positive defaults must not silently rewrite the controlled v35
+# diagnostic matrix.  Only explicitly named packed/scheduler variants inherit
+# those mechanisms; every other stress target keeps its historical baseline.
+ifeq ($(findstring packed,$(STRESS_DIAGNOSTIC)),)
+STRESS_DIAGNOSTIC_FLAGS += -DTYRIAN_GBA_COLLISION_PACKED_CALL=0
+endif
+STRESS_SCHEDULER_DIAGNOSTICS := \
+	active_mask_fast_defer \
+	active_mask_fast_wall \
+	active_mask_fast_wall_lazy \
+	active_mask_fast_wall_lazy_no_recovery \
+	active_mask_fast_wall_lazy_packed \
+	active_mask_fast_wall_full \
+	active_mask_fast_wall_bg_live
+ifeq ($(filter $(STRESS_DIAGNOSTIC),$(STRESS_SCHEDULER_DIAGNOSTICS)),)
+STRESS_DIAGNOSTIC_FLAGS += \
+	-DTYRIAN_GBA_DYNAMIC_FRAME_DROP=0 \
+	-DTYRIAN_GBA_WALL_CLOCK_LOGIC=0
+endif
+
 CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
 TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v40_$(CONFIG_SUFFIX)
 TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$(CONFIG_SUFFIX)
@@ -270,13 +292,15 @@ VFS_INPUTS := \
 
 ASSET_INPUTS := \
 	Configure.h \
+	tools/audit_project_independence.py \
 	tools/build_assets.py \
+	tools/gba_asset_support.py \
+	tools/gba_music_builder.py \
+	tools/templates/gba_maxmod_base.it \
 	tools/background_palette_training.py \
 	tools/music_maxmod_calibration.py \
 	tools/frontend_native_font.txt \
 	tools/frontend_pregame_font.txt \
-	vendor/builders/snes/build_assets.py \
-	vendor/builders/nes/build_assets.py \
 	vendor/opentyrian/REVISION \
 	vendor/tyrian/data/tyrian.hdt \
 	vendor/tyrian/data/tyrian.pic \
@@ -306,7 +330,7 @@ ASSET_INPUTS := \
 	vendor/opentyrian/src/jukebox.c \
 	vendor/opentyrian/src/starlib.c \
 	vendor/opentyrian/src/musmast.c \
-	vendor/audio/Music/channel-calibration.json \
+	vendor/audio/Music/gba-opl-reference.json \
 	$(wildcard vendor/audio/Music/*.tym)
 
 ASSET_BINARIES := \
@@ -449,6 +473,9 @@ $(BUILD_VERSION_HEADER): FORCE tools/write_build_version.py | $(RES)
 		--output "$(CURDIR)/$(BUILD_VERSION_HEADER)"
 
 $(ASSET_STAMP): $(ASSET_INPUTS) | $(BUILD)/preview
+	$(PYTHON) tools/audit_project_independence.py \
+		--project-root "$(PROJECT_ROOT)" \
+		--output "$(CURDIR)/$(RES)/project_independence_audit.json"
 	$(PYTHON) tools/build_assets.py \
 		--project-root "$(PROJECT_ROOT)" \
 		--output "$(CURDIR)/$(RES)" \
@@ -486,6 +513,7 @@ $(BUILD)/main_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_STACK_CANARY \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		$(AUTOTEST_DIAGNOSTIC_FLAGS) \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_death_test_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
@@ -539,7 +567,7 @@ $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUF
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(ROUTE_EPISODE) \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(ROUTE_SECTION) \
-		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
+		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=$(ROUTE_FRONT_WEAPON_POWER) \
 		-MMD -MP -c $< -o $@
 
 $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).o: \
@@ -642,9 +670,11 @@ $(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o: \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
 		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
-		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
+		$(RES)/soundbank.h $(VFS_META) Makefile | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_FRONTEND_TRANSITION_STRESS \
 		-DAUTOTEST_STACK_CANARY \
+		-DTYRIAN_GBA_DYNAMIC_FRAME_DROP=0 \
+		-DTYRIAN_GBA_WALL_CLOCK_LOGIC=0 \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 

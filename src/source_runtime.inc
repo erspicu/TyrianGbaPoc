@@ -40,7 +40,8 @@ static SourceSprite2L2Slot source_sprite2_l2[
  * The complete build-time raw Sprite2 catalog makes this 2 KiB decoder
  * scratch a debug/fallback-only path.  Keep it in IWRAM BSS: the packed
  * background colour-error table recovered enough IWRAM headroom, while this
- * placement restores the release EWRAM safety margin without shrinking L2.
+ * placement preserves the release 12 KiB EWRAM heap floor without shrinking
+ * L2.  Runtime stack-canary tests independently guard the IWRAM boundary.
  */
 static u16 source_enemy_decode_pixels[OT_SPRITE2_FRAME_PIXELS]
     __attribute__((aligned(4)));
@@ -52,6 +53,14 @@ static u16 source_player_cache_graphic;
 static u8 source_player_cache_valid;
 static u8 source_player_cache_visible;
 static u8 source_player_upload_pending;
+
+#ifdef AUTOTEST
+static u32 source_sprite2_pending_upload_count(void)
+{
+    return source_enemy_upload_count +
+        (source_player_upload_pending ? 1u : 0u);
+}
+#endif
 static u8 source_player_upload_l2_slot;
 static u8 source_enemy_palette_valid;
 static u8 source_enemy_first_decode_failure_valid;
@@ -67,6 +76,37 @@ static s16 source_enemy_first_decode_failure_x;
 static s16 source_enemy_first_decode_failure_y;
 static u8 source_enemy_first_decode_failure_cycle;
 static u32 source_enemy_first_decode_failure_shape_banks;
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+enum {
+    SOURCE_ENEMY_CACHE_DROP_RECORD_COUNT = 4,
+    SOURCE_ENEMY_CACHE_DROP_NO_SLOT = 1,
+    SOURCE_ENEMY_CACHE_DROP_UPLOAD_LIMIT = 2,
+};
+
+typedef struct {
+    u32 reason;
+    u32 level_position;
+    u32 shape_table;
+    u32 graphic;
+    u32 size;
+    u32 filter;
+    u32 pool;
+    u32 source_index;
+    u32 definition_id;
+    s32 x;
+    s32 y;
+    u32 enemy_cycle;
+    u32 upload_count;
+    u32 active_slots;
+    u32 active_full_slots;
+    u32 active_compact_slots;
+} SourceEnemyCacheDropRecord;
+
+static SourceEnemyCacheDropRecord source_enemy_cache_drop_record[
+    SOURCE_ENEMY_CACHE_DROP_RECORD_COUNT
+] EWRAM_BSS;
+static u8 source_enemy_cache_drop_record_count;
+#endif
 static u32 source_sprite2_l2_epoch;
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
 static u8 source_autotest_unreachable_stop_ticks;
@@ -512,6 +552,10 @@ static u8 source_option_projectile_build(void)
 static u8 source_enemy_cache_slot_reserved(u8 slot)
 {
     if (
+        slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT &&
+        slot <
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT +
+                SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT &&
         slot > SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT &&
         (
             game_state != STATE_PLAY ||
@@ -527,6 +571,15 @@ static u8 source_enemy_cache_slot_reserved(u8 slot)
          */
         return 1;
     }
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        slot == SOURCE_ENEMY_CACHE_SPLIT_SLOT &&
+        game_paused
+    ) {
+        /* The lower 32x16 half time-shares the PAUSED glyph bank. */
+        return 1;
+    }
+#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
     (void)slot;
     return 0;
@@ -564,8 +617,8 @@ static u8 source_option_projectile_sync(void)
     /*
      * The three 4bpp 64x32 Plasma Storm frames time-share the final three
      * full-size enemy cache slots only while that option is equipped.
-     * Standard loadouts retain all 24 enemy slots and their established
-     * no-drop boss capacity.
+     * Standard loadouts retain the complete ordinary full-size bank plus
+     * the fragmented overflow slot used by dense SAVARA scenes.
      */
     for (
         index =
@@ -908,6 +961,10 @@ static u16 source_player_cache_acquire(u16 graphic)
     if (source_player_cache_valid) {
         telemetry_sprite2_cache_evictions++;
     }
+    if (source_player_upload_pending) {
+        /* Supersede an uncommitted player frame without losing its upload. */
+        telemetry_sprite2_upload_coalesces++;
+    }
     source_player_cache_graphic = graphic;
     source_player_cache_valid = 1;
     source_player_upload_l2_slot = l2_slot;
@@ -938,6 +995,11 @@ static void source_player_cache_commit(void)
 
 static u16 source_enemy_cache_tile(u8 slot)
 {
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (slot == SOURCE_ENEMY_CACHE_SPLIT_SLOT) {
+        return SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE;
+    }
+#endif
     if (slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT) {
         u8 compact =
             (u8)(slot - SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT);
@@ -975,7 +1037,21 @@ static u16 source_enemy_cache_tile(u8 slot)
 
 static u8 source_enemy_cache_slot_is_compact(u8 slot)
 {
-    return slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
+    return
+        slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT &&
+        slot <
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT +
+                SOURCE_ENEMY_CACHE_COMPACT_SLOT_COUNT;
+}
+
+static u8 source_enemy_cache_tile_is_split(u16 tile)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    (void)tile;
+    return 0;
+#else
+    return tile == SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE;
+#endif
 }
 
 static u8 source_enemy_cache_tile_is_compact(u16 tile)
@@ -1020,6 +1096,11 @@ static void source_enemy_cache_begin_frame(void)
             SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + 1u
         ].valid = 0;
     }
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (game_paused) {
+        source_enemy_cache[SOURCE_ENEMY_CACHE_SPLIT_SLOT].valid = 0;
+    }
+#endif
     if (source_enemy_cache_epoch == 0) {
         u8 index;
 
@@ -1032,7 +1113,6 @@ static void source_enemy_cache_begin_frame(void)
             source_enemy_cache[index].last_epoch = 0;
         }
     }
-    source_enemy_upload_count = 0;
 }
 
 static void source_enemy_cache_end_frame(void)
@@ -1062,6 +1142,60 @@ static void source_enemy_cache_end_frame(void)
         telemetry_sprite2_max_visible_unique = visible_unique;
     }
 }
+
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+static void source_enemy_cache_record_drop(
+    const OtEnemyDrawCommand *draw,
+    u8 reason
+)
+{
+    SourceEnemyCacheDropRecord *record;
+    u8 index;
+
+    if (
+        source_enemy_cache_drop_record_count >=
+        SOURCE_ENEMY_CACHE_DROP_RECORD_COUNT
+    ) {
+        return;
+    }
+    record = &source_enemy_cache_drop_record[
+        source_enemy_cache_drop_record_count++
+    ];
+    record->reason = reason;
+    record->level_position = level_position;
+    record->shape_table = draw->shape_table;
+    record->graphic = draw->graphic;
+    record->size = draw->size;
+    record->filter = draw->filter;
+    record->pool = draw->pool;
+    record->source_index = draw->source_index;
+    record->definition_id = draw->enemy_definition_id;
+    record->x = draw->x;
+    record->y = draw->y;
+    record->enemy_cycle = draw->enemy_cycle;
+    record->upload_count = source_enemy_upload_count;
+    for (
+        index = 0;
+        index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
+        index++
+    ) {
+        if (
+            source_enemy_cache_slot_reserved(index) ||
+            !source_enemy_cache[index].valid ||
+            source_enemy_cache[index].last_epoch !=
+                source_enemy_cache_epoch
+        ) {
+            continue;
+        }
+        record->active_slots++;
+        if (source_enemy_cache_slot_is_compact(index)) {
+            record->active_compact_slots++;
+        } else {
+            record->active_full_slots++;
+        }
+    }
+}
+#endif
 
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u16
 source_enemy_cache_acquire(
@@ -1142,6 +1276,12 @@ source_enemy_cache_acquire(
         free_slot :
         eviction_slot;
     if (selected == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+        source_enemy_cache_record_drop(
+            draw,
+            SOURCE_ENEMY_CACHE_DROP_NO_SLOT
+        );
+#endif
         telemetry_sprite2_cache_drops++;
         return 0xffff;
     }
@@ -1192,9 +1332,27 @@ source_enemy_cache_acquire(
         return 0xffff;
     }
 
-    if (
-        source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT
-    ) {
+    /*
+     * A drop-frame recovery loop may render again before the next safe
+     * VBlank commit. Keep one pending upload per physical VRAM slot and let
+     * the newest scene replace its source. Resetting this list per render
+     * made a cache entry look resident even though its tiles never reached
+     * VRAM.
+     */
+    for (index = 0; index < source_enemy_upload_count; index++) {
+        if (source_enemy_uploads[index].slot == selected) {
+            source_enemy_uploads[index].l2_slot = l2_slot;
+            telemetry_sprite2_upload_coalesces++;
+            return source_enemy_cache_tile(selected);
+        }
+    }
+    if (source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT) {
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+        source_enemy_cache_record_drop(
+            draw,
+            SOURCE_ENEMY_CACHE_DROP_UPLOAD_LIMIT
+        );
+#endif
         telemetry_sprite2_cache_drops++;
         source_enemy_cache[selected].valid = 0;
         return 0xffff;
@@ -1229,7 +1387,26 @@ static void source_enemy_cache_commit(void)
             SOURCE_ENEMY_COMPACT_FRAME_BYTES :
             SOURCE_ENEMY_FRAME_BYTES;
 
-        if (source_enemy_cache_slot_is_compact(upload->slot)) {
+        if (source_enemy_cache_tile_is_split(
+                source_enemy_cache_tile(upload->slot)
+            )) {
+#if !TYRIAN_GBA_STRESS_LOADOUT
+            /* L2 is 4x4 8bpp tile order: each 32x16 half is 512 B. */
+            dmaCopy(
+                source,
+                (u8 *)OBJ_BASE_ADR +
+                    SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE * 32u,
+                SOURCE_ENEMY_CACHE_SPLIT_HALF_BYTES
+            );
+            dmaCopy(
+                source + SOURCE_ENEMY_CACHE_SPLIT_HALF_BYTES,
+                (u8 *)OBJ_BASE_ADR +
+                    SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE * 32u,
+                SOURCE_ENEMY_CACHE_SPLIT_HALF_BYTES
+            );
+            telemetry_sprite2_split_uploads++;
+#endif
+        } else if (source_enemy_cache_slot_is_compact(upload->slot)) {
             /*
              * The compact 16x16 slot is canvas (8,8)..(23,23), i.e. tiles
              * 5,6,9,10 of the L2's ordinary 4x4 tile-order frame.
@@ -1316,7 +1493,6 @@ static void source_projectile_cache_begin_frame(void)
             source_projectile_cache[index].last_epoch = 0;
         }
     }
-    source_projectile_upload_count = 0;
 }
 
 static u16 source_projectile_cache_acquire(
@@ -1404,6 +1580,13 @@ static u16 source_projectile_cache_acquire(
         telemetry_projectile_cache_drops++;
         return 0xffff;
     }
+    for (index = 0; index < source_projectile_upload_count; index++) {
+        if (source_projectile_uploads[index].slot == selected) {
+            source_projectile_uploads[index].l2_slot = l2_slot;
+            telemetry_projectile_cache_upload_coalesces++;
+            return source_projectile_cache_tile(selected);
+        }
+    }
     if (
         source_projectile_upload_count >=
         SOURCE_PROJECTILE_CACHE_SLOT_COUNT
@@ -1480,28 +1663,212 @@ static void source_projectile_cache_commit(void)
 }
 
 typedef struct {
-    u32 last_epoch;
-    u8 frame_key;
-    u8 valid;
-} SourceEffectCacheSlot;
-
-typedef struct {
     u8 slot;
     u8 frame_key;
 } SourceEffectUpload;
 
-static SourceEffectCacheSlot source_effect_cache[
+#define SOURCE_EFFECT_FRAME_KEY_INVALID 0xffu
+
+/*
+ * A frame key is only 0..107, so 0xff is an unambiguous invalid marker.
+ * Keeping the keys and epochs in separate arrays removes the padded valid
+ * byte from every slot (108 -> 82 bytes including natural alignment).  The
+ * saved EWRAM is deliberately traded for additional IWRAM user-stack room.
+ */
+static u16 source_effect_cache_last_epoch[
+    SOURCE_EFFECT_CACHE_SLOT_COUNT
+] EWRAM_BSS;
+static u8 source_effect_cache_frame_key[
     SOURCE_EFFECT_CACHE_SLOT_COUNT
 ] EWRAM_BSS;
 static SourceEffectUpload source_effect_uploads[
     SOURCE_EFFECT_CACHE_SLOT_COUNT
 ] EWRAM_BSS;
-static u32 source_effect_cache_epoch;
+/*
+ * Effect hits dominate explosion-heavy routes. Keep a direct mutable
+ * frame-key index so a hit is O(1); only misses scan the 27 physical/logical
+ * slots for an eviction candidate.  The 108-byte table lives in EWRAM:
+ * retaining the larger hot acquire/prefetch routines in IWRAM saves far more
+ * cycles while preserving the measured user-stack floor.
+ * Zero means absent, otherwise the stored value is slot + 1.
+ */
+static u8 source_effect_frame_slot[
+    OBJ_EXPLOSION_SEQUENCE_COUNT * OBJ_EXPLOSION_FRAME_COUNT
+] EWRAM_BSS;
+static u16 source_effect_cache_epoch;
 static u8 source_effect_upload_count;
+static u8 source_effect_boss_bar_tiles_dirty EWRAM_BSS;
+static u8 source_effect_reward_tiles_dirty EWRAM_BSS;
+static u8 source_effect_reward_tiles_required EWRAM_BSS;
+
+static u8 source_effect_boss_bar_active(void)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    return 0;
+#else
+    return
+        source_parity_level.boss_bar_link[0] != 0 ||
+        source_parity_level.boss_bar_link[1] != 0;
+#endif
+}
+
+static u8 source_effect_legacy_reward_frame_active(void)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT || \
+    !defined(AUTOTEST_REWARD_VISUAL_TEST)
+    return 0;
+#else
+    u8 index;
+
+    for (index = 0; index < MAX_REWARDS; index++) {
+        if (
+            rewards[index].active &&
+            rewards[index].sequence == REWARD_SEQUENCE_COUNT - 1u &&
+            rewards[index].frame == REWARD_FRAME_COUNT - 1u
+        ) {
+            return 1;
+        }
+    }
+    return 0;
+#endif
+}
+
+static void source_effect_restore_shared_tiles_if_needed(void)
+{
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        source_effect_boss_bar_tiles_dirty &&
+        source_effect_boss_bar_active()
+    ) {
+        dmaCopy(
+            obj_tiles + OBJ_TILE_BOSS_BAR * 32u,
+            (u8 *)OBJ_BASE_ADR + OBJ_TILE_BOSS_BAR * 32u,
+            SOURCE_EFFECT_FRAME_BYTES
+        );
+        source_effect_boss_bar_tiles_dirty = 0;
+    }
+    if (
+        source_effect_reward_tiles_dirty &&
+        source_effect_reward_tiles_required
+    ) {
+        dmaCopy(
+            obj_tiles + SOURCE_EFFECT_CACHE_REWARD_TILE_BASE * 32u,
+            (u8 *)OBJ_BASE_ADR +
+                SOURCE_EFFECT_CACHE_REWARD_TILE_BASE * 32u,
+            SOURCE_EFFECT_FRAME_BYTES
+        );
+        source_effect_reward_tiles_dirty = 0;
+    }
+#endif
+}
+
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void source_effect_cancel_pending_slot(u8 target_slot)
+{
+    u8 index;
+
+    for (index = 0; index < source_effect_upload_count; index++) {
+        if (
+            source_effect_uploads[index].slot == target_slot
+        ) {
+            u8 move;
+
+            for (
+                move = index;
+                move + 1u < source_effect_upload_count;
+                move++
+            ) {
+                source_effect_uploads[move] =
+                    source_effect_uploads[move + 1u];
+            }
+            source_effect_upload_count--;
+            telemetry_effect_cache_upload_coalesces++;
+            return;
+        }
+    }
+}
+#endif
+
+static u8 source_effect_cache_slot_reserved(u8 slot)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    (void)slot;
+    return 0;
+#else
+    return
+        (
+            slot == SOURCE_EFFECT_CACHE_BOSS_SLOT &&
+            source_effect_boss_bar_active()
+        ) ||
+        (
+            slot == SOURCE_EFFECT_CACHE_REWARD_SLOT &&
+            source_effect_reward_tiles_required
+        );
+#endif
+}
+
+static u16 source_effect_cache_tile(u8 slot)
+{
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (slot == SOURCE_EFFECT_CACHE_OVERFLOW_SLOT) {
+        return SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE;
+    }
+    if (slot == SOURCE_EFFECT_CACHE_BOSS_SLOT) {
+        return SOURCE_EFFECT_CACHE_BOSS_TILE_BASE;
+    }
+    if (slot == SOURCE_EFFECT_CACHE_REWARD_SLOT) {
+        return SOURCE_EFFECT_CACHE_REWARD_TILE_BASE;
+    }
+#endif
+    return (u16)(
+        SOURCE_EFFECT_CACHE_TILE_BASE +
+        slot * SOURCE_EFFECT_TILES_PER_SLOT
+    );
+}
 
 static void source_effect_cache_begin_frame(void)
 {
     source_effect_cache_epoch++;
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    source_effect_reward_tiles_required =
+        source_effect_legacy_reward_frame_active();
+    if (source_effect_boss_bar_active()) {
+        u8 frame_key = source_effect_cache_frame_key[
+            SOURCE_EFFECT_CACHE_BOSS_SLOT];
+
+        if (
+            frame_key != SOURCE_EFFECT_FRAME_KEY_INVALID &&
+            source_effect_frame_slot[frame_key] ==
+                SOURCE_EFFECT_CACHE_BOSS_SLOT + 1u
+        ) {
+            source_effect_frame_slot[frame_key] = 0;
+        }
+        source_effect_cache_frame_key[
+            SOURCE_EFFECT_CACHE_BOSS_SLOT
+        ] = SOURCE_EFFECT_FRAME_KEY_INVALID;
+        source_effect_cancel_pending_slot(
+            SOURCE_EFFECT_CACHE_BOSS_SLOT
+        );
+    }
+    if (source_effect_reward_tiles_required) {
+        u8 frame_key = source_effect_cache_frame_key[
+            SOURCE_EFFECT_CACHE_REWARD_SLOT];
+
+        if (
+            frame_key != SOURCE_EFFECT_FRAME_KEY_INVALID &&
+            source_effect_frame_slot[frame_key] ==
+                SOURCE_EFFECT_CACHE_REWARD_SLOT + 1u
+        ) {
+            source_effect_frame_slot[frame_key] = 0;
+        }
+        source_effect_cache_frame_key[
+            SOURCE_EFFECT_CACHE_REWARD_SLOT
+        ] = SOURCE_EFFECT_FRAME_KEY_INVALID;
+        source_effect_cancel_pending_slot(
+            SOURCE_EFFECT_CACHE_REWARD_SLOT
+        );
+    }
+#endif
     if (source_effect_cache_epoch == 0) {
         u8 index;
 
@@ -1511,10 +1878,9 @@ static void source_effect_cache_begin_frame(void)
             index < SOURCE_EFFECT_CACHE_SLOT_COUNT;
             index++
         ) {
-            source_effect_cache[index].last_epoch = 0;
+            source_effect_cache_last_epoch[index] = 0;
         }
     }
-    source_effect_upload_count = 0;
 }
 
 static void source_effect_cache_end_frame(void)
@@ -1528,8 +1894,9 @@ static void source_effect_cache_end_frame(void)
         index++
     ) {
         if (
-            source_effect_cache[index].valid &&
-            source_effect_cache[index].last_epoch ==
+            source_effect_cache_frame_key[index] !=
+                SOURCE_EFFECT_FRAME_KEY_INVALID &&
+            source_effect_cache_last_epoch[index] ==
                 source_effect_cache_epoch
         ) {
             visible_unique++;
@@ -1543,14 +1910,16 @@ static void source_effect_cache_end_frame(void)
     }
 }
 
-static u16 source_effect_cache_acquire(u8 sequence, u8 frame)
+static __attribute__((noinline, noclone)) u16
+source_effect_cache_acquire(u8 sequence, u8 frame)
 {
     u8 frame_key;
     u8 index;
     u8 free_slot = SOURCE_EFFECT_CACHE_SLOT_COUNT;
     u8 eviction_slot = SOURCE_EFFECT_CACHE_SLOT_COUNT;
-    u32 oldest_epoch = 0xffffffffu;
+    u16 oldest_epoch = 0xffffu;
     u8 selected;
+    u8 mapped_slot;
 
     if (
         sequence >= OBJ_EXPLOSION_SEQUENCE_COUNT ||
@@ -1562,31 +1931,43 @@ static u16 source_effect_cache_acquire(u8 sequence, u8 frame)
     frame_key = (u8)(
         sequence * OBJ_EXPLOSION_FRAME_COUNT + frame
     );
+    mapped_slot = source_effect_frame_slot[frame_key];
+    if (mapped_slot != 0) {
+        index = (u8)(mapped_slot - 1u);
+        if (
+            index < SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+            !source_effect_cache_slot_reserved(index)
+        ) {
+            if (source_effect_cache_frame_key[index] == frame_key) {
+                source_effect_cache_last_epoch[index] =
+                    source_effect_cache_epoch;
+                telemetry_effect_cache_hits++;
+                return source_effect_cache_tile(index);
+            }
+        }
+        /* A time-shared bank was restored or the entry was superseded. */
+        source_effect_frame_slot[frame_key] = 0;
+    }
     for (
         index = 0;
         index < SOURCE_EFFECT_CACHE_SLOT_COUNT;
         index++
     ) {
-        SourceEffectCacheSlot *slot = &source_effect_cache[index];
-
-        if (slot->valid && slot->frame_key == frame_key) {
-            slot->last_epoch = source_effect_cache_epoch;
-            telemetry_effect_cache_hits++;
-            return (u16)(
-                SOURCE_EFFECT_CACHE_TILE_BASE +
-                index * SOURCE_EFFECT_TILES_PER_SLOT
-            );
-        }
-        if (!slot->valid) {
+        if (source_effect_cache_slot_reserved(index)) continue;
+        if (
+            source_effect_cache_frame_key[index] ==
+            SOURCE_EFFECT_FRAME_KEY_INVALID
+        ) {
             if (free_slot == SOURCE_EFFECT_CACHE_SLOT_COUNT) {
                 free_slot = index;
             }
         } else if (
-            slot->last_epoch != source_effect_cache_epoch &&
-            slot->last_epoch < oldest_epoch
+            source_effect_cache_last_epoch[index] !=
+                source_effect_cache_epoch &&
+            source_effect_cache_last_epoch[index] < oldest_epoch
         ) {
             eviction_slot = index;
-            oldest_epoch = slot->last_epoch;
+            oldest_epoch = source_effect_cache_last_epoch[index];
         }
     }
     selected = free_slot != SOURCE_EFFECT_CACHE_SLOT_COUNT ?
@@ -1596,19 +1977,39 @@ static u16 source_effect_cache_acquire(u8 sequence, u8 frame)
         telemetry_effect_cache_drops++;
         return 0xffff;
     }
-    if (source_effect_cache[selected].valid) {
+    if (
+        source_effect_cache_frame_key[selected] !=
+        SOURCE_EFFECT_FRAME_KEY_INVALID
+    ) {
+        u8 old_frame_key = source_effect_cache_frame_key[selected];
+
+        if (
+            source_effect_frame_slot[old_frame_key] == selected + 1u
+        ) {
+            source_effect_frame_slot[old_frame_key] = 0;
+        }
         telemetry_effect_cache_evictions++;
     }
-    if (
-        source_effect_upload_count >= SOURCE_EFFECT_CACHE_SLOT_COUNT
-    ) {
+    for (index = 0; index < source_effect_upload_count; index++) {
+        if (source_effect_uploads[index].slot == selected) {
+            source_effect_cache_frame_key[selected] = frame_key;
+            source_effect_cache_last_epoch[selected] =
+                source_effect_cache_epoch;
+            source_effect_frame_slot[frame_key] = selected + 1u;
+            source_effect_uploads[index].frame_key = frame_key;
+            telemetry_effect_cache_misses++;
+            telemetry_effect_cache_upload_coalesces++;
+            return source_effect_cache_tile(selected);
+        }
+    }
+    if (source_effect_upload_count >= SOURCE_EFFECT_CACHE_SLOT_COUNT) {
         telemetry_effect_cache_drops++;
         return 0xffff;
     }
-    source_effect_cache[selected].valid = 1;
-    source_effect_cache[selected].frame_key = frame_key;
-    source_effect_cache[selected].last_epoch =
+    source_effect_cache_frame_key[selected] = frame_key;
+    source_effect_cache_last_epoch[selected] =
         source_effect_cache_epoch;
+    source_effect_frame_slot[frame_key] = selected + 1u;
     source_effect_uploads[source_effect_upload_count].slot = selected;
     source_effect_uploads[source_effect_upload_count].frame_key =
         frame_key;
@@ -1621,10 +2022,7 @@ static u16 source_effect_cache_acquire(u8 sequence, u8 frame)
         telemetry_effect_cache_max_uploads =
             source_effect_upload_count;
     }
-    return (u16)(
-        SOURCE_EFFECT_CACHE_TILE_BASE +
-        selected * SOURCE_EFFECT_TILES_PER_SLOT
-    );
+    return source_effect_cache_tile(selected);
 }
 
 static void source_effect_cache_commit(void)
@@ -1643,12 +2041,17 @@ static void source_effect_cache_commit(void)
             ) * 32;
         u8 *target =
             (u8 *)OBJ_BASE_ADR +
-            (
-                SOURCE_EFFECT_CACHE_TILE_BASE +
-                upload->slot * SOURCE_EFFECT_TILES_PER_SLOT
-            ) * 32;
+            source_effect_cache_tile(upload->slot) * 32;
 
         dmaCopy(source, target, SOURCE_EFFECT_FRAME_BYTES);
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        if (upload->slot == SOURCE_EFFECT_CACHE_BOSS_SLOT) {
+            source_effect_boss_bar_tiles_dirty = 1;
+        }
+        if (upload->slot == SOURCE_EFFECT_CACHE_REWARD_SLOT) {
+            source_effect_reward_tiles_dirty = 1;
+        }
+#endif
         telemetry_effect_cache_uploads++;
         telemetry_effect_cache_upload_bytes +=
             SOURCE_EFFECT_FRAME_BYTES;
@@ -2677,14 +3080,27 @@ static void source_runtime_reset(void)
         0,
         sizeof(source_projectile_uploads)
     );
-    memset(source_effect_cache, 0, sizeof(source_effect_cache));
+    memset(
+        source_effect_cache_last_epoch,
+        0,
+        sizeof(source_effect_cache_last_epoch)
+    );
+    memset(
+        source_effect_cache_frame_key,
+        SOURCE_EFFECT_FRAME_KEY_INVALID,
+        sizeof(source_effect_cache_frame_key)
+    );
     memset(source_effect_uploads, 0, sizeof(source_effect_uploads));
+    memset(source_effect_frame_slot, 0, sizeof(source_effect_frame_slot));
     source_enemy_cache_epoch = 0;
     source_enemy_upload_count = 0;
     source_projectile_cache_epoch = 0;
     source_projectile_upload_count = 0;
     source_effect_cache_epoch = 0;
     source_effect_upload_count = 0;
+    source_effect_boss_bar_tiles_dirty = 0;
+    source_effect_reward_tiles_dirty = 0;
+    source_effect_reward_tiles_required = 0;
     telemetry_sprite2_l2_hits = 0;
     telemetry_sprite2_l2_misses = 0;
     telemetry_sprite2_l2_evictions = 0;
@@ -2739,6 +3155,8 @@ static void source_runtime_reset(void)
     telemetry_sprite2_uploads = 0;
     telemetry_sprite2_upload_bytes = 0;
     telemetry_sprite2_compact_uploads = 0;
+    telemetry_sprite2_split_uploads = 0;
+    telemetry_sprite2_upload_coalesces = 0;
     telemetry_sprite2_max_uploads = 0;
     telemetry_sprite2_max_visible_unique = 0;
     telemetry_boss_perf_started = 0;
@@ -2773,6 +3191,7 @@ static void source_runtime_reset(void)
     telemetry_effect_cache_drops = 0;
     telemetry_effect_cache_uploads = 0;
     telemetry_effect_cache_upload_bytes = 0;
+    telemetry_effect_cache_upload_coalesces = 0;
     telemetry_effect_cache_max_uploads = 0;
     telemetry_effect_cache_max_visible_unique = 0;
 }

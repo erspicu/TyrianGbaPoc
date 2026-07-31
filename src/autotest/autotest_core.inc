@@ -60,8 +60,8 @@ extern void *fake_heap_high_water;
 #define AUTOTEST_STACK_CANARY_WORD 0xD34DB33Fu
 #define AUTOTEST_STACK_CANARY_INIT_GUARD_BYTES 64u
 
-static u32 *autotest_stack_canary_end;
-static u32 autotest_stack_canary_filled_bytes;
+static u32 *autotest_stack_canary_end EWRAM_BSS;
+static u32 autotest_stack_canary_filled_bytes EWRAM_BSS;
 
 /*
  * Fill only the linker-free IWRAM interval below the currently active C

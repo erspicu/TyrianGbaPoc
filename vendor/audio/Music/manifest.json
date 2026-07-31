@@ -1,6 +1,6 @@
 {
   "format": "TYM1",
-  "source": "C:\\ai_project\\AprTyrianNes\\org\\AprCSTyrian\\Build\\data\\music.mus",
+  "source": "project-local TYM1 exports in vendor/audio/Music",
   "sourceSha256": "b06a509bd8576f63c61859e3a2c59482c4035d79f21725f9ec10479377044a74",
   "trackCount": 41,
   "totalBytes": 1235984,
