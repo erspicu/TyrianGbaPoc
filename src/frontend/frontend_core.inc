@@ -79,6 +79,16 @@ enum {
     FRONTEND_NAV_WINDOW_X1 = 101,
     FRONTEND_NAV_WINDOW_Y0 = 26,
     FRONTEND_NAV_WINDOW_Y1 = 132,
+    /*
+     * OpenTyrian JE_weaponViewFrame clears source (8,8)..(143,182).
+     * The menu presentation is the exact 4/5 transform used by every other
+     * 300x200 front-end element.  WIN0 keeps the hardware OBJ simulator
+     * inside that source aperture while the Mode-4 chrome remains intact.
+     */
+    FRONTEND_UPGRADE_SIM_WINDOW_X0 = 6,
+    FRONTEND_UPGRADE_SIM_WINDOW_X1 = 120,
+    FRONTEND_UPGRADE_SIM_WINDOW_Y0 = 6,
+    FRONTEND_UPGRADE_SIM_WINDOW_Y1 = 147,
 };
 
 #define FRONTEND_MODE4_PAGE0 ((u8 *)0x06000000)
@@ -285,6 +295,17 @@ static void frontend_render_upgrade_submenu_update(
 );
 static void frontend_nav_obj_commit_vblank(void);
 static void frontend_nav_obj_disable(void);
+static u8 frontend_upgrade_sim_is_active(void);
+static u8 frontend_upgrade_sim_category_active(void);
+static void frontend_upgrade_sim_enter_begin(void);
+static void frontend_upgrade_sim_enter_stars(u8 processed, u8 count);
+static void frontend_upgrade_sim_enter_loadout(void);
+static void frontend_upgrade_sim_enter_prepare(void);
+static void frontend_upgrade_sim_enter_finish(void);
+static void frontend_upgrade_sim_update(void);
+static void frontend_upgrade_sim_mark_loadout_dirty(void);
+static void frontend_upgrade_sim_commit_vblank(void);
+static void frontend_upgrade_sim_disable(void);
 static u8 frontend_nav_dot_count(u8 destination);
 static s16 frontend_nav_part_way(
     s16 start,
@@ -518,7 +539,30 @@ static void frontend_campaign_apply_level_script(
         level->cube_operation,
         level->cube_operation_count
     );
-    frontend_level_cube_start_count = frontend_data_cube_count;
+    /*
+     * OpenTyrian JE_main() resets cubeMax to zero after JE_loadMap() has
+     * selected the playable level.  Cube pickups therefore describe only
+     * the level just played; the following map section replaces cubeList
+     * and clamps that new list to the number actually collected.  Carrying
+     * the pre-level menu's four records forward made every post-Tyrian
+     * message visible even when the player collected none.
+     */
+    frontend_data_cube_count = 0;
+    frontend_level_cube_start_count = 0;
+    frontend_data_cache_valid = 0;
+}
+
+static void frontend_campaign_capture_level_cubes(void)
+{
+    u32 total =
+        frontend_level_cube_start_count +
+        source_parity_level.data_cube_pickup_count;
+
+    frontend_data_cube_count =
+        total > OT_EPISODE_CUBE_CAPACITY ?
+            OT_EPISODE_CUBE_CAPACITY :
+            (u8)total;
+    frontend_data_cache_valid = 0;
 }
 
 static void frontend_campaign_sync_from_level(void)
@@ -553,18 +597,308 @@ static void frontend_campaign_sync_from_level(void)
         source_parity_level.player_sidekick_series;
     frontend_player_items.weapon_mode =
         source_parity_level.player_weapon_mode;
-    {
-        u32 total =
-            frontend_level_cube_start_count +
-            source_parity_level.data_cube_pickup_count;
-
-        frontend_data_cube_count =
-            total > OT_EPISODE_CUBE_CAPACITY ?
-                OT_EPISODE_CUBE_CAPACITY :
-                (u8)total;
-        frontend_data_cache_valid = 0;
-    }
+    frontend_campaign_capture_level_cubes();
 }
+
+#ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
+typedef union {
+    OtEpisodeMap map;
+    OtEpisodeLevel level;
+} FrontendCampaignAutotestRecord;
+
+/* The source parser records are hundreds of bytes each; one reusable cold
+ * union keeps deterministic regressions off the shared IWRAM call stack. */
+static FrontendCampaignAutotestRecord
+    frontend_campaign_autotest_record EWRAM_BSS;
+
+/*
+ * Exercise the exact Episode 1 source route without entering rendering:
+ * intro Data (1,2,23,5) -> Tyrian pickups -> Asteroid decision Data
+ * (6,7,12,18) -> Asteroid 1 pickups -> Savara Data (15,13,28).
+ * Every global touched here is restored before returning.
+ */
+static u8 frontend_campaign_data_cube_progression_autotest(void)
+{
+    static const u8 after_tyrian[OT_EPISODE_CUBE_CAPACITY] = {
+        6, 7, 12, 18
+    };
+    static const u8 after_asteroid[OT_EPISODE_CUBE_CAPACITY] = {
+        15, 13, 28, 0
+    };
+    FrontendCampaignAutotestRecord *record =
+        &frontend_campaign_autotest_record;
+    u8 saved_count = frontend_data_cube_count;
+    u8 saved_list[OT_EPISODE_CUBE_CAPACITY];
+    u8 saved_cache_valid = frontend_data_cache_valid;
+    u8 saved_start_count = frontend_level_cube_start_count;
+    u32 saved_pickups = source_parity_level.data_cube_pickup_count;
+    u8 passed = 1;
+
+    memcpy(saved_list, frontend_data_cube_list, sizeof(saved_list));
+    if (
+        !ot_data_episode_level_resolve(
+            1,
+            3,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            &record->level
+        )
+    ) {
+        passed = 0;
+        goto restore;
+    }
+
+    frontend_data_cube_count = 4;
+    frontend_campaign_apply_level_script(&record->level);
+    if (
+        frontend_data_cube_count != 0 ||
+        frontend_level_cube_start_count != 0
+    ) {
+        passed = 0;
+    }
+    source_parity_level.data_cube_pickup_count = 2;
+    frontend_campaign_capture_level_cubes();
+    if (
+        !ot_data_episode_map_resolve(
+            1,
+            4,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            &record->map
+        )
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_campaign_apply_map_script(&record->map);
+    if (
+        frontend_data_cube_count != 2 ||
+        memcmp(
+            frontend_data_cube_list,
+            after_tyrian,
+            sizeof(after_tyrian)
+        ) != 0
+    ) {
+        passed = 0;
+    }
+
+    if (
+        !ot_data_episode_level_resolve(
+            1,
+            5,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            &record->level
+        ) ||
+        record->level.next_section != 8
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_campaign_apply_level_script(&record->level);
+    source_parity_level.data_cube_pickup_count = 1;
+    frontend_campaign_capture_level_cubes();
+    if (
+        !ot_data_episode_map_resolve(
+            1,
+            8,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            &record->map
+        )
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_campaign_apply_map_script(&record->map);
+    if (
+        frontend_data_cube_count != 1 ||
+        memcmp(
+            frontend_data_cube_list,
+            after_asteroid,
+            sizeof(after_asteroid)
+        ) != 0
+    ) {
+        passed = 0;
+    }
+
+restore:
+    frontend_data_cube_count = saved_count;
+    memcpy(frontend_data_cube_list, saved_list, sizeof(saved_list));
+    frontend_data_cache_valid = saved_cache_valid;
+    frontend_level_cube_start_count = saved_start_count;
+    source_parity_level.data_cube_pickup_count = saved_pickups;
+    return passed;
+}
+
+static u8 frontend_campaign_item_group_matches(
+    const OtEpisodeMap *map,
+    u8 group,
+    const u8 *expected,
+    u8 expected_count
+)
+{
+    return
+        map != 0 &&
+        map->item_inventory_valid &&
+        group < OT_EPISODE_ITEM_GROUP_COUNT &&
+        map->item_count[group] == expected_count &&
+        memcmp(
+            map->item_avail[group],
+            expected,
+            expected_count
+        ) == 0;
+}
+
+/*
+ * Exact JE_loadMap inventory regression for the first Episode 1 merchant,
+ * the post-Tyrian merchant, and the stock ]G -> ]J -> ]I Savara chain.
+ * These are source IDs from levels1.dat, not a GBA-authored shop catalog.
+ */
+static u8 frontend_campaign_upgrade_inventory_autotest(void)
+{
+    static const u8 initial_ship[] = {1};
+    static const u8 initial_front[] = {13, 2, 7};
+    static const u8 initial_rear[] = {0, 11, 10, 29};
+    static const u8 initial_generator[] = {1, 2, 3};
+    static const u8 initial_left[] = {0, 9, 16, 30};
+    static const u8 initial_right[] = {0, 9, 20, 30};
+    static const u8 initial_shield[] = {1, 2, 3};
+    static const u8 after_ship[] = {1};
+    static const u8 after_front[] = {2, 13, 17};
+    static const u8 after_rear[] = {0, 11, 12};
+    static const u8 after_generator[] = {1, 2, 3};
+    static const u8 after_left[] = {0, 1, 19, 15};
+    static const u8 after_right[] = {0, 1, 19, 15};
+    static const u8 after_shield[] = {3, 4, 5};
+    static const u8 indirect_ship[] = {1};
+    static const u8 indirect_front[] = {1, 2, 17};
+    static const u8 indirect_rear[] = {0, 12, 15, 29};
+    static const u8 indirect_generator[] = {1, 2, 3, 4};
+    static const u8 indirect_left[] = {0, 2, 6, 15};
+    static const u8 indirect_right[] = {0, 2, 6, 15};
+    static const u8 indirect_shield[] = {3, 4};
+    OtEpisodeMap *map = &frontend_campaign_autotest_record.map;
+
+    if (
+        !ot_data_episode_map_resolve(
+            1,
+            1,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            map
+        ) ||
+        map->resolved_section != 2 ||
+        !frontend_campaign_item_group_matches(
+            map, 0, initial_ship, sizeof(initial_ship)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 1, initial_front, sizeof(initial_front)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 2, initial_rear, sizeof(initial_rear)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 3, initial_generator, sizeof(initial_generator)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 5, initial_left, sizeof(initial_left)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 6, initial_right, sizeof(initial_right)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 8, initial_shield, sizeof(initial_shield)
+        )
+    ) {
+        return 0;
+    }
+    if (
+        !ot_data_episode_map_resolve(
+            1,
+            4,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            map
+        ) ||
+        map->resolved_section != 4 ||
+        !frontend_campaign_item_group_matches(
+            map, 0, after_ship, sizeof(after_ship)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 1, after_front, sizeof(after_front)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 2, after_rear, sizeof(after_rear)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 3, after_generator, sizeof(after_generator)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 5, after_left, sizeof(after_left)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 6, after_right, sizeof(after_right)
+        ) ||
+        !frontend_campaign_item_group_matches(
+            map, 8, after_shield, sizeof(after_shield)
+        )
+    ) {
+        return 0;
+    }
+    return
+        ot_data_episode_map_resolve(
+            1,
+            7,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            map
+        ) &&
+        map->resolved_section == 7 &&
+        frontend_campaign_item_group_matches(
+            map,
+            0,
+            indirect_ship,
+            sizeof(indirect_ship)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            1,
+            indirect_front,
+            sizeof(indirect_front)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            2,
+            indirect_rear,
+            sizeof(indirect_rear)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            3,
+            indirect_generator,
+            sizeof(indirect_generator)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            5,
+            indirect_left,
+            sizeof(indirect_left)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            6,
+            indirect_right,
+            sizeof(indirect_right)
+        ) &&
+        frontend_campaign_item_group_matches(
+            map,
+            8,
+            indirect_shield,
+            sizeof(indirect_shield)
+        );
+}
+#endif
 _Static_assert(
     FRONTEND_CUBE_BYTES ==
         FRONTEND_CUBE_WIDTH * FRONTEND_CUBE_HEIGHT,
@@ -1095,6 +1429,23 @@ static void frontend_commit_mode4_registers(void)
             OBJ_ON |
             OBJ_1D_MAP |
             (1u << 13);
+    } else if (
+        game_state == STATE_UPGRADE_SUBMENU &&
+        frontend_upgrade_sim_is_active()
+    ) {
+        REG_WIN0H =
+            (FRONTEND_UPGRADE_SIM_WINDOW_X0 << 8) |
+            FRONTEND_UPGRADE_SIM_WINDOW_X1;
+        REG_WIN0V =
+            (FRONTEND_UPGRADE_SIM_WINDOW_Y0 << 8) |
+            FRONTEND_UPGRADE_SIM_WINDOW_Y1;
+        REG_WININ = (1u << 2) | (1u << 4);
+        REG_WINOUT = 1u << 2;
+        REG_BG2CNT = BG_PRIORITY(1);
+        display |=
+            OBJ_ON |
+            OBJ_1D_MAP |
+            (1u << 13);
     } else {
         REG_WININ = 0;
         REG_WINOUT = 0;
@@ -1468,6 +1819,7 @@ static void frontend_commit_vblank(void)
     u8 *target;
 
     frontend_nav_obj_commit_vblank();
+    frontend_upgrade_sim_commit_vblank();
     if (frontend_frame_pending) {
         if (
             frontend_pending_kind ==

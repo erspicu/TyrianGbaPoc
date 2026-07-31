@@ -53,6 +53,252 @@ static u16 autotest_frontend_transition_count;
 static u32 autotest_frontend_transition_vblank_start;
 static u32 autotest_frontend_transition_max_cycles;
 static u32 autotest_frontend_transition_failures;
+static u8 autotest_frontend_data_progression_checked;
+static u8 autotest_frontend_upgrade_inventory_checked;
+static u8 autotest_frontend_upgrade_transaction_checked;
+static u8 autotest_frontend_upgrade_transaction_failed;
+
+typedef struct {
+    FrontendPlayerItems items;
+    FrontendPlayerItems accepted_items;
+    FrontendPlayerItems level_items;
+    FrontendSaveSlot save_slot;
+    u8 sub_item[OT_EPISODE_ITEM_GROUP_CAPACITY + 1];
+    u8 sub_power[OT_EPISODE_ITEM_GROUP_CAPACITY + 1];
+} AutotestFrontendUpgradeSnapshot;
+
+/* Keep the regression snapshot out of the 32 KiB IWRAM IRQ/main stack. */
+static AutotestFrontendUpgradeSnapshot
+    autotest_frontend_upgrade_snapshot EWRAM_BSS;
+
+/*
+ * Source-chain regression for game_menu.c's two-confirm purchase protocol:
+ * preview -> Done without accepting restores old_items; preview -> first
+ * confirm snapshots old_items; the second confirm charges JE_cashLeft().
+ * The committed values must then feed both level setup and save capture.
+ */
+static u8 autotest_frontend_upgrade_transaction(void)
+{
+    AutotestFrontendUpgradeSnapshot *snapshot =
+        &autotest_frontend_upgrade_snapshot;
+
+    snapshot->items = frontend_player_items;
+    snapshot->accepted_items = frontend_upgrade_accepted_items;
+    snapshot->save_slot = frontend_save_slot[0];
+    snapshot->level_items = (FrontendPlayerItems){
+        .ship = source_parity_level.player_ship,
+        .weapon = {
+            {
+                source_parity_level.player_front_weapon_id,
+                source_parity_level.player_front_weapon_power
+            },
+            {
+                source_parity_level.player_rear_weapon_id,
+                source_parity_level.player_rear_weapon_power
+            }
+        },
+        .shield = source_parity_level.player_shield_item,
+        .generator = source_parity_level.player_generator,
+        .sidekick = {
+            source_parity_level.player_sidekick[0],
+            source_parity_level.player_sidekick[1]
+        },
+        .special = source_parity_level.player_special,
+        .sidekick_level = source_parity_level.player_sidekick_level,
+        .sidekick_series = source_parity_level.player_sidekick_series,
+        .super_arcade_mode =
+            source_parity_level.player_super_arcade_mode,
+        .weapon_mode = source_parity_level.player_weapon_mode,
+    };
+    u32 saved_cash = player_cash;
+    u32 saved_trade_cash = frontend_upgrade_trade_cash;
+    u16 saved_cache_valid = frontend_save_slot_row_cache_valid;
+    u8 saved_category = frontend_upgrade_category;
+    u8 saved_count = frontend_upgrade_sub_count;
+    u8 saved_scroll = frontend_upgrade_sub_scroll;
+    u8 saved_selection = frontend_selection;
+    u8 saved_items_valid = frontend_player_items_valid;
+    u8 saved_quit_cache_valid = frontend_quit_dialog_cache_valid;
+    u8 saved_quit_cache_selection =
+        frontend_quit_dialog_cache_selection;
+    u8 item_index = 0xffu;
+    u8 power = 1;
+    u8 index;
+    u8 passed = 1;
+    u32 expected_cash;
+
+    memcpy(
+        snapshot->sub_item,
+        frontend_upgrade_sub_item,
+        sizeof(snapshot->sub_item)
+    );
+    memcpy(
+        snapshot->sub_power,
+        frontend_upgrade_sub_power,
+        sizeof(snapshot->sub_power)
+    );
+    frontend_player_items_valid = 1;
+    frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id = 1;
+    frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power = 1;
+    player_cash = 10000u;
+
+    if (!frontend_upgrade_begin_submenu(
+            FRONTEND_UPGRADE_FRONT_WEAPON
+        )) {
+        passed = 0;
+        goto restore;
+    }
+    for (index = 0; index < frontend_upgrade_sub_count; index++) {
+        if (frontend_upgrade_sub_item[index] == 2) {
+            item_index = index;
+            break;
+        }
+    }
+    if (item_index == 0xffu) {
+        passed = 0;
+        goto restore;
+    }
+
+    /* Merely navigating to Done must restore the entry equipment. */
+    frontend_selection = item_index;
+    frontend_upgrade_apply_preview();
+    frontend_selection = frontend_upgrade_sub_count;
+    frontend_upgrade_apply_preview();
+    frontend_upgrade_commit_transaction();
+    if (
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id != 1 ||
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power != 1 ||
+        player_cash != 10000u
+    ) {
+        passed = 0;
+        goto restore;
+    }
+
+    /* First confirm accepts item 2; the Done confirm must charge it. */
+    if (!frontend_upgrade_begin_submenu(
+            FRONTEND_UPGRADE_FRONT_WEAPON
+        )) {
+        passed = 0;
+        goto restore;
+    }
+    item_index = 0xffu;
+    for (index = 0; index < frontend_upgrade_sub_count; index++) {
+        if (frontend_upgrade_sub_item[index] == 2) {
+            item_index = index;
+            break;
+        }
+    }
+    if (item_index == 0xffu) {
+        passed = 0;
+        goto restore;
+    }
+    if (
+        frontend_upgrade_total_cost(
+            FRONTEND_UPGRADE_FRONT_WEAPON,
+            2,
+            2
+        ) <= frontend_upgrade_trade_cash
+    ) {
+        power = 2;
+    }
+    frontend_selection = item_index;
+    frontend_upgrade_sub_power[item_index] = power;
+    frontend_upgrade_apply_preview();
+    expected_cash = frontend_upgrade_trade_cash -
+        frontend_upgrade_total_cost(
+            FRONTEND_UPGRADE_FRONT_WEAPON,
+            2,
+            power
+        );
+    frontend_upgrade_accept_preview();
+    frontend_selection = frontend_upgrade_sub_count;
+    frontend_upgrade_apply_preview();
+    frontend_upgrade_commit_transaction();
+    if (
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id != 2 ||
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power != power ||
+        player_cash != expected_cash
+    ) {
+        passed = 0;
+        goto restore;
+    }
+
+    frontend_campaign_apply_to_level();
+    if (
+        source_parity_level.player_front_weapon_id != 2 ||
+        source_parity_level.player_front_weapon_power != power
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_save_capture_slot(0);
+    if (
+        frontend_save_slot[0].items.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].id != 2 ||
+        frontend_save_slot[0].items.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].power != power ||
+        frontend_save_slot[0].cash != expected_cash
+    ) {
+        passed = 0;
+    }
+
+restore:
+    frontend_player_items = snapshot->items;
+    frontend_upgrade_accepted_items = snapshot->accepted_items;
+    frontend_player_items_valid = saved_items_valid;
+    player_cash = saved_cash;
+    frontend_upgrade_trade_cash = saved_trade_cash;
+    frontend_upgrade_category = saved_category;
+    frontend_upgrade_sub_count = saved_count;
+    frontend_upgrade_sub_scroll = saved_scroll;
+    frontend_selection = saved_selection;
+    memcpy(
+        frontend_upgrade_sub_item,
+        snapshot->sub_item,
+        sizeof(snapshot->sub_item)
+    );
+    memcpy(
+        frontend_upgrade_sub_power,
+        snapshot->sub_power,
+        sizeof(snapshot->sub_power)
+    );
+    frontend_save_slot[0] = snapshot->save_slot;
+    frontend_save_slot_row_cache_valid = (u16)(
+        saved_cache_valid & ~(u16)1u
+    );
+    frontend_quit_dialog_cache_valid = saved_quit_cache_valid;
+    frontend_quit_dialog_cache_selection =
+        saved_quit_cache_selection;
+    source_parity_level.player_front_weapon_id =
+        snapshot->level_items.weapon[FRONTEND_WEAPON_FRONT].id;
+    source_parity_level.player_front_weapon_power =
+        snapshot->level_items.weapon[FRONTEND_WEAPON_FRONT].power;
+    source_parity_level.player_rear_weapon_id =
+        snapshot->level_items.weapon[FRONTEND_WEAPON_REAR].id;
+    source_parity_level.player_rear_weapon_power =
+        snapshot->level_items.weapon[FRONTEND_WEAPON_REAR].power;
+    source_parity_level.player_special = snapshot->level_items.special;
+    source_parity_level.player_sidekick[0] =
+        snapshot->level_items.sidekick[0];
+    source_parity_level.player_sidekick[1] =
+        snapshot->level_items.sidekick[1];
+    source_parity_level.player_generator =
+        snapshot->level_items.generator;
+    source_parity_level.player_shield_item =
+        snapshot->level_items.shield;
+    source_parity_level.player_ship = snapshot->level_items.ship;
+    source_parity_level.player_super_arcade_mode =
+        snapshot->level_items.super_arcade_mode;
+    source_parity_level.player_sidekick_level =
+        snapshot->level_items.sidekick_level;
+    source_parity_level.player_sidekick_series =
+        snapshot->level_items.sidekick_series;
+    source_parity_level.player_weapon_mode =
+        snapshot->level_items.weapon_mode;
+    return passed;
+}
 
 static void autotest_frontend_transition_counters_reset(
     u32 current_vblank
@@ -78,6 +324,8 @@ static void autotest_frontend_transition_counters_reset(
     autotest_frontend_transition_count = 0;
     autotest_frontend_transition_max_cycles = 0;
     autotest_frontend_transition_failures = 0;
+    autotest_frontend_data_progression_checked = 0;
+    autotest_frontend_upgrade_inventory_checked = 0;
     autotest_frontend_transition_vblank_start =
         telemetry_vblank_irqs;
     last_vblank_seen = current_vblank;
@@ -327,9 +575,23 @@ static void autotest_frontend_transition_step(u8 path)
              */
             if (
                 frontend_data_cube_count != 4 ||
-                frontend_data_page_count != 4
+                frontend_data_page_count != 4 ||
+                frontend_data_cube_list[0] != 1 ||
+                frontend_data_cube_list[1] != 2 ||
+                frontend_data_cube_list[2] != 23 ||
+                frontend_data_cube_list[3] != 5 ||
+                strcmp(
+                    frontend_data_cube_cache[3].header,
+                    "Mom"
+                ) != 0
             ) {
                 autotest_frontend_transition_failures++;
+            }
+            if (!autotest_frontend_data_progression_checked) {
+                if (!frontend_campaign_data_cube_progression_autotest()) {
+                    autotest_frontend_transition_failures++;
+                }
+                autotest_frontend_data_progression_checked = 1;
             }
             frontend_data_cache_valid = 0;
             frontend_start_game_menu_transition_selected(0, 0);
@@ -375,19 +637,130 @@ static void autotest_frontend_transition_step(u8 path)
 
     case FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU:
         if (game_state == STATE_UPGRADE_MENU) {
+            u8 category;
+
+            if (!autotest_frontend_upgrade_inventory_checked) {
+                if (!frontend_campaign_upgrade_inventory_autotest()) {
+                    autotest_frontend_transition_failures++;
+                }
+                for (
+                    category = 0;
+                    category < FRONTEND_UPGRADE_CATEGORY_COUNT;
+                    category++
+                ) {
+                    u8 group = frontend_upgrade_item_group[category];
+                    u8 source_index;
+
+                    if (!frontend_upgrade_begin_submenu(category)) {
+                        autotest_frontend_transition_failures++;
+                        continue;
+                    }
+                    for (
+                        source_index = 0;
+                        source_index < frontend_map.item_count[group];
+                        source_index++
+                    ) {
+                        u8 item = frontend_map.item_avail[
+                            group
+                        ][source_index];
+                        u8 menu_index;
+                        u8 found = 0;
+
+                        for (
+                            menu_index = 0;
+                            menu_index < frontend_upgrade_sub_count;
+                            menu_index++
+                        ) {
+                            if (
+                                frontend_upgrade_sub_item[menu_index] ==
+                                    item
+                            ) {
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            autotest_frontend_transition_failures++;
+                        }
+                    }
+                }
+                autotest_frontend_upgrade_inventory_checked = 1;
+            }
+            category = (u8)(
+                (autotest_frontend_transition_count >> 1) %
+                    FRONTEND_UPGRADE_CATEGORY_COUNT
+            );
             if (
                 !frontend_upgrade_begin_submenu(
-                    FRONTEND_UPGRADE_FRONT_WEAPON
+                    category
                 )
             ) {
                 autotest_frontend_transition_failures++;
                 return;
+            }
+            if (
+                category == FRONTEND_UPGRADE_FRONT_WEAPON &&
+                (
+                    frontend_upgrade_sub_count != 4 ||
+                    frontend_upgrade_sub_item[0] != 1 ||
+                    frontend_upgrade_sub_item[1] != 2 ||
+                    frontend_upgrade_sub_item[2] != 7 ||
+                    frontend_upgrade_sub_item[3] != 13
+                )
+            ) {
+                autotest_frontend_transition_failures++;
             }
             frontend_start_upgrade_submenu_transition(
                 frontend_selection
             );
             frontend_upgrade_apply_preview();
         } else {
+            u8 expected_simulator =
+                frontend_upgrade_category ==
+                    FRONTEND_UPGRADE_FRONT_WEAPON ||
+                frontend_upgrade_category ==
+                    FRONTEND_UPGRADE_REAR_WEAPON ||
+                frontend_upgrade_category ==
+                    FRONTEND_UPGRADE_GENERATOR ||
+                frontend_upgrade_category ==
+                    FRONTEND_UPGRADE_LEFT_SIDEKICK ||
+                frontend_upgrade_category ==
+                    FRONTEND_UPGRADE_RIGHT_SIDEKICK;
+
+            if (
+                frontend_upgrade_sim_is_active() !=
+                    expected_simulator
+            ) {
+                autotest_frontend_transition_failures++;
+            }
+            if (expected_simulator) {
+                u16 ship_pixels = 0;
+                u16 tile_index;
+
+                for (
+                    tile_index = 0;
+                    tile_index <
+                        FRONTEND_UPGRADE_SIM_SHIP_TILES_BYTES;
+                    tile_index++
+                ) {
+                    if (
+                        frontend_upgrade_sim->ship_tiles[tile_index] !=
+                            0
+                    ) {
+                        ship_pixels++;
+                    }
+                }
+                if (
+                    !frontend_upgrade_sim->ship_tile_valid ||
+                    frontend_upgrade_sim->ship.shipgraphic == 0 ||
+                    ship_pixels == 0 ||
+                    !frontend_upgrade_sim->bay[0].valid ||
+                    previous_oam_count == 0 ||
+                    frontend_upgrade_sim->power > 900
+                ) {
+                    autotest_frontend_transition_failures++;
+                }
+            }
             frontend_upgrade_cancel_submenu();
         }
         break;
@@ -624,9 +997,27 @@ static void autotest_frontend_transition_update(u32 current_vblank)
             );
             return;
         }
+        if (
+            autotest_frontend_transition_path ==
+                FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU &&
+            !autotest_frontend_upgrade_transaction_checked
+        ) {
+            autotest_frontend_upgrade_transaction_failed =
+                !autotest_frontend_upgrade_transaction();
+            autotest_frontend_upgrade_transaction_checked = 1;
+            /* Re-enter phase 1 on a fresh LCD period before counters reset. */
+            return;
+        }
         autotest_frontend_transition_counters_reset(
             current_vblank
         );
+        if (
+            autotest_frontend_transition_path ==
+                FRONTEND_TRANSITION_PATH_UPGRADE_SUBMENU &&
+            autotest_frontend_upgrade_transaction_failed
+        ) {
+            autotest_frontend_transition_failures++;
+        }
         autotest_frontend_transition_phase = 2;
         return;
     }

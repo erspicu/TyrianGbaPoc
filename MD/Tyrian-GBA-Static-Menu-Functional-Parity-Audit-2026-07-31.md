@@ -1,7 +1,7 @@
 # Tyrian GBA 靜態選單功能對照稽核
 
 - 日期：2026-07-31
-- GBA 基準：`main` / `5fbc2ba`
+- GBA 基準：`main` / v62 candidate
 - C# 對照基準：`org/AprCSTyrian` / `36e4470`
 
 ## 1. 稽核目的與範圍
@@ -39,7 +39,8 @@ Setup、雙人／Network、鍵盤／搖桿設定及隱藏高難度，不列為�
   2. Easy／Normal／Hard 能生效，但 C# 過關後依金錢提高的動態難度沒有延續。
   3. SRAM Load／Save 可用，但尚未涵蓋 C# 的全部劇情／重玩狀態，也沒有
      C# 的「LAST LEVEL」自動備份。
-  4. Upgrade 的購買與裝備是真功能，但少了 C# 的即時武器發射模擬預覽。
+  4. Upgrade 已補上 C/C# 同一條即時武器發射模擬、兩段確認交易與關卡／
+     存檔套用路徑；GBA 只把軟體像素輸出改接 Mode 4 + OBJ。
   5. JukeBox 可播放全部 41 首音樂，但少了 C# 的音效瀏覽及少數進階快捷鍵。
 
 ## 3. 首頁選項
@@ -102,7 +103,7 @@ C# 同時保存 `initialDifficulty` 與會動態上升的 `difficultyLevel`，�
 |---|---|---|---|
 | Data | 使用 campaign 實際取得的 cube list，從 ROMFS 讀取標題、人物圖與全文；可選 Cube、閱讀及上下捲動 | **完整** | 沒有只做四張固定假畫面；資料內容及選擇都來自真正狀態 |
 | Ship Specs | 依目前裝備的 ship ID 讀 HDT 船名、說明、圖形與數值並呈現 | **完整／GBA 改寫** | C# 的 scale-in 動畫已改成較適合 GBA 的硬體轉場；資訊功能相同 |
-| Upgrade Ship | 讀當前 Episode 的真實 item inventory；預覽價格、武器 power、賣回價，確認後扣款並改變下一關裝備 | **部分** | 購買不是假功能；但 C# 子選單會即時模擬船、前後武器、sidekick 發射與 power bar，GBA 目前只有靜態裝備圖與資料預覽 |
+| Upgrade Ship | 讀當前 Episode 的真實 item inventory；預覽價格、武器 power、賣回價，採來源的兩段確認後扣款並改變下一關裝備；前後武器、Generator、左右 Sidekick 會執行即時發射模擬與 power bar | **完整／GBA 改寫** | 狀態、商品、成本、射擊與確認控制流直接對照來源；只把 PC 軟體 blit 改為 GBA Mode 4 + OBJ、分幀轉場與 4/5 座標 adapter |
 | Options | 進入真正的 Load／Save／Done 頁 | **完整（容器）** | 只保留 GBA 已顯示的三項；PC 其他設定未顯示，故不列缺漏 |
 | Play Next Level | 由 map script 產生真正目的地；確認後寫入對應 map section 並載入該關，Arcade 會取最後一條路線 | **完整** | 不是固定回第一關，也不是純 UI |
 | Quit Game | 開啟 Yes／Cancel 對話；Yes 清除目前 campaign 並回首頁，Cancel 回 Game Menu | **完整** | 核心結果與 C# 相同 |
@@ -113,25 +114,28 @@ GBA 主分派位於
 
 ## 6. Upgrade Ship 子選項
 
-下列八個畫面項目都有 handler。前七項都會修改 `frontend_player_items`，確認後
-更新現金；進入下一關時再由 equipment setup 套用到真實 gameplay。
+下列八個畫面項目都有 handler。前七項都會修改 `frontend_player_items`；
+第一次確認把預覽寫入等同 `old_items[0]` 的 accepted snapshot 並移到 Done，
+第二次確認才執行等同 `JE_cashLeft()` 的結帳。進入下一關與 SRAM capture
+都讀取同一份已確認裝備。
 
 | 顯示項目 | 真正影響 | 判定 |
 |---|---|---|
 | Ship Type | 船體圖形、動畫及 Armor 上限 | **完整（購買／裝備）** |
-| Front Gun | 前武器 ID、power、射擊資料及成本 | **完整（購買／裝備）** |
-| Rear Gun | 後武器 ID、power；R 可切換該武器的 mode | **完整（購買／裝備）** |
+| Front Gun | 前武器 ID、power、射擊資料及成本；即時執行來源 `player_shot_create()`／`simulate_player_shots()` 路徑 | **完整／GBA 改寫** |
+| Rear Gun | 後武器 ID、power；R 可切換該武器的 mode；即時模擬對應 port mode | **完整／GBA 改寫** |
 | Shield | Shield 類型、初始值及上限 | **完整（購買／裝備）** |
-| Generator | 武器能源回復與護盾充能能力 | **完整（購買／裝備）** |
-| Left Sidekick | 左側 sidekick 實際種類與射擊 | **完整（購買／裝備）** |
-| Right Sidekick | 右側 sidekick 實際種類與射擊 | **完整（購買／裝備）** |
+| Generator | 武器能源回復與護盾充能能力；預覽 power bar 依真實 `powerSys[].power` 回充 | **完整／GBA 改寫** |
+| Left Sidekick | 左側 sidekick 實際種類、位置與即時射擊 | **完整／GBA 改寫** |
+| Right Sidekick | 右側 sidekick 實際種類、style 2 位置與即時射擊 | **完整／GBA 改寫** |
 | Done | 保留已確認交易並回 Game Menu | **完整** |
 
-共同缺漏只有 **C# 的 live weapon simulator**，不是商品購買或裝備套用缺漏。
-C# 對照函式為 `JE_initWeaponView()`、`JE_weaponViewFrame()`、
-`JE_weaponSimUpdate()`；GBA 現況可見
-[`frontend_menus.inc:809-1098`](../src/frontend/frontend_menus.inc#L809) 與
-[`level_setup.inc:202-234`](../src/level_setup.inc#L202)。
+即時預覽不是重新設計的動畫：初始化常數、81 發 shot pool、100 顆星、
+weapon-port op、shot repeat/multi-position、Sprite2 graphic、聲音 queue、
+邊界、動畫與 Generator bar 都逐段翻寫自 `JE_initWeaponView()`、
+`JE_weaponViewFrame()`、`JE_weaponSimUpdate()`、`player_shot_create()` 與
+`simulate_player_shots()`。平台 adapter 只負責把來源 320x200 座標套用
+既有 4/5 轉換，並以硬體 OBJ、WIN0 clipping、VBlank DMA 呈現。
 
 ## 7. Options、Load 與 Save
 
@@ -156,7 +160,7 @@ C# 對照函式為 `JE_initWeaponView()`、`JE_weaponViewFrame()`、
 | `initialDifficulty` 與 `difficultyLevel` 分離 | 保留玩家最初選擇，同時允許動態難度上升 | GBA 只存一個 difficulty；補動態難度時必須升級 SRAM schema |
 | `gameHasRepeated` | 記錄跨 Episode／重玩狀態，影響後續流程判斷 | GBA 沒有同等 campaign 欄位 |
 | `secretHint` | 部分 map／秘密內容的隨機提示狀態 | GBA 沒有同等 campaign 欄位 |
-| `last_items` | C# 商店／存檔保留進入選單前的裝備快照 | GBA 商店以 current item 重建可售清單，沒有獨立快照；目前一般購買可用，但不是相同狀態模型 |
+| `last_items` | C# 存檔保留上一份裝備；商店另以 `old_items` 作本次交易 snapshot | GBA 商店已有 transient `frontend_upgrade_accepted_items`，其更新時點與 `JE_menuFunction()` 結尾一致；SRAM 尚未另存跨 session 的 `last_items` 欄位 |
 | 自動 slot 11 `LAST LEVEL` 備份 | C# 每關結束後建立上一關備份 | GBA 11 槽目前全為手動存檔，沒有自動 checkpoint |
 
 PC 的雙人欄位、input device 與 High Score 欄位沒有相對應的 GBA 顯示功能，
@@ -201,17 +205,18 @@ PC 的雙人欄位、input device 與 High Score 欄位沒有相對應的 GBA �
 
 ### P2：功能體驗完整度
 
-1. Upgrade 子畫面增加低成本的 live weapon／sidekick firing preview；交易功能
-   已經可用，不應為此重寫商店狀態機。
-2. JukeBox 視需求補音效瀏覽、Stop／Restart 與 fade toggle。這些不是目前
+1. JukeBox 視需求補音效瀏覽、Stop／Restart 與 fade toggle。這些不是目前
    41 首音樂播放的 blocker。
-3. Episode 列表增加資源 availability 檢查，支援未來裁切版 ROM。
+2. Episode 列表增加資源 availability 檢查，支援未來裁切版 ROM。
 
 ## 10. 驗證與證據界線
 
 專案現有自動測試已覆蓋 Demo 五檔解析／輸入、JukeBox 切歌與環狀操作、
 11 槽 SRAM round-trip／CRC fallback、Full Game／Arcade route，以及靜態選單
-轉場壓測。這些能證明上述「已實作」項目不是只存在於繪圖碼。
+轉場壓測。Upgrade 額外驗證 Episode 1 三個 `]I` 商店邊界的七類商品、
+預覽不購買、第一次接受／第二次結帳、現金、關卡裝備與存檔 capture；
+120 次子選單轉場的 runtime SHP/Sprite2 decode、missed VBlank 與功能失敗均為 0。
+這些能證明上述「已實作」項目不是只存在於繪圖碼。
 
 本文件仍刻意把以下兩件事分開：
 

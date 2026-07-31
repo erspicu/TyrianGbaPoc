@@ -1062,7 +1062,9 @@ static u8 frontend_text_ready;
 static u8 frontend_map_ready;
 static u8 frontend_level_ready;
 static FrontendPlayerItems frontend_player_items EWRAM_BSS;
-static FrontendPlayerItems frontend_upgrade_original_items EWRAM_BSS;
+/* OpenTyrian game_menu.c old_items[0]: entry loadout, then the accepted
+ * preview after the first confirm while the cursor advances to Done. */
+static FrontendPlayerItems frontend_upgrade_accepted_items EWRAM_BSS;
 static u8 frontend_player_items_valid;
 static u8 frontend_upgrade_category EWRAM_BSS;
 static u8 frontend_upgrade_sub_count EWRAM_BSS;
@@ -1073,7 +1075,6 @@ static u8 frontend_upgrade_sub_power[
     OT_EPISODE_ITEM_GROUP_CAPACITY + 1
 ] EWRAM_BSS;
 static u8 frontend_upgrade_sub_scroll EWRAM_BSS;
-static u32 frontend_upgrade_original_cash EWRAM_BSS;
 static u32 frontend_upgrade_trade_cash EWRAM_BSS;
 static u8 frontend_quit_yes EWRAM_BSS;
 static u8 frontend_quit_dialog_cache_valid EWRAM_BSS;

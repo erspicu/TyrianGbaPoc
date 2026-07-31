@@ -75,6 +75,9 @@ typedef struct {
     u8 line_length;
     u8 draw_index;
     u8 line_ready;
+    /* 0 = shared 4x8 mixed face, 1 = source-like Data tiny face. */
+    u8 font_mode;
+    u8 highlight;
     u8 active;
     char line[67];
 } FrontendWrappedTextJob;
@@ -97,6 +100,7 @@ typedef struct {
     u8 line_offset;
     u8 visual_line;
     u8 char_index;
+    u8 highlight;
     u8 active;
 } FrontendDataReaderPanelJob;
 
@@ -159,6 +163,27 @@ static void frontend_wrapped_text_job_begin(
 static u8 frontend_wrapped_text_job_step(
     FrontendWrappedTextJob *job
 );
+static void frontend_data_wrapped_text_job_begin(
+    FrontendWrappedTextJob *job,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 line_height,
+    u8 max_lines,
+    u8 colour
+);
+static void frontend_data_reader_font_prepare(void);
+static s16 frontend_data_tiny_text_width(const char *text);
+static void frontend_data_tiny_text_clipped_colours(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour,
+    u8 shadow_colour
+);
 
 static const u8 frontend_data_face_palette_index[12] = {
     1, 2, 3, 4, 6, 9, 11, 12, 16, 13, 14, 15,
@@ -174,6 +199,90 @@ static const char *frontend_data_text(u8 index, const char *fallback)
         return frontend_text.misc_text[index];
     }
     return fallback;
+}
+
+enum {
+    /* Zero-based mainMenuHelp[] entries used by PC game_menu.c. */
+    FRONTEND_DATA_HELP_EXIT = 11,
+    FRONTEND_DATA_HELP_LIST = 21,
+    FRONTEND_DATA_HELP_READER = 22,
+};
+
+static u8 frontend_data_help_index(u8 reader)
+{
+    if (reader) return FRONTEND_DATA_HELP_READER;
+    if (
+        frontend_data_page_count == 0 ||
+        frontend_selection >= frontend_data_page_count
+    ) {
+        return FRONTEND_DATA_HELP_EXIT;
+    }
+    return FRONTEND_DATA_HELP_LIST;
+}
+
+static const char *frontend_data_help_text(u8 reader)
+{
+    static const char *const fallback[3] = {
+        "Return to the previous menu.",
+        "Read the selected Data Cube.",
+        "Scroll through this Data Cube.",
+    };
+    u8 source_index = frontend_data_help_index(reader);
+    u8 fallback_index = reader ? 2u :
+        (source_index == FRONTEND_DATA_HELP_EXIT ? 0u : 1u);
+
+    if (
+        frontend_text_ready &&
+        source_index < 34u &&
+        frontend_text.main_menu_help[source_index][0] != '\0'
+    ) {
+        return frontend_text.main_menu_help[source_index];
+    }
+    return fallback[fallback_index];
+}
+
+static void frontend_data_draw_help(u8 reader)
+{
+    u8 source_index = frontend_data_help_index(reader);
+
+    frontend_draw_menu_help(
+        source_index,
+        frontend_data_help_text(reader)
+    );
+}
+
+static const char *frontend_data_menu_header(u8 reader)
+{
+    if (
+        reader &&
+        frontend_data_reader_index < frontend_data_page_count
+    ) {
+        return frontend_data_cube_cache[
+            frontend_data_reader_index
+        ].header;
+    }
+    return frontend_game_menu_label(1);
+}
+
+/* Direct translation of JE_drawMenuHeader() for Data / Data Cube Sub. */
+static void frontend_data_draw_menu_header(u8 reader)
+{
+    const u16 x = frontend_source_to_screen_x(150);
+    const u16 height = frontend_source_to_screen_y(30);
+
+    frontend_restore_menu_chrome_rect(
+        x,
+        0,
+        (u16)(SCREEN_WIDTH - x),
+        height
+    );
+    frontend_draw_menu_text_centered(
+        frontend_frame_scratch,
+        frontend_data_menu_header(reader),
+        frontend_source_to_screen_x(232),
+        frontend_source_to_screen_y(10),
+        0xfbu
+    );
 }
 
 static u8 frontend_data_source_count(void)
@@ -542,12 +651,12 @@ static void frontend_data_draw_selected_header(void)
         const OtDataCube *cube =
             &frontend_data_cube_cache[frontend_selection];
 
-        frontend_draw_small_mixed_text_clipped_colours(
+        frontend_data_tiny_text_clipped_colours(
             frontend_frame_scratch,
             cube->header,
             (s16)(
                 frontend_source_to_screen_x(75) -
-                frontend_small_mixed_text_width(cube->header) / 2
+                frontend_data_tiny_text_width(cube->header) / 2
             ),
             frontend_source_to_screen_y(173),
             FRONTEND_DATA_LEFT_WIDTH,
@@ -621,10 +730,10 @@ static void frontend_data_selected_header_job_begin(void)
             frontend_data_cube_cache[frontend_selection].header;
         x = (s16)(
             frontend_source_to_screen_x(75) -
-            frontend_small_mixed_text_width(header) / 2
+            frontend_data_tiny_text_width(header) / 2
         );
     }
-    frontend_wrapped_text_job_begin(
+    frontend_data_wrapped_text_job_begin(
         &frontend_data_text_job,
         header,
         x,
@@ -642,8 +751,8 @@ static void frontend_data_draw_list_title(u8 cube_slot)
     u8 colour =
         cube_slot == frontend_selection ? 0xfcu : 0xfau;
 
-    frontend_draw_small_mixed_text_wrapped(
-        frontend_frame_scratch,
+    frontend_data_wrapped_text_job_begin(
+        &frontend_data_text_job,
         frontend_data_cube_cache[cube_slot].title,
         FRONTEND_DATA_TEXT_X,
         frontend_source_to_screen_y(
@@ -654,6 +763,11 @@ static void frontend_data_draw_list_title(u8 cube_slot)
         2,
         colour
     );
+    while (!frontend_wrapped_text_job_step(
+        &frontend_data_text_job
+    )) {
+        /* Synchronous fallback; transitions use the bounded job. */
+    }
 }
 
 static void frontend_data_list_title_begin(u8 cube_slot)
@@ -661,7 +775,7 @@ static void frontend_data_list_title_begin(u8 cube_slot)
     u8 colour =
         cube_slot == frontend_selection ? 0xfcu : 0xfau;
 
-    frontend_wrapped_text_job_begin(
+    frontend_data_wrapped_text_job_begin(
         &frontend_data_text_job,
         frontend_data_cube_cache[cube_slot].title,
         FRONTEND_DATA_TEXT_X,
@@ -693,13 +807,14 @@ static void frontend_data_draw_exit_item(void)
         160 :
         (s16)(44 + done_slot * 28);
 
-    frontend_draw_small_mixed_text_clipped(
+    frontend_data_tiny_text_clipped_colours(
         frontend_frame_scratch,
         frontend_data_text(5, "Exit to Game Menu"),
         frontend_source_to_screen_x(172),
         frontend_source_to_screen_y(done_source_y),
         SCREEN_WIDTH,
-        done_slot == frontend_selection ? 0xfcu : 0xfau
+        done_slot == frontend_selection ? 0xfcu : 0xfau,
+        FRONTEND_NEXT_SHADOW_COLOUR
     );
 }
 
@@ -710,7 +825,7 @@ static void frontend_data_exit_text_begin(void)
         160 :
         (s16)(44 + done_slot * 28);
 
-    frontend_wrapped_text_job_begin(
+    frontend_data_wrapped_text_job_begin(
         &frontend_data_text_job,
         frontend_data_text(5, "Exit to Game Menu"),
         frontend_source_to_screen_x(172),
@@ -788,8 +903,8 @@ static u8 frontend_data_selection_item_job_step(u8 cube_slot)
 
 static void frontend_data_draw_empty_message(void)
 {
-    frontend_draw_small_mixed_text_wrapped(
-        frontend_frame_scratch,
+    frontend_data_wrapped_text_job_begin(
+        &frontend_data_text_job,
         frontend_data_text(
             15,
             "No Data is available at this time."
@@ -801,6 +916,11 @@ static void frontend_data_draw_empty_message(void)
         5,
         0xfau
     );
+    while (!frontend_wrapped_text_job_step(
+        &frontend_data_text_job
+    )) {
+        /* Synchronous fallback; transitions use the bounded job. */
+    }
 }
 
 static void frontend_data_draw_list(void)
@@ -823,6 +943,7 @@ static void frontend_data_draw_list(void)
 
 static void frontend_data_compose_list(void)
 {
+    frontend_data_reader_font_prepare();
     memcpy(
         frontend_frame_scratch,
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
@@ -832,6 +953,8 @@ static void frontend_data_compose_list(void)
     frontend_data_portrait_base_capture();
     frontend_data_draw_selected_portrait();
     frontend_data_draw_list();
+    frontend_data_draw_menu_header(0);
+    frontend_data_draw_help(0);
     frontend_data_prepare_palette();
 }
 
@@ -863,6 +986,7 @@ static void frontend_render_data_selection(u8 old_selection)
     }
     frontend_data_draw_selected_portrait();
     frontend_data_draw_list();
+    frontend_data_draw_help(0);
     frontend_data_prepare_palette();
 
     frontend_dirty_begin();
@@ -878,14 +1002,22 @@ static void frontend_render_data_selection(u8 old_selection)
         FRONTEND_DATA_RIGHT_WIDTH,
         FRONTEND_DATA_RIGHT_HEIGHT
     );
+    frontend_dirty_add(
+        0,
+        frontend_menu_help_dirty_y(),
+        SCREEN_WIDTH,
+        (u16)(SCREEN_HEIGHT - frontend_menu_help_dirty_y())
+    );
     frontend_dirty_present_with_palette(frontend_data_face_palette);
 }
 
 /*
- * The reader uses a 3x5 projection of the shared mixed-case pre-game face.
+ * Data pages use a 3/4x5 projection of the shared mixed-case pre-game face.
  * Build the tiny masks once in EWRAM.  The previous per-character renderer
  * repeatedly searched source row/column spans, making ten lines cost several
- * display frames even though the final glyph contains at most 15 pixels.
+ * display frames even though the final glyph contains at most 20 pixels.
+ * Wide M/W/m/w glyphs retain four columns so the source "Mom" cannot collapse
+ * visually into "Non" after the 320x200 -> 240x160 presentation reduction.
  */
 static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
 {
@@ -905,7 +1037,7 @@ static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
         u8 tile = frontend_data_reader_font_prepare_index++;
         u8 source_width = frontend_pregame_font_width(tile);
         u8 target_width =
-            source_width > 3 ? 3 : source_width;
+            source_width > 4 ? 4 : source_width;
         u8 target_row;
 
         frontend_data_reader_font_width[tile] = target_width;
@@ -991,6 +1123,27 @@ static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
         frontend_data_reader_font_prepare_index >
             FRONTEND_PREGAME_FONT_GLYPH_COUNT
     ) {
+        static const u8 uppercase_m[5] = {
+            0x9, 0xf, 0xf, 0x9, 0x9
+        };
+        static const u8 uppercase_n[5] = {
+            0x9, 0xd, 0xd, 0xb, 0x9
+        };
+        static const u8 lowercase_m[5] = {
+            0x0, 0x0, 0xe, 0xb, 0xb
+        };
+        static const u8 lowercase_n[5] = {
+            0x0, 0x0, 0xe, 0x9, 0x9
+        };
+
+        frontend_data_reader_font_width[13] = 4; /* M */
+        frontend_data_reader_font_width[14] = 4; /* N */
+        frontend_data_reader_font_width[39] = 4; /* m */
+        frontend_data_reader_font_width[40] = 4; /* n */
+        memcpy(frontend_data_reader_font_row[13], uppercase_m, 5);
+        memcpy(frontend_data_reader_font_row[14], uppercase_n, 5);
+        memcpy(frontend_data_reader_font_row[39], lowercase_m, 5);
+        memcpy(frontend_data_reader_font_row[40], lowercase_n, 5);
         frontend_data_reader_font_ready = 1;
     }
     return frontend_data_reader_font_ready;
@@ -1003,10 +1156,47 @@ static void frontend_data_reader_font_prepare(void)
     }
 }
 
-static void frontend_data_reader_draw_glyph(
+static u8 frontend_data_tiny_font_advance(u8 tile)
+{
+    if (tile == 0) return 2;
+    return (u8)(frontend_data_reader_font_width[tile] + 1u);
+}
+
+static s16 frontend_data_tiny_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        char character = *text++;
+
+        /* PC JE_outText() treats '~' as brightness control, not a glyph. */
+        if (character == '~') continue;
+        width = (s16)(
+            width +
+            frontend_data_tiny_font_advance(
+                frontend_pregame_font_tile(character)
+            )
+        );
+    }
+    return width;
+}
+
+static u8 frontend_data_tiny_highlight_colour(u8 colour)
+{
+    u8 brightness = (u8)(colour & 0x0fu);
+
+    brightness = brightness > 13u ? 15u : (u8)(brightness + 2u);
+    return (u8)((colour & 0xf0u) | brightness);
+}
+
+static void frontend_data_tiny_draw_glyph(
+    u8 *frame,
     u8 tile,
     s16 x,
-    s16 y
+    s16 y,
+    s16 right,
+    u8 colour,
+    u8 shadow_colour
 )
 {
     u8 width = frontend_data_reader_font_width[tile];
@@ -1028,25 +1218,86 @@ static void frontend_data_reader_draw_glyph(
                     (1u << (width - column - 1u))
                 ) == 0 ||
                 pixel_x < 0 ||
+                pixel_x >= right ||
                 pixel_x >= SCREEN_WIDTH
             ) {
                 continue;
             }
             if (
+                pixel_x + 1 < right &&
                 pixel_x + 1 < SCREEN_WIDTH &&
                 pixel_y + 1 < SCREEN_HEIGHT
             ) {
-                frontend_frame_scratch[
+                frame[
                     (u32)(pixel_y + 1) * SCREEN_WIDTH +
                     (u16)(pixel_x + 1)
-                ] = 0xe2u;
+                ] = shadow_colour;
             }
-            frontend_frame_scratch[
+            frame[
                 (u32)pixel_y * SCREEN_WIDTH +
                 (u16)pixel_x
-            ] = 0xedu;
+            ] = colour;
         }
     }
+}
+
+static void frontend_data_tiny_text_clipped_colours(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour,
+    u8 shadow_colour
+)
+{
+    u8 highlight = 0;
+
+    while (text != 0 && *text != '\0' && x < right) {
+        char character = *text++;
+        u8 tile;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile = frontend_pregame_font_tile(character);
+        advance = frontend_data_tiny_font_advance(tile);
+        if (x + advance > right) break;
+        if (tile != 0) {
+            frontend_data_tiny_draw_glyph(
+                frame,
+                tile,
+                x,
+                y,
+                right,
+                highlight ?
+                    frontend_data_tiny_highlight_colour(colour) :
+                    colour,
+                shadow_colour
+            );
+        }
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_data_reader_draw_glyph(
+    u8 tile,
+    s16 x,
+    s16 y,
+    u8 colour
+)
+{
+    frontend_data_tiny_draw_glyph(
+        frontend_frame_scratch,
+        tile,
+        x,
+        y,
+        SCREEN_WIDTH,
+        colour,
+        0xe2u
+    );
 }
 
 static void frontend_data_draw_reader_chrome(void);
@@ -1055,24 +1306,16 @@ static void frontend_data_reader_draw_line(u8 source_line, s16 y)
 {
     const OtDataCube *cube =
         &frontend_data_cube_cache[frontend_data_reader_index];
-    const char *text;
-    s16 x = FRONTEND_DATA_READER_X;
-
     if (source_line >= cube->last_line) return;
-    text = cube->text[source_line];
-    while (*text != '\0' && x < SCREEN_WIDTH) {
-        u8 tile = frontend_pregame_font_tile(*text++);
-        u8 width =
-            tile == 0 ?
-                2 :
-                frontend_data_reader_font_width[tile];
-
-        if (x + width > SCREEN_WIDTH) break;
-        if (tile != 0) {
-            frontend_data_reader_draw_glyph(tile, x, y);
-        }
-        x = (s16)(x + width);
-    }
+    frontend_data_tiny_text_clipped_colours(
+        frontend_frame_scratch,
+        cube->text[source_line],
+        FRONTEND_DATA_READER_X,
+        y,
+        SCREEN_WIDTH,
+        0xedu,
+        0xe2u
+    );
 }
 
 static void frontend_data_reader_clear_text_rows(s16 y, s16 height)
@@ -1300,15 +1543,21 @@ static u8 frontend_data_reader_panel_job_step(u8 glyph_budget)
             frontend_data_reader_panel_job.char_index = 0;
             frontend_data_reader_panel_job.draw_x =
                 FRONTEND_DATA_READER_X;
+            frontend_data_reader_panel_job.highlight = 0;
             continue;
         }
-        tile = frontend_pregame_font_tile(
-            text[frontend_data_reader_panel_job.char_index++]
-        );
-        target_width =
-            tile == 0 ?
-                2 :
-                frontend_data_reader_font_width[tile];
+        {
+            char character = text[
+                frontend_data_reader_panel_job.char_index++
+            ];
+
+            if (character == '~') {
+                frontend_data_reader_panel_job.highlight ^= 1u;
+                continue;
+            }
+            tile = frontend_pregame_font_tile(character);
+        }
+        target_width = frontend_data_tiny_font_advance(tile);
         if (
             frontend_data_reader_panel_job.draw_x +
                 target_width >
@@ -1318,6 +1567,7 @@ static u8 frontend_data_reader_panel_job_step(u8 glyph_budget)
             frontend_data_reader_panel_job.char_index = 0;
             frontend_data_reader_panel_job.draw_x =
                 FRONTEND_DATA_READER_X;
+            frontend_data_reader_panel_job.highlight = 0;
             continue;
         }
         y = frontend_source_to_screen_y(
@@ -1332,7 +1582,10 @@ static u8 frontend_data_reader_panel_job_step(u8 glyph_budget)
             frontend_data_reader_draw_glyph(
                 tile,
                 frontend_data_reader_panel_job.draw_x,
-                y
+                y,
+                frontend_data_reader_panel_job.highlight ?
+                    frontend_data_tiny_highlight_colour(0xedu) :
+                    0xedu
             );
         }
         frontend_data_reader_panel_job.draw_x = (s16)(
@@ -1412,7 +1665,7 @@ static void frontend_data_draw_reader_chrome(void)
         percent_text[length++] = '%';
         percent_text[length] = '\0';
     }
-    frontend_draw_small_mixed_text_clipped_colours(
+    frontend_data_tiny_text_clipped_colours(
         frontend_frame_scratch,
         percent_text,
         frontend_source_to_screen_x(176),
@@ -1421,7 +1674,7 @@ static void frontend_data_draw_reader_chrome(void)
         0xebu,
         0xe2u
     );
-    frontend_draw_small_mixed_text_clipped_colours(
+    frontend_data_tiny_text_clipped_colours(
         frontend_frame_scratch,
         frontend_data_text(12, "EXIT"),
         frontend_source_to_screen_x(260),
@@ -1448,12 +1701,26 @@ static void frontend_render_data_reader(void)
      * and selected-face palette; only the right text pane changes.
      */
     frontend_data_draw_reader_panel();
+    frontend_data_draw_menu_header(1);
+    frontend_data_draw_help(1);
     frontend_dirty_begin();
+    frontend_dirty_add(
+        frontend_source_to_screen_x(150),
+        0,
+        (u16)(SCREEN_WIDTH - frontend_source_to_screen_x(150)),
+        frontend_source_to_screen_y(30)
+    );
     frontend_dirty_add(
         FRONTEND_DATA_RIGHT_X,
         FRONTEND_DATA_RIGHT_Y,
         FRONTEND_DATA_RIGHT_WIDTH,
         FRONTEND_DATA_RIGHT_HEIGHT
+    );
+    frontend_dirty_add(
+        0,
+        frontend_menu_help_dirty_y(),
+        SCREEN_WIDTH,
+        (u16)(SCREEN_HEIGHT - frontend_menu_help_dirty_y())
     );
     frontend_dirty_present();
 }
@@ -1771,6 +2038,30 @@ static void frontend_wrapped_text_job_begin(
         text != 0 && max_lines != 0 && *text != '\0';
 }
 
+static void frontend_data_wrapped_text_job_begin(
+    FrontendWrappedTextJob *job,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 line_height,
+    u8 max_lines,
+    u8 colour
+)
+{
+    frontend_wrapped_text_job_begin(
+        job,
+        text,
+        x,
+        y,
+        right,
+        line_height,
+        max_lines,
+        colour
+    );
+    job->font_mode = 1;
+}
+
 static void frontend_wrapped_text_job_prepare_line(
     FrontendWrappedTextJob *job
 )
@@ -1818,7 +2109,8 @@ static void frontend_wrapped_text_job_prepare_line(
             memcpy(job->line, word, word_length);
             job->line[word_length] = '\0';
         }
-        candidate_width =
+        candidate_width = job->font_mode ?
+            frontend_data_tiny_text_width(job->line) :
             frontend_small_mixed_text_width(job->line);
         if (
             candidate_width > job->right - job->x &&
@@ -1840,6 +2132,7 @@ static void frontend_wrapped_text_job_prepare_line(
         job->draw_index = 0;
         job->draw_x = job->x;
         job->line_ready = 1;
+        job->highlight = 0;
     } else {
         job->active = 0;
     }
@@ -1865,33 +2158,58 @@ static u8 frontend_wrapped_text_job_step(
         job->draw_index < job->line_length &&
         glyphs < FRONTEND_COOPERATIVE_TEXT_GLYPHS_PER_STEP
     ) {
-        u8 tile_index = frontend_pregame_font_tile(
-            job->line[job->draw_index++]
-        );
-        u8 advance =
-            frontend_small_mixed_font_advance(tile_index);
+        char character = job->line[job->draw_index++];
+        u8 tile_index;
+        u8 advance;
         s16 draw_y = (s16)(
             job->y + job->lines * job->line_height
         );
+
+        if (job->font_mode && character == '~') {
+            job->highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_pregame_font_tile(character);
+        advance = job->font_mode ?
+            frontend_data_tiny_font_advance(tile_index) :
+            frontend_small_mixed_font_advance(tile_index);
 
         if (job->draw_x + advance > job->right) {
             job->draw_index = job->line_length;
             break;
         }
-        frontend_blit_small_mixed_font(
-            frontend_frame_scratch,
-            tile_index,
-            (s16)(job->draw_x + 1),
-            (s16)(draw_y + 1),
-            job->shadow_colour
-        );
-        frontend_blit_small_mixed_font(
-            frontend_frame_scratch,
-            tile_index,
-            job->draw_x,
-            draw_y,
-            job->colour
-        );
+        if (job->font_mode) {
+            if (tile_index != 0) {
+                frontend_data_tiny_draw_glyph(
+                    frontend_frame_scratch,
+                    tile_index,
+                    job->draw_x,
+                    draw_y,
+                    job->right,
+                    job->highlight ?
+                        frontend_data_tiny_highlight_colour(
+                            job->colour
+                        ) :
+                        job->colour,
+                    job->shadow_colour
+                );
+            }
+        } else {
+            frontend_blit_small_mixed_font(
+                frontend_frame_scratch,
+                tile_index,
+                (s16)(job->draw_x + 1),
+                (s16)(draw_y + 1),
+                job->shadow_colour
+            );
+            frontend_blit_small_mixed_font(
+                frontend_frame_scratch,
+                tile_index,
+                job->draw_x,
+                draw_y,
+                job->colour
+            );
+        }
         job->draw_x = (s16)(job->draw_x + advance);
         glyphs++;
     }

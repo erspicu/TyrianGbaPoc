@@ -1,3 +1,15 @@
+enum {
+    /*
+     * OPTION_SHAPES frame 12 contains 278 sparse runs.  Replaying 64 per
+     * display tick keeps each source-identical slice below one GBA frame;
+     * the transition simply takes five quiet ticks instead of blocking
+     * Maxmod for one oversized draw call.
+     */
+    FRONTEND_UPGRADE_STAMP_RUNS_PER_STEP = 48,
+};
+
+static FrontendSourceStampJob frontend_upgrade_stamp_job EWRAM_BSS;
+
 static const char *frontend_game_menu_label(u8 index)
 {
     static const char *const fallback[7] = {
@@ -875,8 +887,7 @@ static u8 frontend_upgrade_begin_submenu(u8 category)
     }
     frontend_upgrade_sort_items();
     frontend_upgrade_category = category;
-    frontend_upgrade_original_items = frontend_player_items;
-    frontend_upgrade_original_cash = player_cash;
+    frontend_upgrade_accepted_items = frontend_player_items;
     frontend_upgrade_trade_cash =
         player_cash +
         frontend_upgrade_total_cost(
@@ -924,10 +935,23 @@ static void frontend_upgrade_apply_preview(void)
     u8 *field;
 
     if (
-        frontend_selection >= frontend_upgrade_sub_count ||
         frontend_upgrade_category >=
             FRONTEND_UPGRADE_CATEGORY_COUNT
     ) {
+        return;
+    }
+    if (frontend_selection >= frontend_upgrade_sub_count) {
+        /*
+         * game_menu.c restores old_items for the Done row.  weapon_mode is
+         * a Player field in the source, not part of PlayerItems, so retain
+         * its current value across this adapter-structure assignment.
+         */
+        u8 weapon_mode = frontend_player_items.weapon_mode;
+
+        frontend_player_items = frontend_upgrade_accepted_items;
+        frontend_player_items.weapon_mode = weapon_mode;
+        frontend_quit_dialog_cache_valid = 0;
+        frontend_upgrade_sim_mark_loadout_dirty();
         return;
     }
     field = frontend_player_item_field(
@@ -955,32 +979,75 @@ static void frontend_upgrade_apply_preview(void)
             frontend_player_items.weapon_mode = 1;
         }
     }
+    frontend_upgrade_sim_mark_loadout_dirty();
 }
 
-static u32 frontend_upgrade_current_cost(void)
+static u32 frontend_upgrade_equipped_cost(void)
 {
-    if (frontend_selection >= frontend_upgrade_sub_count) return 0;
+    const u8 *field = frontend_player_item_field_const(
+        &frontend_player_items,
+        frontend_upgrade_category
+    );
+    u8 power = 1;
+
+    if (field == 0) return 0;
+    if (
+        frontend_upgrade_category ==
+            FRONTEND_UPGRADE_FRONT_WEAPON
+    ) {
+        power = frontend_player_items.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].power;
+    } else if (
+        frontend_upgrade_category ==
+            FRONTEND_UPGRADE_REAR_WEAPON
+    ) {
+        power = frontend_player_items.weapon[
+            FRONTEND_WEAPON_REAR
+        ].power;
+    }
     return frontend_upgrade_total_cost(
         frontend_upgrade_category,
-        frontend_upgrade_sub_item[frontend_selection],
-        frontend_upgrade_sub_power[frontend_selection]
+        *field,
+        power
     );
 }
 
 static u32 frontend_upgrade_cash_left(void)
 {
-    u32 cost = frontend_upgrade_current_cost();
+    u32 cost = frontend_upgrade_equipped_cost();
 
     return cost > frontend_upgrade_trade_cash ?
         0 :
         frontend_upgrade_trade_cash - cost;
 }
 
+static void frontend_upgrade_accept_preview(void)
+{
+    frontend_upgrade_accepted_items = frontend_player_items;
+}
+
+static void frontend_upgrade_restore_accepted(void)
+{
+    u8 weapon_mode = frontend_player_items.weapon_mode;
+
+    frontend_player_items = frontend_upgrade_accepted_items;
+    frontend_player_items.weapon_mode = weapon_mode;
+    frontend_quit_dialog_cache_valid = 0;
+    frontend_upgrade_sim_mark_loadout_dirty();
+}
+
+static void frontend_upgrade_commit_transaction(void)
+{
+    frontend_upgrade_restore_accepted();
+    player_cash = frontend_upgrade_cash_left();
+}
+
 static void frontend_upgrade_cancel_submenu(void)
 {
-    frontend_player_items = frontend_upgrade_original_items;
-    player_cash = frontend_upgrade_original_cash;
-    frontend_quit_dialog_cache_valid = 0;
+    /* Escape restores game_menu.c old_items, which may already contain the
+     * preview accepted by the first confirm, then settles JE_cashLeft(). */
+    frontend_upgrade_commit_transaction();
     frontend_start_upgrade_menu_transition(
         frontend_upgrade_category
     );
@@ -989,7 +1056,7 @@ static void frontend_upgrade_cancel_submenu(void)
 
 static void frontend_upgrade_commit_submenu(void)
 {
-    player_cash = frontend_upgrade_cash_left();
+    frontend_upgrade_commit_transaction();
     frontend_start_upgrade_menu_transition(
         frontend_upgrade_category
     );
@@ -1255,16 +1322,33 @@ static void frontend_draw_upgrade_submenu_preview_art(void)
 {
     if (
         frontend_upgrade_category == FRONTEND_UPGRADE_SHIP ||
-        frontend_upgrade_category == FRONTEND_UPGRADE_GENERATOR
+        frontend_upgrade_category == FRONTEND_UPGRADE_SHIELD
     ) {
         frontend_draw_ship_illustration(frontend_frame_scratch);
-    } else if (frontend_selection < frontend_upgrade_sub_count) {
-        frontend_draw_item_source(
+    } else if (frontend_upgrade_sim_category_active()) {
+        /*
+         * game_menu.c:JE_weaponViewFrame clears the simulator and then
+         * blits OPTION_SHAPES frame 12.  Stars, shots, the generator bar
+         * and the player ship are supplied by frontend_upgrade_sim.inc as
+         * hardware OBJ, but this immutable source interface remains Mode 4.
+         */
+        frontend_fill_source_rect(
             frontend_frame_scratch,
-            frontend_upgrade_category,
-            frontend_upgrade_sub_item[frontend_selection],
-            55,
-            70
+            8,
+            8,
+            143,
+            182,
+            0
+        );
+        (void)frontend_blit_shp_source(
+            frontend_frame_scratch,
+            5,
+            12,
+            0,
+            0,
+            FRONTEND_SOURCE_BLIT_NORMAL,
+            0,
+            0
         );
     }
 }
@@ -1273,74 +1357,177 @@ static void frontend_draw_upgrade_submenu_preview_details(void)
 {
     char line[40];
     char digits[11];
+    u8 weapon_page;
+    u8 valid_weapon;
+    u8 power = 1;
 
-    if (
-        (
-            frontend_upgrade_category ==
-                FRONTEND_UPGRADE_FRONT_WEAPON ||
-            frontend_upgrade_category ==
-                FRONTEND_UPGRADE_REAR_WEAPON
-        ) &&
-        frontend_selection < frontend_upgrade_sub_count
-    ) {
+    if (!frontend_upgrade_sim_category_active()) return;
+    weapon_page =
+        frontend_upgrade_category ==
+            FRONTEND_UPGRADE_FRONT_WEAPON ||
+        frontend_upgrade_category ==
+            FRONTEND_UPGRADE_REAR_WEAPON;
+    valid_weapon =
+        weapon_page &&
+        frontend_selection < frontend_upgrade_sub_count &&
+        frontend_upgrade_sub_item[frontend_selection] != 0;
+    if (valid_weapon) {
+        u16 base_cost = (u16)frontend_upgrade_base_cost(
+            frontend_upgrade_category,
+            frontend_upgrade_sub_item[frontend_selection]
+        );
+        u32 downgrade_cost;
+        u32 upgrade_cost;
+        u8 left_power;
+        u8 right_power;
+        u8 right_affordable;
+        u8 level;
+
+        power = frontend_upgrade_sub_power[frontend_selection];
+        if (power == 0) power = 1;
+        if (power > 11) power = 11;
+        downgrade_cost =
+            ((u32)base_cost * (power - 1u) * power) >> 1;
+        upgrade_cost =
+            ((u32)base_cost * power * (power + 1u)) >> 1;
+        left_power = power > 1;
+        right_power = power < 11;
+        right_affordable =
+            frontend_upgrade_total_cost(
+                frontend_upgrade_category,
+                frontend_upgrade_sub_item[frontend_selection],
+                (u8)(power + 1u)
+            ) <= frontend_upgrade_trade_cash;
+
+        if (left_power) {
+            frontend_u32_string(downgrade_cost, digits);
+            frontend_draw_upgrade_list_text(
+                frontend_frame_scratch,
+                digits,
+                frontend_source_to_screen_x(26),
+                frontend_source_to_screen_y(137),
+                frontend_source_to_screen_x(58),
+                0x1du
+            );
+        } else {
+            (void)frontend_blit_shp_source(
+                frontend_frame_scratch,
+                5,
+                13,
+                24,
+                149,
+                FRONTEND_SOURCE_BLIT_NORMAL,
+                0,
+                0
+            );
+        }
+        if (right_power) {
+            frontend_u32_string(upgrade_cost, digits);
+            frontend_draw_upgrade_list_text(
+                frontend_frame_scratch,
+                digits,
+                frontend_source_to_screen_x(108),
+                frontend_source_to_screen_y(137),
+                frontend_source_to_screen_x(140),
+                right_affordable ? 0x1du : 0x7cu
+            );
+            if (!right_affordable) {
+                (void)frontend_blit_shp_source(
+                    frontend_frame_scratch,
+                    5,
+                    14,
+                    119,
+                    149,
+                    FRONTEND_SOURCE_BLIT_NORMAL,
+                    0,
+                    0
+                );
+            }
+        } else {
+            (void)frontend_blit_shp_source(
+                frontend_frame_scratch,
+                5,
+                14,
+                119,
+                149,
+                FRONTEND_SOURCE_BLIT_NORMAL,
+                0,
+                0
+            );
+        }
+        for (level = 1; level <= power; level++) {
+            s16 x = (s16)(39 + level * 6);
+
+            frontend_fill_source_rect(
+                frontend_frame_scratch,
+                x,
+                151,
+                (s16)(x + 4),
+                151,
+                251
+            );
+            frontend_source_plot(
+                frontend_frame_scratch,
+                x,
+                151,
+                252,
+                FRONTEND_SOURCE_BLIT_NORMAL,
+                0,
+                0
+            );
+            frontend_fill_source_rect(
+                frontend_frame_scratch,
+                x,
+                152,
+                (s16)(x + 4),
+                164,
+                250
+            );
+            frontend_fill_source_rect(
+                frontend_frame_scratch,
+                x,
+                165,
+                (s16)(x + 4),
+                165,
+                249
+            );
+        }
         frontend_text_with_u32(
             line,
             sizeof(line),
-            "POWER ",
-            frontend_upgrade_sub_power[frontend_selection]
+            "POWER: ",
+            power
         );
-        frontend_draw_runtime_text_clipped(
+        frontend_draw_upgrade_list_text(
             frontend_frame_scratch,
             line,
-            20,
-            118,
-            111,
+            frontend_source_to_screen_x(58),
+            frontend_source_to_screen_y(137),
+            frontend_source_to_screen_x(108),
             0xfeu
         );
-        frontend_draw_runtime_text_clipped(
+    } else {
+        (void)frontend_blit_shp_source(
             frontend_frame_scratch,
-            "< LEFT  RIGHT >",
-            8,
-            130,
-            114,
-            0xfau
+            5,
+            17,
+            20,
+            146,
+            FRONTEND_SOURCE_BLIT_NORMAL,
+            0,
+            0
         );
-        if (
-            frontend_upgrade_category ==
-                FRONTEND_UPGRADE_REAR_WEAPON
-        ) {
-            frontend_text_with_u32(
-                line,
-                sizeof(line),
-                "MODE ",
-                frontend_player_items.weapon_mode
-            );
-            frontend_draw_runtime_text_clipped(
-                frontend_frame_scratch,
-                line,
-                26,
-                142,
-                111,
-                0xfau
-            );
-        }
     }
+
+    /* game_menu.c:JE_drawScore(), after every simulator frame. */
     frontend_u32_string(frontend_upgrade_cash_left(), digits);
-    frontend_draw_runtime_text_clipped(
-        frontend_frame_scratch,
-        "CASH",
-        8,
-        148,
-        45,
-        0xfau
-    );
-    frontend_draw_runtime_text_clipped(
+    frontend_draw_upgrade_list_text(
         frontend_frame_scratch,
         digits,
-        45,
-        148,
-        115,
-        0xfeu
+        frontend_source_to_screen_x(65),
+        frontend_source_to_screen_y(173),
+        frontend_source_to_screen_x(140),
+        0x1eu
     );
 }
 
@@ -1368,7 +1555,7 @@ static void frontend_draw_upgrade_submenu_row(u8 visible_index)
         );
         u8 affordable = cost <= frontend_upgrade_trade_cash;
         const u8 *owned = frontend_player_item_field_const(
-            &frontend_upgrade_original_items,
+            &frontend_upgrade_accepted_items,
             frontend_upgrade_category
         );
 

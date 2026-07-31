@@ -10,4 +10,5 @@
 #include "frontend/frontend_data_specs.inc"
 #include "frontend/frontend_save.inc"
 #include "frontend/frontend_navigation.inc"
+#include "frontend/frontend_upgrade_sim.inc"
 #include "frontend/frontend_flow.inc"

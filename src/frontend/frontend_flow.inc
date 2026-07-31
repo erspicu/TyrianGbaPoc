@@ -526,6 +526,12 @@ static void frontend_enter_state(u8 state, u8 selection)
     ) {
         frontend_nav_obj_disable();
     }
+    if (
+        old_state == STATE_UPGRADE_SUBMENU &&
+        state != STATE_UPGRADE_SUBMENU
+    ) {
+        frontend_upgrade_sim_disable();
+    }
     if (state != STATE_LEVEL_STATS) {
         frontend_stats_overlay_active = 0;
         frontend_stats_tiles_pending = 0;
@@ -960,6 +966,12 @@ static void frontend_transition_begin(
     ) {
         frontend_nav_obj_disable();
     }
+    if (
+        old_state == STATE_UPGRADE_SUBMENU &&
+        state != STATE_UPGRADE_SUBMENU
+    ) {
+        frontend_upgrade_sim_disable();
+    }
     if (state != STATE_LEVEL_STATS) {
         frontend_stats_overlay_active = 0;
         frontend_stats_tiles_pending = 0;
@@ -1302,10 +1314,52 @@ static void frontend_transition_update(void)
             break;
         case 2:
             frontend_draw_upgrade_submenu_title();
+            frontend_upgrade_stamp_job =
+                (FrontendSourceStampJob){0};
             frontend_transition_phase = 3;
             break;
         case 3:
-            frontend_draw_upgrade_submenu_preview_art();
+            if (frontend_upgrade_sim_category_active()) {
+                s8 result;
+
+                if (frontend_transition_work_mode == 0) {
+                    frontend_fill_source_rect(
+                        frontend_frame_scratch,
+                        8,
+                        8,
+                        143,
+                        182,
+                        0
+                    );
+                    if (
+                        !frontend_source_stamp_job_begin(
+                            &frontend_upgrade_stamp_job,
+                            frontend_frame_scratch,
+                            frontend_source_stamp_shp_key(5, 12),
+                            0,
+                            0,
+                            FRONTEND_SOURCE_BLIT_NORMAL,
+                            0,
+                            0
+                        )
+                    ) {
+                        frontend_draw_upgrade_submenu_preview_art();
+                        frontend_transition_phase = 4;
+                        break;
+                    }
+                    frontend_transition_work_mode = 1;
+                }
+                result = frontend_source_stamp_job_step(
+                    &frontend_upgrade_stamp_job,
+                    FRONTEND_UPGRADE_STAMP_RUNS_PER_STEP
+                );
+                if (result == 0) break;
+                if (result < 0) {
+                    frontend_draw_upgrade_submenu_preview_art();
+                }
+            } else {
+                frontend_draw_upgrade_submenu_preview_art();
+            }
             frontend_transition_phase = 4;
             break;
         case 4:
@@ -1321,13 +1375,51 @@ static void frontend_transition_update(void)
                 frontend_transition_phase = 6;
             }
             break;
-        default:
+        case 6:
             frontend_present(
                 frontend_frame_scratch,
                 frontend_palette_address(
                     FRONTEND_FRAME_MENU_CHROME
                 )
             );
+            if (frontend_upgrade_sim_category_active()) {
+                frontend_transition_phase = 7;
+            } else {
+                frontend_upgrade_sim_disable();
+                frontend_transition_job =
+                    FRONTEND_TRANSITION_JOB_NONE;
+            }
+            break;
+        case 7:
+            frontend_upgrade_sim_enter_begin();
+            frontend_transition_work_index = 0;
+            frontend_transition_phase = 8;
+            break;
+        case 8:
+            frontend_upgrade_sim_enter_stars(
+                frontend_transition_work_index,
+                40
+            );
+            frontend_transition_work_index = (u8)(
+                frontend_transition_work_index + 40u
+            );
+            if (
+                frontend_transition_work_index >=
+                    FRONTEND_UPGRADE_SIM_STAR_COUNT
+            ) {
+                frontend_transition_phase = 9;
+            }
+            break;
+        case 9:
+            frontend_upgrade_sim_enter_loadout();
+            frontend_transition_phase = 10;
+            break;
+        case 10:
+            frontend_upgrade_sim_enter_prepare();
+            frontend_transition_phase = 11;
+            break;
+        default:
+            frontend_upgrade_sim_enter_finish();
             frontend_transition_job =
                 FRONTEND_TRANSITION_JOB_NONE;
             break;
@@ -1732,6 +1824,9 @@ static void frontend_transition_update(void)
             frontend_transition_phase = 3;
             break;
         case 3:
+            if (!frontend_data_reader_font_prepare_step(16)) {
+                break;
+            }
             frontend_copy_frame_rows(
                 FRONTEND_FRAME_MENU_CHROME,
                 0,
@@ -1836,6 +1931,8 @@ static void frontend_transition_update(void)
             }
             break;
         case 9:
+            frontend_data_draw_menu_header(0);
+            frontend_data_draw_help(0);
             frontend_data_prepare_palette();
             frontend_present(
                 frontend_frame_scratch,
@@ -1933,6 +2030,8 @@ static void frontend_transition_update(void)
             }
             break;
         case 12:
+            frontend_data_draw_menu_header(0);
+            frontend_data_draw_help(0);
             frontend_data_prepare_palette();
             frontend_transition_phase = 13;
             break;
@@ -2008,6 +2107,7 @@ static void frontend_transition_update(void)
                 }
                 break;
             case 5:
+                frontend_data_draw_help(0);
                 frontend_data_prepare_palette();
                 frontend_transition_work_mode = 6;
                 break;
@@ -2025,6 +2125,15 @@ static void frontend_transition_update(void)
                     FRONTEND_DATA_RIGHT_WIDTH,
                     FRONTEND_DATA_RIGHT_HEIGHT
                 );
+                frontend_dirty_add(
+                    0,
+                    frontend_menu_help_dirty_y(),
+                    SCREEN_WIDTH,
+                    (u16)(
+                        SCREEN_HEIGHT -
+                        frontend_menu_help_dirty_y()
+                    )
+                );
                 frontend_dirty_present_with_palette(
                     frontend_data_face_palette
                 );
@@ -2040,10 +2149,28 @@ static void frontend_transition_update(void)
         default:
             frontend_dirty_begin();
             frontend_dirty_add(
+                frontend_source_to_screen_x(150),
+                0,
+                (u16)(
+                    SCREEN_WIDTH -
+                    frontend_source_to_screen_x(150)
+                ),
+                frontend_source_to_screen_y(30)
+            );
+            frontend_dirty_add(
                 FRONTEND_DATA_RIGHT_X,
                 FRONTEND_DATA_RIGHT_Y,
                 FRONTEND_DATA_RIGHT_WIDTH,
                 FRONTEND_DATA_RIGHT_HEIGHT
+            );
+            frontend_dirty_add(
+                0,
+                frontend_menu_help_dirty_y(),
+                SCREEN_WIDTH,
+                (u16)(
+                    SCREEN_HEIGHT -
+                    frontend_menu_help_dirty_y()
+                )
             );
             frontend_dirty_present_with_palette(
                 frontend_data_face_palette
@@ -2075,15 +2202,35 @@ static void frontend_transition_update(void)
             break;
         case 3:
             frontend_data_draw_reader_chrome();
+            frontend_data_draw_menu_header(1);
+            frontend_data_draw_help(1);
             frontend_transition_phase = 4;
             break;
         default:
             frontend_dirty_begin();
             frontend_dirty_add(
+                frontend_source_to_screen_x(150),
+                0,
+                (u16)(
+                    SCREEN_WIDTH -
+                    frontend_source_to_screen_x(150)
+                ),
+                frontend_source_to_screen_y(30)
+            );
+            frontend_dirty_add(
                 FRONTEND_DATA_RIGHT_X,
                 FRONTEND_DATA_RIGHT_Y,
                 FRONTEND_DATA_RIGHT_WIDTH,
                 FRONTEND_DATA_RIGHT_HEIGHT
+            );
+            frontend_dirty_add(
+                0,
+                frontend_menu_help_dirty_y(),
+                SCREEN_WIDTH,
+                (u16)(
+                    SCREEN_HEIGHT -
+                    frontend_menu_help_dirty_y()
+                )
             );
             frontend_dirty_present();
             frontend_transition_job =
@@ -2336,6 +2483,7 @@ static void frontend_update(void)
 
     frontend_data_animate();
     frontend_data_reader_animate();
+    frontend_upgrade_sim_update();
     if (frontend_save_frontend_update()) return;
 
     if (game_state == STATE_NEXT_LEVEL_MENU) {
@@ -2639,6 +2787,7 @@ static void frontend_update(void)
             if (frontend_player_items.weapon_mode > port.opnum) {
                 frontend_player_items.weapon_mode = 1;
             }
+            frontend_upgrade_sim_mark_loadout_dirty();
             audio_effect(SFX_CURSOR);
             frontend_render_upgrade_submenu_update(
                 frontend_selection,
@@ -2742,6 +2891,14 @@ static void frontend_update(void)
         audio_effect(SFX_SELECT);
         frontend_difficulty =
             (u8)(FRONTEND_DIFFICULTY_EASY + frontend_selection);
+#ifdef AUTOTEST_FRONTEND_CAPTURE_SECTION
+        /*
+         * Deterministic visual regression for a post-level merchant/map
+         * section.  Release builds always keep the selected Episode's
+         * normal section-1 entry point.
+         */
+        frontend_main_section = AUTOTEST_FRONTEND_CAPTURE_SECTION;
+#endif
         frontend_start_game_menu_transition(
             FRONTEND_GAME_MENU_JOB_INITIALIZE_CAMPAIGN |
             FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
@@ -2828,6 +2985,10 @@ static void frontend_update(void)
             u8 old_selection = frontend_selection;
             u8 old_scroll = frontend_upgrade_sub_scroll;
 
+            /* JE_menuFunction() snapshots the preview into old_items before
+             * advancing to Done; the following frame restores that accepted
+             * item and JE_cashLeft() charges it on the second confirmation. */
+            frontend_upgrade_accept_preview();
             frontend_selection = frontend_upgrade_sub_count;
             if (
                 frontend_selection >=
@@ -2837,6 +2998,7 @@ static void frontend_update(void)
                     (u8)(frontend_selection - 5u);
             }
             audio_effect(SFX_CLICK);
+            frontend_upgrade_apply_preview();
             frontend_render_upgrade_submenu_update(
                 old_selection,
                 old_scroll

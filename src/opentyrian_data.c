@@ -1978,6 +1978,12 @@ bool ot_data_episode_map_resolve(
                 )) {
                 return false;
             }
+            /*
+             * A map section must reach its ]I menu boundary (possibly by
+             * following ]J) after ]G.  Do not silently consume the next
+             * sequential section if a malformed route omits both.
+             */
+            if (line[0] == '*') return false;
             if (line[0] != ']') continue;
             switch (line[1]) {
             case 'J':
@@ -2032,6 +2038,17 @@ bool ot_data_episode_map_resolve(
                         );
                 }
                 resolved.item_inventory_valid = true;
+                /*
+                 * JE_loadMap() does not open JE_itemScreen() when it sees
+                 * ]G.  It keeps the map choices, reads the following ]I
+                 * merchant inventory, and only then enters Game Menu.  A
+                 * few stock sections use ]G -> ]J -> ]I, so the inventory
+                 * boundary can also be in the jumped-to section.
+                 */
+                if (resolved.choice_count != 0) {
+                    *map = resolved;
+                    return true;
+                }
                 break;
             }
 
@@ -2102,8 +2119,8 @@ bool ot_data_episode_map_resolve(
                         return false;
                     }
                 }
-                *map = resolved;
-                return true;
+                /* Keep interpreting until the source ]I menu boundary. */
+                break;
             }
 
             case 'L':

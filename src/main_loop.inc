@@ -495,6 +495,7 @@ int main(void)
             }
 #ifdef AUTOTEST_FRONTEND_CAPTURE_STATE
             static u8 frontend_capture_armed;
+            static u8 frontend_capture_settle_frames;
 
             if (
                 game_state == AUTOTEST_FRONTEND_CAPTURE_STATE &&
@@ -535,7 +536,72 @@ int main(void)
                      * headless screenshot hook stops execution.
                      */
                     frontend_capture_armed = 2;
-                } else if (frontend_capture_armed == 2) {
+                } else if (
+                    frontend_capture_armed == 2 &&
+                    (
+                        AUTOTEST_FRONTEND_CAPTURE_STATE !=
+                            STATE_UPGRADE_SUBMENU ||
+                        frontend_capture_settle_frames++ >= 30
+                    )
+                ) {
+#if defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
+                    if (
+                        AUTOTEST_FRONTEND_CAPTURE_STATE ==
+                            STATE_UPGRADE_SUBMENU
+                    ) {
+                        volatile u8 *sram =
+                            (volatile u8 *)0x0E000000;
+                        u16 tile_nonzero = 0;
+                        u16 tile_index;
+
+                        /*
+                         * Deterministic source-parity diagnostics for the
+                         * hardware Upgrade simulator.  Keep this outside
+                         * the normal save header so capture ROMs can prove
+                         * that HDT selection, Sprite2 composition and OAM
+                         * presentation all reached the final rasterized
+                         * frame independently of a visual inspection.
+                         */
+                        for (
+                            tile_index = 0;
+                            tile_index <
+                                FRONTEND_UPGRADE_SIM_SHIP_TILES_BYTES;
+                            tile_index++
+                        ) {
+                            if (
+                                frontend_upgrade_sim->ship_tiles[
+                                    tile_index
+                                ] != 0
+                            ) {
+                                tile_nonzero++;
+                            }
+                        }
+                        sram[0x100] = 'T';
+                        sram[0x101] = 'G';
+                        sram[0x102] = 'U';
+                        sram[0x103] = 'S';
+                        sram[0x104] = frontend_player_items.ship;
+                        sram[0x105] = (u8)(
+                            frontend_upgrade_sim->ship.shipgraphic &
+                            0xffu
+                        );
+                        sram[0x106] = (u8)(
+                            frontend_upgrade_sim->ship.shipgraphic >> 8
+                        );
+                        sram[0x107] =
+                            frontend_upgrade_sim->ship_tile_valid;
+                        sram[0x108] = (u8)(tile_nonzero & 0xffu);
+                        sram[0x109] = (u8)(tile_nonzero >> 8);
+                        sram[0x10a] = previous_oam_count;
+                        sram[0x10b] = oam_count;
+                        sram[0x10c] = (u8)(oam_shadow[0].attr0 & 0xffu);
+                        sram[0x10d] = (u8)(oam_shadow[0].attr0 >> 8);
+                        sram[0x10e] = (u8)(oam_shadow[0].attr1 & 0xffu);
+                        sram[0x10f] = (u8)(oam_shadow[0].attr1 >> 8);
+                        sram[0x110] = (u8)(oam_shadow[0].attr2 & 0xffu);
+                        sram[0x111] = (u8)(oam_shadow[0].attr2 >> 8);
+                    }
+#endif
 #ifdef AUTOTEST_DEATH_MUSIC_CHECK
                     const OtDataCatalog *catalog = ot_data_catalog();
                     volatile u8 *sram = (volatile u8 *)0x0E000000;

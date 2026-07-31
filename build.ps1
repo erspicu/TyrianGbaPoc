@@ -350,10 +350,17 @@ if (
     [int64]$assetReport.finite_music_09_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_10_it_bytes -le 0 -or
     [int64]$assetReport.finite_music_30_it_bytes -le 0 -or
-    $assetReport.frontend_source_stamp_shp_keys -ne "49" -or
-    $assetReport.frontend_source_stamp_count -ne "15425" -or
-    $assetReport.frontend_source_stamp_data_bytes -ne "7890692" -or
+    $assetReport.frontend_source_stamp_shp_keys -ne "53" -or
+    $assetReport.frontend_source_stamp_comp_keys -ne "568" -or
+    $assetReport.frontend_source_stamp_count -ne "15525" -or
+    $assetReport.frontend_source_stamp_offset_bytes -ne "62100" -or
+    $assetReport.frontend_source_stamp_data_bytes -ne "8218212" -or
+    $assetReport.frontend_source_stamp_offsets_crc32 -ne "993c4687" -or
+    $assetReport.frontend_source_stamp_data_crc32 -ne "39e1fa68" -or
+    $assetReport.frontend_source_stamp_comp_source_crc32 -ne "f92a3e62" -or
     $assetReport.frontend_source_stamp_runtime_rle_decode -ne "0" -or
+    $assetReport.frontend_source_stamp_runtime_coordinate_division -ne
+        "2_per_stamp" -or
     $assetReport.frontend_source_stamp_strategy -ne
         "build-time lossless decode + 25 scale phases + aligned sparse runs" -or
     $assetReport.frontend_nav_bitmap_strategy -ne
@@ -2914,7 +2921,14 @@ for ($pathIndex = 0; $pathIndex -lt $transitionPathCount; $pathIndex++) {
             120
         }
     $cycleLimit =
-        if ($record.path -eq "game_data") { 230000 } else { 180000 }
+        if (
+            $record.path -eq "game_data" -or
+            $record.path -eq "upgrade_submenu"
+        ) {
+            230000
+        } else {
+            180000
+        }
     if (
         $record.transitions -ne 120 -or
         $record.missed_vblanks -ne 0 -or

@@ -32,6 +32,7 @@ enum {
     ROMFS_MATRIX_FAIL_ITEM_DATABASE = 26,
     ROMFS_MATRIX_FAIL_DATA_CUBE = 27,
     ROMFS_MATRIX_FAIL_SHIP_INFO = 28,
+    ROMFS_MATRIX_FAIL_ROUTE_ITEMS = 29,
 };
 
 typedef struct {
@@ -843,6 +844,21 @@ static void romfs_matrix_validate_routes(
                             episode,
                             section,
                             map.choice_count,
+                            0
+                        );
+                        telemetry->route_failures++;
+                        break;
+                    }
+                    if (
+                        !map.direct_level &&
+                        !map.item_inventory_valid
+                    ) {
+                        romfs_matrix_fail(
+                            telemetry,
+                            ROMFS_MATRIX_FAIL_ROUTE_ITEMS,
+                            episode,
+                            section,
+                            map.resolved_section,
                             0
                         );
                         telemetry->route_failures++;

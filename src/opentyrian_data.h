@@ -445,9 +445,11 @@ bool ot_data_episode_level_resolve(
 );
 
 /*
- * Resolve the stock script up to its ]G map-choice directive.  Sections
- * which lead directly to ]L are returned as a one-entry direct_level route,
- * and ]Q is reported without inventing a destination.
+ * Resolve the stock script through its ]G map-choice directive and the ]I
+ * merchant-inventory boundary which opens JE_itemScreen().  The interpreter
+ * preserves map choices across stock ]G -> ]J -> ]I chains.  Sections which
+ * lead directly to ]L are returned as a one-entry direct_level route, and ]Q
+ * is reported without inventing a destination.
  */
 bool ot_data_episode_map_resolve(
     uint8_t episode,

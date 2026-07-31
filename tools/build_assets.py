@@ -240,6 +240,10 @@ FRONTEND_SOURCE_STAMP_PHASE_COUNT = (
 FRONTEND_SOURCE_STAMP_SHP_RANGES = (
     # FACE_SHAPES 0..11: every stock Data Cube portrait.
     (4, 0, 12),
+    # OPTION_SHAPES 12..14: JE_weaponViewFrame plus the two power arrows.
+    (5, 12, 3),
+    # OPTION_SHAPES 17: the stock disabled simulator message.
+    (5, 17, 1),
     # OPTION_SHAPES 20..34: Data/Ship pages plus ship/shield menu art.
     (5, 20, 15),
     (6, 0, 22),
@@ -1669,6 +1673,10 @@ def build_frontend_source_stamp_assets(
         "FRONTEND_SOURCE_STAMP_SHP_KEY_COUNT": shp_key_count,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE4_FIRST": 0,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT": 12,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_FIRST": 12,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_COUNT": 3,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_FIRST": 17,
+        "FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_COUNT": 1,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST": 20,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT": 15,
         "FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST": 0,
@@ -1689,7 +1697,7 @@ def build_frontend_source_stamp_assets(
     report = [
         (
             "frontend_source_stamp_source="
-            "stock tyrian.shp tables5/6 + complete options/shop Sprite2"
+            "stock tyrian.shp tables4/5/6 + complete options/shop Sprite2"
         ),
         (
             "frontend_source_stamp_strategy="

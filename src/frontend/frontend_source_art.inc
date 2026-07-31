@@ -415,6 +415,33 @@ static u32 frontend_source_stamp_shp_key(
     }
     if (
         table == 5 &&
+        sprite_index >=
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_FIRST &&
+        sprite_index <
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_FIRST +
+                FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_COUNT
+    ) {
+        return
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
+            sprite_index -
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_FIRST;
+    }
+    if (
+        table == 5 &&
+        sprite_index >=
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_FIRST &&
+        sprite_index <
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_FIRST +
+                FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_COUNT
+    ) {
+        return
+            FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_COUNT +
+            sprite_index -
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_FIRST;
+    }
+    if (
+        table == 5 &&
         sprite_index >= FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST &&
         sprite_index <
             FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST +
@@ -422,6 +449,8 @@ static u32 frontend_source_stamp_shp_key(
     ) {
         return
             FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_COUNT +
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_COUNT +
             sprite_index -
             FRONTEND_SOURCE_STAMP_SHP_TABLE5_FIRST;
     }
@@ -433,6 +462,8 @@ static u32 frontend_source_stamp_shp_key(
     ) {
         return
             FRONTEND_SOURCE_STAMP_SHP_TABLE4_COUNT +
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_SIM_COUNT +
+            FRONTEND_SOURCE_STAMP_SHP_TABLE5_DISABLED_COUNT +
             FRONTEND_SOURCE_STAMP_SHP_TABLE5_COUNT +
             sprite_index -
             FRONTEND_SOURCE_STAMP_SHP_TABLE6_FIRST;
