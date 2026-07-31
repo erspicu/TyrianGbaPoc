@@ -1189,6 +1189,38 @@ static u8 frontend_data_tiny_highlight_colour(u8 colour)
     return (u8)((colour & 0xf0u) | brightness);
 }
 
+/*
+ * Ship Specs is drawn through JE_helpBox() -> JE_textShade() on PC.
+ * JE_outText() treats '~' as a +4 brightness toggle rather than a glyph.
+ * Keep the marker in the source-backed string, but exclude it from the GBA
+ * adapter's measured width and reproduce the same colour-bank operation.
+ */
+static s16 frontend_ship_specs_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        char character = *text++;
+
+        if (character == '~') continue;
+        width = (s16)(
+            width +
+            frontend_small_mixed_font_advance(
+                frontend_pregame_font_tile(character)
+            )
+        );
+    }
+    return width;
+}
+
+static u8 frontend_ship_specs_highlight_colour(u8 colour)
+{
+    u8 brightness = (u8)(colour & 0x0fu);
+
+    brightness = brightness > 11u ? 15u : (u8)(brightness + 4u);
+    return (u8)((colour & 0xf0u) | brightness);
+}
+
 static void frontend_data_tiny_draw_glyph(
     u8 *frame,
     u8 tile,
@@ -2111,7 +2143,7 @@ static void frontend_wrapped_text_job_prepare_line(
         }
         candidate_width = job->font_mode ?
             frontend_data_tiny_text_width(job->line) :
-            frontend_small_mixed_text_width(job->line);
+            frontend_ship_specs_text_width(job->line);
         if (
             candidate_width > job->right - job->x &&
             line_length != 0
@@ -2165,7 +2197,8 @@ static u8 frontend_wrapped_text_job_step(
             job->y + job->lines * job->line_height
         );
 
-        if (job->font_mode && character == '~') {
+        /* PC JE_outText() consumes '~' in both Data and Ship Specs text. */
+        if (character == '~') {
             job->highlight ^= 1u;
             continue;
         }
@@ -2195,6 +2228,10 @@ static u8 frontend_wrapped_text_job_step(
                 );
             }
         } else {
+            u8 foreground_colour = job->highlight ?
+                frontend_ship_specs_highlight_colour(job->colour) :
+                job->colour;
+
             frontend_blit_small_mixed_font(
                 frontend_frame_scratch,
                 tile_index,
@@ -2207,7 +2244,7 @@ static u8 frontend_wrapped_text_job_step(
                 tile_index,
                 job->draw_x,
                 draw_y,
-                job->colour
+                foreground_colour
             );
         }
         job->draw_x = (s16)(job->draw_x + advance);

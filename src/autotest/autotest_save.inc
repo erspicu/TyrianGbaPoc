@@ -148,6 +148,40 @@ static void autotest_save_flow(void)
     ) {
         failures |= 1u << 6;
     }
+    {
+        u16 ship_sprite_index = 0;
+        s16 ship_x = 0;
+        s16 ship_y = 0;
+
+        /*
+         * Save/load must feed JE_drawShipSpecs() through the restored
+         * PlayerItems.ship, not through a fixed Talon presentation.
+         */
+        if (
+            !frontend_ship_specs_prepare() ||
+            strncmp(
+                frontend_ship_specs_ship.name,
+                "Prototype Stalker-C",
+                19
+            ) != 0 ||
+            strncmp(
+                frontend_ship_info_cache->paragraph[0],
+                "~TOP SECRET:~",
+                13
+            ) != 0 ||
+            frontend_ship_specs_ship.bigshipgraphic != 33 ||
+            !frontend_ship_specs_art_parameters(
+                &ship_sprite_index,
+                &ship_x,
+                &ship_y
+            ) ||
+            ship_sprite_index != 32 ||
+            ship_x != 1 ||
+            ship_y != 35
+        ) {
+            failures |= 1u << 7;
+        }
+    }
 
     sram[0] = 'T';
     sram[1] = 'G';

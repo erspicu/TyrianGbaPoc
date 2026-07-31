@@ -942,7 +942,7 @@ static const char frontend_runtime_font_characters[] =
 static const char frontend_pregame_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "0123456789.,!?'/:-%";
+    "0123456789.,!?'/:-%;";
 static u8 frontend_pregame_font_width_cache[
     FRONTEND_PREGAME_FONT_GLYPH_COUNT + 1u
 ] EWRAM_BSS;
@@ -2331,6 +2331,7 @@ static u8 frontend_pregame_font_tile(char character)
     case ':': return 69;
     case '-': return 70;
     case '%': return 71;
+    case ';': return 72;
     default:
         /* The stock helper face uses '?' for every unsupported byte. */
         return 66;

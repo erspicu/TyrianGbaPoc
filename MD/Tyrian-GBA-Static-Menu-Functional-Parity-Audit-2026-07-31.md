@@ -102,7 +102,7 @@ C# 同時保存 `initialDifficulty` 與會動態上升的 `difficultyLevel`，�
 | 選項 | GBA 真正執行的功能 | 判定 | C# 對照後的落差 |
 |---|---|---|---|
 | Data | 使用 campaign 實際取得的 cube list，從 ROMFS 讀取標題、人物圖與全文；可選 Cube、閱讀及上下捲動 | **完整** | 沒有只做四張固定假畫面；資料內容及選擇都來自真正狀態 |
-| Ship Specs | 依目前裝備的 ship ID 讀 HDT 船名、說明、圖形與數值並呈現 | **完整／GBA 改寫** | C# 的 scale-in 動畫已改成較適合 GBA 的硬體轉場；資訊功能相同 |
+| Ship Specs | 依目前裝備的 ship ID 讀 HDT 船名、兩段 `shipInfo` 與 `bigshipgraphic`；已用購買 Phoenix 及存檔載入 Stalker-C 做端到端驗證 | **完整／GBA 改寫** | C# 的 scale-in 動畫改成較適合 GBA 的硬體轉場；`~` 高亮控制與內容資料仍依 PC 規則 |
 | Upgrade Ship | 讀當前 Episode 的真實 item inventory；預覽價格、武器 power、賣回價，採來源的兩段確認後扣款並改變下一關裝備；前後武器、Generator、左右 Sidekick 會執行即時發射模擬與 power bar | **完整／GBA 改寫** | 狀態、商品、成本、射擊與確認控制流直接對照來源；只把 PC 軟體 blit 改為 GBA Mode 4 + OBJ、分幀轉場與 4/5 座標 adapter |
 | Options | 進入真正的 Load／Save／Done 頁 | **完整（容器）** | 只保留 GBA 已顯示的三項；PC 其他設定未顯示，故不列缺漏 |
 | Play Next Level | 由 map script 產生真正目的地；確認後寫入對應 map section 並載入該關，Arcade 會取最後一條路線 | **完整** | 不是固定回第一關，也不是純 UI |

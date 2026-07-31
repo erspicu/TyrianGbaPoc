@@ -63,6 +63,9 @@ typedef struct {
     FrontendPlayerItems accepted_items;
     FrontendPlayerItems level_items;
     FrontendSaveSlot save_slot;
+    OtEpisodeMap map;
+    OtShipDefinition ship_specs;
+    OtShipInfo ship_info;
     u8 sub_item[OT_EPISODE_ITEM_GROUP_CAPACITY + 1];
     u8 sub_power[OT_EPISODE_ITEM_GROUP_CAPACITY + 1];
 } AutotestFrontendUpgradeSnapshot;
@@ -85,6 +88,9 @@ static u8 autotest_frontend_upgrade_transaction(void)
     snapshot->items = frontend_player_items;
     snapshot->accepted_items = frontend_upgrade_accepted_items;
     snapshot->save_slot = frontend_save_slot[0];
+    snapshot->map = frontend_map;
+    snapshot->ship_specs = frontend_ship_specs_ship;
+    snapshot->ship_info = *frontend_ship_info_cache;
     snapshot->level_items = (FrontendPlayerItems){
         .ship = source_parity_level.player_ship,
         .weapon = {
@@ -125,6 +131,9 @@ static u8 autotest_frontend_upgrade_transaction(void)
     u8 power = 1;
     u8 index;
     u8 passed = 1;
+    u16 ship_sprite_index = 0;
+    s16 ship_x = 0;
+    s16 ship_y = 0;
     u32 expected_cash;
 
     memcpy(
@@ -242,11 +251,130 @@ static u8 autotest_frontend_upgrade_transaction(void)
         frontend_save_slot[0].cash != expected_cash
     ) {
         passed = 0;
+        goto restore;
+    }
+
+    /*
+     * A later stock Episode 1 merchant (section 12) offers ship IDs 1, 3
+     * and 9.  Buy the Gencore Phoenix through the same two-confirm flow,
+     * then prove JE_drawShipSpecs()'s complete source chain changes:
+     * PlayerItems.ship -> ships[id] -> shipInfo[id-1] -> bigshipgraphic.
+     */
+    if (
+        !ot_data_episode_map_resolve(
+            1,
+            12,
+            FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL,
+            &frontend_map
+        ) ||
+        !frontend_map.item_inventory_valid
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_player_items.ship = 1;
+    player_cash = 50000u;
+    if (
+        !frontend_ship_specs_prepare() ||
+        strncmp(frontend_ship_specs_ship.name, "USP Talon", 9) != 0 ||
+        strncmp(
+            frontend_ship_info_cache->paragraph[0],
+            "The ~USP Talon~",
+            15
+        ) != 0 ||
+        frontend_ship_specs_ship.bigshipgraphic != 32 ||
+        !frontend_ship_specs_art_parameters(
+            &ship_sprite_index,
+            &ship_x,
+            &ship_y
+        ) ||
+        ship_sprite_index != 31 ||
+        ship_x != 5 ||
+        ship_y != 33
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    if (!frontend_upgrade_begin_submenu(FRONTEND_UPGRADE_SHIP)) {
+        passed = 0;
+        goto restore;
+    }
+    item_index = 0xffu;
+    for (index = 0; index < frontend_upgrade_sub_count; index++) {
+        if (frontend_upgrade_sub_item[index] == 3) {
+            item_index = index;
+            break;
+        }
+    }
+    if (item_index == 0xffu) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_selection = item_index;
+    frontend_upgrade_apply_preview();
+    expected_cash = frontend_upgrade_trade_cash -
+        frontend_upgrade_total_cost(FRONTEND_UPGRADE_SHIP, 3, 1);
+    frontend_upgrade_accept_preview();
+    frontend_selection = frontend_upgrade_sub_count;
+    frontend_upgrade_apply_preview();
+    frontend_upgrade_commit_transaction();
+    ship_sprite_index = 0;
+    ship_x = 0;
+    ship_y = 0;
+    if (
+        frontend_player_items.ship != 3 ||
+        player_cash != expected_cash ||
+        !frontend_ship_specs_prepare() ||
+        strncmp(
+            frontend_ship_specs_ship.name,
+            "Gencore Phoenix",
+            15
+        ) != 0 ||
+        strncmp(
+            frontend_ship_info_cache->paragraph[0],
+            "The ~Gencore Phoenix~",
+            21
+        ) != 0 ||
+        frontend_ship_specs_ship.bigshipgraphic != 28 ||
+        !frontend_ship_specs_art_parameters(
+            &ship_sprite_index,
+            &ship_x,
+            &ship_y
+        ) ||
+        ship_sprite_index != 27 ||
+        ship_x != 1 ||
+        ship_y != 36 ||
+        frontend_ship_specs_text_width("~A~;") !=
+            (s16)(
+                frontend_small_mixed_font_advance(
+                    frontend_pregame_font_tile('A')
+                ) +
+                frontend_small_mixed_font_advance(
+                    frontend_pregame_font_tile(';')
+                )
+            ) ||
+        frontend_pregame_font_tile(';') ==
+            frontend_pregame_font_tile('?')
+    ) {
+        passed = 0;
+        goto restore;
+    }
+    frontend_campaign_apply_to_level();
+    frontend_save_capture_slot(0);
+    if (
+        source_parity_level.player_ship != 3 ||
+        frontend_save_slot[0].items.ship != 3
+    ) {
+        passed = 0;
     }
 
 restore:
     frontend_player_items = snapshot->items;
     frontend_upgrade_accepted_items = snapshot->accepted_items;
+    frontend_map = snapshot->map;
+    frontend_ship_specs_ship = snapshot->ship_specs;
+    *frontend_ship_info_cache = snapshot->ship_info;
     frontend_player_items_valid = saved_items_valid;
     player_cash = saved_cash;
     frontend_upgrade_trade_cash = saved_trade_cash;
@@ -297,6 +425,7 @@ restore:
         snapshot->level_items.sidekick_series;
     source_parity_level.player_weapon_mode =
         snapshot->level_items.weapon_mode;
+    (void)ot_data_episode_items_select((u8)(frontend_episode + 1u));
     return passed;
 }
 
