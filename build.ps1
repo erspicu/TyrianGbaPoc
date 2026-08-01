@@ -489,13 +489,13 @@ if (
     $assetReport.frontend_static_help_strategy -ne
         "build-time stock HDT mixed-case strips; aligned ROM copy" -or
     $assetReport.frontend_static_help_dimensions -ne "240x11" -or
-    $assetReport.frontend_static_help_count -ne "41" -or
-    $assetReport.frontend_static_help_bytes -ne "108240" -or
-    $assetReport.frontend_static_help_crc32 -ne "1fc40730" -or
-    $assetReport.frontend_static_menu_panel_count -ne "18" -or
+    $assetReport.frontend_static_help_count -ne "37" -or
+    $assetReport.frontend_static_help_bytes -ne "97680" -or
+    $assetReport.frontend_static_help_crc32 -ne "ab94bb88" -or
+    $assetReport.frontend_static_menu_panel_count -ne "15" -or
     $assetReport.frontend_static_menu_panel_dimensions -ne "120x120" -or
-    $assetReport.frontend_static_menu_panel_bytes -ne "259200" -or
-    $assetReport.frontend_static_menu_panel_crc32 -ne "8bfce76e" -or
+    $assetReport.frontend_static_menu_panel_bytes -ne "216000" -or
+    $assetReport.frontend_static_menu_panel_crc32 -ne "78629d37" -or
     $assetReport.frontend_stats_tiles_bytes -ne "6656" -or
     $assetReport.frontend_stats_width_bytes -ne "45" -or
     $assetReport.frontend_stats_tiles_crc32 -ne "0f04dee4" -or
