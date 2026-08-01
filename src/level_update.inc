@@ -274,30 +274,10 @@ static void advance_backgrounds(void)
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
 }
 
-static u8 source_enemy_on_screen_count(void)
-{
-    u8 index;
-    u8 count = 0;
-
-    for (index = 0; index < OT_ENEMY_COUNT; index++) {
-        if (
-            source_parity_level.enemy_avail[index] == 0 &&
-            source_parity_level.enemy_draw[index].active
-        ) {
-            count++;
-        }
-    }
-    return count;
-}
-
 static u8 source_enemy_still_exploding(void)
 {
-    u8 index;
-
-    for (index = 0; index < MAX_EFFECTS; index++) {
-        if (effects[index].active) return 1;
-    }
-    return 0;
+    /* tyrian2.c enemyStillExploding tracks rep_explosions[] only. */
+    return source_repeating_explosions_active();
 }
 
 static void source_resume_group_stopped_backgrounds(void)
@@ -319,12 +299,20 @@ static void source_resume_group_stopped_backgrounds(void)
         source_parity_level.explode_move = 2;
         source_parity_level.stop_background_num = 0;
         source_parity_level.stop_backgrounds = false;
+        if (source_parity_level.all_players_gone) {
+            source_parity_level.really_end_level = true;
+        }
     }
 }
 
 static void source_begin_end_level_audio(void)
 {
-    if (level_exit_music_started) return;
+    if (
+        level_exit_music_started ||
+        source_parity_level.all_players_gone
+    ) {
+        return;
+    }
     level_exit_music_started = 1;
     secret_level_music_active = 0;
     /*
@@ -348,13 +336,30 @@ static void source_update_end_level_condition(void)
     if (
         !source_parity_level.end_level &&
         source_parity_level.ready_to_end_level &&
-        source_enemy_on_screen_count() == 0 &&
+        source_parity_level.frame_enemy_on_screen == 0 &&
         !source_enemy_still_exploding()
     ) {
+        if (source_parity_level.level_timer_countdown > 0) {
+            source_parity_level.level_timer = false;
+        }
         source_parity_level.ready_to_end_level = false;
         source_parity_level.end_level = true;
         source_parity_level.level_end = 40;
+        if (source_parity_level.all_players_gone) {
+            source_parity_level.really_end_level = true;
+        }
         source_begin_end_level_audio();
+    }
+    if (
+        !source_parity_level.end_level &&
+        source_parity_level.frame_enemy_on_screen == 0 &&
+        source_parity_level.stop_backgrounds
+    ) {
+        source_parity_level.stop_backgrounds = false;
+        source_parity_level.back_move = 1;
+        source_parity_level.back_move2 = 2;
+        source_parity_level.back_move3 = 3;
+        source_parity_level.explode_move = 2;
     }
 }
 
@@ -378,6 +383,41 @@ static void source_update_boss_bar_colour(void)
         if (source_parity_level.boss_bar_color[index] > 0) {
             source_parity_level.boss_bar_color[index]--;
         }
+    }
+}
+
+static void source_update_event_music_fade(void)
+{
+    /*
+     * Literal tyrian2.c MUSIC FADE phase.  Event 34 initializes tempVolume
+     * to tyrMusicVolume (255 in this calibrated adapter), then the loop
+     * lowers it once per gameplay tick before processing the next event.
+     */
+    if (!source_parity_level.music_fade) return;
+    if (source_parity_level.music_fade_volume > 10) {
+        source_parity_level.music_fade_volume--;
+        audio_set_source_music_volume(
+            source_parity_level.music_fade_volume
+        );
+    } else {
+        source_parity_level.music_fade = false;
+    }
+}
+
+static void source_apply_event_music_request(int16_t previous_song)
+{
+    if (!source_parity_level.frame_music_song_request) return;
+    if (
+        source_parity_level.current_song >= 0 &&
+        source_parity_level.current_song <
+            (int16_t)JUKEBOX_MUSIC_COUNT
+    ) {
+        if (source_parity_level.current_song != previous_song) {
+            audio_load_source_song_preserve_effects(
+                (u8)source_parity_level.current_song
+            );
+        }
+        audio_set_source_music_volume(255);
     }
 }
 
@@ -428,12 +468,16 @@ static void source_update_secret_level_display(void)
 static void update_logic(void)
 {
     u8 end_level_before = source_parity_level.end_level;
+    int16_t event_song_before = source_parity_level.current_song;
+    u32 event_jump_count_after_advance;
 #ifdef AUTOTEST_ROUTE_PERF
     u32 route_stage_start = stress_cycle_counter_read();
 #endif
 
     level_tick++;
     telemetry_logic_updates++;
+    /* PC decrements textErase before JE_eventSystem can replace the text. */
+    gameplay_overlay_logic_tick();
     if (
         frontend_demo_active &&
         !source_parity_level.end_level
@@ -443,6 +487,18 @@ static void update_logic(void)
     if (!source_parity_level.end_level) {
         source_player_energy_update();
     }
+    source_parity_level.player_armor = player_armor;
+    source_parity_level.all_players_gone = (u8)(
+        !player_alive &&
+        (
+            !source_parity_level.arcade_mode ||
+            (
+                source_parity_level.player_front_weapon_power == 1 &&
+                player_exploding_ticks == 0
+            )
+        )
+    );
+    source_update_event_music_fade();
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
         ROUTE_PERF_LOGIC_STAGE_PLAYER_ENERGY
@@ -460,6 +516,8 @@ static void update_logic(void)
         player_source_x,
         player_source_y
     );
+    event_jump_count_after_advance =
+        source_parity_level.event_jump_count;
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
         ROUTE_PERF_LOGIC_STAGE_LEVEL_PORT
@@ -474,10 +532,13 @@ static void update_logic(void)
             source_parity_level.frame_player_invulnerable_ticks;
     }
     source_apply_background_state();
+    source_apply_level_frame_outputs();
+    source_apply_event_music_request(event_song_before);
     if (!end_level_before && source_parity_level.end_level) {
         source_begin_end_level_audio();
     }
-    source_update_secret_level_display();
+    /* backgrnd.c updates this immediately after background 1. */
+    ot_level_port_update_starfield(&source_parity_level);
     source_sync_runtime_telemetry();
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
@@ -507,16 +568,6 @@ static void update_logic(void)
     ] += stress_cycle_counter_read() - route_stage_start;
     route_stage_start = stress_cycle_counter_read();
 #endif
-    /*
-     * Advance existing explosions before collision handling so a newly
-     * spawned effect renders source frame 122 for one complete tick.
-     */
-    update_effects();
-    /*
-     * Existing fixed-position JE_setupExplosion entries lose one TTL before
-     * JE_playerCollide() can append this tick's newly collected label.
-     */
-    source_update_explosions();
 #ifdef AUTOTEST_EXPLOSION_SEAM_TEST
     if (level_tick == 2) spawn_large_effect(120, 72, 0);
 #endif
@@ -530,8 +581,20 @@ static void update_logic(void)
     ] += stress_cycle_counter_read() - route_stage_start;
     route_stage_start = stress_cycle_counter_read();
 #endif
-    if (player_alive && !source_parity_level.end_level) {
-        source_process_player_collisions();
+    source_process_player_collisions(
+        player_alive && !source_parity_level.end_level
+    );
+    if (
+        source_parity_level.event_jump_count !=
+            event_jump_count_after_advance
+    ) {
+        /*
+         * JE_eventJump() can also run from the lethal player-shot phase,
+         * after this adapter has already advanced/synchronised backgrounds.
+         * Preserve that source curLoc immediately so the next tick cannot
+         * overwrite the jump with the pre-collision GBA level_position.
+         */
+        level_position = source_parity_level.cur_loc;
     }
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
@@ -539,7 +602,6 @@ static void update_logic(void)
     ] += stress_cycle_counter_read() - route_stage_start;
     route_stage_start = stress_cycle_counter_read();
 #endif
-    source_resume_group_stopped_backgrounds();
     update_player();
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
@@ -547,7 +609,10 @@ static void update_logic(void)
     ] += stress_cycle_counter_read() - route_stage_start;
     route_stage_start = stress_cycle_counter_read();
 #endif
-    if (game_state != STATE_PLAY) {
+    if (
+        game_state != STATE_PLAY &&
+        game_state != STATE_GAME_OVER
+    ) {
         source_play_frame_weapon_sounds();
 #ifdef AUTOTEST_ROUTE_PERF
         route_perf_current_logic_stage[
@@ -556,12 +621,52 @@ static void update_logic(void)
 #endif
         return;
     }
-    if (player_alive) {
+    if (!source_parity_level.end_level) {
         source_update_enemy_projectiles();
     }
-    source_update_end_level_condition();
+    /*
+     * Only the enemy-shot block is inside tyrian2.c's !endLevel guard.
+     * background3over/topEnemyOver/skyEnemyOverAll and their JE_drawEnemy()
+     * updates remain live throughout the ship's exit flight.
+     */
+    ot_level_port_advance_over_player_enemies(
+        &source_parity_level
+    );
+    source_apply_level_frame_outputs();
+    source_sync_runtime_telemetry();
+    source_update_repeating_explosions();
+    /*
+     * tyrian2.c advances the complete explosion pool only after player
+     * collisions/movement, enemy shots, over-player enemies and sequenced
+     * explosions have all had their chance to append new entries.
+     */
+    update_effects();
+    source_update_explosions();
+    source_parity_level.player_armor = player_armor;
+    ot_level_port_update_low_armor_warning(
+        &source_parity_level,
+        player_alive != 0
+    );
+    source_update_random_explosions();
+    /*
+     * Preserve tyrian2.c's tail phase: returnActive, secret notice, timer,
+     * filter fade, then the end-level gate.  Keeping these out of the enemy
+     * advance prevents an event return from changing the current draw phase.
+     */
+    ot_level_port_update_return_active(&source_parity_level);
+    if (
+        source_parity_level.event_jump_count !=
+            event_jump_count_after_advance
+    ) {
+        level_position = source_parity_level.cur_loc;
+    }
+    source_update_secret_level_display();
+    ot_level_port_update_level_timer(&source_parity_level);
+    ot_level_port_update_filter_fade(&source_parity_level);
     source_update_boss_bar_colour();
     source_play_frame_weapon_sounds();
+    source_resume_group_stopped_backgrounds();
+    source_update_end_level_condition();
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
         ROUTE_PERF_LOGIC_STAGE_ENEMY_SHOTS_TAIL

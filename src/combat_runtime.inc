@@ -40,16 +40,20 @@ static void source_player_energy_update(void)
             player_shield++;
         }
     }
-    player_weapon_energy = (u16)(
-        player_weapon_energy + player_generator_power
-    );
-    if (player_weapon_energy > 900) player_weapon_energy = 900;
+    if (source_parity_level.arcade_mode) {
+        player_weapon_energy = 900;
+    } else {
+        player_weapon_energy = (u16)(
+            player_weapon_energy + player_generator_power
+        );
+        if (player_weapon_energy > 900) player_weapon_energy = 900;
+    }
 #endif
 }
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
 static const u8 source_weapon_sound_slot[SOURCE_WEAPON_BAY_COUNT] = {
-    0, 2, 4, 4, 2
+    0, 2, 4, 4, 2, 2, 5, 5, 1, 4, 1
 };
 
 static u8 source_weapon_energy_consume(u16 poweruse)
@@ -172,6 +176,9 @@ static u8 source_sidekick_sync(u8 side)
     runtime = &source_sidekick[side];
     item_id = source_parity_level.player_sidekick[side];
     if (runtime->item_id != item_id) {
+        source_shot_multi_pos[
+            SOURCE_WEAPON_BAY_LEFT_SIDEKICK + side
+        ] = 0;
         memset(runtime, 0, sizeof(*runtime));
         runtime->item_id = item_id;
         runtime->weapon_charge = 0xff;
@@ -254,6 +261,24 @@ static void source_front_weapon_init(void)
     source_sidekick_attachment_return = 0;
     source_player_delta_x = 0;
     source_player_delta_y = 0;
+    source_special_bound_id = 0xff;
+    source_special_valid = 0;
+    source_special_power = 0;
+    source_special_type = 0;
+    source_special_definition_weapon = 0;
+    source_special_wait = 0;
+    source_special_next_wait = 0;
+    source_special_fire_held = 0;
+    source_special_flare_start = 0;
+    source_special_spray = 0;
+    source_special_link_to_player = 0;
+    source_special_weapon_frequency = 0;
+    source_special_zinglon_duration = 0;
+    source_special_astral_duration = 0;
+    source_special_flare_duration = 0;
+    source_special_weapon_id = 0;
+    source_special_weapon_filter = -99;
+    source_last_spawned_shot_index = MAX_PLAYER_SHOTS;
 #if TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER
     /*
      * Regression-only loadout.  Release builds cannot enable this macro,
@@ -452,8 +477,12 @@ static void stress_spawn_weapon(
             weapon->delay[position] == 121 ?
                 0 :
                 weapon->trail;
+        shot->blast_filter = weapon->shipblastfilter;
         attack = weapon->attack[position];
-        if (attack > 99 && attack < 250) {
+        if (attack == 99) {
+            shot->damage = 0;
+            shot->iced = 40;
+        } else if (attack > 99 && attack < 250) {
             shot->chain_weapon = (u16)(attack - 100u);
             shot->damage = 1;
         } else if (attack >= 250) {
@@ -462,7 +491,6 @@ static void stress_spawn_weapon(
         } else {
             shot->damage = attack;
         }
-        if (shot->damage == 0) shot->damage = 1;
         telemetry_player_shot_spawns++;
         spawned++;
     }
@@ -493,6 +521,8 @@ static u8 source_spawn_weapon(
 {
     u8 multi;
     u8 spawned = 0;
+
+    source_last_spawned_shot_index = MAX_PLAYER_SHOTS;
 
     if (
         !player_alive ||
@@ -548,7 +578,10 @@ static u8 source_spawn_weapon(
             shot->xm = (s16)(
                 shot->xm +
                 source_clamp_s16_to_s8(
-                    (s16)(origin_x - player_source_x),
+                    (s16)(
+                        origin_x - player_source_x +
+                        source_player_delta_x
+                    ),
                     -5,
                     5
                 )
@@ -558,7 +591,8 @@ static u8 source_spawn_weapon(
             shot->ym = source_clamp_s16_to_s8(
                 (s16)(
                     origin_y -
-                    player_source_y -
+                    player_source_y +
+                    source_player_delta_y -
                     weapon->sy[position]
                 ),
                 -4,
@@ -593,7 +627,10 @@ static u8 source_spawn_weapon(
                 weapon->trail;
         shot->blast_filter = weapon->shipblastfilter;
         attack = weapon->attack[position];
-        if (attack > 99 && attack < 250) {
+        if (attack == 99) {
+            shot->damage = 0;
+            shot->iced = 40;
+        } else if (attack > 99 && attack < 250) {
             shot->chain_weapon = (u16)(attack - 100u);
             shot->damage = 1;
         } else if (attack >= 250) {
@@ -602,7 +639,6 @@ static u8 source_spawn_weapon(
         } else {
             shot->damage = attack;
         }
-        if (shot->damage == 0) shot->damage = 1;
         circle = weapon->circlesize;
         shot->complicated = circle != 0;
         if (circle != 0) {
@@ -640,7 +676,7 @@ static u8 source_spawn_weapon(
                     continue;
                 }
                 dx = (s16)(
-                    enemy->ex + enemy->mapoffset - shot->x
+                    enemy->ex - shot->x
                 );
                 dy = (s16)(enemy->ey - shot->y);
                 distance = (u16)(
@@ -663,6 +699,7 @@ static u8 source_spawn_weapon(
         shot->ttl = delay;
         shot->active = shot->graphic != 0 && delay != 0;
         if (shot->active) {
+            source_last_spawned_shot_index = index;
             telemetry_player_shot_spawns++;
             spawned++;
         }
@@ -739,8 +776,15 @@ static u8 spawn_orbiting_asteroid_shot(void)
             (u8)(weapon.weapani + 1u);
     if (shot->animation_max == 0) shot->animation_max = 1;
     shot->trail = weapon.delay[0] == 121 ? 0 : weapon.trail;
-    shot->damage = weapon.attack[0];
-    if (shot->damage == 0) shot->damage = 1;
+    if (weapon.attack[0] == 99) {
+        shot->damage = 0;
+        shot->iced = 40;
+    } else if (weapon.attack[0] >= 250) {
+        shot->damage = (u8)(weapon.attack[0] - 250u);
+        shot->infinite = 1;
+    } else {
+        shot->damage = weapon.attack[0];
+    }
     shot->ttl = delay;
 
     circle = weapon.circlesize;
@@ -772,11 +816,12 @@ static u8 spawn_orbiting_asteroid_shot(void)
  * presentation-only in the 320x200 PC build and intentionally absent from
  * the cropped GBA combat viewport.
  */
-static void player_damage(u16 damage)
+static u16 player_damage(u16 damage)
 {
     u16 remaining = damage;
+    u16 damage_through_shield = 0;
 
-    if (!player_alive || player_invulnerable || remaining == 0) return;
+    if (!player_alive || player_invulnerable || remaining == 0) return 0;
     telemetry_collision_count++;
     source_parity_level.frame_sound_queue[7] = 27;
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
@@ -784,16 +829,17 @@ static void player_damage(u16 damage)
      * Development validation still records the collision, but deliberately
      * leaves the translated shield, armor and death state untouched.
      */
-    return;
+    return 0;
 #endif
 #if defined(AUTOTEST) && !defined(AUTOTEST_FORCE_PLAYER_DEATH)
     /*
      * The deterministic source-event audit must reach the authored boss and
      * level-exit records; release builds retain the translated damage path.
      */
-    return;
+    return 0;
 #endif
     if (player_shield < remaining) {
+        damage_through_shield = remaining;
         remaining -= player_shield;
         player_shield = 0;
         if (remaining > 0) {
@@ -804,6 +850,7 @@ static void player_damage(u16 damage)
                 player_death_fx_wait = 0;
                 player_death_music_volume = 255;
                 player_death_music_fade_active = 0;
+                source_parity_level.level_timer = false;
                 source_parity_level.level_end = 40;
                 /*
                  * varz.c JE_playerDamage() assigns S_EXPLOSION_22 at the
@@ -819,8 +866,51 @@ static void player_damage(u16 damage)
         }
     } else {
         player_shield = (u8)(player_shield - remaining);
+        /*
+         * Literal single-player JE_playerDamage() shield-hit corona.  These
+         * nine explosions are part of the 264x184 battle presentation, not
+         * the omitted PC sidebar HUD, and enter the normal explosion pool at
+         * the same pre-JE_playerMovement phase as the source.
+         */
+        source_spawn_explosion(
+            (s16)(player_source_x - 17),
+            (s16)(player_source_y - 12), 0, 14, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x - 5),
+            (s16)(player_source_y - 12), 0, 15, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x + 7),
+            (s16)(player_source_y - 12), 0, 16, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x + 19),
+            (s16)(player_source_y - 12), 0, 17, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x - 17),
+            (s16)(player_source_y + 2), 0, 18, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x + 19),
+            (s16)(player_source_y + 2), 0, 19, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x - 17),
+            (s16)(player_source_y + 16), 0, 20, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x - 5),
+            (s16)(player_source_y + 16), 0, 21, 1
+        );
+        source_spawn_explosion(
+            (s16)(player_source_x + 7),
+            (s16)(player_source_y + 16), 0, 22, 1
+        );
     }
     source_parity_level.player_armor = player_armor;
+    return damage_through_shield;
 }
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -876,8 +966,12 @@ static void source_sidekick_positions_update(void)
     if (left->valid) {
         switch (left->option.style) {
         case 0:
-            left->x = (s16)(player_source_x - 14);
-            left->y = player_source_y;
+            left->x = (s16)(
+                player_source_x - source_player_delta_x - 14
+            );
+            left->y = (s16)(
+                player_source_y - source_player_delta_y
+            );
             break;
         case 1:
         case 3:
@@ -900,8 +994,12 @@ static void source_sidekick_positions_update(void)
     if (right->valid) {
         switch (right->option.style) {
         case 0:
-            right->x = (s16)(player_source_x + 16);
-            right->y = player_source_y;
+            right->x = (s16)(
+                player_source_x - source_player_delta_x + 16
+            );
+            right->y = (s16)(
+                player_source_y - source_player_delta_y
+            );
             break;
         case 1:
         case 3:
@@ -1033,6 +1131,456 @@ static void source_rear_mode_update(void)
     (void)source_rear_weapon_sync();
 }
 
+static u8 source_special_sync(void)
+{
+    OtSpecialDefinition definition;
+    u8 special_id = source_parity_level.player_special;
+
+    if (source_special_bound_id == special_id) {
+        return source_special_valid;
+    }
+    source_special_bound_id = special_id;
+    source_special_valid = 0;
+    source_special_power = 0;
+    source_special_type = 0;
+    source_special_definition_weapon = 0;
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+    if (
+        special_id == 0 ||
+        !ot_data_hdt_special_read(special_id, &definition)
+    ) {
+        return 0;
+    }
+    source_special_power = definition.power;
+    source_special_type = definition.type;
+    source_special_definition_weapon = definition.weapon;
+    source_special_valid = definition.type != 0;
+    return source_special_valid;
+}
+
+static void source_special_complete(void)
+{
+    OtWeaponDefinition weapon;
+    u8 index;
+    u8 effect_power = source_special_power;
+
+    if (!source_special_valid) return;
+    source_special_next_wait = 0;
+    switch (source_special_type) {
+    case 1: /* Weapon */
+        if (
+            ot_data_hdt_weapon_read(
+                source_special_definition_weapon,
+                &weapon
+            ) &&
+            source_weapon_is_valid(&weapon)
+        ) {
+            source_spawn_weapon(
+                &weapon,
+                SOURCE_WEAPON_BAY_SPECIAL2,
+                player_source_x,
+                player_source_y
+            );
+            source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] =
+                source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL2];
+        }
+        break;
+
+    case 2: /* Repulsor */
+        for (index = 0; index < OT_ENEMY_SHOT_COUNT; index++) {
+            OtEnemyShot *shot =
+                &source_parity_level.enemy_shot[index];
+
+            if (!shot->active) continue;
+            if (player_source_x > shot->sx) {
+                shot->sxm--;
+            } else if (player_source_x < shot->sx) {
+                shot->sxm++;
+            }
+            if (player_source_y > shot->sy) {
+                shot->sym--;
+            } else if (player_source_y < shot->sy) {
+                shot->sym++;
+            }
+        }
+        break;
+
+    case 3: /* Zinglon Blast */
+        source_special_zinglon_duration = 50;
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 100;
+        source_parity_level.frame_sound_queue[7] = 21;
+        break;
+
+    case 4: /* Attractor */
+        for (index = 0; index < OT_ENEMY_COUNT; index++) {
+            OtEnemy *enemy = &source_parity_level.enemy[index];
+
+            if (
+                source_parity_level.enemy_avail[index] == 1 ||
+                !enemy->scoreitem ||
+                enemy->evalue == 0
+            ) {
+                continue;
+            }
+            if (player_source_x > enemy->ex) {
+                enemy->exc++;
+            } else if (player_source_x < enemy->ex) {
+                enemy->exc--;
+            }
+            if (player_source_y > enemy->ey) {
+                enemy->eyc++;
+            } else if (player_source_y < enemy->ey) {
+                enemy->eyc--;
+            }
+        }
+        break;
+
+    case 5:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 10:
+    case 11:
+    case 16:
+        if (source_special_flare_duration == 0) {
+            source_special_flare_start = 1;
+        }
+        source_special_weapon_id =
+            source_special_definition_weapon;
+        source_special_link_to_player = 0;
+        source_special_spray = 0;
+        switch (source_special_type) {
+        case 5:
+            source_special_weapon_filter = 7;
+            source_special_weapon_frequency = 2;
+            source_special_flare_duration = 50;
+            break;
+        case 6:
+            source_special_weapon_filter = 1;
+            source_special_weapon_frequency = 7;
+            source_special_flare_duration = (u16)(
+                200u +
+                25u * source_parity_level.player_front_weapon_power
+            );
+            break;
+        case 7:
+            source_special_weapon_filter = 3;
+            source_special_weapon_frequency = 3;
+            source_special_flare_duration = (u16)(
+                50u +
+                10u * source_parity_level.player_front_weapon_power
+            );
+            source_special_zinglon_duration = 50;
+            source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 100;
+            source_parity_level.frame_sound_queue[7] = 21;
+            break;
+        case 8:
+            source_special_weapon_filter = -99;
+            source_special_weapon_frequency = 7;
+            source_special_flare_duration = (u16)(
+                10u + source_parity_level.player_front_weapon_power
+            );
+            break;
+        case 9:
+            source_special_weapon_filter = -99;
+            source_special_weapon_frequency = 8;
+            source_special_flare_duration = (u16)(
+                8u +
+                2u * source_parity_level.player_front_weapon_power
+            );
+            source_special_link_to_player = 1;
+            source_special_next_wait = source_special_power;
+            break;
+        case 10:
+            source_special_weapon_filter = -99;
+            source_special_weapon_frequency = 8;
+            source_special_flare_duration = (u16)(
+                14u +
+                4u * source_parity_level.player_front_weapon_power
+            );
+            source_special_link_to_player = 1;
+            break;
+        case 11:
+            source_special_weapon_filter = -99;
+            source_special_weapon_frequency = source_special_power;
+            source_special_flare_duration = (u16)(
+                10u +
+                10u * source_parity_level.player_front_weapon_power
+            );
+            source_special_astral_duration = (u8)(
+                20u +
+                10u * source_parity_level.player_front_weapon_power
+            );
+            break;
+        default: /* type 16 */
+            source_special_weapon_filter = -99;
+            source_special_weapon_frequency = 8;
+            source_special_flare_duration = (u16)(
+                effect_power * 16u + 8u
+            );
+            source_special_link_to_player = 1;
+            source_special_spray = 1;
+            break;
+        }
+        break;
+
+    case 12: /* Invulnerability */
+        player_invulnerable = (u16)effect_power * 10u;
+        if (source_parity_level.player_super_arcade_mode != 0) {
+            source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 250;
+            if (
+                ot_data_hdt_weapon_read(707, &weapon) &&
+                source_weapon_is_valid(&weapon)
+            ) {
+                source_spawn_weapon(
+                    &weapon,
+                    SOURCE_WEAPON_BAY_SPECIAL2,
+                    player_source_x,
+                    player_source_y
+                );
+            }
+            player_invulnerable = 100;
+        }
+        break;
+
+    case 13: /* Repair player one */
+        {
+            u16 repaired = (u16)(
+                player_armor + effect_power / 4u + 1u
+            );
+
+            player_armor = repaired > 255 ? 255 : (u8)repaired;
+            source_parity_level.player_armor = player_armor;
+            source_parity_level.frame_sound_queue[3] = 29;
+        }
+        break;
+
+    case 14: /* Player two is intentionally absent on GBA. */
+        break;
+
+    case 17: /* Spawn left or right sidekick */
+        source_parity_level.frame_sound_queue[3] = 29;
+        if (
+            source_parity_level.player_sidekick[0] ==
+                source_special_definition_weapon
+        ) {
+            source_parity_level.player_sidekick[1] =
+                (u8)source_special_definition_weapon;
+            source_shot_multi_pos[
+                SOURCE_WEAPON_BAY_RIGHT_SIDEKICK
+            ] = 0;
+        } else {
+            source_parity_level.player_sidekick[0] =
+                (u8)source_special_definition_weapon;
+            source_shot_multi_pos[
+                SOURCE_WEAPON_BAY_LEFT_SIDEKICK
+            ] = 0;
+        }
+        break;
+
+    case 18: /* Spawn right sidekick */
+        source_parity_level.player_sidekick[1] =
+            (u8)source_special_definition_weapon;
+        source_shot_multi_pos[
+            SOURCE_WEAPON_BAY_RIGHT_SIDEKICK
+        ] = 0;
+        source_parity_level.frame_sound_queue[4] = 29;
+        break;
+
+    default:
+        break;
+    }
+}
+
+static void source_special_flare_update(void)
+{
+    OtWeaponDefinition weapon;
+
+    if (source_special_astral_duration > 0) {
+        source_special_astral_duration--;
+    }
+    if (source_special_flare_duration > 1) {
+        if (source_special_weapon_filter != -99) {
+            s8 colour_change =
+                ot_level_port_random(&source_parity_level) % 2u == 0 ?
+                    -1 : 1;
+
+            if (
+                source_parity_level.level_filter == -99 &&
+                source_parity_level.level_brightness == -99
+            ) {
+                source_parity_level.filter_active = false;
+            }
+            if (!source_parity_level.filter_active) {
+                source_parity_level.level_filter =
+                    source_special_weapon_filter;
+                if (source_parity_level.level_filter == 7) {
+                    source_parity_level.level_brightness = 0;
+                }
+                source_parity_level.filter_active = true;
+            }
+            if (source_parity_level.level_filter == 7) {
+                if (source_parity_level.level_brightness < -6) {
+                    colour_change = 1;
+                }
+                if (source_parity_level.level_brightness > 6) {
+                    colour_change = -1;
+                }
+                source_parity_level.level_brightness = (int16_t)(
+                    source_parity_level.level_brightness +
+                    colour_change
+                );
+            }
+        }
+        if (
+            (s32)(ot_level_port_random(&source_parity_level) % 6u) <
+                source_special_weapon_frequency &&
+            ot_data_hdt_weapon_read(
+                source_special_weapon_id,
+                &weapon
+            ) &&
+            source_weapon_is_valid(&weapon)
+        ) {
+            u8 spawned = 0;
+
+            if (source_special_link_to_player) {
+                if (
+                    source_shot_repeat[
+                        SOURCE_WEAPON_BAY_SPECIAL
+                    ] == 0
+                ) {
+                    spawned = source_spawn_weapon(
+                        &weapon,
+                        SOURCE_WEAPON_BAY_SPECIAL,
+                        player_source_x,
+                        player_source_y
+                    );
+                }
+            } else {
+                spawned = source_spawn_weapon(
+                    &weapon,
+                    SOURCE_WEAPON_BAY_SPECIAL,
+                    (s16)(
+                        ot_level_port_random(
+                            &source_parity_level
+                        ) % 280u
+                    ),
+                    (s16)(
+                        ot_level_port_random(
+                            &source_parity_level
+                        ) % 180u
+                    )
+                );
+            }
+            if (
+                source_special_spray &&
+                spawned != 0 &&
+                source_last_spawned_shot_index < MAX_PLAYER_SHOTS
+            ) {
+                PlayerShot *shot = &player_shots[
+                    source_last_spawned_shot_index
+                ];
+
+                shot->xm = (s16)(
+                    ot_level_port_random(&source_parity_level) % 5u
+                ) - 2;
+                shot->ym = (s16)(
+                    ot_level_port_random(&source_parity_level) % 5u
+                ) - 2;
+                if (shot->ym == 0) shot->ym++;
+            }
+        }
+        source_special_flare_duration--;
+        if (source_special_flare_duration == 1) {
+            source_special_wait = source_special_next_wait;
+        }
+    } else if (source_special_flare_start) {
+        source_special_flare_start = 0;
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] =
+            source_special_link_to_player ? 15 : 200;
+        source_special_flare_duration = 0;
+        if (
+            source_parity_level.level_filter ==
+                source_special_weapon_filter
+        ) {
+            source_parity_level.level_filter = -99;
+            source_parity_level.level_brightness = -99;
+            source_parity_level.filter_active = false;
+        }
+    }
+    if (source_special_zinglon_duration > 1) {
+        source_special_zinglon_duration--;
+    }
+}
+
+static void source_special_update(void)
+{
+    u8 special_fire;
+
+    (void)source_special_sync();
+    if (source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] > 0) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL]--;
+    }
+    if (source_special_wait > 0) source_special_wait--;
+    special_fire = (pad_now & KEY_A) != 0;
+    if (
+        source_parity_level.player_super_arcade_mode != 0 &&
+        (pad_now & (KEY_B | KEY_R)) != 0
+    ) {
+        source_special_fire_held = 0;
+        special_fire = 1;
+    }
+    if (!special_fire) {
+        source_special_fire_held = 0;
+    } else if (
+        source_special_valid &&
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] == 0 &&
+        !source_special_fire_held &&
+        source_special_flare_duration == 0 &&
+        source_special_wait == 0
+    ) {
+        source_special_fire_held = 1;
+        source_special_complete();
+    }
+    source_special_flare_update();
+}
+
+static void source_superbomb_update(void)
+{
+    OtWeaponDefinition weapon;
+
+    if (
+        source_shot_repeat[
+            SOURCE_WEAPON_BAY_P1_SUPERBOMB
+        ] > 0
+    ) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_P1_SUPERBOMB]--;
+    } else if (
+        source_parity_level.player_superbombs > 0 &&
+        (pad_now & (KEY_B | KEY_R)) != 0
+    ) {
+        source_parity_level.player_superbombs--;
+        source_shot_multi_pos[
+            SOURCE_WEAPON_BAY_P1_SUPERBOMB
+        ] = 0;
+        if (
+            ot_data_hdt_weapon_read(535, &weapon) &&
+            source_weapon_is_valid(&weapon)
+        ) {
+            source_spawn_weapon(
+                &weapon,
+                SOURCE_WEAPON_BAY_P1_SUPERBOMB,
+                player_source_x,
+                player_source_y
+            );
+        }
+    }
+}
+
 static void source_sidekick_fire_update(u8 side, u16 button)
 {
     SourceSidekickRuntime *runtime = &source_sidekick[side];
@@ -1062,16 +1610,12 @@ static void source_sidekick_fire_update(u8 side, u16 button)
     }
     if (!fire) return;
     if (!source_weapon_energy_consume(runtime->poweruse)) return;
-    if (
-        source_spawn_weapon(
-            &runtime->weapon,
-            bay,
-            runtime->x,
-            runtime->y
-        ) == 0
-    ) {
-        return;
-    }
+    (void)source_spawn_weapon(
+        &runtime->weapon,
+        bay,
+        runtime->x,
+        runtime->y
+    );
     if (runtime->ammo_max > 0) runtime->ammo--;
     if (runtime->charge > 0) {
         source_shot_multi_pos[bay] = 0;
@@ -1113,8 +1657,6 @@ static void source_sidekick_animation_update(u8 side)
 
 static void source_player_weapons_update(void)
 {
-    u8 bay;
-
     (void)source_front_weapon_sync();
     (void)source_rear_weapon_sync();
     (void)source_sidekick_sync(0);
@@ -1123,10 +1665,22 @@ static void source_player_weapons_update(void)
         source_parity_level.assets_valid = false;
     }
     source_rear_mode_update();
-    for (bay = 0; bay < SOURCE_WEAPON_BAY_COUNT; bay++) {
-        if (source_shot_repeat[bay] > 0) {
-            source_shot_repeat[bay]--;
-        }
+    source_special_update();
+    if (source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] > 0) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_FRONT]--;
+    }
+    if (source_shot_repeat[SOURCE_WEAPON_BAY_REAR] > 0) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_REAR]--;
+    }
+    if (
+        source_shot_repeat[SOURCE_WEAPON_BAY_LEFT_SIDEKICK] > 0
+    ) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_LEFT_SIDEKICK]--;
+    }
+    if (
+        source_shot_repeat[SOURCE_WEAPON_BAY_RIGHT_SIDEKICK] > 0
+    ) {
+        source_shot_repeat[SOURCE_WEAPON_BAY_RIGHT_SIDEKICK]--;
     }
     if (pad_now & KEY_A) {
         if (
@@ -1164,12 +1718,55 @@ static void source_player_weapons_update(void)
             }
         }
     }
+    source_superbomb_update();
+    source_sidekick_positions_update();
     source_sidekick_fire_update(0, KEY_B);
     source_sidekick_fire_update(1, KEY_R);
     source_sidekick_animation_update(0);
     source_sidekick_animation_update(1);
 }
 #endif
+
+static u8 source_player_arcade_respawn(void)
+{
+    if (
+        !source_parity_level.arcade_mode ||
+        source_parity_level.player_front_weapon_power <= 1
+    ) {
+        return 0;
+    }
+
+    /*
+     * Direct onePlayerAction branch from mainint.c JE_playerMovement().
+     * Arcade aliases lives to front-weapon power, so losing a life also
+     * selects the preceding authored weapon-power row.
+     */
+    source_parity_level.player_front_weapon_power--;
+    player_lives = source_parity_level.player_front_weapon_power;
+    source_parity_level.really_end_level = false;
+    source_parity_level.end_level = false;
+    source_parity_level.all_players_gone = false;
+    ot_level_port_recalculate_player_power_progress(
+        &source_parity_level
+    );
+#if TYRIAN_GBA_STRESS_LOADOUT
+    stress_shot_multi_pos[STRESS_BAY_FRONT] = 0;
+#else
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_FRONT] = 0;
+#endif
+    player_source_y = 160;
+    player_invulnerable = 100;
+    player_alive = 1;
+    player_armor = frontend_level.episode == 4 ?
+        player_initial_armor :
+        (u8)(player_initial_armor / 2u);
+    player_shield = (u8)(player_shield_max / 2u);
+    source_parity_level.player_armor = player_armor;
+    player_death_music_volume = 255;
+    player_death_music_fade_active = 0;
+    audio_set_source_music_volume(255);
+    return 1;
+}
 
 static void update_player(void)
 {
@@ -1252,28 +1849,27 @@ static void update_player(void)
             if (source_parity_level.level_end > 0) {
                 source_parity_level.level_end--;
             }
-            player_death_music_fade_active = 1;
+            /*
+             * PC allPlayersGone is true during a Full Game death, but not
+             * during an Arcade death which still has a respawn available.
+             */
+            player_death_music_fade_active =
+                !source_parity_level.arcade_mode;
             telemetry_source_rng_calls =
                 source_parity_level.rng_call_count;
             if (
                 player_exploding_ticks == 0 &&
+                !source_parity_level.arcade_mode &&
                 game_state == STATE_PLAY
             ) {
-                /*
-                 * Full Game starts with exactly one life.  Unlike Arcade,
-                 * there is no JE_playerMovement respawn branch here.
-                 */
                 frontend_enter_game_over();
             }
         } else if (game_state == STATE_PLAY) {
-            /*
-             * onePlayerAction aliases lives to front-weapon power.  A fresh
-             * Pulse-Cannon starts at power/lives 1, so neither requested mode
-             * has an extra life in the selected-level source port.
-             */
-            frontend_enter_game_over();
+            if (!source_player_arcade_respawn()) {
+                frontend_enter_game_over();
+            }
         }
-        return;
+        if (!player_alive || game_state != STATE_PLAY) return;
     }
 
     if (source_parity_level.end_level) {
@@ -1330,12 +1926,8 @@ static void update_player(void)
             player_source_velocity_y--;
         }
     }
-    player_source_velocity_x = (s8)(
-        player_source_velocity_x + accel_x
-    );
-    player_source_velocity_y = (s8)(
-        player_source_velocity_y + accel_y
-    );
+    player_source_velocity_x += accel_x;
+    player_source_velocity_y += accel_y;
     if (player_source_velocity_x < -4) player_source_velocity_x = -4;
     if (player_source_velocity_x > 4) player_source_velocity_x = 4;
     if (player_source_velocity_y < -4) player_source_velocity_y = -4;
@@ -1460,7 +2052,6 @@ static void update_player(void)
     source_player_delta_x = (s16)(player_source_x - old_x);
     source_player_delta_y = (s16)(player_source_y - old_y);
     source_player_history_update(old_x, old_y);
-    source_sidekick_positions_update();
     source_player_weapons_update();
 #endif
     if (player_invulnerable) player_invulnerable--;
@@ -1586,9 +2177,7 @@ static void update_shots(void)
                 ) {
                     const OtEnemy *enemy =
                         &source_parity_level.enemy[enemy_index];
-                    s16 target_x = (s16)(
-                        enemy->ex + enemy->mapoffset
-                    );
+                    s16 target_x = enemy->ex;
 
                     if (player_shot->x < target_x) {
                         player_shot->xm++;

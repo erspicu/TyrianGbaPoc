@@ -562,6 +562,25 @@ static void autotest_finish(void)
     sram_write_u32(6112, telemetry_secret_level_collision_pass);
     sram_write_u32(6116, telemetry_end_level_music_natural_stops);
     sram_write_u32(6120, telemetry_arcade_equipment_collision_pass);
+    /*
+     * Event-clock diagnostics.  These values make a stopped-background
+     * authored sequence distinguishable from a stalled GAMELOOP without
+     * changing release behaviour.
+     */
+    sram_write_u32(6124, source_parity_level.force_events ? 1 : 0);
+    sram_write_u32(6128, source_parity_level.cur_loc);
+    sram_write_u32(6132, source_parity_level.back_move);
+    sram_write_u32(6136, source_parity_level.back_move2);
+    sram_write_u32(6140, source_parity_level.back_move3);
+    sram_write_u32(6144, source_parity_level.map1_y_delay);
+    sram_write_u32(6148, source_parity_level.map1_y_delay_max);
+    sram_write_u32(6152, source_parity_level.event_index);
+    sram_write_u32(6156, source_parity_level.event_jump_count);
+    sram_write_u32(
+        6160,
+        source_parity_level.super_enemy_254_jump_count
+    );
+    sram_write_u32(6164, source_parity_level.super_enemy_254_jump);
     sram_write_u32(6200, telemetry_boss_perf_started);
     sram_write_u32(6204, telemetry_boss_perf_completed);
     sram_write_u32(6208, telemetry_boss_perf_start_position);

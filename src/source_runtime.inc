@@ -1700,6 +1700,8 @@ static u8 source_effect_upload_count;
 static u8 source_effect_boss_bar_tiles_dirty EWRAM_BSS;
 static u8 source_effect_reward_tiles_dirty EWRAM_BSS;
 static u8 source_effect_reward_tiles_required EWRAM_BSS;
+static u8 source_effect_status_tiles_dirty EWRAM_BSS;
+static u8 source_effect_status_tiles_required EWRAM_BSS;
 
 static u8 source_effect_boss_bar_active(void)
 {
@@ -1733,6 +1735,23 @@ static u8 source_effect_legacy_reward_frame_active(void)
 #endif
 }
 
+static u8 source_effect_status_label_active(void)
+{
+#if TYRIAN_GBA_STRESS_LOADOUT
+    return 0;
+#else
+    return
+        game_state == STATE_GAME_OVER ||
+        (
+            game_state == STATE_PLAY &&
+            (
+                source_parity_level.display_time != 0 ||
+                frontend_demo_active
+            )
+        );
+#endif
+}
+
 static void source_effect_restore_shared_tiles_if_needed(void)
 {
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -1758,6 +1777,30 @@ static void source_effect_restore_shared_tiles_if_needed(void)
             SOURCE_EFFECT_FRAME_BYTES
         );
         source_effect_reward_tiles_dirty = 0;
+    }
+    if (
+        source_effect_status_tiles_dirty &&
+        source_effect_status_tiles_required
+    ) {
+        const u8 *source = 0;
+
+        if (game_state == STATE_GAME_OVER) {
+            source = obj_tiles + OBJ_TILE_GAME_OVER_SOURCE * 32u;
+        } else if (source_parity_level.display_time != 0) {
+            source = obj_tiles + OBJ_TILE_SECRET_LEVEL_SOURCE * 32u;
+        } else if (frontend_demo_active) {
+            source = obj_tiles + OBJ_TILE_INSERT_COIN_SOURCE * 32u;
+        }
+        if (source != 0) {
+            dmaCopy(
+                source + 8u * 32u,
+                (u8 *)OBJ_BASE_ADR +
+                    SOURCE_EFFECT_CACHE_STATUS_TILE_BASE * 32u,
+                SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT *
+                    SOURCE_EFFECT_FRAME_BYTES
+            );
+        }
+        source_effect_status_tiles_dirty = 0;
     }
 #endif
 }
@@ -1803,6 +1846,13 @@ static u8 source_effect_cache_slot_reserved(u8 slot)
         (
             slot == SOURCE_EFFECT_CACHE_REWARD_SLOT &&
             source_effect_reward_tiles_required
+        ) ||
+        (
+            slot >= SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT &&
+            slot <
+                SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT +
+                    SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT &&
+            source_effect_status_tiles_required
         );
 #endif
 }
@@ -1819,6 +1869,18 @@ static u16 source_effect_cache_tile(u8 slot)
     if (slot == SOURCE_EFFECT_CACHE_REWARD_SLOT) {
         return SOURCE_EFFECT_CACHE_REWARD_TILE_BASE;
     }
+    if (
+        slot >= SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT &&
+        slot <
+            SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT +
+                SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT
+    ) {
+        return (u16)(
+            SOURCE_EFFECT_CACHE_STATUS_TILE_BASE +
+            (slot - SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT) *
+                SOURCE_EFFECT_TILES_PER_SLOT
+        );
+    }
 #endif
     return (u16)(
         SOURCE_EFFECT_CACHE_TILE_BASE +
@@ -1832,6 +1894,8 @@ static void source_effect_cache_begin_frame(void)
 #if !TYRIAN_GBA_STRESS_LOADOUT
     source_effect_reward_tiles_required =
         source_effect_legacy_reward_frame_active();
+    source_effect_status_tiles_required =
+        source_effect_status_label_active();
     if (source_effect_boss_bar_active()) {
         u8 frame_key = source_effect_cache_frame_key[
             SOURCE_EFFECT_CACHE_BOSS_SLOT];
@@ -1867,6 +1931,29 @@ static void source_effect_cache_begin_frame(void)
         source_effect_cancel_pending_slot(
             SOURCE_EFFECT_CACHE_REWARD_SLOT
         );
+    }
+    if (source_effect_status_tiles_required) {
+        u8 slot;
+
+        for (
+            slot = SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT;
+            slot <
+                SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT +
+                    SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT;
+            slot++
+        ) {
+            u8 frame_key = source_effect_cache_frame_key[slot];
+
+            if (frame_key != SOURCE_EFFECT_FRAME_KEY_INVALID) {
+                if (source_effect_frame_slot[frame_key] == slot + 1u) {
+                    source_effect_frame_slot[frame_key] = 0;
+                }
+                source_effect_status_tiles_dirty = 1;
+            }
+            source_effect_cache_frame_key[slot] =
+                SOURCE_EFFECT_FRAME_KEY_INVALID;
+            source_effect_cancel_pending_slot(slot);
+        }
     }
 #endif
     if (source_effect_cache_epoch == 0) {
@@ -2050,6 +2137,14 @@ static void source_effect_cache_commit(void)
         }
         if (upload->slot == SOURCE_EFFECT_CACHE_REWARD_SLOT) {
             source_effect_reward_tiles_dirty = 1;
+        }
+        if (
+            upload->slot >= SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT &&
+            upload->slot <
+                SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT +
+                    SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT
+        ) {
+            source_effect_status_tiles_dirty = 1;
         }
 #endif
         telemetry_effect_cache_uploads++;
@@ -2360,6 +2455,23 @@ typedef struct {
     u8 ttl;
 } SourceExplosionDefinition;
 
+enum {
+    SOURCE_REPEATING_EXPLOSION_COUNT = 20,
+};
+
+/* Direct fixed-width counterpart of varz.h rep_explosion_type. */
+typedef struct {
+    u16 delay;
+    u16 ttl;
+    s16 x;
+    s16 y;
+    u8 big;
+} SourceRepeatingExplosion;
+
+static SourceRepeatingExplosion source_repeating_explosion[
+    SOURCE_REPEATING_EXPLOSION_COUNT
+] EWRAM_DATA;
+
 /*
  * Direct JE_setupExplosion() table from OpenTyrian varz.c.  For a fixed
  * pickup label the PC renderer does not increment sprite; blit_sprite2()
@@ -2477,13 +2589,177 @@ static void source_update_explosions(void)
     }
 }
 
+static void source_spawn_large_explosion_visual(
+    bool ground,
+    s16 x,
+    s16 y
+)
+{
+    s16 centre_x;
+    s16 centre_y;
+
+    if (y < 0) return;
+    centre_x = source_world_to_screen_x((s16)(x + 6));
+    centre_y = source_world_to_screen_y((s16)(y + 7));
+    spawn_large_effect(centre_x, centre_y, ground);
+}
+
+static void source_setup_large_explosion(
+    bool ground,
+    u8 repeat_count,
+    s16 x,
+    s16 y
+)
+{
+    u8 index;
+    u8 big = 0;
+
+    if (y < 0) return;
+    source_spawn_large_explosion_visual(ground, x, y);
+    if (repeat_count > 10) {
+        repeat_count = (u8)(repeat_count - 10u);
+        big = 1;
+    }
+    if (repeat_count == 0) return;
+    for (index = 0; index < SOURCE_REPEATING_EXPLOSION_COUNT; index++) {
+        SourceRepeatingExplosion *repeating =
+            &source_repeating_explosion[index];
+
+        if (repeating->ttl != 0) continue;
+        repeating->ttl = repeat_count;
+        repeating->delay = 2;
+        repeating->x = x;
+        repeating->y = y;
+        repeating->big = big;
+        return;
+    }
+}
+
+static u8 source_repeating_explosions_active(void)
+{
+    u8 index;
+
+    for (index = 0; index < SOURCE_REPEATING_EXPLOSION_COUNT; index++) {
+        if (source_repeating_explosion[index].ttl != 0) return 1;
+    }
+    return 0;
+}
+
+static void source_update_repeating_explosions(void)
+{
+    u8 index;
+
+    for (index = 0; index < SOURCE_REPEATING_EXPLOSION_COUNT; index++) {
+        SourceRepeatingExplosion *repeating =
+            &source_repeating_explosion[index];
+        s16 x;
+        s16 y;
+
+        if (repeating->ttl == 0) continue;
+        if (repeating->delay > 0) {
+            repeating->delay--;
+            continue;
+        }
+        repeating->y = (s16)(
+            repeating->y + source_parity_level.back_move2 + 1
+        );
+        x = (s16)(
+            repeating->x +
+            (s16)(ot_level_port_random(&source_parity_level) % 24u) -
+            12
+        );
+        y = (s16)(
+            repeating->y +
+            (s16)(ot_level_port_random(&source_parity_level) % 27u) -
+            24
+        );
+        if (repeating->big) {
+            source_setup_large_explosion(false, 2, x, y);
+            if (
+                repeating->ttl == 1 ||
+                ot_level_port_random(&source_parity_level) % 5u == 1u
+            ) {
+                source_parity_level.frame_sound_queue[7] = 11;
+            } else {
+                source_parity_level.frame_sound_queue[6] = 9;
+            }
+            repeating->delay = (u16)(
+                4u + ot_level_port_random(&source_parity_level) % 3u
+            );
+        } else {
+            source_spawn_explosion(x, y, 0, 1, 0);
+            source_parity_level.frame_sound_queue[5] = 4;
+            repeating->delay = 3;
+        }
+        repeating->ttl--;
+    }
+}
+
+static void source_update_random_explosions(void)
+{
+    if (
+        source_parity_level.random_explosions &&
+        ot_level_port_random(&source_parity_level) % 10u == 1u
+    ) {
+        s16 x = (s16)(
+            ot_level_port_random(&source_parity_level) % 280u
+        );
+        s16 y = (s16)(
+            ot_level_port_random(&source_parity_level) % 180u
+        );
+
+        source_setup_large_explosion(false, 20, x, y);
+    }
+}
+
+static void source_apply_level_frame_outputs(void)
+{
+    u8 index;
+
+    if (source_parity_level.pending_text_window != 0) {
+        gameplay_overlay_show_event(
+            source_parity_level.pending_text_window
+        );
+        source_parity_level.pending_text_window = 0;
+    }
+    /* JE_drawEnemy() runs before JE_playerMovement() in the source loop. */
+    player_source_velocity_x +=
+        source_parity_level.frame_player_velocity_x_delta;
+    player_source_velocity_y +=
+        source_parity_level.frame_player_velocity_y_delta;
+    source_parity_level.frame_player_velocity_x_delta = 0;
+    source_parity_level.frame_player_velocity_y_delta = 0;
+    for (
+        index = 0;
+        index < source_parity_level.frame_explosion_count;
+        index++
+    ) {
+        const OtFrameExplosion *request =
+            &source_parity_level.frame_explosion[index];
+
+        source_spawn_explosion(
+            request->x,
+            request->y,
+            request->delta_y,
+            request->explosion_type,
+            request->fixed_position
+        );
+    }
+    source_parity_level.frame_explosion_count = 0;
+}
+
 static void source_emit_effect(const OtHitEffect *effect)
 {
     s16 centre_x = source_world_to_screen_x((s16)(effect->x + 6));
     s16 centre_y = source_world_to_screen_y((s16)(effect->y + 7));
 
     if (effect->large) {
-        spawn_large_effect(centre_x, centre_y, effect->ground);
+        source_setup_large_explosion(
+            effect->ground,
+            effect->repeat_count,
+            effect->x,
+            effect->y
+        );
     } else {
         spawn_effect(
             (s16)(centre_x - 8),
@@ -2824,7 +3100,7 @@ static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
 #else
 static void
 #endif
-source_process_player_collisions(void)
+source_process_player_collisions(bool collide_player)
 {
 #if !(TYRIAN_GBA_STRESS_LOADOUT && \
     TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION)
@@ -2837,6 +3113,36 @@ source_process_player_collisions(void)
     OtPlayerCollisionResult player_result;
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
     u32 collision_cycle_start = stress_cycle_counter_read();
+#endif
+
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        !source_parity_level.end_level &&
+        source_special_zinglon_duration > 1
+    ) {
+        s16 width = (s16)(
+            25 -
+            (
+                source_special_zinglon_duration > 25 ?
+                    source_special_zinglon_duration - 25 :
+                    25 - source_special_zinglon_duration
+            )
+        );
+        OtShotCollisionResult zinglon_result;
+
+        if (width > 0) {
+            ot_level_port_collide_zinglon_beam(
+                &source_parity_level,
+                (s16)(player_source_x + 7),
+                (u8)width,
+                &zinglon_result
+            );
+            source_apply_player_shot_result(
+                0,
+                &zinglon_result
+            );
+        }
+    }
 #endif
 
 #if !(TYRIAN_GBA_STRESS_LOADOUT && \
@@ -2917,6 +3223,11 @@ source_process_player_collisions(void)
                 damage_and_radii |=
                     (u32)radius_h << 16;
             }
+            damage_and_radii |=
+                (u32)(shot->blast_filter & 0x0fu) << 24;
+            if (shot->iced != 0) {
+                damage_and_radii |= (u32)1u << 28;
+            }
             ot_level_port_collide_player_shot_packed(
                 &source_parity_level,
                 shot->x,
@@ -2929,6 +3240,12 @@ source_process_player_collisions(void)
         {
             u8 radius_w;
             u8 radius_h;
+            u32 damage_and_radii = shot->damage |
+                ((u32)(shot->blast_filter & 0x0fu) << 24);
+
+            if (shot->iced != 0) {
+                damage_and_radii |= (u32)1u << 28;
+            }
 
             if (
                 source_option_projectile_collision_radii(
@@ -2937,22 +3254,22 @@ source_process_player_collisions(void)
                     &radius_h
                 )
             ) {
-            ot_level_port_collide_player_shot_sized(
-                &source_parity_level,
-                shot->x,
-                shot->y,
-                shot->damage,
-                    radius_w,
-                    radius_h,
-                &result
-            );
-            } else {
-                ot_level_port_collide_player_shot(
+                damage_and_radii |= (u32)radius_w << 8;
+                damage_and_radii |= (u32)radius_h << 16;
+                ot_level_port_collide_player_shot_packed(
                     &source_parity_level,
                     shot->x,
                     shot->y,
-                    shot->damage,
-                    &result
+                    &result,
+                    damage_and_radii
+                );
+            } else {
+                ot_level_port_collide_player_shot_packed(
+                    &source_parity_level,
+                    shot->x,
+                    shot->y,
+                    &result,
+                    damage_and_radii
                 );
             }
         }
@@ -2977,9 +3294,18 @@ source_process_player_collisions(void)
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
 #if !(TYRIAN_GBA_STRESS_LOADOUT && \
     TYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION)
-    source_autotest_route_combat_assist();
+    if (collide_player) source_autotest_route_combat_assist();
 #endif
 #endif
+
+    /*
+     * tyrian2.c keeps advancing/colliding every existing player shot during
+     * endLevel, but JE_playerCollide() itself is guarded by
+     * player.is_alive && !endLevel.  Keep that boundary explicit: otherwise
+     * the GBA port can leave linked enemies or event-jump targets alive while
+     * the level-exit animation is already running.
+     */
+    if (!collide_player) return;
 
     source_parity_level.player_armor = player_armor;
     ot_level_port_collide_player(
@@ -2989,6 +3315,15 @@ source_process_player_collisions(void)
     );
     player_armor = source_parity_level.player_armor;
     player_cash += player_result.cash_awarded;
+    /*
+     * JE_playerCollide() runs before JE_playerMovement().  Preserve the wide
+     * pre-clamp velocity so the source friction/input/clamp order remains
+     * intact even for high-armour authored collision objects.
+     */
+    player_source_velocity_x +=
+        player_result.player_velocity_x_delta;
+    player_source_velocity_y +=
+        player_result.player_velocity_y_delta;
     for (
         effect_index = 0;
         effect_index < player_result.effect_count;
@@ -3009,6 +3344,37 @@ source_process_player_collisions(void)
         (void)spawn_orbiting_asteroid_shot();
         player_result.orbiting_asteroids_awarded--;
     }
+    if (player_result.reset_all_shot_multi_pos) {
+#if TYRIAN_GBA_STRESS_LOADOUT
+        memset(stress_shot_multi_pos, 0, sizeof(stress_shot_multi_pos));
+#else
+        memset(source_shot_multi_pos, 0, sizeof(source_shot_multi_pos));
+#endif
+    }
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (player_result.front_weapon_picked_up) {
+        /* JE_playerCollide(): shotMultiPos[SHOT_FRONT]=0; repeat=10. */
+        source_front_weapon_bound = 0;
+        (void)source_front_weapon_sync();
+        source_shot_multi_pos[SOURCE_WEAPON_BAY_FRONT] = 0;
+        source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] = 10;
+    }
+    if (player_result.special_weapon_picked_up) {
+        source_special_bound_id = 0xff;
+        (void)source_special_sync();
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 10;
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+    }
+#endif
+    if (
+        player_result.pickup_message_type !=
+            OT_PICKUP_MESSAGE_NONE
+    ) {
+        gameplay_overlay_show_pickup(
+            player_result.pickup_message_type,
+            player_result.pickup_message_item_id
+        );
+    }
     if (player_result.bonus_level_triggered) {
         /*
          * mainint.c plays source song 30 ("Zanac"), then displays
@@ -3023,9 +3389,36 @@ source_process_player_collisions(void)
     if (player_result.damage) player_damage(player_result.damage);
 }
 
+static bool source_apply_enemy_shot_impact(
+    void *context,
+    const OtEnemyShotImpact *impact
+)
+{
+    u16 damage_through_shield;
+
+    (void)context;
+    /* tyrian2.c creates this type-0 impact even during invulnerability. */
+    source_spawn_explosion(
+        impact->x,
+        impact->y,
+        0,
+        0,
+        0
+    );
+    damage_through_shield = player_damage(impact->damage);
+    if (damage_through_shield > 0) {
+        player_source_velocity_x +=
+            ((s32)impact->velocity_x * damage_through_shield) / 2;
+        player_source_velocity_y +=
+            ((s32)impact->velocity_y * damage_through_shield) / 2;
+    }
+    return player_alive != 0;
+}
+
 static void source_update_enemy_projectiles(void)
 {
-    u32 old_enemy_shot_hits;
+    u8 hit_area_x = source_parity_level.player_shot_hit_area_x;
+    u8 hit_area_y = source_parity_level.player_shot_hit_area_y;
 
     /*
      * JE_mainGamePlayerFunctions() runs between player/enemy collision and
@@ -3034,16 +3427,18 @@ static void source_update_enemy_projectiles(void)
      */
     source_parity_level.player_x = player_source_x;
     source_parity_level.player_y = player_source_y;
-    old_enemy_shot_hits =
-        source_parity_level.enemy_shot_player_hit_count;
-    ot_level_port_update_enemy_shots(&source_parity_level);
-    if (
-        source_parity_level.enemy_shot_player_hit_count >
-        old_enemy_shot_hits &&
-        source_parity_level.frame_player_damage > 0
-    ) {
-        player_damage(source_parity_level.frame_player_damage);
+    if (!player_alive) {
+        /* PC keeps moving/drawing shots but skips its alive-player loop. */
+        source_parity_level.player_shot_hit_area_x = 0;
+        source_parity_level.player_shot_hit_area_y = 0;
     }
+    ot_level_port_update_enemy_shots(
+        &source_parity_level,
+        source_apply_enemy_shot_impact,
+        0
+    );
+    source_parity_level.player_shot_hit_area_x = hit_area_x;
+    source_parity_level.player_shot_hit_area_y = hit_area_y;
     telemetry_collision_count =
         source_parity_level.player_shot_collision_count +
         source_parity_level.enemy_shot_player_hit_count +
@@ -3057,6 +3452,11 @@ static void source_runtime_reset(void)
     u32 layer_failed_checks;
 
     memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
+    memset(
+        source_repeating_explosion,
+        0,
+        sizeof(source_repeating_explosion)
+    );
     memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
     source_player_cache_graphic = 0;
     source_player_cache_valid = 0;
@@ -3094,6 +3494,8 @@ static void source_runtime_reset(void)
     source_effect_boss_bar_tiles_dirty = 0;
     source_effect_reward_tiles_dirty = 0;
     source_effect_reward_tiles_required = 0;
+    source_effect_status_tiles_dirty = 0;
+    source_effect_status_tiles_required = 0;
     telemetry_sprite2_l2_hits = 0;
     telemetry_sprite2_l2_misses = 0;
     telemetry_sprite2_l2_evictions = 0;

@@ -99,6 +99,41 @@ static void commit_background_rows(u8 layer)
     pending->count = 0;
 }
 
+static u8 gameplay_filter_brightness_level(void)
+{
+#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
+    int16_t brightness;
+
+    if (
+        !source_parity_level.filter_active ||
+        source_parity_level.level_brightness == -99
+    ) {
+        return 0;
+    }
+    brightness = source_parity_level.level_brightness;
+    if (brightness < 0) brightness = (int16_t)-brightness;
+    if (brightness > 16) brightness = 16;
+    return (u8)brightness;
+#else
+    /* PC processor type 1 disables explosionTransparent/brightness filters. */
+    return 0;
+#endif
+}
+
+static u16 gameplay_filter_bldcnt(void)
+{
+    if (gameplay_filter_brightness_level() == 0) return 0;
+    /* BG0..3, OBJ and backdrop; negative=darken, positive=brighten. */
+    return (u16)(
+        0x003fu |
+        (
+            source_parity_level.level_brightness < 0 ?
+                (3u << 6) :
+                (2u << 6)
+        )
+    );
+}
+
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 static void gameplay_presentation_capture_registers(void)
 {
@@ -143,8 +178,17 @@ static void gameplay_presentation_capture_registers(void)
         SCREEN_BASE(BG2_SCREEN_BLOCK) |
         BG_16_COLOR | BG_SIZE_1;
     gameplay_presentation.dispcnt =
-        MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
-        (background2_present ? BG1_ON : 0);
+        MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        (source_special_astral_duration == 0 ? BG0_ON : 0) |
+#else
+        BG0_ON |
+#endif
+        (background2_present ? BG1_ON : 0) |
+        (
+            game_state == STATE_PLAY && gameplay_overlay_active ?
+                BG3_ON : 0
+        );
 #if TYRIAN_GBA_STRESS_LOADOUT
     blend_first |= 1u << 4;
     blend_second |= 1u | 2u | 4u | 32u;
@@ -158,13 +202,19 @@ static void gameplay_presentation_capture_registers(void)
         blend_second |= 1u | 4u | 32u;
     }
 #endif
-    if (blend_first != 0) {
+    if (gameplay_filter_brightness_level() != 0) {
+        gameplay_presentation.bldcnt = gameplay_filter_bldcnt();
+        gameplay_presentation.bldalpha = 0;
+        gameplay_presentation.bldy = gameplay_filter_brightness_level();
+    } else if (blend_first != 0) {
         gameplay_presentation.bldcnt =
             blend_first | (1u << 6) | (blend_second << 8);
         gameplay_presentation.bldalpha = 8u | (8u << 8);
+        gameplay_presentation.bldy = 0;
     } else {
         gameplay_presentation.bldcnt = 0;
         gameplay_presentation.bldalpha = 0;
+        gameplay_presentation.bldy = 0;
     }
     presentation_registers_valid = 1;
 }
@@ -405,6 +455,22 @@ static void commit_vblank_work(void)
     }
     commit_background_rows(2);
     if (
+        game_state == STATE_PLAY &&
+        gameplay_overlay_upload_pending
+    ) {
+        dmaCopy(
+            gameplay_overlay_tiles,
+            CHAR_BASE_BLOCK(GAMEPLAY_OVERLAY_CHAR_BASE),
+            (u32)(gameplay_overlay_tile_count + 1u) * 32u
+        );
+        dmaCopy(
+            gameplay_overlay_map,
+            SCREEN_BASE_BLOCK(GAMEPLAY_OVERLAY_SCREEN_BLOCK),
+            sizeof(gameplay_overlay_map)
+        );
+        gameplay_overlay_upload_pending = 0;
+    }
+    if (
         game_state == STATE_PLAY ||
         game_state == STATE_GAME_OVER
     ) {
@@ -424,9 +490,16 @@ static void commit_vblank_work(void)
         REG_BG2VOFS = gameplay_presentation.vofs[2];
         REG_BG1CNT = gameplay_presentation.bg1cnt;
         REG_BG2CNT = gameplay_presentation.bg2cnt;
+        REG_BG3CNT = BG_PRIORITY(0) |
+                     CHAR_BASE(GAMEPLAY_OVERLAY_CHAR_BASE) |
+                     SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
+                     BG_16_COLOR | BG_SIZE_0;
+        REG_BG3HOFS = 0;
+        REG_BG3VOFS = 0;
         REG_DISPCNT = gameplay_presentation.dispcnt;
         REG_BLDCNT = gameplay_presentation.bldcnt;
         REG_BLDALPHA = gameplay_presentation.bldalpha;
+        REG_BLDY = gameplay_presentation.bldy;
 #else
         u8 background2_priority = 2;
         u8 background3_priority = 1;
@@ -449,9 +522,24 @@ static void commit_vblank_work(void)
                      CHAR_BASE(background_cache_char_base[2]) |
                      SCREEN_BASE(BG2_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_1;
+        REG_BG3CNT = BG_PRIORITY(0) |
+                     CHAR_BASE(GAMEPLAY_OVERLAY_CHAR_BASE) |
+                     SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
+                     BG_16_COLOR | BG_SIZE_0;
+        REG_BG3HOFS = 0;
+        REG_BG3VOFS = 0;
         REG_DISPCNT =
-            MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
-            (background2_present ? BG1_ON : 0);
+            MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
+#if !TYRIAN_GBA_STRESS_LOADOUT
+            (source_special_astral_duration == 0 ? BG0_ON : 0) |
+#else
+            BG0_ON |
+#endif
+            (background2_present ? BG1_ON : 0) |
+            (
+                game_state == STATE_PLAY && gameplay_overlay_active ?
+                    BG3_ON : 0
+            );
 #endif
         /*
          * Count the source software-filter requests independently from the
@@ -515,14 +603,20 @@ static void commit_vblank_work(void)
                 blend_second |= 1u | 4u | 32u;
             }
 #endif
-            if (blend_first != 0) {
+            if (gameplay_filter_brightness_level() != 0) {
+                REG_BLDCNT = gameplay_filter_bldcnt();
+                REG_BLDALPHA = 0;
+                REG_BLDY = gameplay_filter_brightness_level();
+            } else if (blend_first != 0) {
                 REG_BLDCNT =
                     blend_first | (1u << 6) |
                     (blend_second << 8);
                 REG_BLDALPHA = 8u | (8u << 8);
+                REG_BLDY = 0;
             } else {
                 REG_BLDCNT = 0;
                 REG_BLDALPHA = 0;
+                REG_BLDY = 0;
             }
         }
 #endif

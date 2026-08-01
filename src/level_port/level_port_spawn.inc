@@ -198,6 +198,13 @@ static bool ot_make_enemy(
     uint8_t shape_slot;
     uint8_t index;
 
+    /* JE_makeEnemy() substitutes the ordinary arcade pickup definition. */
+    if (
+        state->player_super_arcade_mode != 0 &&
+        enemy_definition_id == 534
+    ) {
+        enemy_definition_id = 533;
+    }
     if (definition_override != 0) {
         definition = *definition_override;
     } else if (!ot_level_enemy_read(enemy_definition_id, &definition)) {
@@ -361,14 +368,37 @@ static bool ot_make_enemy(
     enemy->filter = 0;
 
     if (definition.value > 1 && definition.value < 10000) {
-        if (state->difficulty_level == 3) {
-            enemy->evalue = (int16_t)(
-                (int32_t)definition.value * 9 / 8
-            );
-        } else {
-            /* Easy and Normal share the source identity branch. */
-            enemy->evalue = definition.value;
+        int32_t value = definition.value;
+
+        /* Literal JE_makeEnemy() reward scaling, including event-46 levels. */
+        switch (state->difficulty_level) {
+        case 0:
+            value = value * 3 / 4;
+            break;
+        case 1:
+        case 2:
+            break;
+        case 3:
+            value = value * 9 / 8;
+            break;
+        case 4:
+            value = value * 3 / 2;
+            break;
+        case 5:
+            value *= 2;
+            break;
+        case 6:
+            value = value * 5 / 2;
+            break;
+        case 7:
+        case 8:
+            value *= 4;
+            break;
+        default:
+            value *= 8;
+            break;
         }
+        enemy->evalue = (int16_t)value;
         if (enemy->evalue > 10000) enemy->evalue = 10000;
     } else {
         enemy->evalue = definition.value;
@@ -378,10 +408,36 @@ static bool ot_make_enemy(
         uint16_t armor = definition.armor;
 
         if (definition.armor != 255) {
-            if (state->difficulty_level == 1) {
+            switch (state->difficulty_level) {
+            case 0:
+                armor = (uint16_t)(definition.armor / 2u + 1u);
+                break;
+            case 1:
                 armor = (uint16_t)(definition.armor * 3u / 4u + 1u);
-            } else if (state->difficulty_level == 3) {
+                break;
+            case 2:
+                break;
+            case 3:
                 armor = (uint16_t)(definition.armor * 6u / 5u);
+                break;
+            case 4:
+                armor = (uint16_t)(definition.armor * 3u / 2u);
+                break;
+            case 5:
+                armor = (uint16_t)(definition.armor * 9u / 5u);
+                break;
+            case 6:
+                armor = (uint16_t)(definition.armor * 2u);
+                break;
+            case 7:
+                armor = (uint16_t)(definition.armor * 3u);
+                break;
+            case 8:
+                armor = (uint16_t)(definition.armor * 4u);
+                break;
+            default:
+                armor = (uint16_t)(definition.armor * 8u);
+                break;
             }
             if (armor > 254) armor = 254;
         }
@@ -407,6 +463,7 @@ typedef enum {
     OT_SPAWN_LAUNCH,
     OT_SPAWN_RANDOM,
     OT_SPAWN_DEATH,
+    OT_SPAWN_WARNING_SHIP,
 } OtSpawnOrigin;
 
 static void ot_record_spawn_attempt(
@@ -426,6 +483,9 @@ static void ot_record_spawn_attempt(
         break;
     case OT_SPAWN_DEATH:
         state->death_spawn_attempt_count++;
+        break;
+    case OT_SPAWN_WARNING_SHIP:
+        state->warning_ship_spawn_attempt_count++;
         break;
     }
 }
@@ -448,6 +508,9 @@ static void ot_record_spawn_pool_full(
     case OT_SPAWN_DEATH:
         state->death_spawn_pool_full_count++;
         break;
+    case OT_SPAWN_WARNING_SHIP:
+        state->warning_ship_spawn_pool_full_count++;
+        break;
     }
 }
 
@@ -469,6 +532,9 @@ static void ot_record_spawn_missing(
     case OT_SPAWN_DEATH:
         state->death_spawn_missing_definition_count++;
         break;
+    case OT_SPAWN_WARNING_SHIP:
+        state->warning_ship_spawn_missing_definition_count++;
+        break;
     }
 }
 
@@ -489,6 +555,9 @@ static void ot_record_spawn_success(
         break;
     case OT_SPAWN_DEATH:
         state->death_spawn_success_count++;
+        break;
+    case OT_SPAWN_WARNING_SHIP:
+        state->warning_ship_spawn_success_count++;
         break;
     }
 }
@@ -749,11 +818,24 @@ void ot_level_port_init(
     state->explode_move = 2;
     state->starfield_speed = 1;
     state->star_active = true;
+    state->warning_color = 120;
+    state->warning_color_change = 1;
+    state->warning_sound_delay = 0;
+    state->armor_ship_delay = 50;
     state->enemies_active = true;
     state->background2_over = 1;
     state->level_enemy_frequency = 96;
     state->current_song = -1;
+    state->music_fade_volume = 255;
     state->level_end = 255;
+    /* tyrian2.c's initial JE_filterScreen fade-in state. */
+    state->filter_active = true;
+    state->filter_fade = true;
+    state->filter_fade_start = false;
+    state->level_filter = -99;
+    state->level_filter_new = 0;
+    state->level_brightness = -14;
+    state->level_brightness_change = 1;
     state->difficulty_level =
         difficulty_level >= 1 && difficulty_level <= 3 ?
             difficulty_level :
@@ -783,7 +865,10 @@ void ot_level_port_init(
     state->player_generator = 2;
     state->player_shield_item = 4;
     state->player_ship = 1;
+    state->super_arcade_power_up = 1;
     state->player_armor = 10;
+    state->player_shot_hit_area_x = 11;
+    state->player_shot_hit_area_y = 14;
     state->player_weapon_mode = 1;
     state->player_purple_balls_needed = 1;
     state->display_flash = 0;

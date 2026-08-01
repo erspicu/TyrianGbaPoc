@@ -35,10 +35,12 @@ static bool ot_event_jump(OtLevelPortState *state, uint16_t jump)
         }
         if (event.eventtime >= destination) {
             state->event_index = index;
+            state->event_jump_count++;
             return true;
         }
     }
     state->event_index = state->event_count;
+    state->event_jump_count++;
     return true;
 }
 
@@ -177,7 +179,7 @@ static bool apply_event(
         return true;
 
     case 11:
-        if (event->eventdat == 1) {
+        if (state->all_players_gone || event->eventdat == 1) {
             state->really_end_level = true;
         } else if (!state->end_level) {
             state->ready_to_end_level = false;
@@ -535,6 +537,7 @@ static bool apply_event(
 
     case 33: { /* Enemy From other Enemies */
         uint16_t enemy_die = (uint16_t)event->eventdat;
+        uint8_t lives = state->player_front_weapon_power;
 
         state->death_control_event_count++;
         if (
@@ -543,10 +546,18 @@ static bool apply_event(
         ) {
             return true;
         }
-        /* SA_NONE, !superTyrian, one life in both supported modes. */
-        if (
+        /*
+         * superTyrian is intentionally unsupported, but superArcadeMode and
+         * the source lives alias (front-weapon power) are real campaign data.
+         */
+        if (state->player_super_arcade_mode != 0) {
+            if (event->eventdat == 534) enemy_die = 827;
+        } else if (
             event->eventdat == 533 &&
-            (ot_mt_rand(state) % 15u) < 1u
+            (
+                lives == 11 ||
+                (ot_mt_rand(state) % 15u) < lives
+            )
         ) {
             enemy_die = (uint16_t)(829u + ot_mt_rand(state) % 6u);
         }
@@ -562,11 +573,14 @@ static bool apply_event(
 
     case 34:
         state->music_fade = true;
+        state->music_fade_volume = 255;
         return true;
 
     case 35:
         state->current_song = (int16_t)(event->eventdat - 1);
         state->music_fade = false;
+        state->music_fade_volume = 255;
+        state->frame_music_song_request = true;
         return true;
 
     case 36:
@@ -646,10 +660,14 @@ static bool apply_event(
 
     case 45: { /* arcade-only enemy from other enemies */
         uint16_t enemy_die = (uint16_t)event->eventdat;
+        uint8_t lives = state->player_front_weapon_power;
 
         if (
             event->eventdat == 533 &&
-            (ot_mt_rand(state) % 15u) < 1u
+            (
+                lives == 11 ||
+                (ot_mt_rand(state) % 15u) < lives
+            )
         ) {
             enemy_die =
                 (uint16_t)(829u + ot_mt_rand(state) % 6u);

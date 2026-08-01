@@ -79,8 +79,10 @@ enum {
     OT_GLOBAL_FLAG_COUNT = 10,
     OT_NEW_PL_COUNT = 10,
     OT_MT_STATE_COUNT = 624,
+    OT_STARFIELD_STAR_COUNT = 100,
     OT_HIT_EFFECT_COUNT = 16,
     OT_PICKUP_EFFECT_COUNT = 16,
+    OT_FRAME_EXPLOSION_COUNT = 16,
 };
 
 /*
@@ -187,8 +189,22 @@ typedef struct {
 typedef struct {
     int16_t x;
     int16_t y;
+    int16_t velocity_x;
+    int16_t velocity_y;
+    uint8_t damage;
+} OtEnemyShotImpact;
+
+typedef bool (*OtEnemyShotImpactHandler)(
+    void *context,
+    const OtEnemyShotImpact *impact
+);
+
+typedef struct {
+    int16_t x;
+    int16_t y;
     bool large;
     bool ground;
+    uint8_t repeat_count;
 } OtHitEffect;
 
 typedef struct {
@@ -196,6 +212,15 @@ typedef struct {
     int16_t y;
     uint8_t explosion_type;
 } OtPickupEffect;
+
+/* One-tick JE_setupExplosion() request emitted by translated enemy logic. */
+typedef struct {
+    int16_t x;
+    int16_t y;
+    int8_t delta_y;
+    uint8_t explosion_type;
+    bool fixed_position;
+} OtFrameExplosion;
 
 /*
  * Presentation command captured at the exact blit_enemy() point inside the
@@ -228,16 +253,38 @@ typedef struct {
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
 } OtShotCollisionResult;
 
+enum {
+    OT_PICKUP_MESSAGE_NONE = 0,
+    OT_PICKUP_MESSAGE_FRONT_POWER,
+    OT_PICKUP_MESSAGE_REAR_POWER,
+    OT_PICKUP_MESSAGE_WEAPON_PORT,
+    OT_PICKUP_MESSAGE_SPECIAL,
+    OT_PICKUP_MESSAGE_OPTION,
+};
+
 typedef struct {
     uint8_t pickup_count;
     uint8_t contact_count;
     uint16_t damage;
+    /*
+     * mainint.c:JE_playerCollide() applies enemy motion as ship push-back
+     * before JE_playerMovement() performs its normal friction/clamp pass.
+     * Keep the pre-clamp sum wide: a 255-armour authored object can produce
+     * a value far outside int8_t even though movement later clamps to +/-4.
+     */
+    int32_t player_velocity_x_delta;
+    int32_t player_velocity_y_delta;
     uint8_t effect_count;
     uint8_t data_cubes_awarded;
     uint8_t front_powerups;
     uint8_t rear_powerups;
     uint8_t orbiting_asteroids_awarded;
     uint8_t superbombs_awarded;
+    uint8_t pickup_message_type;
+    uint8_t pickup_message_item_id;
+    bool reset_all_shot_multi_pos;
+    bool front_weapon_picked_up;
+    bool special_weapon_picked_up;
     bool bonus_level_triggered;
     uint16_t next_level;
     uint32_t cash_awarded;
@@ -290,10 +337,15 @@ typedef struct {
     uint8_t background2_over;
     uint8_t pending_text_window;
     int16_t starfield_speed;
+    uint16_t armor_ship_delay;
+    uint16_t warning_sound_delay;
+    int16_t warning_color;
+    int8_t warning_color_change;
     uint16_t level_enemy_frequency;
     uint16_t super_enemy_254_jump;
     uint16_t galaga_shot_frequency;
     int16_t current_song;
+    uint8_t music_fade_volume;
     uint8_t level_end;
     uint16_t map_x;
     uint16_t map_x3;
@@ -324,6 +376,7 @@ typedef struct {
     int16_t player_y;
 
     bool star_active;
+    bool warning_active;
     bool enemies_active;
     bool stop_backgrounds;
     bool top_enemy_over;
@@ -337,6 +390,12 @@ typedef struct {
     bool ready_to_end_level;
     bool end_level;
     bool really_end_level;
+    /*
+     * tyrian2.c calculates allPlayersGone immediately before JE_eventSystem().
+     * Keep that phase result explicit so event 11 and the level-tail gates use
+     * the same single-player/death semantics as the PC loop.
+     */
+    bool all_players_gone;
     bool random_explosions;
     bool small_enemy_adjust;
     bool arcade_mode;
@@ -366,11 +425,23 @@ typedef struct {
     OtEnemyShot enemy_shot[OT_ENEMY_SHOT_COUNT];
     uint8_t global_flags[OT_GLOBAL_FLAG_COUNT];
     uint8_t new_pl[OT_NEW_PL_COUNT];
+    /*
+     * Literal backgrnd.c 320x200 starfield state, including u16 wrap.
+     * star_meta packs source colour 0x90..0x9f in bits 4..7 and the
+     * source speed 2..4 minus two in bits 0..1.
+     */
+    uint16_t star_position[OT_STARFIELD_STAR_COUNT];
+    uint8_t star_meta[OT_STARFIELD_STAR_COUNT];
     OtMt19937 rng;
     uint16_t frame_sound_mask;
     uint8_t frame_sound_queue[8];
+    bool frame_music_song_request;
     uint16_t frame_player_damage;
     uint16_t frame_player_invulnerable_ticks;
+    int32_t frame_player_velocity_x_delta;
+    int32_t frame_player_velocity_y_delta;
+    uint8_t frame_explosion_count;
+    OtFrameExplosion frame_explosion[OT_FRAME_EXPLOSION_COUNT];
     uint8_t frame_enemy_on_screen;
     uint8_t frame_ground_enemy_on_screen;
     uint8_t frame_sky_enemy_on_screen;
@@ -385,6 +456,8 @@ typedef struct {
     uint8_t player_rear_weapon_power;
     uint8_t player_superbombs;
     uint8_t player_armor;
+    uint8_t player_shot_hit_area_x;
+    uint8_t player_shot_hit_area_y;
     uint8_t player_weapon_mode;
     uint8_t player_special;
     uint8_t player_sidekick[2];
@@ -392,6 +465,7 @@ typedef struct {
     uint8_t player_shield_item;
     uint8_t player_ship;
     uint8_t player_super_arcade_mode;
+    uint8_t super_arcade_power_up;
     uint8_t player_sidekick_level;
     uint8_t player_sidekick_series;
     uint8_t player_purple_balls_needed;
@@ -404,6 +478,8 @@ typedef struct {
     uint32_t applied_event_count;
     uint32_t deferred_event_count;
     uint32_t skipped_event_count;
+    uint32_t event_jump_count;
+    uint32_t super_enemy_254_jump_count;
     uint32_t spawn_attempt_count;
     uint32_t spawn_success_count;
     uint32_t spawn_pool_full_count;
@@ -434,6 +510,10 @@ typedef struct {
     uint32_t death_spawn_success_count;
     uint32_t death_spawn_pool_full_count;
     uint32_t death_spawn_missing_definition_count;
+    uint32_t warning_ship_spawn_attempt_count;
+    uint32_t warning_ship_spawn_success_count;
+    uint32_t warning_ship_spawn_pool_full_count;
+    uint32_t warning_ship_spawn_missing_definition_count;
     uint32_t player_shot_collision_count;
     uint32_t player_shot_collision_mask_rebuild_count;
     uint32_t player_shot_collision_candidate_visit_count;
@@ -472,12 +552,28 @@ void ot_level_port_advance(
     int16_t player_x,
     int16_t player_y
 );
+void ot_level_port_advance_over_player_enemies(OtLevelPortState *state);
 void ot_level_port_update_parallax(
     OtLevelPortState *state,
     int16_t player_x
 );
-IWRAM_CODE ARM_CODE void
-ot_level_port_update_enemy_shots(OtLevelPortState *state);
+void ot_level_port_initialize_starfield(OtLevelPortState *state);
+void ot_level_port_update_starfield(OtLevelPortState *state);
+void ot_level_port_update_low_armor_warning(
+    OtLevelPortState *state,
+    bool player_alive
+);
+void ot_level_port_update_return_active(OtLevelPortState *state);
+void ot_level_port_update_filter_fade(OtLevelPortState *state);
+void ot_level_port_update_level_timer(OtLevelPortState *state);
+void ot_level_port_recalculate_player_power_progress(
+    OtLevelPortState *state
+);
+IWRAM_CODE ARM_CODE void ot_level_port_update_enemy_shots(
+    OtLevelPortState *state,
+    OtEnemyShotImpactHandler impact_handler,
+    void *impact_context
+);
 uint32_t ot_level_port_random(OtLevelPortState *state);
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
 uint32_t ot_level_port_stress_round_ratio_call_count(void);
@@ -493,6 +589,12 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot(
     int16_t shot_x,
     int16_t shot_y,
     uint8_t damage,
+    OtShotCollisionResult *result
+);
+void ot_level_port_collide_zinglon_beam(
+    OtLevelPortState *state,
+    int16_t beam_x,
+    uint8_t half_width,
     OtShotCollisionResult *result
 );
 IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_sized(

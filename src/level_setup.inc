@@ -30,7 +30,7 @@ static u8 autotest_secret_level_collision(void)
 {
     OtPlayerCollisionResult result;
     OtEnemy *portal = &source_parity_level.enemy[0];
-    u8 portal_pass;
+    u8 pass;
 
     source_parity_level.player_x = 80;
     source_parity_level.player_y = 96;
@@ -44,7 +44,7 @@ static u8 autotest_secret_level_collision(void)
         true,
         &result
     );
-    portal_pass =
+    pass =
         result.bonus_level_triggered &&
         result.next_level == 42 &&
         source_parity_level.bonus_level &&
@@ -67,11 +67,68 @@ static u8 autotest_secret_level_collision(void)
         true,
         &result
     );
-    return
-        portal_pass &&
+    pass =
+        pass &&
         result.orbiting_asteroids_awarded == 1 &&
         source_parity_level.orbiting_asteroid_pickup_count == 1 &&
         source_parity_level.enemy_avail[0] == 1;
+
+    /*
+     * Event 46 changes damageRate.  Verify JE_playerCollide() uses it,
+     * preserves the original-armour push-back, and damages the enemy.
+     */
+    memset(portal, 0, sizeof(*portal));
+    source_parity_level.enemy_avail[0] = 0;
+    source_parity_level.damage_rate = 3;
+    portal->ex = 80;
+    portal->ey = 96;
+    portal->enemyground = true;
+    portal->armorleft = 5;
+    portal->exc = 2;
+    portal->eyc = -2;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.contact_count == 1 &&
+        result.damage == 3 &&
+        result.player_velocity_x_delta == 5 &&
+        result.player_velocity_y_delta == -5 &&
+        portal->armorleft == 2 &&
+        source_parity_level.enemy_avail[0] == 0 &&
+        source_parity_level.frame_sound_queue[5] == 3;
+
+    /* Contact death releases the exact mainint.c linked group. */
+    memset(portal, 0, sizeof(*portal));
+    memset(&source_parity_level.enemy[1], 0, sizeof(OtEnemy));
+    source_parity_level.enemy_avail[0] = 0;
+    source_parity_level.enemy_avail[1] = 0;
+    portal->ex = 80;
+    portal->ey = 96;
+    portal->enemyground = true;
+    portal->armorleft = 2;
+    portal->linknum = 42;
+    source_parity_level.enemy[1].ex = 160;
+    source_parity_level.enemy[1].ey = 80;
+    source_parity_level.enemy[1].enemyground = true;
+    source_parity_level.enemy[1].armorleft = 9;
+    source_parity_level.enemy[1].linknum = 42;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.contact_count == 1 &&
+        result.damage == 2 &&
+        source_parity_level.enemy_avail[0] == 1 &&
+        source_parity_level.enemy_avail[1] == 1 &&
+        result.effect_count == 2;
+    return pass;
 }
 
 #ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
@@ -180,6 +237,28 @@ static u8 autotest_arcade_equipment_collision(void)
         source_parity_level.player_special == 10 &&
         source_parity_level.enemy_avail[0] == 1 &&
         source_parity_level.high_value_pickup_count == 5;
+
+    /* Super Arcade ship 1 maps its red pickup through SAWeapon[0][0]. */
+    source_parity_level.player_super_arcade_mode = 1;
+    memset(pickup, 0, sizeof(*pickup));
+    source_parity_level.enemy_avail[0] = 0;
+    pickup->ex = 80;
+    pickup->ey = 96;
+    pickup->evalue = 30001;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        true,
+        &result
+    );
+    pass =
+        pass &&
+        result.pickup_count == 1 &&
+        result.cash_awarded == 200 &&
+        result.front_weapon_picked_up &&
+        source_parity_level.player_front_weapon_id == 9 &&
+        source_parity_level.enemy_avail[0] == 1 &&
+        source_parity_level.high_value_pickup_count == 6;
+    source_parity_level.player_super_arcade_mode = 0;
     return pass;
 }
 #endif
@@ -230,7 +309,12 @@ static u8 source_player_equipment_apply(void)
     player_ship_graphic = ship.shipgraphic;
     player_ship_animation = ship.animation;
     player_armor = ship.damage;
+    player_initial_armor = player_armor;
     source_parity_level.player_armor = player_armor;
+    source_parity_level.player_shot_hit_area_x =
+        ship.animation == 0 ? 12 : 11;
+    source_parity_level.player_shot_hit_area_y =
+        ship.animation == 0 ? 10 : 14;
     player_shield = shield.max_power;
     player_shield_max = (u8)(shield.max_power * 2u);
     player_shield_recharge_cost =
@@ -261,6 +345,8 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
         frontend_level_ready = 0;
         return 0;
     }
+    gameplay_overlay_reset();
+    gameplay_overlay_prepare_palette();
 
     REG_DISPCNT = LCDC_OFF;
     frontend_mode4_active = 0;
@@ -359,6 +445,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     player_death_music_volume = 255;
     player_death_music_fade_active = 0;
     player_armor = 0;
+    player_initial_armor = 0;
     player_shield = 0;
     player_shield_max = 0;
     player_lives = 1;
@@ -442,6 +529,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     } else {
         frontend_campaign_apply_to_level();
     }
+    player_lives = source_parity_level.arcade_mode ?
+        source_parity_level.player_front_weapon_power :
+        1;
     if (!source_player_equipment_apply()) {
         frontend_level_ready = 0;
         return 0;
@@ -458,6 +548,20 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_front_weapon_init();
 #endif
     source_runtime_reset();
+    /*
+     * play_song(levelSong - 1) has already been started by the non-blocking
+     * frontend transition.  Record it so event 35 only reloads a genuinely
+     * different authored song, matching loudness.c::play_song().
+     */
+    source_parity_level.current_song = frontend_level.source_song;
+    /* Direct counterpart of JE_drawTextWindow(miscText[20]). */
+    gameplay_overlay_show_initial_message();
+    /*
+     * backgrnd.c initializes 100 stars before the first level-loop tick.
+     * Its 400 MT19937 calls are part of the authoritative gameplay RNG
+     * stream, not merely a presentation detail.
+     */
+    ot_level_port_initialize_starfield(&source_parity_level);
 #if defined(AUTOTEST) && !TYRIAN_GBA_STRESS_LOADOUT
     telemetry_upgrade_loadout_pass =
         autotest_source_upgrade_loadout();

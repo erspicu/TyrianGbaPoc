@@ -169,6 +169,14 @@ _Static_assert(
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
+#define GAMEPLAY_OVERLAY_CHAR_BASE 3
+#define GAMEPLAY_OVERLAY_SCREEN_BLOCK 31
+#define GAMEPLAY_OVERLAY_MAP_ROWS (SCREEN_HEIGHT / 8)
+#define GAMEPLAY_OVERLAY_MAX_TILES 136
+#define GAMEPLAY_OVERLAY_TILE_BYTES \
+    (GAMEPLAY_OVERLAY_MAX_TILES * 32u)
+#define GAMEPLAY_OVERLAY_MAP_ENTRIES \
+    (32u * GAMEPLAY_OVERLAY_MAP_ROWS)
 #define FRONTEND_STATS_FONT_GLYPH_COUNT \
     (JUKEBOX_FONT_TILE_COUNT - 1u)
 #define FRONTEND_STATS_FONT_TILES_PER_GLYPH 4u
@@ -457,8 +465,10 @@ enum {
  * contiguous explosion bank, place one overflow frame in the four-tile
  * alignment gap between the generated static OBJ bank and the upper Sprite2
  * cache, time-share one more with the boss-bar tiles only while no boss bar
- * is active, and reclaim the final frame of the legacy POC reward atlas for
- * ordinary source-parity play. The next four contiguous frame slots remain
+ * is active, reclaim the final frame of the legacy POC reward atlas, and
+ * time-share the unused lower half of the GAME OVER / SECRET LEVEL /
+ * INSERT COIN runtime bank. Those labels atomically restore their eight
+ * characters when active. The next four contiguous frame slots remain
  * available to the fragmented 32x32 Sprite2 overflow canvas required by
  * Episode 4/SAVARA.
  */
@@ -468,7 +478,6 @@ enum {
 #define SOURCE_EFFECT_CACHE_SLOT_COUNT 32
 #else
 #define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 24
-#define SOURCE_EFFECT_CACHE_SLOT_COUNT 27
 #define SOURCE_EFFECT_CACHE_OVERFLOW_SLOT \
     SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT
 #define SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE OBJ_STATIC_TILE_COUNT
@@ -481,6 +490,14 @@ enum {
     (OBJ_TILE_REWARD + \
         (REWARD_SEQUENCE_COUNT * REWARD_FRAME_COUNT - 1u) * \
             REWARD_TILES_PER_FRAME)
+#define SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT 2u
+#define SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT \
+    (SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT + 3u)
+#define SOURCE_EFFECT_CACHE_STATUS_TILE_BASE \
+    (OBJ_TILE_GAME_OVER_RUNTIME + 8u)
+#define SOURCE_EFFECT_CACHE_SLOT_COUNT \
+    (SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT + \
+        SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT)
 #endif
 #define SOURCE_EFFECT_TILES_PER_SLOT EXPLOSION_TILES_PER_FRAME
 #define SOURCE_EFFECT_FRAME_BYTES \
@@ -730,11 +747,23 @@ _Static_assert(
 );
 _Static_assert(
     SOURCE_EFFECT_CACHE_REWARD_SLOT + 1u ==
-            SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+            SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT &&
         SOURCE_EFFECT_CACHE_REWARD_TILE_BASE +
                 SOURCE_EFFECT_TILES_PER_SLOT ==
             OBJ_TILE_SCORE_DIGITS,
-    "final effect slot must reclaim only the last legacy reward frame"
+    "reward-shared effect slot must reclaim only the last legacy reward frame"
+);
+_Static_assert(
+    SOURCE_EFFECT_CACHE_STATUS_FIRST_SLOT +
+            SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT ==
+        SOURCE_EFFECT_CACHE_SLOT_COUNT &&
+        SOURCE_EFFECT_CACHE_STATUS_TILE_BASE ==
+            OBJ_TILE_GAME_OVER_RUNTIME + 8u &&
+        SOURCE_EFFECT_CACHE_STATUS_TILE_BASE +
+                SOURCE_EFFECT_CACHE_STATUS_SLOT_COUNT *
+                    SOURCE_EFFECT_TILES_PER_SLOT ==
+            OBJ_TILE_REWARD,
+    "status-shared effect slots must occupy only OBJ tiles 520..527"
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE +
@@ -958,7 +987,7 @@ typedef struct {
     u8 animation;
     u8 animation_max;
     u8 trail;
-    u8 reserved;
+    u8 iced;
     u16 graphic;
     u16 render_graphic;
     u16 chain_weapon;
@@ -1403,8 +1432,9 @@ static s16 source_camera_offset_x_q8;
 static s16 source_camera_offset_y_q8;
 static s8 source_camera_offset_x;
 static s8 source_camera_offset_y;
-static s8 player_source_velocity_x;
-static s8 player_source_velocity_y;
+/* OpenTyrian Player.x_velocity/y_velocity are int, then clamp to +/-4. */
+static s32 player_source_velocity_x;
+static s32 player_source_velocity_y;
 static u8 player_source_x_friction_ticks;
 static u8 player_source_y_friction_ticks;
 static u16 player_invulnerable;
@@ -1416,6 +1446,7 @@ static u8 player_death_music_fade_active;
 static u8 audio_level_music_fade_in_active;
 static u8 audio_level_music_fade_in_step;
 static u8 player_armor;
+static u8 player_initial_armor;
 static u8 player_shield;
 static u8 player_shield_max;
 static u8 player_lives;
@@ -1436,7 +1467,13 @@ enum {
     SOURCE_WEAPON_BAY_LEFT_SIDEKICK = 2,
     SOURCE_WEAPON_BAY_RIGHT_SIDEKICK = 3,
     SOURCE_WEAPON_BAY_MISC = 4,
-    SOURCE_WEAPON_BAY_COUNT = 5,
+    SOURCE_WEAPON_BAY_P2_CHARGE = 5,
+    SOURCE_WEAPON_BAY_P1_SUPERBOMB = 6,
+    SOURCE_WEAPON_BAY_P2_SUPERBOMB = 7,
+    SOURCE_WEAPON_BAY_SPECIAL = 8,
+    SOURCE_WEAPON_BAY_NORTSPARKS = 9,
+    SOURCE_WEAPON_BAY_SPECIAL2 = 10,
+    SOURCE_WEAPON_BAY_COUNT = 11,
 };
 
 typedef struct {
@@ -1485,6 +1522,24 @@ static u8 source_sidekick_attachment_linked;
 static u8 source_sidekick_attachment_return;
 static s16 source_player_delta_x;
 static s16 source_player_delta_y;
+static u8 source_special_bound_id;
+static u8 source_special_valid;
+static u8 source_special_power;
+static u8 source_special_type;
+static u16 source_special_definition_weapon;
+static u8 source_special_wait;
+static u8 source_special_next_wait;
+static u8 source_special_fire_held;
+static u8 source_special_flare_start;
+static u8 source_special_spray;
+static u8 source_special_link_to_player;
+static u8 source_special_weapon_frequency;
+static u8 source_special_zinglon_duration;
+static u8 source_special_astral_duration;
+static u16 source_special_flare_duration;
+static u16 source_special_weapon_id;
+static s8 source_special_weapon_filter;
+static u8 source_last_spawned_shot_index;
 #endif
 
 #if TYRIAN_GBA_STRESS_LOADOUT
@@ -1544,6 +1599,25 @@ static u8 bg2_step;
 static u8 bg3_step;
 static u8 source_background2_enabled;
 static u8 source_background2_upload_pending;
+/* Transparent hardware BG3: source starfield and in-level text/warnings. */
+static u8 gameplay_overlay_tiles[
+    GAMEPLAY_OVERLAY_TILE_BYTES
+] EWRAM_BSS;
+static u16 gameplay_overlay_map[
+    GAMEPLAY_OVERLAY_MAP_ENTRIES
+] EWRAM_BSS;
+static u8 gameplay_overlay_star_nibble[16];
+static u8 gameplay_overlay_warning_colour[16];
+static u8 gameplay_overlay_star_bank;
+static u8 gameplay_overlay_event_bank;
+static u8 gameplay_overlay_event_nibble[2];
+static u8 gameplay_overlay_tile_count;
+static u8 gameplay_overlay_active;
+static u8 gameplay_overlay_upload_pending;
+static u8 gameplay_overlay_message_index;
+static u8 gameplay_overlay_message_ticks;
+static u8 gameplay_overlay_pickup_message_type;
+static u8 gameplay_overlay_pickup_message_item_id;
 
 /*
  * A source-authored parallax event may expose more than one 8-pixel map row
@@ -1570,6 +1644,7 @@ typedef struct {
     u16 dispcnt;
     u16 bldcnt;
     u16 bldalpha;
+    u16 bldy;
     u16 full_scroll_pixel[3];
 } GameplayPresentationRegisters;
 
@@ -2052,6 +2127,13 @@ static s16 source_world_to_screen_x(s16 source_x);
 static s16 source_world_to_screen_y(s16 source_y);
 static u16 source_background_hofs(u8 layer);
 static void source_runtime_reset(void);
+static void gameplay_overlay_reset(void);
+static void gameplay_overlay_prepare_palette(void);
+static void gameplay_overlay_logic_tick(void);
+static void gameplay_overlay_show_event(u8 event_index);
+static void gameplay_overlay_show_initial_message(void);
+static void gameplay_overlay_show_pickup(u8 message_type, u8 item_id);
+static void gameplay_overlay_prepare_frame(void);
 static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
 static void source_projectile_cache_commit(void);
@@ -2131,6 +2213,7 @@ static void source_effect_restore_shared_tiles_if_needed(void);
 #include "src/gba_platform.inc"
 #include "src/level_setup.inc"
 #include "src/frontend_runtime.inc"
+#include "src/gameplay_overlay.inc"
 #include "src/entity_runtime.inc"
 #include "src/combat_runtime.inc"
 #include "src/source_runtime.inc"

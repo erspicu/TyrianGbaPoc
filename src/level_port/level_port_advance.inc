@@ -119,7 +119,11 @@ void ot_level_port_advance(
     }
     state->frame_player_damage = 0;
     state->frame_player_invulnerable_ticks = 0;
+    state->frame_player_velocity_x_delta = 0;
+    state->frame_player_velocity_y_delta = 0;
+    state->frame_explosion_count = 0;
     state->pending_text_window = 0;
+    state->frame_music_song_request = false;
     state->map_position_override_pending = false;
     state->background2_wrap_pending = false;
     state->frame_enemy_on_screen = 0;
@@ -182,37 +186,141 @@ void ot_level_port_advance(
     state->presentation_parallax_initialized =
         state->parallax_initialized;
     state->presentation_background3_x1 = state->background3_x1;
-    ot_advance_enemies(state);
-    if (
-        state->stop_background_num == 1 &&
-        state->frame_ground_enemy_on_screen == 0
-    ) {
-        state->stop_background_num = 9;
+    ot_advance_enemies_before_player(state);
+}
+
+void ot_level_port_advance_over_player_enemies(OtLevelPortState *state)
+{
+    if (state != 0) ot_advance_enemies_over_player(state);
+}
+
+void ot_level_port_update_filter_fade(OtLevelPortState *state)
+{
+    if (state != 0) ot_update_filter_fade(state);
+}
+
+void ot_level_port_update_level_timer(OtLevelPortState *state)
+{
+    if (state != 0) ot_update_level_timer(state);
+}
+
+void ot_level_port_initialize_starfield(OtLevelPortState *state)
+{
+    int16_t index;
+
+    if (state == 0) return;
+    /*
+     * Literal initialize_starfield() call order.  Besides presentation this
+     * is gameplay-significant: the 400 MT19937 draws precede every authored
+     * random enemy, launch and explosion decision in the PC level loop.
+     */
+    for (index = OT_STARFIELD_STAR_COUNT - 1; index >= 0; index--) {
+        uint32_t x = ot_level_port_random(state) % 320u;
+        uint32_t y = ot_level_port_random(state) % 200u;
+        uint8_t speed = (uint8_t)(
+            ot_level_port_random(state) % 3u
+        );
+        uint8_t color = (uint8_t)(
+            ot_level_port_random(state) % 16u
+        );
+
+        state->star_position[index] = (uint16_t)(x + y * 320u);
+        state->star_meta[index] = (uint8_t)(
+            speed | (color << 4)
+        );
     }
-    if (
-        state->stop_background_num == 2 &&
-        state->frame_sky_enemy_on_screen == 0
-    ) {
-        state->stop_background_num = 9;
+}
+
+void ot_level_port_update_starfield(OtLevelPortState *state)
+{
+    int16_t index;
+
+    if (state == 0 || !state->star_active) return;
+    for (index = OT_STARFIELD_STAR_COUNT - 1; index >= 0; index--) {
+        /* OpenTyrian deliberately relies on JE_word/u16 wrap-around. */
+        state->star_position[index] = (uint16_t)(
+            state->star_position[index] +
+            (
+                (state->star_meta[index] & 3u) + 2 +
+                state->starfield_speed
+            ) * 320
+        );
     }
-    if (
-        !state->end_level &&
-        state->frame_enemy_on_screen == 0 &&
-        state->stop_backgrounds
-    ) {
-        state->stop_backgrounds = false;
-        state->back_move = 1;
-        state->back_move2 = 2;
-        state->back_move3 = 3;
-        state->explode_move = 2;
+}
+
+void ot_level_port_update_low_armor_warning(
+    OtLevelPortState *state,
+    bool player_alive
+)
+{
+    uint16_t sound_delay;
+    int16_t warning_max;
+
+    if (state == 0) return;
+    state->warning_active = false;
+    if (!player_alive || state->player_armor >= 6) return;
+    state->warning_active = true;
+
+    if (state->armor_ship_delay > 0) {
+        state->armor_ship_delay--;
+    } else {
+        uint8_t created = ot_new_enemy(
+            state,
+            50,
+            560,
+            0,
+            OT_SPAWN_WARNING_SHIP
+        );
+
+        if (created > 0) {
+            OtEnemy *enemy = &state->enemy[created - 1u];
+
+            enemy->enemydie = (uint16_t)(
+                561u + ot_level_port_random(state) % 3u
+            );
+            enemy->eyc = (int8_t)(
+                (int16_t)enemy->eyc - (int16_t)state->back_move3
+            );
+            enemy->armorleft = 4;
+        }
+        state->armor_ship_delay = 500;
     }
+
+    sound_delay = (uint16_t)(state->player_armor * 4u + 8u);
+    if (state->warning_sound_delay > sound_delay) {
+        state->warning_sound_delay = sound_delay;
+    }
+    if (state->warning_sound_delay > 1) {
+        state->warning_sound_delay--;
+    } else {
+        state->frame_sound_queue[7] = 17; /* S_WARNING */
+        state->warning_sound_delay = sound_delay;
+    }
+
+    state->warning_color = (int16_t)(
+        state->warning_color + state->warning_color_change
+    );
+    warning_max = (int16_t)(
+        113 + (14 - state->player_armor * 2)
+    );
+    if (state->warning_color > warning_max) {
+        state->warning_color_change =
+            (int8_t)-state->warning_color_change;
+        state->warning_color = warning_max;
+    } else if (state->warning_color < 113) {
+        state->warning_color_change =
+            (int8_t)-state->warning_color_change;
+    }
+}
+
+void ot_level_port_update_return_active(OtLevelPortState *state)
+{
     if (
+        state != 0 &&
         state->return_active &&
         state->frame_enemy_on_screen == 0
     ) {
         ot_event_jump(state, UINT16_MAX);
         state->return_active = false;
     }
-    ot_update_filter_fade(state);
-    ot_update_level_timer(state);
 }

@@ -916,7 +916,17 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
     }
     if (!hdt_pascal_skip(&position)) return false;
 
-    if (!hdt_group_skip(&position, 9)) return false;  /* Event text */
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 9; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->event_text[index],
+                sizeof(text->event_text[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
     if (!hdt_group_skip(&position, 6)) return false;  /* Help topics */
     if (!hdt_pascal_skip(&position)) return false;
     for (index = 0; index < 34; index++) {

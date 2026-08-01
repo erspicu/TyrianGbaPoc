@@ -921,7 +921,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     skip_group(5)
     skip_group(11)
     title_menu = read_group(7)
-    skip_group(9)
+    event_text = read_group(9)
     skip_group(6)
     main_menu_help = read_group(34)
     full_game_menu = read_group(7)
@@ -937,6 +937,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
         "planet_name": planet_name,
         "misc_text": misc_text,
         "title_menu": title_menu,
+        "event_text": event_text,
         "main_menu_help": main_menu_help,
         "full_game_menu": full_game_menu,
         "upgrade_menu": upgrade_menu,

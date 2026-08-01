@@ -61,7 +61,7 @@ static void ot_advance_fixed_acceleration(
     *current_speed = (int8_t)(*current_speed + *add);
     *wait = (int8_t)wait_max;
     if (*current_speed == *reverse_speed) {
-        *wait = (int8_t)-*wait;
+        *control = (int8_t)-*control;
         *reverse_speed = (int8_t)-*reverse_speed;
         *add = (int16_t)-*add;
     }
@@ -108,6 +108,28 @@ static void ot_release_enemy_shot(
     state->enemy_shot_release_count++;
 }
 
+static void ot_queue_frame_explosion(
+    OtLevelPortState *state,
+    int16_t x,
+    int16_t y,
+    int8_t delta_y,
+    uint8_t explosion_type,
+    bool fixed_position
+)
+{
+    OtFrameExplosion *request;
+
+    if (state->frame_explosion_count >= OT_FRAME_EXPLOSION_COUNT) {
+        return;
+    }
+    request = &state->frame_explosion[state->frame_explosion_count++];
+    request->x = x;
+    request->y = y;
+    request->delta_y = delta_y;
+    request->explosion_type = explosion_type;
+    request->fixed_position = fixed_position;
+}
+
 /*
  * Direct single-player/Normal translation of JE_drawEnemy()'s three firing
  * slots.  Returning false preserves the source's "goto draw_enemy_end" when
@@ -135,13 +157,116 @@ static bool ot_enemy_fire_slots(
         }
         enemy->eshotwait[(uint8_t)slot] =
             enemy->freq[(uint8_t)slot];
+        if (state->difficulty_level > 2) {
+            enemy->eshotwait[(uint8_t)slot] = (uint8_t)(
+                enemy->eshotwait[(uint8_t)slot] / 2u + 1u
+            );
+            if (state->difficulty_level > 7) {
+                enemy->eshotwait[(uint8_t)slot] = (uint8_t)(
+                    enemy->eshotwait[(uint8_t)slot] / 2u + 1u
+                );
+            }
+        }
 
-        /*
-         * 251..255 are magnet/explosion control opcodes, not HDT weapons.
-         * Their gameplay-side player forces/render effects are deferred, but
-         * the source wait/animation state above is already authoritative.
-         */
-        if (turret >= 251) continue;
+        /* Direct tyrian2.c JE_drawEnemy() control-opcode switch. */
+        if (turret >= 251) {
+            int16_t source_player_x_minus_25 =
+                (int16_t)(state->player_x - 25);
+            int16_t distance;
+            int16_t force;
+
+            switch (turret) {
+            case 252: /* Savara Boss DualMissile */
+                if (enemy->ey > 20) {
+                    int16_t explosion_y = (int16_t)(
+                        enemy->ey - 20 - state->back_move * 8
+                    );
+
+                    ot_queue_frame_explosion(
+                        state,
+                        (int16_t)(enemy->ex - 8 + enemy->mapoffset),
+                        explosion_y,
+                        -2,
+                        6,
+                        false
+                    );
+                    ot_queue_frame_explosion(
+                        state,
+                        (int16_t)(enemy->ex + 4 + enemy->mapoffset),
+                        explosion_y,
+                        -2,
+                        6,
+                        false
+                    );
+                }
+                break;
+
+            case 251: /* Suck-O-Magnet */
+                distance = (int16_t)(
+                    ot_abs_s16((int16_t)(
+                        source_player_x_minus_25 - enemy->ex
+                    )) +
+                    ot_abs_s16((int16_t)(state->player_y - enemy->ey))
+                );
+                force = (int16_t)(4 - distance / 100);
+                if (force > 0) {
+                    state->frame_player_velocity_x_delta +=
+                        source_player_x_minus_25 > enemy->ex ?
+                            -force : force;
+                }
+                break;
+
+            case 253: /* Rightward short-range magnet */
+                if (
+                    ot_abs_s16((int16_t)(
+                        state->player_x - 14 - enemy->ex
+                    )) < 24 &&
+                    ot_abs_s16((int16_t)(
+                        state->player_y - enemy->ey
+                    )) < 28
+                ) {
+                    state->frame_player_velocity_x_delta += 2;
+                }
+                break;
+
+            case 254: /* Leftward short-range magnet */
+                if (
+                    ot_abs_s16((int16_t)(
+                        state->player_x - 14 - enemy->ex
+                    )) < 24 &&
+                    ot_abs_s16((int16_t)(
+                        state->player_y - enemy->ey
+                    )) < 28
+                ) {
+                    state->frame_player_velocity_x_delta -= 2;
+                }
+                break;
+
+            case 255: /* Magneto RePulse */
+                if (state->difficulty_level != 1) {
+                    if (slot == 2) {
+                        enemy->filter = 0x70;
+                    } else {
+                        distance = (int16_t)(
+                            ot_abs_s16((int16_t)(
+                                source_player_x_minus_25 - enemy->ex
+                            )) +
+                            ot_abs_s16((int16_t)(
+                                state->player_y - enemy->ey
+                            ))
+                        );
+                        force = (int16_t)(4 - distance / 20);
+                        if (force > 0) {
+                            state->frame_player_velocity_x_delta +=
+                                source_player_x_minus_25 > enemy->ex ?
+                                    force : -force;
+                        }
+                    }
+                }
+                break;
+            }
+            continue;
+        }
         {
             OtWeaponDefinition weapon;
             uint8_t projectile;
@@ -222,11 +347,18 @@ static bool ot_enemy_fire_slots(
                 }
 
                 if (weapon.aim > 0) {
+                    uint8_t aim = weapon.aim;
+
                     /*
                      * JE_drawEnemy temporarily subtracts 25 from player.x;
                      * its later +25 therefore cancels.  state->player_x is
                      * kept unmodified, leaving the source expression below.
                      */
+                    if (state->difficulty_level > 2) {
+                        aim = (uint8_t)(
+                            aim + state->difficulty_level - 2u
+                        );
+                    }
                     aim_x = (int16_t)(
                         state->player_x - enemy->ex -
                         enemy->mapoffset - 4
@@ -238,11 +370,11 @@ static bool ot_enemy_fire_slots(
                         ot_abs_s16(aim_x) > ot_abs_s16(aim_y) ?
                         ot_abs_s16(aim_x) : ot_abs_s16(aim_y);
                     shot->sxm = ot_round_ratio(
-                        (int32_t)aim_x * weapon.aim,
+                        (int32_t)aim_x * aim,
                         magnitude
                     );
                     shot->sym = ot_round_ratio(
-                        (int32_t)aim_y * weapon.aim,
+                        (int32_t)aim_y * aim,
                         magnitude
                     );
                 }
@@ -513,8 +645,8 @@ static void ot_draw_enemy_pool(
         }
         enemy->ey = (int16_t)(enemy->ey + temp_back_move);
         if (
-            enemy->ex + enemy->mapoffset <= -24 ||
-            enemy->ex + enemy->mapoffset >= 296
+            enemy->ex <= -24 ||
+            enemy->ex >= 296
         ) {
             continue;
         }
@@ -558,12 +690,34 @@ static void ot_spawn_continual_enemy(OtLevelPortState *state)
         state->assets_valid = false;
         return;
     }
+    if (enemy_id == 2) {
+        state->frame_sound_queue[3] = 7; /* S_WEAPON_7 */
+    }
     ot_new_enemy(state, 0, enemy_id, 0, OT_SPAWN_RANDOM);
 }
 
-static void ot_advance_enemies(OtLevelPortState *state)
+static void ot_mark_stopped_enemy_group_clear(
+    OtLevelPortState *state,
+    uint8_t group
+)
 {
-    /* JE_main() draw/update order: ground, ground2, continual, sky, top. */
+    if (state->stop_background_num != group) return;
+    if (
+        (group == 1 && state->frame_ground_enemy_on_screen == 0) ||
+        (group == 2 && state->frame_sky_enemy_on_screen == 0)
+    ) {
+        state->stop_background_num = 9;
+    }
+}
+
+static void ot_advance_enemies_before_player(OtLevelPortState *state)
+{
+    /*
+     * Direct JE_main() phase order before player shots/movement:
+     * ground, ground2, continual, then only the sky/top layers which are
+     * configured behind the player.  The over-player variants are advanced
+     * later by ot_level_port_advance_over_player_enemies().
+     */
     ot_draw_enemy_pool(
         state,
         25,
@@ -576,17 +730,45 @@ static void ot_advance_enemies(OtLevelPortState *state)
         (int16_t)state->back_move,
         state->presentation_map_x_offset
     );
+    ot_mark_stopped_enemy_group_clear(state, 1);
     ot_spawn_continual_enemy(state);
-    ot_draw_enemy_pool(
-        state,
-        0,
-        0,
-        state->presentation_map_x2_offset
-    );
-    ot_draw_enemy_pool(
-        state,
-        50,
-        (int16_t)state->back_move3,
-        state->presentation_map_x3_offset
-    );
+    if (!state->sky_enemy_over_all) {
+        ot_draw_enemy_pool(
+            state,
+            0,
+            0,
+            state->presentation_map_x2_offset
+        );
+        ot_mark_stopped_enemy_group_clear(state, 2);
+    }
+    if (!state->top_enemy_over) {
+        ot_draw_enemy_pool(
+            state,
+            50,
+            (int16_t)state->back_move3,
+            state->presentation_map_x3_offset
+        );
+    }
+}
+
+static void ot_advance_enemies_over_player(OtLevelPortState *state)
+{
+    /* Direct JE_main() order after existing enemy-shot movement. */
+    if (state->top_enemy_over) {
+        ot_draw_enemy_pool(
+            state,
+            50,
+            (int16_t)state->back_move3,
+            state->presentation_map_x3_offset
+        );
+    }
+    if (state->sky_enemy_over_all) {
+        ot_draw_enemy_pool(
+            state,
+            0,
+            0,
+            state->presentation_map_x2_offset
+        );
+        ot_mark_stopped_enemy_group_clear(state, 2);
+    }
 }

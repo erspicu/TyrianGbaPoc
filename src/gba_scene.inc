@@ -697,6 +697,15 @@ static void render_game(void)
     u8 old_count = previous_oam_count;
     u8 visible_count;
 
+    if (
+        game_state == STATE_PLAY ||
+        game_state == STATE_GAME_OVER
+    ) {
+        gameplay_overlay_prepare_frame();
+    } else {
+        gameplay_overlay_active = 0;
+        gameplay_overlay_upload_pending = 0;
+    }
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP && \
     TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
     /*
