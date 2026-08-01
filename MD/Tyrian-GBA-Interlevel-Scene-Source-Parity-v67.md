@@ -80,3 +80,21 @@ gameloop 的工作量門檻已不再代表正式程式。第一關 high/normal �
 正式門檻因此改為最多 2% presentation deadline miss，並繼續分別驗證
 wall-clock 邏輯、音訊、前端零掉幀、快取帳務與來源 gameplay golden。這是
 完整 PC 規格在 GBA 上的明確降級契約，不是把舊測試失敗靜默忽略。
+
+## Episode 2～4 路線重校驗
+
+完整 gameloop 納入後，正式建置原先的 Episode 2 精確計數仍停留在舊的
+局部流程。重新以相同 high/normal 路線量測後，Episode 2 已完整走到事件
+`1751/1752`、位置 `8829`，回到 Game Menu；素材解碼、ROMFS、L2 與所有
+前端 missed VBlank 均為零失敗。`216/10831` gameplay presentation miss
+落在正式 2% 契約內，因此更新 deterministic completion golden 與快取
+帳務範圍，不刪除任何 gameplay 功能。
+
+Episode 3 第一關直接通過來源流程。Episode 4 第一關則確認原本不是關卡
+事件缺漏，而是 route-smoke 的自動輸入卡在 event-4 sky stop group：控制
+hitbox 會短暫跨過 y 邊界，使既有「連續離屏 60 tick」測試 fallback 每次
+歸零，永遠無法清掉 link 39。fallback 現在保留已累積的離屏 grace，只在
+hitbox 真正位於可射擊範圍時交給按鍵射擊；下一次離屏即可完成原本已存在、
+且只編入 autotest ROM 的一次碰撞。修正後 Episode 4 走到事件 `903/904`、
+位置 `6624`，勝利音樂自然停止、四階段統計完成並回 Game Menu。正式遊戲
+ROM 沒有這個測試輔助分支。

@@ -901,12 +901,20 @@ source_autotest_route_combat_assist(void)
             continue;
         }
         /*
-         * The current GBA shot adapter releases at y < 0.  A normal collision
-         * can still reach an enemy centre down to y=-8; let keypad aiming
-         * handle every such target without assistance.
+         * The stock shot lifetime ends below y=-15.  A normal collision can
+         * still reach an enemy centre down to y=-8; let keypad aiming handle
+         * every such target without assistance.
          */
         if (enemy->ey >= -8 && enemy->ey <= 190) {
-            source_autotest_unreachable_stop_ticks = 0;
+            /*
+             * Keep already-earned off-screen grace.  Some authored control
+             * hitboxes oscillate across this boundary for only a few ticks;
+             * resetting here prevented the route input from ever reaching
+             * the existing fallback even though most of each cycle remained
+             * outside the stock shot's y<-15 lifetime.  A genuinely
+             * reachable target is still left entirely to keypad fire while
+             * it is on screen.
+             */
             return;
         }
         if (candidate == OT_ENEMY_COUNT) candidate = index;
