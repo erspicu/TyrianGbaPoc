@@ -458,14 +458,13 @@ static void frontend_render_pre_game_menu(void)
                     SCREEN_WIDTH
                 );
             }
-            frontend_draw_small_mixed_text_clipped_colours(
+            frontend_draw_pregame_text_clipped_no_shadow(
                 frontend_frame_scratch,
                 TYRIAN_GBA_BUILD_LABEL,
                 TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
                 TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
                 SCREEN_WIDTH,
-                0xecu,
-                0xe2u
+                0xfeu
             );
             frontend_present(
                 static_frame,
@@ -503,14 +502,13 @@ static void frontend_render_pre_game_menu(void)
         );
     }
     if (game_state == STATE_TITLE) {
-        frontend_draw_small_mixed_text_clipped_colours(
+        frontend_draw_pregame_text_clipped_no_shadow(
             frontend_frame_scratch,
             TYRIAN_GBA_BUILD_LABEL,
             TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
             TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
             SCREEN_WIDTH,
-            0xecu,
-            0xe2u
+            0xfeu
         );
         frontend_title_brand_pending = 0;
     }

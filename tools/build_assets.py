@@ -174,7 +174,7 @@ FRONTEND_NATIVE_FONT_SHADOW = 240
 FRONTEND_PREGAME_FONT_CHARACTERS = (
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "0123456789.,!?'/:-%;"
+    "0123456789.,!?'/:-%;[]+^"
 )
 FRONTEND_PREGAME_FONT_HEIGHT = 8
 FRONTEND_PREGAME_FONT_WIDTH = 8
@@ -223,12 +223,12 @@ FRONTEND_STATIC_MENU_PANEL_BYTES = (
 FRONTEND_STATIC_GAME_MENU_COUNT = 6
 FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
 FRONTEND_STATIC_OPTIONS_MENU_COUNT = 1
-FRONTEND_STATIC_SAVE_MENU_COUNT = 2
-FRONTEND_STATIC_SAVE_NAME_MENU_COUNT = 1
+FRONTEND_STATIC_SAVE_MENU_COUNT = 0
+FRONTEND_STATIC_SAVE_NAME_MENU_COUNT = 0
 FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT = 34
 FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT = 3
-FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT = 2
-FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT = 2
+FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT = 0
+FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT = 0
 FRONTEND_STATIC_HELP_STRIP_COUNT = (
     FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
     FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT +
@@ -2825,6 +2825,114 @@ def build_frontend_static_menu_panels(
             )
         add_pre_game(f"difficulty_{selection}", frame, 7)
 
+    # OpenTyrian JE_loadScreen() uses PIC 2 and one full-width list with
+    # three data columns.  The GBA port intentionally keeps only the
+    # one-player page, so the PC left/right 1P/2P controls and their help
+    # line are omitted.  Empty rows are baked once; runtime replaces only
+    # occupied and selected rows from the same source background.
+    save_background = source.picture_frame(2)
+    save_first_y = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y"]
+    save_row_step = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP"]
+    save_name_x = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_X"]
+    save_name_right = layout["TYRIAN_GBA_LAYOUT_SAVE_NAME_RIGHT"]
+    save_last_x = layout["TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_X"]
+    save_last_right = layout["TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_RIGHT"]
+    save_episode_x = layout["TYRIAN_GBA_LAYOUT_SAVE_EPISODE_X"]
+    save_right = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT"]
+
+    for mode, title, footer in (
+        (0, "Load Game", "A: Load   B: Back"),
+        (1, "Save Game", "A: Name and save   B: Back"),
+    ):
+        frame = save_background.copy()
+        draw_pregame_centered(
+            frame,
+            title,
+            layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y"],
+            0xfb,
+        )
+        for index in range(11):
+            y = save_first_y + index * save_row_step
+            colour = 0xf4 if mode == 0 else 0xfa
+            draw_small_mixed_text(
+                frame,
+                "EMPTY SLOT",
+                save_name_x,
+                y,
+                save_name_right,
+                colour,
+                0xe2,
+            )
+            draw_small_mixed_text(
+                frame,
+                "Last level -----",
+                save_last_x,
+                y,
+                save_last_right,
+                colour,
+                0xe2,
+            )
+        draw_small_mixed_text(
+            frame,
+            "Exit to Main Menu",
+            save_name_x,
+            layout["TYRIAN_GBA_LAYOUT_SAVE_EXIT_Y"],
+            save_right,
+            0xfa,
+            0xe2,
+        )
+        draw_small_mixed_text(
+            frame,
+            footer,
+            layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y"],
+            save_right,
+            0xea,
+            0xe2,
+        )
+        add_pre_game(
+            "save_slots_load_base" if mode == 0 else
+                "save_slots_save_base",
+            frame,
+            7,
+        )
+
+    frame = save_background.copy()
+    draw_pregame_centered(
+        frame,
+        "Save Game",
+        layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y"],
+        0xfb,
+    )
+    for text, y, colour in (
+        ("Choose a pilot name", 42, 0xfa),
+        ("Up/Down: letter", 88, 0xea),
+        ("R+Up/Down: CAPITAL", 98, 0xea),
+        ("A/Right: next   B: erase", 108, 0xea),
+        ("START: save", 120, 0xfe),
+    ):
+        draw_small_mixed_text(
+            frame,
+            text,
+            layout["TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X"],
+            y,
+            save_right,
+            colour,
+            0xe2,
+        )
+    draw_small_mixed_text(
+        frame,
+        "Hold SELECT to clear the name.",
+        layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y"],
+        save_right,
+        0xea,
+        0xe2,
+    )
+    add_pre_game("save_name_base", frame, 7)
+
     full_game_menu = source.text["full_game_menu"]
     game_fallback = (
         "Game Menu",
@@ -2907,10 +3015,8 @@ def build_frontend_static_menu_panels(
             )
         add(f"upgrade_menu_{selection}", frame)
 
-    # Options and save-slot screens use one immutable right-panel base each,
-    # then overlay only the active row and occupied slot names at runtime.
-    # This preserves the proven static-panel transition cost without storing
-    # dozens of near-identical selection variants in ROM.
+    # Options retains the Game Menu right panel.  Load/Save is a separate
+    # PC-source full-screen family in the pre-game atlas above.
     frame = menu_chrome.copy()
     draw_menu_centered(
         frame,
@@ -2929,58 +3035,6 @@ def build_frontend_static_menu_panels(
             0xfa,
         )
     add("options_menu_base", frame)
-
-    for mode, title in enumerate(("Load Game", "Save Game")):
-        frame = menu_chrome.copy()
-        draw_menu_centered(
-            frame,
-            title,
-            layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
-            layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
-            0xfb,
-        )
-        for index in range(11):
-            draw_small_mixed_text(
-                frame,
-                f"{index + 1} Empty",
-                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_X"],
-                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y"] +
-                    index *
-                    layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP"],
-                layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT"],
-                0xf4 if mode == 0 else 0xfa,
-                0xe2,
-            )
-        add(
-            "save_slots_load_base" if mode == 0 else
-                "save_slots_save_base",
-            frame,
-        )
-
-    frame = menu_chrome.copy()
-    draw_menu_centered(
-        frame,
-        "Save Name",
-        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
-        layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
-        0xfb,
-    )
-    for text, y, colour in (
-        ("Up/Down: letter", 86, 0xea),
-        ("R+Up/Down: CAPITAL", 94, 0xea),
-        ("A/Right: next  B: erase", 102, 0xea),
-        ("START: save", 110, 0xfe),
-    ):
-        draw_small_mixed_text(
-            frame,
-            text,
-            126,
-            y,
-            239,
-            colour,
-            0xe2,
-        )
-    add("save_name_base", frame)
 
     # Every mainMenuHelp string is immutable stock HDT text.  Baking the
     # final 240-pixel strip avoids thousands of runtime glyph divisions on
@@ -3013,10 +3067,6 @@ def build_frontend_static_menu_panels(
         "Load a saved campaign.",
         "Save the current campaign.",
         "Return to Game Menu.",
-        "A: Load   B: Back",
-        "A: Name and save   B: Back",
-        "Hold SELECT to clear the name.",
-        "Saving... Do not turn off power.",
     )
     for text in custom_help:
         frame = menu_chrome.copy()
@@ -3339,6 +3389,10 @@ def build_frontend_static_menu_panels(
         "FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT": 4,
         "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE": 10,
         "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT": 3,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_BASE": 13,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT": 2,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE": 15,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT": 1,
         "FRONTEND_STATIC_PRE_GAME_FRAME_COUNT": len(pre_game_frames),
         "FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES": len(pre_game_bytes),
         "FRONTEND_STATIC_QUIT_OVERLAY_VERSION": 1,

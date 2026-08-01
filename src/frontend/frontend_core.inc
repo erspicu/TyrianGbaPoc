@@ -169,11 +169,11 @@ _Static_assert(
         FRONTEND_STATIC_OPTIONS_MENU_BASE ==
             FRONTEND_STATIC_UPGRADE_MENU_BASE +
                 FRONTEND_STATIC_UPGRADE_MENU_COUNT &&
-        FRONTEND_STATIC_SAVE_MENU_COUNT == 2 &&
+        FRONTEND_STATIC_SAVE_MENU_COUNT == 0 &&
         FRONTEND_STATIC_SAVE_MENU_BASE ==
             FRONTEND_STATIC_OPTIONS_MENU_BASE +
                 FRONTEND_STATIC_OPTIONS_MENU_COUNT &&
-        FRONTEND_STATIC_SAVE_NAME_MENU_COUNT == 1 &&
+        FRONTEND_STATIC_SAVE_NAME_MENU_COUNT == 0 &&
         FRONTEND_STATIC_SAVE_NAME_MENU_BASE ==
             FRONTEND_STATIC_SAVE_MENU_BASE +
                 FRONTEND_STATIC_SAVE_MENU_COUNT &&
@@ -197,7 +197,11 @@ _Static_assert(
         FRONTEND_STATIC_PRE_GAME_EPISODE_COUNT == 4 &&
         FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE == 10 &&
         FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT == 3 &&
-        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 13 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_BASE == 13 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT == 2 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE == 15 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT == 1 &&
+        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 16 &&
         FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES ==
             FRONTEND_STATIC_PRE_GAME_FRAME_COUNT *
                 FRONTEND_FRAME_BYTES,
@@ -915,11 +919,11 @@ _Static_assert(
         FRONTEND_STATIC_SAVE_HELP_STRIP_BASE ==
             FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE +
                 FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT &&
-        FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT == 2 &&
+        FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT == 0 &&
         FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_BASE ==
             FRONTEND_STATIC_SAVE_HELP_STRIP_BASE +
                 FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT &&
-        FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT == 2 &&
+        FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT == 0 &&
         FRONTEND_STATIC_HELP_STRIP_COUNT ==
             FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT +
                 FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT +
@@ -944,7 +948,7 @@ static const char frontend_runtime_font_characters[] =
 static const char frontend_pregame_font_characters[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
-    "0123456789.,!?'/:-%;";
+    "0123456789.,!?'/:-%;[]+^";
 static u8 frontend_pregame_font_width_cache[
     FRONTEND_PREGAME_FONT_GLYPH_COUNT + 1u
 ] EWRAM_BSS;
@@ -2340,6 +2344,10 @@ static u8 frontend_pregame_font_tile(char character)
     case '-': return 70;
     case '%': return 71;
     case ';': return 72;
+    case '[': return 73;
+    case ']': return 74;
+    case '+': return 75;
+    case '^': return 76;
     default:
         /* The stock helper face uses '?' for every unsupported byte. */
         return 66;
@@ -2464,6 +2472,28 @@ static void frontend_draw_pregame_text_clipped(
             y,
             colour
         );
+        x = (s16)(x + advance);
+    }
+}
+
+/* One-pixel authored face without the usual drop shadow.  The title build
+ * identity uses this path so the larger mixed-case label remains crisp over
+ * the detailed PC title artwork instead of merging into a dark block. */
+static void frontend_draw_pregame_text_clipped_no_shadow(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_pregame_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_pregame_font(frame, tile_index, x, y, colour);
         x = (s16)(x + advance);
     }
 }

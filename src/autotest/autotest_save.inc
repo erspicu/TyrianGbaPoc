@@ -196,10 +196,16 @@ static void autotest_save_flow(void)
     if (
         game_state != STATE_SAVE_SLOTS ||
         frontend_save_slot_mode != FRONTEND_SAVE_MODE_LOAD ||
-        frontend_save_return_state != STATE_TITLE
+        frontend_save_return_state != STATE_TITLE ||
+        !frontend_save_slots_patch_pending
     ) {
         failures |= 1u << 8;
     }
+    /* This synchronous unit path has no VBlank loop to commit the static
+     * page and its bounded row patch; production and transition stress do. */
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_save_slots_patch_pending = 0;
     pad_pressed = KEY_B;
     if (
         !frontend_save_frontend_update() ||
@@ -213,6 +219,9 @@ static void autotest_save_flow(void)
         STATE_TITLE,
         1
     );
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_save_slots_patch_pending = 0;
     frontend_selection = slot;
     frontend_main_section = 1;
     player_cash = 0;

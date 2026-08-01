@@ -2950,13 +2950,14 @@ for ($pathIndex = 0; $pathIndex -lt $transitionPathCount; $pathIndex++) {
         if (
             $record.path -eq "data_selection" -or
             $record.path -eq "data_reader" -or
-            $record.path -eq "options_slots" -or
-            $record.path -eq "save_name" -or
             $record.path -eq "save_name_edit" -or
             $record.path -eq "data_reader_scroll"
         ) {
             0
-        } elseif ($record.path -eq "game_options") {
+        } elseif (
+            $record.path -eq "game_options" -or
+            $record.path -eq "options_slots"
+        ) {
             60
         } else {
             120

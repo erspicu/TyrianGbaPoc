@@ -447,12 +447,14 @@
 #endif
 
 /*
- * Options and Load/Save pages reuse the Game Menu chrome and the cached ship
- * panel.  These are final 240x160 coordinates.  Keep the slot step at least
- * 8 pixels so the compact mixed-case rows never overlap.
+ * Options remains on the Game Menu chrome.  Load/Save follows the PC
+ * JE_loadScreen() full-width PIC 2 layout, scaled to 240x160 with its
+ * one-player name, Last level and Episode columns.  These are final screen
+ * coordinates; keep the slot step at least 8 pixels.
  *
- * Options 與讀檔／存檔頁沿用 Game Menu 底圖及快取好的船體面板。下列為
- * 最終 240x160 座標；存檔槽列距請至少保留 8 像素，避免小字互相重疊。
+ * Options 仍沿用 Game Menu 底圖；讀檔／存檔則依 PC JE_loadScreen() 改為
+ * PIC 2 全寬單人介面，保留名稱、Last level 與 Episode 三欄並適配
+ * 240x160。下列皆為最終螢幕座標；槽列距至少保留 8 像素。
  */
 #ifndef TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X
 #define TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X 180
@@ -470,16 +472,43 @@
 #define TYRIAN_GBA_LAYOUT_OPTIONS_ROW_STEP 24
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_X
-#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_X 124
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_X 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_RIGHT
+#define TYRIAN_GBA_LAYOUT_SAVE_NAME_RIGHT 86
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_X
+#define TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_X 86
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_RIGHT
+#define TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_RIGHT 195
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_EPISODE_X
+#define TYRIAN_GBA_LAYOUT_SAVE_EPISODE_X 196
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT
 #define TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT 239
 #endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X
+#define TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X 120
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y 4
+#endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y
-#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y 18
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y 24
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP
-#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP 9
+#define TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP 10
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_EXIT_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_EXIT_Y 139
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X
+#define TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y 151
 #endif
 
 /*
@@ -493,10 +522,13 @@
 #define TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y 151
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_X
-#define TYRIAN_GBA_LAYOUT_SAVE_NAME_X 126
+#define TYRIAN_GBA_LAYOUT_SAVE_NAME_X 54
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_Y
 #define TYRIAN_GBA_LAYOUT_SAVE_NAME_Y 62
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X
+#define TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X 46
 #endif
 
 /* Upgrade Ship category panel / Upgrade Ship 分類面板。 */

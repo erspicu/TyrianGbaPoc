@@ -41,20 +41,8 @@ enum {
     FRONTEND_SAVE_REPEAT_DELAY = 15,
     FRONTEND_SAVE_REPEAT_RATE = 4,
     FRONTEND_SAVE_CLEAR_HOLD_FRAMES = 60,
-    FRONTEND_SAVE_SLOT_ROW_WIDTH =
-        TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT -
-            TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
     FRONTEND_SAVE_SLOT_ROW_HEIGHT = 8,
-    FRONTEND_SAVE_SLOT_ROW_BYTES =
-        FRONTEND_SAVE_SLOT_ROW_WIDTH * FRONTEND_SAVE_SLOT_ROW_HEIGHT,
-    FRONTEND_SAVE_SPECIAL_ROW_WIDTH = 120,
-    FRONTEND_SAVE_SPECIAL_ROW_BYTES =
-        FRONTEND_SAVE_SPECIAL_ROW_WIDTH *
-            FRONTEND_SAVE_SLOT_ROW_HEIGHT,
-    FRONTEND_SAVE_SPECIAL_EMPTY_LOAD_ACTIVE = 0,
-    FRONTEND_SAVE_SPECIAL_EMPTY_SAVE_ACTIVE = 1,
-    FRONTEND_SAVE_SPECIAL_DONE_INACTIVE = 2,
-    FRONTEND_SAVE_SPECIAL_ROW_COUNT = 3,
+    FRONTEND_SAVE_PATCH_ROWS_PER_VBLANK = 3,
 };
 
 typedef struct {
@@ -87,29 +75,16 @@ static u8 frontend_save_has_active_bank EWRAM_BSS;
 static u8 frontend_save_slot_mode EWRAM_BSS;
 static u8 frontend_save_return_state EWRAM_BSS;
 static u8 frontend_save_return_selection EWRAM_BSS;
-static u8 frontend_save_full_frame_entry EWRAM_BSS;
 static u8 frontend_save_name_cursor EWRAM_BSS;
 static u8 frontend_save_name_slot EWRAM_BSS;
+static u8 frontend_save_name_base_ready EWRAM_BSS;
+static u8 frontend_save_slots_patch_pending EWRAM_BSS;
+static u8 frontend_save_slots_patch_cursor EWRAM_BSS;
+static u8 frontend_save_name_patch_pending EWRAM_BSS;
 static u8 frontend_save_write_active EWRAM_BSS;
 static u8 frontend_save_repeat_direction EWRAM_BSS;
 static u8 frontend_save_repeat_frames EWRAM_BSS;
 static u8 frontend_save_clear_frames EWRAM_BSS;
-/*
- * Occupied slot labels are dynamic, but redrawing all eleven mixed-case
- * strings on every page entry is too expensive for ARM7TDMI.  Cache only the
- * 115x8 text rows (9.9 KiB total); the static ROM panel supplies empty
- * rows and the active row remains one cheap runtime overlay.
- */
-static u8 frontend_save_slot_row_cache[
-    FRONTEND_SAVE_SLOT_COUNT
-][FRONTEND_SAVE_SLOT_ROW_BYTES] EWRAM_BSS __attribute__((aligned(4)));
-static u16 frontend_save_slot_row_cache_valid EWRAM_BSS;
-static u8 frontend_save_special_row_cache[
-    FRONTEND_SAVE_SPECIAL_ROW_COUNT
-][FRONTEND_SAVE_SPECIAL_ROW_BYTES] EWRAM_BSS __attribute__((aligned(4)));
-
-static void frontend_save_build_slot_row_cache(u8 slot);
-static void frontend_save_build_special_row_cache(void);
 
 static volatile u8 *frontend_save_sram(void)
 {
@@ -587,12 +562,12 @@ static void frontend_save_initialize(void)
      */
     __asm__ volatile("" : : "r"(save_type_marker));
     memset(frontend_save_slot, 0, sizeof(frontend_save_slot));
-    frontend_save_slot_row_cache_valid = 0;
     frontend_save_slot_mode = FRONTEND_SAVE_MODE_LOAD;
     frontend_save_return_state = STATE_OPTIONS_MENU;
     frontend_save_return_selection = FRONTEND_SAVE_MODE_LOAD;
-    frontend_save_full_frame_entry = 0;
-    frontend_save_build_special_row_cache();
+    frontend_save_name_base_ready = 0;
+    frontend_save_slots_patch_pending = 0;
+    frontend_save_name_patch_pending = 0;
     frontend_save_sequence = 0;
     frontend_save_has_active_bank = 0;
     frontend_save_write_active = 0;
@@ -625,12 +600,6 @@ static void frontend_save_initialize(void)
     }
     frontend_save_active_bank = selected_bank;
     frontend_save_has_active_bank = 1;
-    for (selected_bank = 0; selected_bank < FRONTEND_SAVE_SLOT_COUNT;
-         selected_bank++) {
-        if (frontend_save_slot[selected_bank].occupied) {
-            frontend_save_build_slot_row_cache(selected_bank);
-        }
-    }
 }
 
 static s16 frontend_save_option_y(u8 selection)
@@ -643,6 +612,9 @@ static s16 frontend_save_option_y(u8 selection)
 
 static s16 frontend_save_slot_y(u8 selection)
 {
+    if (selection == FRONTEND_SAVE_SLOT_COUNT) {
+        return TYRIAN_GBA_LAYOUT_SAVE_EXIT_Y;
+    }
     return (s16)(
         TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y +
         selection * TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP
@@ -782,391 +754,306 @@ static void frontend_render_options_selection(u8 old_selection)
     frontend_dirty_present();
 }
 
-static void frontend_save_append_u8(char *text, u8 *length, u8 value)
+static const u8 *frontend_save_static_slots_frame(u8 mode)
 {
-    if (value >= 10) text[(*length)++] = (char)('0' + value / 10u);
-    text[(*length)++] = (char)('0' + value % 10u);
-    text[*length] = '\0';
+    return frontend_static_pre_game_frames +
+        (u32)(
+            FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_BASE +
+            (mode == FRONTEND_SAVE_MODE_SAVE ? 1u : 0u)
+        ) * FRONTEND_FRAME_BYTES;
 }
 
-static void frontend_save_draw_slot(u8 selection, u8 active)
+static const u8 *frontend_save_static_name_frame(void)
 {
-    char text[32];
-    u8 length = 0;
-    s16 y = frontend_save_slot_y(selection);
-    u8 colour = selection == active ? 0xfeu : 0xfau;
+    return frontend_static_pre_game_frames +
+        (u32)FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE *
+            FRONTEND_FRAME_BYTES;
+}
 
-    frontend_restore_menu_chrome_rect(120, (u16)y, 120, 8);
+static void frontend_save_copy_rows(
+    const u8 *source,
+    u16 y,
+    u16 row_count
+)
+{
+    if (y >= SCREEN_HEIGHT) return;
+    if (y + row_count > SCREEN_HEIGHT) {
+        row_count = (u16)(SCREEN_HEIGHT - y);
+    }
+    memcpy(
+        frontend_frame_scratch + (u32)y * SCREEN_WIDTH,
+        source + (u32)y * SCREEN_WIDTH,
+        (u32)row_count * SCREEN_WIDTH
+    );
+}
+
+static void frontend_save_clear_slot_row(u8 selection)
+{
+    frontend_save_copy_rows(
+        frontend_frame_address(FRONTEND_FRAME_SELECT_CHROME),
+        (u16)frontend_save_slot_y(selection),
+        FRONTEND_SAVE_SLOT_ROW_HEIGHT
+    );
+}
+
+static void frontend_save_append_text(
+    char *text,
+    u8 capacity,
+    const char *suffix
+)
+{
+    u8 length = (u8)strlen(text);
+
+    while (
+        suffix != 0 &&
+        *suffix != '\0' &&
+        length + 1u < capacity
+    ) {
+        text[length++] = *suffix++;
+    }
+    text[length] = '\0';
+}
+
+static void frontend_save_draw_slot_pc(u8 selection, u8 active)
+{
+    char last_level_text[40];
+    char episode_text[16];
+    const char *name;
+    u8 colour;
+    s16 y = frontend_save_slot_y(selection);
+
     if (selection == FRONTEND_SAVE_SLOT_COUNT) {
         frontend_draw_small_mixed_text_clipped_colours(
             frontend_frame_scratch,
-            "Done",
+            "Exit to Main Menu",
             TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
+            y,
+            TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
+            active ? 0xfeu : 0xfau,
+            0xe2u
+        );
+        return;
+    }
+
+    if (frontend_save_slot[selection].occupied) {
+        name = frontend_save_slot[selection].name;
+        frontend_save_string_copy(
+            last_level_text,
+            sizeof(last_level_text),
+            "Last level "
+        );
+        frontend_save_append_text(
+            last_level_text,
+            sizeof(last_level_text),
+            frontend_save_slot[selection].level_name
+        );
+        frontend_save_string_copy(
+            episode_text,
+            sizeof(episode_text),
+            "Episode "
+        );
+        episode_text[8] = (char)(
+            '1' + frontend_save_slot[selection].episode
+        );
+        episode_text[9] = '\0';
+        colour = active ? 0xfeu : 0xfau;
+    } else {
+        name = "EMPTY SLOT";
+        frontend_save_string_copy(
+            last_level_text,
+            sizeof(last_level_text),
+            "Last level -----"
+        );
+        episode_text[0] = '\0';
+        colour = frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD ?
+            (active ? 0xf8u : 0xf4u) :
+            (active ? 0xfeu : 0xfau);
+    }
+
+    frontend_draw_small_mixed_text_clipped_colours(
+        frontend_frame_scratch,
+        name,
+        TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
+        y,
+        TYRIAN_GBA_LAYOUT_SAVE_NAME_RIGHT,
+        colour,
+        0xe2u
+    );
+    frontend_draw_small_mixed_text_clipped_colours(
+        frontend_frame_scratch,
+        last_level_text,
+        TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_X,
+        y,
+        TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_RIGHT,
+        colour,
+        0xe2u
+    );
+    if (episode_text[0] != '\0') {
+        frontend_draw_small_mixed_text_clipped_colours(
+            frontend_frame_scratch,
+            episode_text,
+            TYRIAN_GBA_LAYOUT_SAVE_EPISODE_X,
             y,
             TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
             colour,
             0xe2u
         );
-        return;
-    }
-    frontend_save_append_u8(text, &length, (u8)(selection + 1u));
-    text[length++] = ' ';
-    text[length] = '\0';
-    if (!frontend_save_slot[selection].occupied) {
-        frontend_save_string_copy(
-            text + length,
-            (u8)(sizeof(text) - length),
-            "Empty"
-        );
-        if (frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD) {
-            colour = selection == active ? 0xf8u : 0xf4u;
-        }
-    } else {
-        u8 name_length;
-
-        frontend_save_string_copy(
-            text + length,
-            (u8)(sizeof(text) - length),
-            frontend_save_slot[selection].name
-        );
-        name_length = (u8)strlen(text);
-        if (name_length + 5u < sizeof(text)) {
-            text[name_length++] = ' ';
-            text[name_length++] = 'E';
-            text[name_length++] =
-                (char)('1' + frontend_save_slot[selection].episode);
-            text[name_length++] = ' ';
-            text[name_length++] = 'L';
-            text[name_length] = '\0';
-            frontend_save_append_u8(
-                text,
-                &name_length,
-                (u8)(
-                    frontend_save_slot[selection].main_section > 99 ?
-                        99 :
-                        frontend_save_slot[selection].main_section
-                )
-            );
-        }
-    }
-    frontend_draw_small_mixed_text_clipped_colours(
-        frontend_frame_scratch,
-        text,
-        TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
-        y,
-        TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
-        colour,
-        0xe2u
-    );
-}
-
-static void frontend_save_build_slot_row_cache(u8 slot)
-{
-    u8 row;
-    s16 y;
-
-    if (
-        slot >= FRONTEND_SAVE_SLOT_COUNT ||
-        !frontend_save_slot[slot].occupied
-    ) {
-        return;
-    }
-    y = frontend_save_slot_y(slot);
-    frontend_save_draw_slot(slot, 0xffu);
-    for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
-        memcpy(
-            frontend_save_slot_row_cache[slot] +
-                (u16)row * FRONTEND_SAVE_SLOT_ROW_WIDTH,
-            frontend_frame_scratch +
-                (u32)(y + row) * SCREEN_WIDTH +
-                TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
-            FRONTEND_SAVE_SLOT_ROW_WIDTH
-        );
-    }
-    frontend_save_slot_row_cache_valid |= (u16)(1u << slot);
-}
-
-static void frontend_save_copy_slot_row_cache(u8 slot)
-{
-    u8 row;
-    s16 y = frontend_save_slot_y(slot);
-
-    if (
-        (
-            frontend_save_slot_row_cache_valid &
-                (u16)(1u << slot)
-        ) == 0
-    ) {
-        frontend_save_build_slot_row_cache(slot);
-    }
-    for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
-        memcpy(
-            frontend_frame_scratch +
-                (u32)(y + row) * SCREEN_WIDTH +
-                TYRIAN_GBA_LAYOUT_SAVE_SLOT_X,
-            frontend_save_slot_row_cache[slot] +
-                (u16)row * FRONTEND_SAVE_SLOT_ROW_WIDTH,
-            FRONTEND_SAVE_SLOT_ROW_WIDTH
-        );
     }
 }
 
-static void frontend_save_copy_special_row(u8 cache_index, u8 selection)
-{
-    u8 row;
-    s16 y = frontend_save_slot_y(selection);
-
-    for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
-        memcpy(
-            frontend_frame_scratch +
-                (u32)(y + row) * SCREEN_WIDTH +
-                FRONTEND_STATIC_MENU_PANEL_X,
-            frontend_save_special_row_cache[cache_index] +
-                (u16)row * FRONTEND_SAVE_SPECIAL_ROW_WIDTH,
-            FRONTEND_SAVE_SPECIAL_ROW_WIDTH
-        );
-    }
-}
-
-static void frontend_save_build_special_row_cache(void)
-{
-    u8 saved_mode = frontend_save_slot_mode;
-    u8 cache_index;
-    u8 row;
-    const u8 selection[FRONTEND_SAVE_SPECIAL_ROW_COUNT] = {
-        0,
-        0,
-        FRONTEND_SAVE_SLOT_COUNT,
-    };
-    const u8 active[FRONTEND_SAVE_SPECIAL_ROW_COUNT] = {
-        0,
-        0,
-        0xffu,
-    };
-
-    for (
-        cache_index = 0;
-        cache_index < FRONTEND_SAVE_SPECIAL_ROW_COUNT;
-        cache_index++
-    ) {
-        frontend_save_slot_mode =
-            cache_index == FRONTEND_SAVE_SPECIAL_EMPTY_SAVE_ACTIVE ?
-                FRONTEND_SAVE_MODE_SAVE :
-                FRONTEND_SAVE_MODE_LOAD;
-        frontend_save_draw_slot(
-            selection[cache_index],
-            active[cache_index]
-        );
-        for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
-            memcpy(
-                frontend_save_special_row_cache[cache_index] +
-                    (u16)row * FRONTEND_SAVE_SPECIAL_ROW_WIDTH,
-                frontend_frame_scratch +
-                    (u32)(
-                        frontend_save_slot_y(selection[cache_index]) +
-                        row
-                    ) * SCREEN_WIDTH +
-                    FRONTEND_STATIC_MENU_PANEL_X,
-                FRONTEND_SAVE_SPECIAL_ROW_WIDTH
-            );
-        }
-    }
-    frontend_save_slot_mode = saved_mode;
-}
-
-static void frontend_save_restore_slot_row(u8 selection)
+static void frontend_save_restore_slot_row_pc(u8 selection)
 {
     s16 y = frontend_save_slot_y(selection);
 
-    if (selection < FRONTEND_SAVE_SLOT_COUNT) {
-        if (frontend_save_slot[selection].occupied) {
-            frontend_save_copy_slot_row_cache(selection);
-        } else {
-            (void)frontend_copy_static_menu_panel_rows(
-                (u8)(
-                    FRONTEND_STATIC_SAVE_MENU_BASE +
-                    frontend_save_slot_mode
-                ),
-                (u8)y,
-                FRONTEND_SAVE_SLOT_ROW_HEIGHT
-            );
-        }
+    if (
+        selection < FRONTEND_SAVE_SLOT_COUNT &&
+        frontend_save_slot[selection].occupied
+    ) {
+        frontend_save_clear_slot_row(selection);
+        frontend_save_draw_slot_pc(selection, 0);
         return;
     }
-    frontend_save_copy_special_row(
-        FRONTEND_SAVE_SPECIAL_DONE_INACTIVE,
-        selection
+    frontend_save_copy_rows(
+        frontend_save_static_slots_frame(frontend_save_slot_mode),
+        (u16)y,
+        FRONTEND_SAVE_SLOT_ROW_HEIGHT
     );
 }
 
 static void frontend_render_save_slots(void)
 {
-    u8 full_frame_entry = frontend_save_full_frame_entry;
-    u8 selection;
+    /* DMA the immutable PIC 2 page directly from ROM.  Dynamic rows are
+     * patched over the next few VBlanks, bounded to three occupied rows per
+     * pass, so entering Load/Save never steals an audio frame. */
+    frontend_present(
+        frontend_save_static_slots_frame(frontend_save_slot_mode),
+        frontend_palette_address(FRONTEND_FRAME_SELECT_CHROME)
+    );
+    frontend_save_slots_patch_pending = 1;
+    frontend_save_slots_patch_cursor = 0;
+}
 
-    /*
-     * Options already sits on the shared Game Menu chrome.  Title-screen
-     * Load Game does not, so compose that immutable base once before the
-     * same eleven-slot panel is overlaid.  Subsequent cursor movement stays
-     * on the established dirty-row path.
-     */
-    if (full_frame_entry) {
-        memcpy(
-            frontend_frame_scratch,
-            frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
-            FRONTEND_FRAME_BYTES
-        );
-    }
-    if (
-        !frontend_copy_static_menu_panel(
-            (u8)(
-                FRONTEND_STATIC_SAVE_MENU_BASE +
-                frontend_save_slot_mode
-            )
-        )
-    ) {
-        frontend_restore_menu_chrome_rect(120, 0, 120, SCREEN_HEIGHT);
-        frontend_draw_menu_text_centered(
-            frontend_frame_scratch,
-            frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD ?
-                "Load Game" :
-                "Save Game",
-            TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X,
-            TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y,
-            0xfbu
-        );
-        for (
-            selection = 0;
-            selection < FRONTEND_SAVE_SLOT_COUNT;
-            selection++
-        ) {
-            frontend_save_draw_slot(selection, 0xffu);
-        }
-    } else {
-        for (
-            selection = 0;
-            selection < FRONTEND_SAVE_SLOT_COUNT;
-            selection++
-        ) {
-            if (
-                selection != frontend_selection &&
-                frontend_save_slot[selection].occupied
-            ) {
-                frontend_save_copy_slot_row_cache(selection);
-            }
-        }
-    }
-    frontend_save_copy_special_row(
-        FRONTEND_SAVE_SPECIAL_DONE_INACTIVE,
-        FRONTEND_SAVE_SLOT_COUNT
-    );
-    if (
-        frontend_selection == 0 &&
-        !frontend_save_slot[0].occupied
-    ) {
-        frontend_save_copy_special_row(
-            frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD ?
-                FRONTEND_SAVE_SPECIAL_EMPTY_LOAD_ACTIVE :
-                FRONTEND_SAVE_SPECIAL_EMPTY_SAVE_ACTIVE,
-            0
-        );
-    } else if (
-        frontend_selection == FRONTEND_SAVE_SLOT_COUNT
-    ) {
-        frontend_save_draw_slot(
-            frontend_selection,
-            frontend_selection
-        );
-    } else {
-        frontend_save_draw_slot(
-            frontend_selection,
-            frontend_selection
-        );
-    }
-    frontend_save_draw_help(
-        (u8)(
-            FRONTEND_STATIC_SAVE_HELP_STRIP_BASE +
-            frontend_save_slot_mode
-        ),
-        frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD ?
-            "A: Load   B: Back" :
-            "A: Name and save   B: Back"
-    );
-    frontend_save_full_frame_entry = 0;
-    if (full_frame_entry) {
-        frontend_present(
-            frontend_frame_scratch,
-            frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
-        );
-        return;
-    }
+static u8 frontend_save_slots_patch_update(void)
+{
+    u8 patched = 0;
+
+    if (!frontend_save_slots_patch_pending) return 0;
+    if (frontend_frame_pending) return 1;
     frontend_dirty_begin();
-    frontend_dirty_add(
-        FRONTEND_STATIC_MENU_PANEL_X,
-        FRONTEND_STATIC_MENU_PANEL_Y,
-        FRONTEND_STATIC_MENU_PANEL_WIDTH,
-        (u16)(
-            frontend_save_slot_y(FRONTEND_SAVE_SLOT_COUNT) +
+    if (frontend_save_slots_patch_cursor == 0) {
+        frontend_save_clear_slot_row(frontend_selection);
+        frontend_save_draw_slot_pc(frontend_selection, 1);
+        frontend_dirty_add(
+            0,
+            (u16)frontend_save_slot_y(frontend_selection),
+            SCREEN_WIDTH,
             FRONTEND_SAVE_SLOT_ROW_HEIGHT
-        )
-    );
-    frontend_dirty_add(
-        0,
-        frontend_menu_help_dirty_y(),
-        SCREEN_WIDTH,
-        (u16)(SCREEN_HEIGHT - frontend_menu_help_dirty_y())
-    );
-    frontend_dirty_present();
+        );
+        frontend_save_slots_patch_cursor = 1;
+        patched++;
+    }
+    while (
+        frontend_save_slots_patch_cursor <=
+            FRONTEND_SAVE_SLOT_COUNT &&
+        patched < FRONTEND_SAVE_PATCH_ROWS_PER_VBLANK + 1u
+    ) {
+        u8 selection = (u8)(frontend_save_slots_patch_cursor - 1u);
+
+        frontend_save_slots_patch_cursor++;
+        if (
+            selection == frontend_selection ||
+            !frontend_save_slot[selection].occupied
+        ) {
+            continue;
+        }
+        frontend_save_clear_slot_row(selection);
+        frontend_save_draw_slot_pc(selection, 0);
+        frontend_dirty_add(
+            0,
+            (u16)frontend_save_slot_y(selection),
+            SCREEN_WIDTH,
+            FRONTEND_SAVE_SLOT_ROW_HEIGHT
+        );
+        patched++;
+    }
+    if (
+        frontend_save_slots_patch_cursor >
+            FRONTEND_SAVE_SLOT_COUNT
+    ) {
+        frontend_save_slots_patch_pending = 0;
+    }
+    if (patched != 0) frontend_dirty_present();
+    return 1;
 }
 
 static void frontend_render_save_slot_selection(u8 old_selection)
 {
-    frontend_save_restore_slot_row(old_selection);
-    if (
-        frontend_selection == 0 &&
-        !frontend_save_slot[0].occupied
-    ) {
-        frontend_save_copy_special_row(
-            frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD ?
-                FRONTEND_SAVE_SPECIAL_EMPTY_LOAD_ACTIVE :
-                FRONTEND_SAVE_SPECIAL_EMPTY_SAVE_ACTIVE,
-            0
-        );
-    } else if (
-        frontend_selection == FRONTEND_SAVE_SLOT_COUNT
-    ) {
-        frontend_save_draw_slot(
-            frontend_selection,
-            frontend_selection
-        );
-    } else {
-        frontend_save_draw_slot(
-            frontend_selection,
-            frontend_selection
-        );
-    }
+    frontend_save_restore_slot_row_pc(old_selection);
+    frontend_save_clear_slot_row(frontend_selection);
+    frontend_save_draw_slot_pc(frontend_selection, 1);
     frontend_dirty_begin();
     frontend_dirty_add(
-        120,
+        0,
         (u16)frontend_save_slot_y(old_selection),
-        120,
-        8
+        SCREEN_WIDTH,
+        FRONTEND_SAVE_SLOT_ROW_HEIGHT
     );
     frontend_dirty_add(
-        120,
+        0,
         (u16)frontend_save_slot_y(frontend_selection),
-        120,
-        8
+        SCREEN_WIDTH,
+        FRONTEND_SAVE_SLOT_ROW_HEIGHT
     );
     frontend_dirty_present();
 }
 
-static void frontend_save_draw_name_editor(void)
+static void frontend_save_draw_name_editor_pc(u8 include_level)
 {
     char display[FRONTEND_SAVE_NAME_BYTES + 3];
     char cursor[FRONTEND_SAVE_NAME_BYTES + 2];
+    char level_text[FRONTEND_SAVE_LEVEL_NAME_BYTES + 8];
+    const char *current_level_name =
+        frontend_level.level_name[0] != '\0' ?
+            frontend_level.level_name :
+            (
+                frontend_map_level[0].level_name[0] != '\0' ?
+                    frontend_map_level[0].level_name :
+                    "Tyrian"
+            );
     u8 length = (u8)strlen(frontend_save_name);
     u8 index;
+
+    if (include_level) {
+        frontend_save_copy_rows(
+            frontend_save_static_name_frame(),
+            24,
+            12
+        );
+        frontend_save_string_copy(
+            level_text,
+            sizeof(level_text),
+            "Level: "
+        );
+        frontend_save_append_text(
+            level_text,
+            sizeof(level_text),
+            current_level_name
+        );
+        frontend_draw_small_mixed_text_clipped_colours(
+            frontend_frame_scratch,
+            level_text,
+            TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X,
+            28,
+            TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
+            0xfau,
+            0xe2u
+        );
+    }
+    frontend_save_copy_rows(
+        frontend_save_static_name_frame(),
+        58,
+        23
+    );
 
     display[0] = '[';
     memcpy(display + 1, frontend_save_name, length);
@@ -1177,61 +1064,10 @@ static void frontend_save_draw_name_editor(void)
     }
     cursor[sizeof(cursor) - 1u] = '\0';
     cursor[
-        frontend_save_name_cursor + 1u <
-                sizeof(cursor) - 1u ?
+        frontend_save_name_cursor + 1u < sizeof(cursor) - 1u ?
             frontend_save_name_cursor + 1u :
             sizeof(cursor) - 2u
     ] = '^';
-    if (
-        !frontend_copy_static_menu_panel(
-            FRONTEND_STATIC_SAVE_NAME_MENU_BASE
-        )
-    ) {
-        frontend_restore_menu_chrome_rect(120, 0, 120, 120);
-        frontend_draw_menu_text_centered(
-            frontend_frame_scratch,
-            "Save Name",
-            TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X,
-            TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y,
-            0xfbu
-        );
-        frontend_draw_small_mixed_text_clipped_colours(
-            frontend_frame_scratch,
-            "Up/Down: letter",
-            126,
-            86,
-            239,
-            0xeau,
-            0xe2u
-        );
-        frontend_draw_small_mixed_text_clipped_colours(
-            frontend_frame_scratch,
-            "R+Up/Down: CAPITAL",
-            126,
-            94,
-            239,
-            0xeau,
-            0xe2u
-        );
-        frontend_draw_small_mixed_text_clipped_colours(
-            frontend_frame_scratch,
-            "A/Right: next  B: erase",
-            126,
-            102,
-            239,
-            0xeau,
-            0xe2u
-        );
-        frontend_draw_small_mixed_text_clipped_colours(
-            frontend_frame_scratch,
-            "START: save",
-            126,
-            110,
-            239,
-            0xfeu,
-            0xe2u
-        );
-    }
     frontend_draw_small_mixed_text_clipped_colours(
         frontend_frame_scratch,
         display,
@@ -1245,7 +1081,7 @@ static void frontend_save_draw_name_editor(void)
         frontend_frame_scratch,
         cursor,
         TYRIAN_GBA_LAYOUT_SAVE_NAME_X,
-        (s16)(TYRIAN_GBA_LAYOUT_SAVE_NAME_Y + 7),
+        (s16)(TYRIAN_GBA_LAYOUT_SAVE_NAME_Y + 8),
         TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
         0xfbu,
         0xe2u
@@ -1254,30 +1090,55 @@ static void frontend_save_draw_name_editor(void)
 
 static void frontend_render_save_name(void)
 {
-    frontend_save_draw_name_editor();
-    frontend_save_draw_help(
-        (u8)(
-            FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_BASE +
-            (frontend_save_write_active ? 1u : 0u)
-        ),
-        frontend_save_write_active ?
-            "Saving... Do not turn off power." :
-            "Hold SELECT to clear the name."
-    );
+    if (!frontend_save_name_base_ready) {
+        frontend_present(
+            frontend_save_static_name_frame(),
+            frontend_palette_address(FRONTEND_FRAME_SELECT_CHROME)
+        );
+        frontend_save_name_base_ready = 1;
+        frontend_save_name_patch_pending = 1;
+        return;
+    }
+    frontend_save_draw_name_editor_pc(0);
+    if (frontend_save_write_active) {
+        frontend_save_copy_rows(
+            frontend_save_static_name_frame(),
+            TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y,
+            (u16)(SCREEN_HEIGHT - TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y)
+        );
+        frontend_draw_small_mixed_text_clipped_colours(
+            frontend_frame_scratch,
+            "Saving... Do not turn off power.",
+            TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X,
+            TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y,
+            TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT,
+            0xfeu,
+            0xe2u
+        );
+    }
     frontend_dirty_begin();
-    frontend_dirty_add(
-        FRONTEND_STATIC_MENU_PANEL_X,
-        FRONTEND_STATIC_MENU_PANEL_Y,
-        FRONTEND_STATIC_MENU_PANEL_WIDTH,
-        FRONTEND_STATIC_MENU_PANEL_HEIGHT
-    );
-    frontend_dirty_add(
-        0,
-        frontend_menu_help_dirty_y(),
-        SCREEN_WIDTH,
-        (u16)(SCREEN_HEIGHT - frontend_menu_help_dirty_y())
-    );
+    frontend_dirty_add(0, 58, SCREEN_WIDTH, 23);
+    if (frontend_save_write_active) {
+        frontend_dirty_add(
+            0,
+            TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y,
+            SCREEN_WIDTH,
+            (u16)(SCREEN_HEIGHT - TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y)
+        );
+    }
     frontend_dirty_present();
+}
+
+static u8 frontend_save_name_patch_update(void)
+{
+    if (!frontend_save_name_patch_pending) return 0;
+    if (frontend_frame_pending) return 1;
+    frontend_save_draw_name_editor_pc(1);
+    frontend_dirty_begin();
+    frontend_dirty_add(0, 24, SCREEN_WIDTH, 57);
+    frontend_dirty_present();
+    frontend_save_name_patch_pending = 0;
+    return 1;
 }
 
 static void frontend_save_name_begin(u8 slot)
@@ -1300,6 +1161,8 @@ static void frontend_save_name_begin(u8 slot)
     frontend_save_repeat_direction = 0;
     frontend_save_repeat_frames = 0;
     frontend_save_clear_frames = 0;
+    frontend_save_name_base_ready = 0;
+    frontend_save_name_patch_pending = 0;
     frontend_enter_state(STATE_SAVE_NAME, slot);
 }
 
@@ -1346,9 +1209,6 @@ static void frontend_save_capture_slot(u8 slot)
         sizeof(destination->level_name),
         level_name
     );
-    frontend_save_slot_row_cache_valid &=
-        (u16)~(u16)(1u << slot);
-    frontend_save_build_slot_row_cache(slot);
 }
 
 static void frontend_save_write_begin(u8 slot)
@@ -1458,8 +1318,6 @@ static void frontend_save_open_slots(
             STATE_TITLE :
             STATE_OPTIONS_MENU;
     frontend_save_return_selection = return_selection;
-    frontend_save_full_frame_entry =
-        frontend_save_return_state == STATE_TITLE;
     frontend_enter_state(STATE_SAVE_SLOTS, 0);
 }
 
@@ -1468,7 +1326,6 @@ static void frontend_save_return_to_parent(void)
     u8 return_state = frontend_save_return_state;
     u8 return_selection = frontend_save_return_selection;
 
-    frontend_save_full_frame_entry = 0;
     if (return_state == STATE_TITLE) {
         frontend_title_idle_frames = 0;
         frontend_enter_state(STATE_TITLE, return_selection);
@@ -1676,6 +1533,18 @@ static u8 frontend_save_name_update(void)
 
 static u8 frontend_save_frontend_update(void)
 {
+    if (
+        game_state == STATE_SAVE_SLOTS &&
+        frontend_save_slots_patch_update()
+    ) {
+        return 1;
+    }
+    if (
+        game_state == STATE_SAVE_NAME &&
+        frontend_save_name_patch_update()
+    ) {
+        return 1;
+    }
     if (game_state == STATE_SAVE_NAME) {
         return frontend_save_name_update();
     }

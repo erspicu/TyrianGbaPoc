@@ -490,6 +490,21 @@ int main(void)
              * menu choice a player would make before pressing A.
              */
             if (
+                game_state == STATE_TITLE &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_SLOTS ||
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
+                )
+            ) {
+                /* Homepage Load Game is the production entry path. */
+                frontend_selection = 1;
+            } else if (
+                game_state == STATE_SAVE_SLOTS &&
+                AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
+            ) {
+                /* Exercise the GBA name editor without requiring SRAM. */
+                frontend_save_slot_mode = FRONTEND_SAVE_MODE_SAVE;
+            } else if (
                 game_state == STATE_GAME_MENU &&
                 (
                     AUTOTEST_FRONTEND_CAPTURE_STATE ==

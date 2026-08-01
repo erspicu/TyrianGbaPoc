@@ -118,7 +118,6 @@ static u8 autotest_frontend_upgrade_transaction(void)
     };
     u32 saved_cash = player_cash;
     u32 saved_trade_cash = frontend_upgrade_trade_cash;
-    u16 saved_cache_valid = frontend_save_slot_row_cache_valid;
     u8 saved_category = frontend_upgrade_category;
     u8 saved_count = frontend_upgrade_sub_count;
     u8 saved_scroll = frontend_upgrade_sub_scroll;
@@ -393,9 +392,6 @@ restore:
         sizeof(snapshot->sub_power)
     );
     frontend_save_slot[0] = snapshot->save_slot;
-    frontend_save_slot_row_cache_valid = (u16)(
-        saved_cache_valid & ~(u16)1u
-    );
     frontend_quit_dialog_cache_valid = saved_quit_cache_valid;
     frontend_quit_dialog_cache_selection =
         saved_quit_cache_selection;
