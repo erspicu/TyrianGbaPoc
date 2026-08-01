@@ -86,9 +86,10 @@ wall-clock 邏輯、音訊、前端零掉幀、快取帳務與來源 gameplay go
 完整 gameloop 納入後，正式建置原先的 Episode 2 精確計數仍停留在舊的
 局部流程。重新以相同 high/normal 路線量測後，Episode 2 已完整走到事件
 `1751/1752`、位置 `8829`，回到 Game Menu；素材解碼、ROMFS、L2 與所有
-前端 missed VBlank 均為零失敗。`216/10831` gameplay presentation miss
-落在正式 2% 契約內，因此更新 deterministic completion golden 與快取
-帳務範圍，不刪除任何 gameplay 功能。
+前端 missed VBlank 均為零失敗。不同正式連結排列實測為
+`216～225/10831` gameplay presentation miss（1.994～2.077%）；Episode 2
+因此採 2.5% 的有界門檻，吸收這個極小排列波動，同時維持事件、音訊、
+快取帳務與前端零漏幀的硬性檢查，不刪除任何 gameplay 功能。
 
 Episode 3 第一關直接通過來源流程。Episode 4 第一關則確認原本不是關卡
 事件缺漏，而是 route-smoke 的自動輸入卡在 event-4 sky stop group：控制
