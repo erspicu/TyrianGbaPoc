@@ -169,14 +169,92 @@ _Static_assert(
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
-#define GAMEPLAY_OVERLAY_CHAR_BASE 3
-#define GAMEPLAY_OVERLAY_SCREEN_BLOCK 31
+#define GAMEPLAY_OVERLAY_CHAR_BASE 2
+/*
+ * Gameplay BG characters occupy physical tiles 0..1477 and the three
+ * 512x256 maps occupy screen blocks 24..29.  BG3 therefore stores its
+ * visible 20-row map in rows 3..22 of otherwise free screen block 23.  Its
+ * character bank uses the remaining 18 tiles in that block plus screen
+ * blocks 30..31.  Character base 2 can address both disjoint free regions.
+ * The 24-pixel VOFS below makes hardware row 3 appear at LCD row 0.
+ */
+#define GAMEPLAY_OVERLAY_SCREEN_BLOCK 23
+#define GAMEPLAY_OVERLAY_SCREEN_ROW_OFFSET 3u
+#define GAMEPLAY_OVERLAY_MAP_VOFS \
+    (GAMEPLAY_OVERLAY_SCREEN_ROW_OFFSET * 8u)
 #define GAMEPLAY_OVERLAY_MAP_ROWS (SCREEN_HEIGHT / 8)
 #define GAMEPLAY_OVERLAY_MAX_TILES 136
 #define GAMEPLAY_OVERLAY_TILE_BYTES \
     (GAMEPLAY_OVERLAY_MAX_TILES * 32u)
 #define GAMEPLAY_OVERLAY_MAP_ENTRIES \
     (32u * GAMEPLAY_OVERLAY_MAP_ROWS)
+#define GAMEPLAY_OVERLAY_MAP_VRAM_OFFSET \
+    ( \
+        GAMEPLAY_OVERLAY_SCREEN_BLOCK * 2048u + \
+        GAMEPLAY_OVERLAY_SCREEN_ROW_OFFSET * 32u * sizeof(u16) \
+    )
+#define GAMEPLAY_OVERLAY_TILE0_VRAM_OFFSET \
+    ( \
+        GAMEPLAY_OVERLAY_MAP_VRAM_OFFSET + \
+        GAMEPLAY_OVERLAY_MAP_ENTRIES * sizeof(u16) \
+    )
+#define GAMEPLAY_OVERLAY_TILE0_CAPACITY \
+    ( \
+        (BG0_SCREEN_BLOCK * 2048u - \
+            GAMEPLAY_OVERLAY_TILE0_VRAM_OFFSET) / 32u \
+    )
+#define GAMEPLAY_OVERLAY_TILE1_SCREEN_BLOCK 30
+#define GAMEPLAY_OVERLAY_TILE1_VRAM_OFFSET \
+    (GAMEPLAY_OVERLAY_TILE1_SCREEN_BLOCK * 2048u)
+#define GAMEPLAY_OVERLAY_TILE1_CAPACITY \
+    ((32u * 2048u - GAMEPLAY_OVERLAY_TILE1_VRAM_OFFSET) / 32u)
+#define GAMEPLAY_OVERLAY_TILE0_INDEX_BASE \
+    ( \
+        (GAMEPLAY_OVERLAY_TILE0_VRAM_OFFSET - \
+            GAMEPLAY_OVERLAY_CHAR_BASE * 16384u) / 32u \
+    )
+#define GAMEPLAY_OVERLAY_TILE1_INDEX_BASE \
+    ( \
+        (GAMEPLAY_OVERLAY_TILE1_VRAM_OFFSET - \
+            GAMEPLAY_OVERLAY_CHAR_BASE * 16384u) / 32u \
+    )
+#define GAMEPLAY_OVERLAY_BLANK_TILE_INDEX \
+    GAMEPLAY_OVERLAY_TILE0_INDEX_BASE
+
+_Static_assert(
+    GAMEPLAY_OVERLAY_SCREEN_ROW_OFFSET +
+            GAMEPLAY_OVERLAY_MAP_ROWS <= 32u,
+    "gameplay overlay map rows must fit one screen block"
+);
+_Static_assert(
+    GAMEPLAY_OVERLAY_MAP_VRAM_OFFSET +
+            GAMEPLAY_OVERLAY_MAP_ENTRIES * sizeof(u16) <=
+        BG0_SCREEN_BLOCK * 2048u,
+    "gameplay overlay map must stop before the first world map"
+);
+_Static_assert(
+    GAMEPLAY_OVERLAY_TILE0_VRAM_OFFSET +
+            GAMEPLAY_OVERLAY_TILE0_CAPACITY * 32u <=
+        BG0_SCREEN_BLOCK * 2048u,
+    "gameplay overlay lower tile segment must stop before world maps"
+);
+_Static_assert(
+    GAMEPLAY_OVERLAY_TILE1_SCREEN_BLOCK >= BG2_SCREEN_BLOCK + 2u,
+    "gameplay overlay upper tiles must not overlap world maps"
+);
+_Static_assert(
+    GAMEPLAY_OVERLAY_MAX_TILES <=
+        GAMEPLAY_OVERLAY_TILE0_CAPACITY +
+            GAMEPLAY_OVERLAY_TILE1_CAPACITY,
+    "gameplay overlay tile segments must retain the full source budget"
+);
+_Static_assert(
+    GAMEPLAY_OVERLAY_TILE0_INDEX_BASE +
+            GAMEPLAY_OVERLAY_TILE0_CAPACITY <= 512u &&
+        GAMEPLAY_OVERLAY_TILE1_INDEX_BASE +
+            GAMEPLAY_OVERLAY_TILE1_CAPACITY <= 1024u,
+    "gameplay overlay tiles must fit character base 2 addressing"
+);
 #define FRONTEND_STATS_FONT_GLYPH_COUNT \
     (JUKEBOX_FONT_TILE_COUNT - 1u)
 #define FRONTEND_STATS_FONT_TILES_PER_GLYPH 4u

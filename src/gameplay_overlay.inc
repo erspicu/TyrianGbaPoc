@@ -166,6 +166,16 @@ static void gameplay_overlay_prepare_palette(void)
         );
 }
 
+static void gameplay_overlay_clear_map(void)
+{
+    u16 index;
+
+    for (index = 0; index < GAMEPLAY_OVERLAY_MAP_ENTRIES; index++) {
+        gameplay_overlay_map[index] =
+            GAMEPLAY_OVERLAY_BLANK_TILE_INDEX;
+    }
+}
+
 static void gameplay_overlay_reset(void)
 {
     gameplay_overlay_tile_count = 0;
@@ -175,7 +185,7 @@ static void gameplay_overlay_reset(void)
     gameplay_overlay_message_ticks = 0;
     gameplay_overlay_pickup_message_type = OT_PICKUP_MESSAGE_NONE;
     gameplay_overlay_pickup_message_item_id = 0;
-    memset(gameplay_overlay_map, 0, sizeof(gameplay_overlay_map));
+    gameplay_overlay_clear_map();
 }
 
 static void gameplay_overlay_logic_tick(void)
@@ -217,12 +227,51 @@ static void gameplay_overlay_show_pickup(u8 message_type, u8 item_id)
     gameplay_overlay_message_ticks = 100;
 }
 
+static u16 gameplay_overlay_hardware_tile(u8 tile)
+{
+    if (tile < GAMEPLAY_OVERLAY_TILE0_CAPACITY) {
+        return (u16)(GAMEPLAY_OVERLAY_TILE0_INDEX_BASE + tile);
+    }
+    return (u16)(
+        GAMEPLAY_OVERLAY_TILE1_INDEX_BASE +
+        tile - GAMEPLAY_OVERLAY_TILE0_CAPACITY
+    );
+}
+
+static u8 gameplay_overlay_local_tile(u16 hardware_tile)
+{
+    if (
+        hardware_tile >= GAMEPLAY_OVERLAY_TILE0_INDEX_BASE &&
+        hardware_tile <
+            GAMEPLAY_OVERLAY_TILE0_INDEX_BASE +
+                GAMEPLAY_OVERLAY_TILE0_CAPACITY
+    ) {
+        return (u8)(
+            hardware_tile - GAMEPLAY_OVERLAY_TILE0_INDEX_BASE
+        );
+    }
+    if (
+        hardware_tile >= GAMEPLAY_OVERLAY_TILE1_INDEX_BASE &&
+        hardware_tile <
+            GAMEPLAY_OVERLAY_TILE1_INDEX_BASE +
+                GAMEPLAY_OVERLAY_MAX_TILES -
+                GAMEPLAY_OVERLAY_TILE0_CAPACITY
+    ) {
+        return (u8)(
+            GAMEPLAY_OVERLAY_TILE0_CAPACITY +
+            hardware_tile - GAMEPLAY_OVERLAY_TILE1_INDEX_BASE
+        );
+    }
+    return 0;
+}
+
 static u8 gameplay_overlay_allocate_tile(u16 cell, u8 bank)
 {
+    u16 hardware_tile = (u16)(gameplay_overlay_map[cell] & 0x03ffu);
     u8 tile;
 
-    if (gameplay_overlay_map[cell] != 0) {
-        return (u8)(gameplay_overlay_map[cell] & 0x03ffu);
+    if (hardware_tile != GAMEPLAY_OVERLAY_BLANK_TILE_INDEX) {
+        return gameplay_overlay_local_tile(hardware_tile);
     }
     if (
         gameplay_overlay_tile_count + 1u >=
@@ -233,7 +282,8 @@ static u8 gameplay_overlay_allocate_tile(u16 cell, u8 bank)
     tile = ++gameplay_overlay_tile_count;
     memset(gameplay_overlay_tiles + (u16)tile * 32u, 0, 32);
     gameplay_overlay_map[cell] = (u16)(
-        tile | ((u16)bank << 12)
+        gameplay_overlay_hardware_tile(tile) |
+        ((u16)bank << 12)
     );
     return tile;
 }
@@ -275,10 +325,19 @@ static void gameplay_overlay_set_pixel(
 
 static void gameplay_overlay_clear_row(u8 row)
 {
-    memset(
-        gameplay_overlay_map + (u16)row * 32u,
-        0,
-        32u * sizeof(u16)
+    u8 column;
+
+    for (column = 0; column < 32u; column++) {
+        gameplay_overlay_map[(u16)row * 32u + column] =
+            GAMEPLAY_OVERLAY_BLANK_TILE_INDEX;
+    }
+}
+
+static u8 gameplay_overlay_cell_occupied(u16 cell)
+{
+    return (u8)(
+        (gameplay_overlay_map[cell] & 0x03ffu) !=
+            GAMEPLAY_OVERLAY_BLANK_TILE_INDEX
     );
 }
 
@@ -415,7 +474,9 @@ static void gameplay_overlay_draw_starfield(void)
 {
     int16_t index;
 
+#if !defined(AUTOTEST_FORCE_OVERLAY_STARFIELD)
     if (!source_parity_level.star_active) return;
+#endif
     for (index = OT_STARFIELD_STAR_COUNT - 1; index >= 0; index--) {
         u16 position = source_parity_level.star_position[index];
         s16 source_x;
@@ -437,7 +498,9 @@ static void gameplay_overlay_draw_starfield(void)
             continue;
         }
         /* Text is authored above the starfield; never merge palette banks. */
-        if (gameplay_overlay_map[(u16)(y >> 3) * 32u + (u16)(x >> 3)]) {
+        if (gameplay_overlay_cell_occupied(
+                (u16)(y >> 3) * 32u + (u16)(x >> 3)
+            )) {
             continue;
         }
         colour = (u8)(source_parity_level.star_meta[index] >> 4);
@@ -710,6 +773,9 @@ static void gameplay_overlay_draw_zinglon(void)
 static void gameplay_overlay_prepare_frame(void)
 {
     gameplay_overlay_active = (u8)(
+#if defined(AUTOTEST_FORCE_OVERLAY_STARFIELD)
+        1 ||
+#endif
         source_parity_level.star_active ||
         source_parity_level.warning_active ||
         gameplay_overlay_message_ticks != 0 ||
@@ -727,7 +793,7 @@ static void gameplay_overlay_prepare_frame(void)
     }
     gameplay_overlay_tile_count = 0;
     memset(gameplay_overlay_tiles, 0, 32);
-    memset(gameplay_overlay_map, 0, sizeof(gameplay_overlay_map));
+    gameplay_overlay_clear_map();
     /* Allocate gameplay-critical text first; stars use only remaining cells. */
     gameplay_overlay_draw_event_message();
     gameplay_overlay_draw_warning();

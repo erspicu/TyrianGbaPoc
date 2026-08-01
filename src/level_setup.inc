@@ -554,8 +554,14 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
      * different authored song, matching loudness.c::play_song().
      */
     source_parity_level.current_song = frontend_level.source_song;
-    /* Direct counterpart of JE_drawTextWindow(miscText[20]). */
+    /*
+     * Direct counterpart of JE_drawTextWindow(miscText[20]).  Keep a
+     * compile-time isolation switch for opening-frame presentation
+     * regressions; normal and release builds always retain the source event.
+     */
+#if !defined(AUTOTEST_DISABLE_INITIAL_MESSAGE)
     gameplay_overlay_show_initial_message();
+#endif
     /*
      * backgrnd.c initializes 100 stars before the first level-loop tick.
      * Its 400 MT19937 calls are part of the authoritative gameplay RNG

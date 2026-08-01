@@ -458,14 +458,33 @@ static void commit_vblank_work(void)
         game_state == STATE_PLAY &&
         gameplay_overlay_upload_pending
     ) {
+        u16 overlay_tile_count =
+            (u16)(gameplay_overlay_tile_count + 1u);
+        u16 overlay_tile0_count =
+            overlay_tile_count < GAMEPLAY_OVERLAY_TILE0_CAPACITY ?
+                overlay_tile_count :
+                GAMEPLAY_OVERLAY_TILE0_CAPACITY;
+
         dmaCopy(
             gameplay_overlay_tiles,
-            CHAR_BASE_BLOCK(GAMEPLAY_OVERLAY_CHAR_BASE),
-            (u32)(gameplay_overlay_tile_count + 1u) * 32u
+            (u8 *)CHAR_BASE_BLOCK(0) +
+                GAMEPLAY_OVERLAY_TILE0_VRAM_OFFSET,
+            (u32)overlay_tile0_count * 32u
         );
+        if (overlay_tile_count > overlay_tile0_count) {
+            dmaCopy(
+                gameplay_overlay_tiles +
+                    GAMEPLAY_OVERLAY_TILE0_CAPACITY * 32u,
+                SCREEN_BASE_BLOCK(
+                    GAMEPLAY_OVERLAY_TILE1_SCREEN_BLOCK
+                ),
+                (u32)(overlay_tile_count - overlay_tile0_count) * 32u
+            );
+        }
         dmaCopy(
             gameplay_overlay_map,
-            SCREEN_BASE_BLOCK(GAMEPLAY_OVERLAY_SCREEN_BLOCK),
+            (u16 *)SCREEN_BASE_BLOCK(GAMEPLAY_OVERLAY_SCREEN_BLOCK) +
+                GAMEPLAY_OVERLAY_SCREEN_ROW_OFFSET * 32u,
             sizeof(gameplay_overlay_map)
         );
         gameplay_overlay_upload_pending = 0;
@@ -495,7 +514,7 @@ static void commit_vblank_work(void)
                      SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_0;
         REG_BG3HOFS = 0;
-        REG_BG3VOFS = 0;
+        REG_BG3VOFS = GAMEPLAY_OVERLAY_MAP_VOFS;
         REG_DISPCNT = gameplay_presentation.dispcnt;
         REG_BLDCNT = gameplay_presentation.bldcnt;
         REG_BLDALPHA = gameplay_presentation.bldalpha;
@@ -527,7 +546,7 @@ static void commit_vblank_work(void)
                      SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_0;
         REG_BG3HOFS = 0;
-        REG_BG3VOFS = 0;
+        REG_BG3VOFS = GAMEPLAY_OVERLAY_MAP_VOFS;
         REG_DISPCNT =
             MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
 #if !TYRIAN_GBA_STRESS_LOADOUT

@@ -288,7 +288,12 @@ static const u8 background_cache_char_base[BACKGROUND_LAYER_COUNT] = {
 
 _Static_assert(
     BACKGROUND_TOTAL_CACHE_SLOTS == 1478,
-    "BG character pool must reserve 58 charblock-2 tiles for stats"
+    "BG character pool must retain the measured three-layer budget"
+);
+_Static_assert(
+    BACKGROUND_TOTAL_CACHE_SLOTS * BACKGROUND_TILE_BYTES <=
+        GAMEPLAY_OVERLAY_MAP_VRAM_OFFSET,
+    "BG character pool must stop before the gameplay overlay map"
 );
 _Static_assert(
     BACKGROUND_LAYER0_CACHE_SLOTS <= 1024 &&
