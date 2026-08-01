@@ -156,6 +156,21 @@ void ot_level_port_advance(
         }
     }
     /*
+     * tyrian2.c advances curLoc by one when event 53 has enabled
+     * forceEvents and event 2 has stopped the first background.  Several
+     * authored set pieces depend on this separate event clock: Episode 4
+     * HARVEST stops at 9400, runs its mechanical gate sequence, and only
+     * later spawns/arms the real boss.  Merely storing force_events leaves
+     * the timeline parked forever because the normal background-derived
+     * increment is zero.
+     *
+     * Keep this immediately after JE_eventSystem(), before the background
+     * delay/update phase, which is the exact source ordering.
+     */
+    if (state->force_events && state->back_move == 0) {
+        state->cur_loc++;
+    }
+    /*
      * Backgrounds and enemies use the offsets calculated after the preceding
      * player phase.  Snapshot them before the keypad adapter calculates the
      * next frame's offsets.

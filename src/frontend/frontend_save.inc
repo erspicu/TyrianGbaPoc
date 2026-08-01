@@ -80,6 +80,9 @@ static u16 frontend_save_target_offset EWRAM_BSS;
 static u8 frontend_save_active_bank EWRAM_BSS;
 static u8 frontend_save_has_active_bank EWRAM_BSS;
 static u8 frontend_save_slot_mode EWRAM_BSS;
+static u8 frontend_save_return_state EWRAM_BSS;
+static u8 frontend_save_return_selection EWRAM_BSS;
+static u8 frontend_save_full_frame_entry EWRAM_BSS;
 static u8 frontend_save_name_cursor EWRAM_BSS;
 static u8 frontend_save_name_slot EWRAM_BSS;
 static u8 frontend_save_write_active EWRAM_BSS;
@@ -385,6 +388,9 @@ static void frontend_save_initialize(void)
     memset(frontend_save_slot, 0, sizeof(frontend_save_slot));
     frontend_save_slot_row_cache_valid = 0;
     frontend_save_slot_mode = FRONTEND_SAVE_MODE_LOAD;
+    frontend_save_return_state = STATE_OPTIONS_MENU;
+    frontend_save_return_selection = FRONTEND_SAVE_MODE_LOAD;
+    frontend_save_full_frame_entry = 0;
     frontend_save_build_special_row_cache();
     frontend_save_sequence = 0;
     frontend_save_has_active_bank = 0;
@@ -794,8 +800,22 @@ static void frontend_save_restore_slot_row(u8 selection)
 
 static void frontend_render_save_slots(void)
 {
+    u8 full_frame_entry = frontend_save_full_frame_entry;
     u8 selection;
 
+    /*
+     * Options already sits on the shared Game Menu chrome.  Title-screen
+     * Load Game does not, so compose that immutable base once before the
+     * same eleven-slot panel is overlaid.  Subsequent cursor movement stays
+     * on the established dirty-row path.
+     */
+    if (full_frame_entry) {
+        memcpy(
+            frontend_frame_scratch,
+            frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
+            FRONTEND_FRAME_BYTES
+        );
+    }
     if (
         !frontend_copy_static_menu_panel(
             (u8)(
@@ -871,6 +891,14 @@ static void frontend_render_save_slots(void)
             "A: Load   B: Back" :
             "A: Name and save   B: Back"
     );
+    frontend_save_full_frame_entry = 0;
+    if (full_frame_entry) {
+        frontend_present(
+            frontend_frame_scratch,
+            frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
+        );
+        return;
+    }
     frontend_dirty_begin();
     frontend_dirty_add(
         FRONTEND_STATIC_MENU_PANEL_X,
@@ -1212,6 +1240,40 @@ static u8 frontend_save_apply_slot(u8 slot)
     return 1;
 }
 
+static void frontend_save_open_slots(
+    u8 mode,
+    u8 return_state,
+    u8 return_selection
+)
+{
+    frontend_save_slot_mode =
+        mode == FRONTEND_SAVE_MODE_SAVE ?
+            FRONTEND_SAVE_MODE_SAVE :
+            FRONTEND_SAVE_MODE_LOAD;
+    frontend_save_return_state =
+        return_state == STATE_TITLE ?
+            STATE_TITLE :
+            STATE_OPTIONS_MENU;
+    frontend_save_return_selection = return_selection;
+    frontend_save_full_frame_entry =
+        frontend_save_return_state == STATE_TITLE;
+    frontend_enter_state(STATE_SAVE_SLOTS, 0);
+}
+
+static void frontend_save_return_to_parent(void)
+{
+    u8 return_state = frontend_save_return_state;
+    u8 return_selection = frontend_save_return_selection;
+
+    frontend_save_full_frame_entry = 0;
+    if (return_state == STATE_TITLE) {
+        frontend_title_idle_frames = 0;
+        frontend_enter_state(STATE_TITLE, return_selection);
+    } else {
+        frontend_enter_state(STATE_OPTIONS_MENU, return_selection);
+    }
+}
+
 static void frontend_save_move_selection(u8 count, s8 direction)
 {
     u8 old_selection = frontend_selection;
@@ -1442,10 +1504,7 @@ static u8 frontend_save_frontend_update(void)
         if (game_state == STATE_OPTIONS_MENU) {
             frontend_start_game_menu_transition_selected(0, 3);
         } else {
-            frontend_enter_state(
-                STATE_OPTIONS_MENU,
-                frontend_save_slot_mode
-            );
+            frontend_save_return_to_parent();
         }
         audio_effect(SFX_SPRING);
         return 1;
@@ -1453,8 +1512,11 @@ static u8 frontend_save_frontend_update(void)
     if ((pad_pressed & (KEY_A | KEY_START)) == 0) return 1;
     if (game_state == STATE_OPTIONS_MENU) {
         if (frontend_selection < 2) {
-            frontend_save_slot_mode = frontend_selection;
-            frontend_enter_state(STATE_SAVE_SLOTS, 0);
+            frontend_save_open_slots(
+                frontend_selection,
+                STATE_OPTIONS_MENU,
+                frontend_selection
+            );
             audio_effect(SFX_CLICK);
         } else {
             frontend_start_game_menu_transition_selected(0, 3);
@@ -1463,10 +1525,7 @@ static u8 frontend_save_frontend_update(void)
         return 1;
     }
     if (frontend_selection == FRONTEND_SAVE_SLOT_COUNT) {
-        frontend_enter_state(
-            STATE_OPTIONS_MENU,
-            frontend_save_slot_mode
-        );
+        frontend_save_return_to_parent();
         audio_effect(SFX_CLICK);
     } else if (frontend_save_slot_mode == FRONTEND_SAVE_MODE_LOAD) {
         if (frontend_save_apply_slot(frontend_selection)) {

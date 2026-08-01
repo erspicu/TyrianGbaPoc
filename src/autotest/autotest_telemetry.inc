@@ -49,9 +49,19 @@ static void autotest_finish(void)
         telemetry_romfs_failures == 0 &&
         telemetry_romfs_manifest_crc32 ==
             TYRIAN_ROMFS_MANIFEST_CRC32 &&
+        /*
+         * event_index is an absolute cursor, not a processed-event count.
+         * Arbitrary stock routes may use JE_eventJump() (events 54/70),
+         * timer jumps or returnActive, so a forward jump legitimately makes
+         * it larger than applied+deferred+explicit-skip accounting.  The
+         * first-level golden below still checks exact linear counts; generic
+         * route smoke instead validates bounded cursor/counter state.
+         */
+        telemetry_source_events <= source_parity_level.event_count &&
         telemetry_source_events_applied +
-            telemetry_source_events_deferred +
-            telemetry_source_events_skipped == telemetry_source_events &&
+            telemetry_source_events_deferred > 0 &&
+        telemetry_source_events_skipped <=
+            source_parity_level.event_count &&
         telemetry_source_spawn_successes +
             telemetry_source_spawn_pool_full +
             telemetry_source_spawn_missing ==

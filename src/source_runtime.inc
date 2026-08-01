@@ -2157,19 +2157,12 @@ static void source_camera_update(void)
     source_camera_offset_x_q8 = next_x_q8;
     source_camera_offset_x = source_camera_q8_to_pixel(next_x_q8);
     /*
-     * A vertical offset is visible in the same VBlank as the row DMA.  Do
-     * not advance the camera until every active background layer can install
-     * the newly exposed source row; otherwise VOFS would sample stale ring
-     * entries at the top or bottom edge.
+     * Camera state is authoritative logic.  The presentation pass later
+     * materializes the final complete background window and publishes VOFS
+     * atomically, so skipped frames no longer build intermediate camera rows.
      */
-    if (background_schedule_presentation_window(next_y)) {
-        source_camera_offset_y_q8 = next_y_q8;
-        source_camera_offset_y = next_y;
-    } else {
-        (void)background_schedule_presentation_window(
-            source_camera_offset_y
-        );
-    }
+    source_camera_offset_y_q8 = next_y_q8;
+    source_camera_offset_y = next_y;
     if (
         (u32)(u16)source_camera_origin_x() <
             telemetry_camera_min_origin_x

@@ -697,6 +697,18 @@ static void render_game(void)
     u8 old_count = previous_oam_count;
     u8 visible_count;
 
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP && \
+    TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
+    /*
+     * This render will replace the held scene at the next VBlank.  Its row
+     * DMA and VOFS commit together, so old display-only cache references may
+     * be released while constructing the newest coalesced window.
+     */
+    presentation_release_held_window = 1;
+#endif
+    (void)background_schedule_presentation_window(
+        source_camera_offset_y
+    );
     source_effect_cache_begin_frame();
     oam_count = 0;
     if (game_state == STATE_GAME_OVER) {

@@ -612,7 +612,9 @@ int main(void)
                 background_prefetch_step(
                     game_over_logic_updates != 0 ?
                         0 :
-                        BACKGROUND_PREFETCH_IDLE_MISSES
+                        BACKGROUND_PREFETCH_FRAME_BUDGET(
+                            BACKGROUND_PREFETCH_IDLE_MISSES
+                        )
                 );
                 telemetry_display_frames++;
 #ifdef AUTOTEST_DEATH_FLOW
@@ -1507,7 +1509,9 @@ int main(void)
                 background_prefetch_step(
                     logic_updated || rendered_this_loop ?
                         0 :
-                        BACKGROUND_PREFETCH_IDLE_MISSES
+                        BACKGROUND_PREFETCH_FRAME_BUDGET(
+                            BACKGROUND_PREFETCH_IDLE_MISSES
+                        )
                 );
 #ifdef AUTOTEST_ROUTE_PERF
                 route_perf_current_prefetch_cycles =

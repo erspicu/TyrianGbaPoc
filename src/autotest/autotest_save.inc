@@ -183,6 +183,50 @@ static void autotest_save_flow(void)
         }
     }
 
+    /*
+     * The title-screen Load Game entry must use the same production slot
+     * browser as Options, return to the highlighted title item on cancel,
+     * and restore a real campaign before scheduling Game Menu preparation.
+     */
+    frontend_save_open_slots(
+        FRONTEND_SAVE_MODE_LOAD,
+        STATE_TITLE,
+        1
+    );
+    if (
+        game_state != STATE_SAVE_SLOTS ||
+        frontend_save_slot_mode != FRONTEND_SAVE_MODE_LOAD ||
+        frontend_save_return_state != STATE_TITLE
+    ) {
+        failures |= 1u << 8;
+    }
+    pad_pressed = KEY_B;
+    if (
+        !frontend_save_frontend_update() ||
+        game_state != STATE_TITLE ||
+        frontend_selection != 1
+    ) {
+        failures |= 1u << 9;
+    }
+    frontend_save_open_slots(
+        FRONTEND_SAVE_MODE_LOAD,
+        STATE_TITLE,
+        1
+    );
+    frontend_selection = slot;
+    frontend_main_section = 1;
+    player_cash = 0;
+    pad_pressed = KEY_A;
+    if (
+        !frontend_save_frontend_update() ||
+        frontend_main_section != 42 ||
+        player_cash != 123456u ||
+        frontend_transition_job != FRONTEND_TRANSITION_JOB_GAME_MENU
+    ) {
+        failures |= 1u << 10;
+    }
+    pad_pressed = 0;
+
     sram[0] = 'T';
     sram[1] = 'G';
     sram[2] = 'S';

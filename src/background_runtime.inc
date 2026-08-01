@@ -12,7 +12,7 @@
  */
 
 #ifndef TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES
-#define TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES 6
+#define TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES 16
 #endif
 
 enum {
@@ -39,7 +39,8 @@ enum {
         BACKGROUND_SHAPE_WIDTH * BACKGROUND_SHAPE_HEIGHT,
     BACKGROUND_PALETTE_BANKS = 16,
     BACKGROUND_PALETTE_BANK_COLOURS = 16,
-    BACKGROUND_MAX_ROW_UPLOADS = BACKGROUND_ROW_TILES,
+    BACKGROUND_UPLOAD_MASK_WORDS =
+        (BACKGROUND_LAYER0_CACHE_SLOTS + 31) / 32,
     /*
      * A non-tile-aligned 160-pixel viewport intersects 21 source tile rows.
      * Keeping all 32 hardware map rows referenced inflated Episode 2's
@@ -47,13 +48,15 @@ enum {
      * its O(512 * 32-byte) visual-approximation fallback.
      */
     BACKGROUND_VISIBLE_TILE_ROWS = SCREEN_HEIGHT / 8 + 1,
+    BACKGROUND_PREFETCH_LOOKAHEAD_MAX = 7,
     BACKGROUND_CAMERA_RETAIN_TILE_ROWS =
         TYRIAN_GBA_SOFT_CROP_CAMERA ?
             (SOURCE_VIEW_CROP_Y + 7) / 8 :
             0,
     BACKGROUND_RETAINED_TILE_ROWS =
         BACKGROUND_VISIBLE_TILE_ROWS +
-        BACKGROUND_CAMERA_RETAIN_TILE_ROWS * 2,
+        BACKGROUND_CAMERA_RETAIN_TILE_ROWS * 2 +
+        BACKGROUND_PREFETCH_LOOKAHEAD_MAX,
     BACKGROUND_SEMANTIC_CACHE_SIZE = 1024,
     BACKGROUND_SEMANTIC_WAYS = 4,
     BACKGROUND_SEMANTIC_SETS =
@@ -64,18 +67,37 @@ enum {
      * background work cannot push an already busy gameplay tick past
      * VBlank.  Four cache misses fit comfortably when no gameplay/render
      * pass ran and provide more throughput than two misses on every frame.
-     * Six misses leaves headroom on an idle ARM7 frame while keeping the
-     * three scrolling layers ahead of their next eight-pixel boundary.
+     * Sixteen misses uses the otherwise idle presentation frame to keep a
+     * source-authored 22-pixel parallax layer ahead of its next three
+     * eight-pixel boundaries.  Gameplay frames still do no speculative work.
      */
     BACKGROUND_PREFETCH_IDLE_MISSES =
         TYRIAN_GBA_BACKGROUND_PREFETCH_IDLE_MISSES,
+    BACKGROUND_PREFETCH_ROWS_PER_IDLE = 12,
+    /*
+     * A cold semantic-tile miss costs roughly 6k cycles on the measured
+     * ARM7 path.  Budget in conservative 8192-cycle units and keep another
+     * 24 Ki cycles for loop tail/VBlank jitter; both values are powers or
+     * constants so the runtime guard never introduces software division.
+     */
+    BACKGROUND_PREFETCH_MISS_CYCLE_SHIFT = 13,
+    BACKGROUND_PREFETCH_DEADLINE_RESERVE_CYCLES = 24576,
     BACKGROUND_PC_PALETTE_INDEX = 0,
 };
 
 _Static_assert(
-    BACKGROUND_RETAINED_TILE_ROWS + 1 <= MAP_RING_ROWS,
-    "retained camera window plus prefetch row must fit the hardware ring"
+    BACKGROUND_RETAINED_TILE_ROWS <= MAP_RING_ROWS,
+    "retained camera window plus lookahead rows must fit the hardware ring"
 );
+_Static_assert(
+    BACKGROUND_PENDING_ROW_CAPACITY == BACKGROUND_VISIBLE_TILE_ROWS,
+    "pending row batch must cover one complete visible window"
+);
+
+#if TYRIAN_GBA_PERF_TIMER
+static u32 background_prefetch_cycle_start;
+static u32 background_prefetch_cycle_limit;
+#endif
 
 typedef struct {
     u32 key;
@@ -112,11 +134,19 @@ typedef struct {
     u16 pattern_bucket_head[BACKGROUND_PATTERN_BUCKETS];
     u16 ring_word[MAP_RING_ROWS][BACKGROUND_ROW_TILES];
     u16 ring_source_row[MAP_RING_ROWS];
+    /* Source row whose map words are actually resident in VRAM. */
+    u16 ring_vram_source_row[MAP_RING_ROWS];
     u8 ring_reference_rows;
     u16 prefetch_word[BACKGROUND_ROW_TILES];
     u16 prefetch_row;
-    u16 upload_slot[BACKGROUND_MAX_ROW_UPLOADS];
-    u8 upload_count;
+    /*
+     * A multi-row presentation batch can allocate more than 64 patterns.
+     * Track dirty cache slots as a bitset: it is bounded by cache capacity,
+     * deduplicates repeated allocations, and costs less EWRAM than a
+     * worst-case list of 576 u16 entries per layer.
+     */
+    u32 upload_mask[BACKGROUND_UPLOAD_MASK_WORDS];
+    u16 upload_count;
     u8 prefetch_column;
     u8 prefetch_active;
     u8 prefetch_ready;
@@ -609,63 +639,95 @@ static IWRAM_CODE ARM_CODE u16 background_map_shape_number(
     return background_shape_number_for_map_index(layer, map_index);
 }
 
-#if TYRIAN_GBA_STRESS_LOADOUT
-static ARM_CODE __attribute__((noinline, noclone)) u32
-#else
-static IWRAM_CODE ARM_CODE u32
-#endif
-background_tile_key(
-    u8 layer,
-    u16 tile_x,
-    u16 tile_y
-)
-{
-    u16 canvas_x = (u16)(tile_x * 8u);
-    u16 canvas_y = (u16)(tile_y * 8u);
+typedef struct {
     u16 map_row;
     u16 top_shape;
-    u16 bottom_shape = 0;
+    u16 bottom_shape;
+    u32 phase_bits;
+    u8 layer;
     u8 map_column;
     u8 sub_x;
-    u8 phase;
-    u32 packed;
+    u8 valid_y;
+} BackgroundRowKeyCursor;
 
-    if (
-        canvas_x >=
-            (u16)background_map_columns[layer] *
-                BACKGROUND_SHAPE_WIDTH ||
-        tile_y >= background_canvas_rows[layer]
-    ) {
-        return 1;
-    }
-    map_row = (u16)(
+static IWRAM_CODE ARM_CODE void background_row_key_cursor_shapes(
+    BackgroundRowKeyCursor *cursor
+)
+{
+    cursor->top_shape = background_map_shape_number(
+        cursor->layer,
+        cursor->map_row,
+        cursor->map_column
+    );
+    cursor->bottom_shape =
+        cursor->phase_bits == (6u << 20) ?
+            background_map_shape_number(
+                cursor->layer,
+                (u16)(cursor->map_row + 1u),
+                cursor->map_column
+            ) :
+            0;
+}
+
+static IWRAM_CODE ARM_CODE void background_row_key_cursor_init(
+    BackgroundRowKeyCursor *cursor,
+    u8 layer,
+    u16 tile_y,
+    u8 first_column
+)
+{
+    u16 canvas_y = (u16)(tile_y * 8u);
+    u8 phase;
+
+    cursor->layer = layer;
+    cursor->valid_y = tile_y < background_canvas_rows[layer];
+    cursor->map_row = (u16)(
         background_map_first_row[layer] +
         canvas_y / BACKGROUND_SHAPE_HEIGHT
     );
-    map_column = (u8)(canvas_x / BACKGROUND_SHAPE_WIDTH);
-    sub_x = (u8)(
-        (canvas_x % BACKGROUND_SHAPE_WIDTH) / 8u
-    );
     phase = (u8)(canvas_y % BACKGROUND_SHAPE_HEIGHT);
-    top_shape = background_map_shape_number(
-        layer,
-        map_row,
-        map_column
-    );
-    if (phase + 7u >= BACKGROUND_SHAPE_HEIGHT) {
-        bottom_shape = background_map_shape_number(
-            layer,
-            (u16)(map_row + 1u),
-            map_column
-        );
+    cursor->phase_bits = (u32)(phase / 4u) << 20;
+    cursor->map_column = (u8)(first_column / 3u);
+    cursor->sub_x = (u8)(first_column % 3u);
+    if (cursor->valid_y) {
+        background_row_key_cursor_shapes(cursor);
+    } else {
+        cursor->top_shape = 0;
+        cursor->bottom_shape = 0;
     }
-    if (top_shape == 0 && bottom_shape == 0) return 1;
-    packed =
-        top_shape |
-        ((u32)bottom_shape << 10) |
-        ((u32)(phase / 4u) << 20) |
-        ((u32)sub_x << 23);
-    return packed + 1u;
+}
+
+static IWRAM_CODE ARM_CODE u32 background_row_key_cursor_next(
+    BackgroundRowKeyCursor *cursor
+)
+{
+    u32 key = 1;
+
+    if (
+        cursor->valid_y &&
+        cursor->map_column <
+            background_map_columns[cursor->layer] &&
+        (
+            cursor->top_shape != 0 ||
+            cursor->bottom_shape != 0
+        )
+    ) {
+        key =
+            cursor->top_shape |
+            ((u32)cursor->bottom_shape << 10) |
+            cursor->phase_bits |
+            ((u32)cursor->sub_x << 23);
+        key++;
+    }
+    cursor->sub_x++;
+    if (cursor->sub_x == 3) {
+        cursor->sub_x = 0;
+        cursor->map_column++;
+        if (cursor->valid_y) {
+            background_row_key_cursor_shapes(cursor);
+        }
+    }
+    return key;
 }
 
 static IWRAM_CODE ARM_CODE void background_render_tile(
@@ -886,16 +948,14 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
     u8 column_budget
 );
 
-static IWRAM_CODE ARM_CODE u16 background_resolve_word(
+static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     u8 layer,
-    u16 source_row,
-    u8 column,
+    u32 key,
     u8 queue_upload,
     u8 *rendered
 )
 {
     u8 pattern[BACKGROUND_TILE_BYTES];
-    u32 key = background_tile_key(layer, column, source_row);
     u8 palette_bank;
     u16 slot;
     u16 word;
@@ -1174,16 +1234,19 @@ static IWRAM_CODE ARM_CODE u16 background_cache_acquire(
         cache->generation[replacement] = 1;
     }
     background_pattern_insert(cache, replacement, hash);
-    if (
-        queue_upload &&
-        cache->upload_count < BACKGROUND_MAX_ROW_UPLOADS
-    ) {
-        cache->upload_slot[cache->upload_count++] = replacement;
+    if (queue_upload) {
+        u16 mask_word = (u16)(replacement >> 5);
+        u32 mask = 1u << (replacement & 31u);
+
+        if ((cache->upload_mask[mask_word] & mask) == 0) {
+            cache->upload_mask[mask_word] |= mask;
+            cache->upload_count++;
+        }
     }
     return replacement;
 }
 
-static __attribute__((noinline, noclone)) void
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
 background_release_ring_row(
     u8 layer,
     u8 ring_row
@@ -1215,7 +1278,7 @@ background_release_ring_row(
     }
 }
 
-static void background_build_ring_row(
+static IWRAM_CODE ARM_CODE void background_build_ring_row(
     u8 layer,
     u16 source_row,
     u8 replacing
@@ -1223,15 +1286,15 @@ static void background_build_ring_row(
 {
     BackgroundLayerCache *cache = &background_layer_cache[layer];
     u8 ring_row = (u8)(source_row & (MAP_RING_ROWS - 1u));
+    BackgroundRowKeyCursor key_cursor;
     u8 column;
 
     if (replacing) background_release_ring_row(layer, ring_row);
-    cache->upload_count = 0;
+    background_row_key_cursor_init(&key_cursor, layer, source_row, 0);
     for (column = 0; column < BACKGROUND_ROW_TILES; column++) {
-        u16 word = background_resolve_word(
+        u16 word = background_resolve_key(
             layer,
-            source_row,
-            column,
+            background_row_key_cursor_next(&key_cursor),
             replacing,
             0
         );
@@ -1347,6 +1410,7 @@ static u8 background_prepare_layer(u8 layer, u16 top_row)
     );
     for (row = 0; row < MAP_RING_ROWS; row++) {
         cache->ring_source_row[row] = UINT16_MAX;
+        cache->ring_vram_source_row[row] = UINT16_MAX;
     }
     for (row = first; row < last; row++) {
         background_build_ring_row(layer, row, 0);
@@ -1373,6 +1437,8 @@ static void background_commit_full_layer(
             (u32)cache->physical_start * BACKGROUND_TILE_BYTES,
         (u32)cache->capacity * BACKGROUND_TILE_BYTES
     );
+    memset(cache->upload_mask, 0, sizeof(cache->upload_mask));
+    cache->upload_count = 0;
     {
         static const u32 blank_word = 0;
 
@@ -1391,7 +1457,45 @@ static void background_commit_full_layer(
     }
     for (row = first; row < last; row++) {
         background_copy_ring_row(layer, row, screen_block);
+        cache->ring_vram_source_row[
+            row & (MAP_RING_ROWS - 1u)
+        ] = row;
     }
+}
+
+static IWRAM_CODE ARM_CODE void background_install_prefetch_row(
+    u8 layer
+)
+{
+    BackgroundLayerCache *cache = &background_layer_cache[layer];
+    u8 ring_row;
+
+    if (
+        !cache->prefetch_active ||
+        !cache->prefetch_ready ||
+        cache->prefetch_existing
+    ) {
+        return;
+    }
+    ring_row = (u8)(
+        cache->prefetch_row & (MAP_RING_ROWS - 1u)
+    );
+    background_release_ring_row(layer, ring_row);
+    memcpy(
+        cache->ring_word[ring_row],
+        cache->prefetch_word,
+        sizeof(cache->prefetch_word)
+    );
+    cache->ring_source_row[ring_row] = cache->prefetch_row;
+    cache->ring_reference_rows++;
+    /*
+     * Prefetch incremented references while building.  They now belong to
+     * the installed EWRAM ring row; VRAM ownership changes only when the row
+     * enters a pending presentation batch.
+     */
+    cache->prefetch_active = 0;
+    cache->prefetch_ready = 0;
+    background_rows_prefetched++;
 }
 
 static IWRAM_CODE ARM_CODE u8 background_schedule_row(
@@ -1442,28 +1546,6 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
     if (cache->ring_source_row[row & 31u] == row) {
         /* A farther-ahead prefetch may already own queued tile uploads. */
         background_rows_existing++;
-    } else if (
-        cache->prefetch_ready &&
-        cache->prefetch_row == row &&
-        !cache->prefetch_existing
-    ) {
-        u8 ring_row = (u8)(row & 31u);
-
-        background_release_ring_row(layer, ring_row);
-        memcpy(
-            cache->ring_word[ring_row],
-            cache->prefetch_word,
-            sizeof(cache->prefetch_word)
-        );
-        cache->ring_source_row[ring_row] = row;
-        cache->ring_reference_rows++;
-        /*
-         * Prefetch incremented references while building. They now become
-         * the installed ring's references without another adjustment.
-         */
-        cache->prefetch_active = 0;
-        cache->prefetch_ready = 0;
-        background_rows_prefetched++;
     } else {
         background_build_ring_row(layer, row, 1);
         background_rows_synchronous++;
@@ -1506,9 +1588,13 @@ static IWRAM_CODE ARM_CODE void background_retain_visible_rows(
 {
     BackgroundLayerCache *cache;
     u16 retain_top =
-        top_row > BACKGROUND_CAMERA_RETAIN_TILE_ROWS ?
+        top_row >
+            BACKGROUND_CAMERA_RETAIN_TILE_ROWS +
+                BACKGROUND_PREFETCH_LOOKAHEAD_MAX ?
             (u16)(
-                top_row - BACKGROUND_CAMERA_RETAIN_TILE_ROWS
+                top_row -
+                    BACKGROUND_CAMERA_RETAIN_TILE_ROWS -
+                    BACKGROUND_PREFETCH_LOOKAHEAD_MAX
             ) :
             0;
     u16 retain_last =
@@ -1623,6 +1709,7 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
 )
 {
     BackgroundLayerCache *cache = &background_layer_cache[layer];
+    BackgroundRowKeyCursor key_cursor;
     u8 work = 0;
 
     if (
@@ -1646,20 +1733,25 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
                 target_row;
         cache->prefetch_active = 1;
         if (cache->prefetch_existing) {
-            cache->prefetch_ready = 1;
+            cache->prefetch_active = 0;
             return 0;
         }
     }
     if (cache->prefetch_ready) return 0;
+    background_row_key_cursor_init(
+        &key_cursor,
+        layer,
+        target_row,
+        cache->prefetch_column
+    );
     while (
         cache->prefetch_column < BACKGROUND_ROW_TILES &&
         work < column_budget
     ) {
         u8 rendered;
-        u16 word = background_resolve_word(
+        u16 word = background_resolve_key(
             layer,
-            target_row,
-            cache->prefetch_column,
+            background_row_key_cursor_next(&key_cursor),
             1,
             &rendered
         );
@@ -1673,6 +1765,7 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
     }
     if (cache->prefetch_column == BACKGROUND_ROW_TILES) {
         cache->prefetch_ready = 1;
+        background_install_prefetch_row(layer);
     }
     return work;
 }
@@ -1718,12 +1811,31 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
     ) {
         return;
     }
-    for (pass = 0; pass < BACKGROUND_LAYER_COUNT; pass++) {
-        u8 layer = (u8)(background_prefetch_round_robin + pass);
+    for (
+        pass = 0;
+        pass < BACKGROUND_PREFETCH_ROWS_PER_IDLE;
+        pass++
+    ) {
+        u8 layer = (u8)(
+            background_prefetch_round_robin + pass
+        );
         u16 row;
+        u16 minimum_row;
         u8 active;
+        u8 speed;
+        u8 lookahead;
 
-        if (layer >= BACKGROUND_LAYER_COUNT) {
+#if TYRIAN_GBA_PERF_TIMER
+        if (
+            background_prefetch_cycle_limit != 0 &&
+            stress_cycle_counter_read() -
+                background_prefetch_cycle_start >=
+                background_prefetch_cycle_limit
+        ) {
+            break;
+        }
+#endif
+        while (layer >= BACKGROUND_LAYER_COUNT) {
             layer = (u8)(layer - BACKGROUND_LAYER_COUNT);
         }
         if (used >= miss_budget) break;
@@ -1732,42 +1844,59 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
                 0,
                 source_camera_offset_y
             ) >> 3;
-            active = bg1_scroll_speed != 0;
+            speed = bg1_scroll_speed;
+            active = speed != 0;
         } else if (layer == 1) {
             row = background_presentation_scroll_pixel(
                 1,
                 source_camera_offset_y
             ) >> 3;
+            speed = bg2_scroll_speed;
             active =
                 source_background2_enabled &&
                 !source_background2_upload_pending &&
-                bg2_scroll_speed != 0;
+                speed != 0;
         } else {
             row = background_presentation_scroll_pixel(
                 2,
                 source_camera_offset_y
             ) >> 3;
-            active = bg3_scroll_speed != 0;
+            speed = bg3_scroll_speed;
+            active = speed != 0;
         }
         if (!active || row == 0) continue;
+        /* Cover the release scheduler's two pending source ticks. */
+        lookahead = (u8)(((u16)speed * 2u + 7u) >> 3);
+        if (lookahead == 0) lookahead = 1;
+        if (lookahead < BACKGROUND_PREFETCH_LOOKAHEAD_MAX) {
+            lookahead++;
+        }
+        if (lookahead > BACKGROUND_PREFETCH_LOOKAHEAD_MAX) {
+            lookahead = BACKGROUND_PREFETCH_LOOKAHEAD_MAX;
+        }
         /*
-         * A just-installed row overlaps the previous presentation window for
-         * one frame.  Do not add another prefetched row until that outgoing
-         * row has been released, keeping the maximum ownership window at the
-         * 25-row camera hysteresis band plus one prefetched row rather than
-         * silently growing back toward the old 32-row problem.
+         * A fast source-authored layer can consume three rows in one source
+         * tick.  Keep a bounded EWRAM lookahead during idle display frames;
+         * ring_vram_source_row keeps these prepared rows distinct from rows
+         * that the PPU may actually sample.
          */
         if (
-            background_layer_cache[layer].ring_reference_rows >
-            BACKGROUND_RETAINED_TILE_ROWS
+            !background_layer_cache[layer].prefetch_active &&
+            background_layer_cache[layer].ring_reference_rows >=
+                BACKGROUND_RETAINED_TILE_ROWS
         ) {
             continue;
         }
+        minimum_row = row > lookahead ?
+            (u16)(row - lookahead) :
+            0;
+        row = background_next_missing_row(layer, row);
+        if (row < minimum_row) continue;
         used = (u8)(
             used +
             background_prefetch_layer(
                 layer,
-                background_next_missing_row(layer, row),
+                row,
                 (u8)(miss_budget - used)
             )
         );
@@ -1784,11 +1913,14 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
 static IWRAM_CODE ARM_CODE void background_commit_row_uploads(u8 layer)
 {
     BackgroundLayerCache *cache = &background_layer_cache[layer];
-    u8 index;
+    u16 slot;
 
-    for (index = 0; index < cache->upload_count; index++) {
-        u16 slot = cache->upload_slot[index];
+    if (cache->upload_count == 0) return;
+    for (slot = 0; slot < cache->capacity; slot++) {
+        u16 mask_word = (u16)(slot >> 5);
+        u32 mask = 1u << (slot & 31u);
 
+        if ((cache->upload_mask[mask_word] & mask) == 0) continue;
         dmaCopy(
             cache->pattern[slot],
             (u8 *)CHAR_BASE_BLOCK(0) +
@@ -1799,5 +1931,6 @@ static IWRAM_CODE ARM_CODE void background_commit_row_uploads(u8 layer)
         );
         background_cache_uploads++;
     }
+    memset(cache->upload_mask, 0, sizeof(cache->upload_mask));
     cache->upload_count = 0;
 }

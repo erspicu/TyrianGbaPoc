@@ -1,7 +1,7 @@
 # Tyrian GBA 靜態選單功能對照稽核
 
 - 日期：2026-07-31
-- GBA 基準：`main` / v62 candidate
+- GBA 基準：`main` / v62 candidate；2026-08-01 補充首頁 Load Game
 - C# 對照基準：`org/AprCSTyrian` / `36e4470`
 
 ## 1. 稽核目的與範圍
@@ -29,9 +29,9 @@ Setup、雙人／Network、鍵盤／搖桿設定及隱藏高難度，不列為�
 
 目前確認的結果如下：
 
-- **純粹只有 UI、沒有真正功能的選項只有首頁 `Load Game`。** 它目前刻意以
-  暗色顯示，按下後只播放 `SFX_CLINK`。這符合先前「先放著但不能使用」的
-  階段需求，但和 C# 首頁可直接載入存檔仍有明確落差。
+- 首頁 `Load Game` 已不再是停用 UI：它會開啟和 Options 共用的 11 槽
+  SRAM browser，讀入有效存檔後還原 campaign 並準備對應 Game Menu／map；
+  取消則回到首頁並保留 `Load Game` 游標。
 - `Data`、`Ship Specs`、`Upgrade Ship`、`Options`、`Play Next Level`、
   `Quit Game` 都不是空殼；它們已有實際資料及狀態變更。
 - 真正需要補齊的主要功能落差是：
@@ -48,14 +48,15 @@ Setup、雙人／Network、鍵盤／搖桿設定及隱藏高難度，不列為�
 | GBA 選項 | GBA 現況 | AprCSTyrian 行為 | 判定 | 實際落差 |
 |---|---|---|---|---|
 | Start New Game | 進入 Play Mode → Episode → Difficulty；之後建立新 campaign、初始裝備與金錢 | `newGame()` 走同一組選擇流程並初始化單人模式 | **完整** | 無核心落差 |
-| Load Game | 暗色顯示；確認鍵只播放無效提示音 | 首頁呼叫 `JE_loadScreen()`，可以直接選存檔並載入 | **僅 UI／停用** | 尚未把已完成的 SRAM Load 畫面接到首頁 |
+| Load Game | 開啟真實 11 槽 SRAM browser；空槽不可載入，有效槽會還原 campaign 並進入 Game Menu；取消回首頁 Load Game | 首頁呼叫 `JE_loadScreen()`，可以直接選存檔並載入 | **部分** | 首頁控制流已對齊；SRAM 狀態模型仍少部分 C# 欄位，見 7.2 |
 | Demo | 讀取 ROMFS `demo.1`～`demo.5`，套用關卡、裝備、音樂及逐幀輸入；首頁閒置 30 秒也會啟動 | 同樣循環原始 demo 檔並支援閒置播放 | **完整** | GBA 手把中止操作屬平台改寫 |
 | JukeBox | 真正播放 41 首曲目，支援前後切歌、環狀切換、自動換歌、文字顯示切換及星空效果 | C# 位於 Setup → Jukebox，另有音效瀏覽、停止／重播及 fade 行為快捷鍵 | **部分** | 音樂播放核心完整；缺 sound-FX browser 與少數進階控制。入口位置改到首頁是 GBA 設計差異 |
 
 GBA 首頁 dispatch 可見於
-[`frontend_flow.inc`](../src/frontend/frontend_flow.inc#L2711)，其中 `Load Game`
-分支只有 `SFX_CLINK`。C# 對照為
-`org/AprCSTyrian/cs_ported/Core/Tyrian2.cs:237-267`。
+[`frontend_flow.inc`](../src/frontend/frontend_flow.inc)，`Load Game` 會呼叫
+[`frontend_save.inc`](../src/frontend/frontend_save.inc) 的共用 slot browser。
+PC 對照為 `vendor/opentyrian/src/tyrian2.c` 的 `MENU_ITEM_LOAD_GAME` →
+`JE_loadScreen()`，以及 `vendor/opentyrian/src/mainint.c` 的 slot 選擇流程。
 
 ## 4. Start New Game 前置選單
 
@@ -141,7 +142,7 @@ weapon-port op、shot repeat/multi-position、Sprite2 graphic、聲音 queue、
 
 | 顯示項目 | GBA 真正執行的功能 | 判定 | 落差 |
 |---|---|---|---|
-| Load | 顯示 11 個槽；驗證 SRAM bank／CRC，載入 play mode、Episode、difficulty、section、裝備、金錢、Armor／Shield 與 Cubes，重新準備 map | **部分** | 真正可用，但只能從 Game Menu 進入；首頁 Load 未接線。另缺 C# 的部分跨章節狀態，見下表 |
+| Load | 首頁或 Options 都能進入同一個 11 槽畫面；驗證 SRAM bank／CRC，載入 play mode、Episode、difficulty、section、裝備、金錢、Armor／Shield 與 Cubes，重新準備 map | **部分** | 兩個入口都真正可用；仍缺 C# 的部分跨章節狀態，見下表 |
 | Save | 11 個槽、14 字元手把命名、雙 bank、sequence、CRC32、最後 commit byte、分幀寫 SRAM | **部分** | 儲存本專案目前主要 campaign 狀態；尚未達到 C# 完整語意，也沒有自動 LAST LEVEL backup |
 | Done | 返回 Game Menu 並保留原本游標 | **完整** | 無核心落差 |
 
@@ -198,10 +199,8 @@ PC 的雙人欄位、input device 與 High Score 欄位沒有相對應的 GBA �
 
 ### P1：Load／Save 完整性
 
-1. 把首頁 `Load Game` 接到現有 11 槽讀檔流程；若仍要刻意停用，應維持現在
-   暗色及 clink，避免使用者誤認為 bug。
-2. 增加 `gameHasRepeated`、`secretHint` 與必要的初始／目前難度欄位。
-3. 決定是否保留一槽作 `LAST LEVEL` 自動備份，或另設不佔手動槽的 checkpoint。
+1. 增加 `gameHasRepeated`、`secretHint` 與必要的初始／目前難度欄位。
+2. 決定是否保留一槽作 `LAST LEVEL` 自動備份，或另設不佔手動槽的 checkpoint。
 
 ### P2：功能體驗完整度
 
@@ -212,7 +211,8 @@ PC 的雙人欄位、input device 與 High Score 欄位沒有相對應的 GBA �
 ## 10. 驗證與證據界線
 
 專案現有自動測試已覆蓋 Demo 五檔解析／輸入、JukeBox 切歌與環狀操作、
-11 槽 SRAM round-trip／CRC fallback、Full Game／Arcade route，以及靜態選單
+11 槽 SRAM round-trip／CRC fallback、首頁 Load 的進入／取消／有效槽載入、
+Full Game／Arcade route，以及靜態選單
 轉場壓測。Upgrade 額外驗證 Episode 1 三個 `]I` 商店邊界的七類商品、
 預覽不購買、第一次接受／第二次結帳、現金、關卡裝備與存檔 capture；
 120 次子選單轉場的 runtime SHP/Sprite2 decode、missed VBlank 與功能失敗均為 0。

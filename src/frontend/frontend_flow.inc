@@ -2863,7 +2863,12 @@ static void frontend_update(void)
             audio_effect(SFX_SELECT);
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
         } else if (frontend_selection == 1) {
-            audio_effect(SFX_CLINK);
+            audio_effect(SFX_SELECT);
+            frontend_save_open_slots(
+                FRONTEND_SAVE_MODE_LOAD,
+                STATE_TITLE,
+                1
+            );
         } else if (frontend_selection == 2) {
             audio_effect(SFX_SELECT);
             (void)frontend_demo_start(0);

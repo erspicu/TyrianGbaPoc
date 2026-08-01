@@ -4,12 +4,14 @@ static u8 schedule_row(
     u8 layer,
     u16 row,
     u16 screen_block,
-    u8 *pending,
-    const u8 **source,
-    u16 **target
+    BackgroundPendingRows *pending
 )
 {
-    if (*pending) {
+    const u8 *source;
+    u16 *target;
+    u8 index = pending->count;
+
+    if (index >= BACKGROUND_PENDING_ROW_CAPACITY) {
         telemetry_stream_drops++;
         return 0;
     }
@@ -17,13 +19,16 @@ static u8 schedule_row(
             layer,
             row,
             screen_block,
-            source,
-            target
+            &source,
+            &target
         )) {
         telemetry_stream_drops++;
         return 0;
     }
-    *pending = 1;
+    pending->row[index] = row;
+    pending->source[index] = source;
+    pending->target[index] = target;
+    pending->count = (u8)(index + 1u);
     telemetry_map_rows++;
     return 1;
 }
@@ -53,10 +58,13 @@ static u16 background_presentation_scroll_pixel(
     return (u16)scroll;
 }
 
-static u8 background_layer_missing_presentation_row(
+static u8 background_layer_missing_presentation_rows(
     u8 layer,
     s8 camera_offset_y,
-    u16 *missing_row
+    const BackgroundPendingRows *pending,
+    u16 missing[BACKGROUND_PENDING_ROW_CAPACITY],
+    u16 *top_out,
+    u16 *last_out
 )
 {
     BackgroundLayerCache *cache =
@@ -74,17 +82,58 @@ static u8 background_layer_missing_presentation_row(
     if (last > background_canvas_rows[layer]) {
         last = background_canvas_rows[layer];
     }
+    *top_out = top;
+    *last_out = last;
     for (row = top; row < last; row++) {
+        u8 pending_index;
+        u8 already_pending = 0;
+
         if (
-            cache->ring_source_row[row & (MAP_RING_ROWS - 1u)] !=
-                row
+            cache->ring_source_row[
+                row & (MAP_RING_ROWS - 1u)
+            ] != row ||
+            cache->ring_vram_source_row[
+                row & (MAP_RING_ROWS - 1u)
+            ] != row
         ) {
-            *missing_row = row;
-            missing_count++;
-            if (missing_count > 1) return missing_count;
+            for (
+                pending_index = 0;
+                pending_index < pending->count;
+                pending_index++
+            ) {
+                if (pending->row[pending_index] == row) {
+                    already_pending = 1;
+                    break;
+                }
+            }
+            if (already_pending) continue;
+            missing[missing_count++] = row;
         }
     }
     return missing_count;
+}
+
+static void background_pending_retain_window(
+    BackgroundPendingRows *pending,
+    u16 top,
+    u16 last
+)
+{
+    u8 read;
+    u8 write = 0;
+
+    for (read = 0; read < pending->count; read++) {
+        u16 row = pending->row[read];
+
+        if (row < top || row >= last) continue;
+        if (write != read) {
+            pending->row[write] = row;
+            pending->source[write] = pending->source[read];
+            pending->target[write] = pending->target[read];
+        }
+        write++;
+    }
+    pending->count = write;
 }
 
 /*
@@ -92,14 +141,18 @@ static u8 background_layer_missing_presentation_row(
  * will be committed.  Camera motion and map scrolling are independent, so
  * checking only the map's raw 8-pixel boundary can leave the newly exposed
  * top/bottom row absent.  Preflight all visible layers before installing any
- * row; if a layer already owns a different VBlank upload, the camera simply
- * holds its previous sub-pixel target for one logic tick.
+ * row.  Source events can move a visual layer by 20-22 pixels per tick, so a
+ * complete visible-window batch is required; all rows commit before the new
+ * VOFS is published.
  */
 static u8 background_schedule_presentation_window(
     s8 camera_offset_y
 )
 {
-    u16 missing[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
+    u16 missing[BACKGROUND_LAYER_COUNT]
+        [BACKGROUND_PENDING_ROW_CAPACITY];
+    u16 top[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
+    u16 last[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
     u8 count[BACKGROUND_LAYER_COUNT] = {0, 0, 0};
     u8 active[BACKGROUND_LAYER_COUNT] = {
         1,
@@ -113,54 +166,56 @@ static u8 background_schedule_presentation_window(
 
     if (!background_runtime_valid) return 1;
     for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
-        u8 pending;
+        BackgroundPendingRows *pending =
+            &background_pending_rows[layer];
 
         if (!active[layer]) continue;
-        count[layer] = background_layer_missing_presentation_row(
+        count[layer] = background_layer_missing_presentation_rows(
             layer,
             camera_offset_y,
-            &missing[layer]
+            pending,
+            missing[layer],
+            &top[layer],
+            &last[layer]
         );
-        if (count[layer] > 1) return 0;
-        pending =
-            layer == 0 ? bg1_row_pending :
-            layer == 1 ? bg2_row_pending :
-                bg3_row_pending;
-        if (count[layer] != 0 && pending) return 0;
+        background_pending_retain_window(
+            pending,
+            top[layer],
+            last[layer]
+        );
+        /*
+         * Presentation is now the ownership boundary.  Release rows outside
+         * the newest complete viewport only when that viewport is actually
+         * being materialized; source ticks skipped by drop-frame never build
+         * or retain intermediate map rows.
+         */
+        background_retain_visible_rows(layer, top[layer]);
+        if (
+            pending->count + count[layer] >
+            BACKGROUND_PENDING_ROW_CAPACITY
+        ) {
+            telemetry_stream_drops++;
+            return 0;
+        }
     }
     for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        u8 row_index;
+
         if (!active[layer] || count[layer] == 0) continue;
-        if (layer == 0) {
+        for (row_index = 0; row_index < count[layer]; row_index++) {
+            u16 screen_block =
+                layer == 0 ? BG0_SCREEN_BLOCK :
+                layer == 1 ? BG1_SCREEN_BLOCK :
+                    BG2_SCREEN_BLOCK;
+
             if (!schedule_row(
-                    0,
-                    missing[0],
-                    BG0_SCREEN_BLOCK,
-                    &bg1_row_pending,
-                    &bg1_row_source,
-                    &bg1_row_target
+                    layer,
+                    missing[layer][row_index],
+                    screen_block,
+                    &background_pending_rows[layer]
                 )) {
                 return 0;
             }
-        } else if (layer == 1) {
-            if (!schedule_row(
-                    1,
-                    missing[1],
-                    BG1_SCREEN_BLOCK,
-                    &bg2_row_pending,
-                    &bg2_row_source,
-                    &bg2_row_target
-                )) {
-                return 0;
-            }
-        } else if (!schedule_row(
-                2,
-                missing[2],
-                BG2_SCREEN_BLOCK,
-                &bg3_row_pending,
-                &bg3_row_source,
-                &bg3_row_target
-            )) {
-            return 0;
         }
     }
     return 1;
@@ -170,38 +225,6 @@ static void advance_backgrounds(void)
 {
     u8 move1 = 0;
     u8 move2 = 0;
-
-    /*
-     * The previous update may have kept one outgoing row alive while the old
-     * presentation scroll was still on screen.  It is safe to release that
-     * row now, before this update can allocate or upload another source row.
-     */
-    background_retain_visible_rows(
-        0,
-        background_presentation_scroll_pixel(
-            0,
-            source_camera_offset_y
-        ) >> 3
-    );
-    if (
-        source_background2_enabled &&
-        !source_background2_upload_pending
-    ) {
-        background_retain_visible_rows(
-            1,
-            background_presentation_scroll_pixel(
-                1,
-                source_camera_offset_y
-            ) >> 3
-        );
-    }
-    background_retain_visible_rows(
-        2,
-        background_presentation_scroll_pixel(
-            2,
-            source_camera_offset_y
-        ) >> 3
-    );
 
     bg1_step = 0;
     bg2_step = 0;
@@ -249,9 +272,6 @@ static void advance_backgrounds(void)
     }
     /* draw_background_3 advances backPos3 before it blits. */
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
-    (void)background_schedule_presentation_window(
-        source_camera_offset_y
-    );
 }
 
 static u8 source_enemy_on_screen_count(void)

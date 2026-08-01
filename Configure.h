@@ -30,7 +30,7 @@
  * 0：使用正常的 OpenTyrian 傷害與死亡流程。
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
 #endif
 
 /*

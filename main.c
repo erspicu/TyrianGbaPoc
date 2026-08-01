@@ -188,6 +188,7 @@ _Static_assert(
 #define MAP_ROW_BYTES (BG_MAP_COLUMNS * sizeof(u16))
 #define MAP_HALF_ROW_BYTES (32 * sizeof(u16))
 #define MAP_SCREEN_BLOCK_WORDS (32 * 32)
+#define BACKGROUND_PENDING_ROW_CAPACITY (SCREEN_HEIGHT / 8 + 1)
 
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 enum {
@@ -1541,17 +1542,24 @@ static u8 bg2_scroll_delay_max;
 static u8 bg1_step;
 static u8 bg2_step;
 static u8 bg3_step;
-static u8 bg1_row_pending;
-static u8 bg2_row_pending;
-static u8 bg3_row_pending;
 static u8 source_background2_enabled;
 static u8 source_background2_upload_pending;
-static const u8 *bg1_row_source;
-static const u8 *bg2_row_source;
-static const u8 *bg3_row_source;
-static u16 *bg1_row_target;
-static u16 *bg2_row_target;
-static u16 *bg3_row_target;
+
+/*
+ * A source-authored parallax event may expose more than one 8-pixel map row
+ * in a single logic tick (UNDERDELI reaches 22 pixels).  Keep every row that
+ * must become visible at the next VBlank instead of letting a scalar pending
+ * slot silently turn the 32-row hardware ring into stale data.
+ */
+typedef struct {
+    u8 count;
+    u16 row[BACKGROUND_PENDING_ROW_CAPACITY];
+    const u8 *source[BACKGROUND_PENDING_ROW_CAPACITY];
+    u16 *target[BACKGROUND_PENDING_ROW_CAPACITY];
+} BackgroundPendingRows;
+
+static BackgroundPendingRows
+    background_pending_rows[3] EWRAM_BSS;
 
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 typedef struct {

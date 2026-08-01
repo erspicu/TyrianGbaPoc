@@ -1462,9 +1462,9 @@ static void frontend_show_immediate(
     REG_DISPCNT = LCDC_OFF;
     REG_BLDCNT = 0;
     REG_BLDALPHA = 0;
-    bg1_row_pending = 0;
-    bg2_row_pending = 0;
-    bg3_row_pending = 0;
+    background_pending_rows[0].count = 0;
+    background_pending_rows[1].count = 0;
+    background_pending_rows[2].count = 0;
     hide_all_sprites();
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     oam_dirty = 0;

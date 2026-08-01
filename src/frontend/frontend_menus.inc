@@ -373,11 +373,7 @@ static void frontend_draw_pre_game_item(
     s16 y = frontend_pre_game_item_y(state, selection);
     u8 colour;
 
-    if (state == STATE_TITLE && selection == 1) {
-        colour = selection == active_selection ? 0xf8u : 0xf4u;
-    } else {
-        colour = selection == active_selection ? 0xfeu : 0xfau;
-    }
+    colour = selection == active_selection ? 0xfeu : 0xfau;
 
     if (state == STATE_EPISODE_MENU) {
         frontend_draw_pregame_text_clipped(

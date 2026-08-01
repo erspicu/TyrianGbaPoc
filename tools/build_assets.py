@@ -2732,10 +2732,7 @@ def build_frontend_static_menu_panels(
             title_fallback[3],
         )
         for index, label in enumerate(labels):
-            if index == 1:
-                colour = 0xf8 if index == selection else 0xf4
-            else:
-                colour = 0xfe if index == selection else 0xfa
+            colour = 0xfe if index == selection else 0xfa
             draw_pregame_centered(
                 frame,
                 label,
@@ -3583,10 +3580,7 @@ def build_frontend_mode4_assets(
         frame = render_title_chrome()
         labels = ("Start New Game", "Load Game", "Demo", "JukeBox")
         for index, label in enumerate(labels):
-            if index == 1:
-                brightness = -7 if selection == index else -9
-            else:
-                brightness = -1 if selection == index else -4
+            brightness = -1 if selection == index else -4
             source.draw_text(
                 frame,
                 label,

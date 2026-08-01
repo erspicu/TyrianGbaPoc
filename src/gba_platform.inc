@@ -79,6 +79,26 @@ static void commit_background_row(const u8 *source, u16 *left_target)
     );
 }
 
+static void commit_background_rows(u8 layer)
+{
+    BackgroundPendingRows *pending =
+        &background_pending_rows[layer];
+    u8 index;
+
+    if (pending->count == 0) return;
+    background_commit_row_uploads(layer);
+    for (index = 0; index < pending->count; index++) {
+        commit_background_row(
+            pending->source[index],
+            pending->target[index]
+        );
+        background_layer_cache[layer].ring_vram_source_row[
+            pending->row[index] & (MAP_RING_ROWS - 1u)
+        ] = pending->row[index];
+    }
+    pending->count = 0;
+}
+
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 static void gameplay_presentation_capture_registers(void)
 {
@@ -203,7 +223,7 @@ static u8 gameplay_presentation_should_render(
         presentation_pending_logic_ticks >=
             PRESENTATION_MAX_PENDING_LOGIC_TICKS ||
         current_held_rows >
-            BACKGROUND_VISIBLE_TILE_ROWS + 1
+            BACKGROUND_RETAINED_TILE_ROWS
     ) {
         forced = 1;
     }
@@ -292,6 +312,56 @@ static void gameplay_presentation_complete(u32 actual_render_cycles)
 }
 #endif
 
+#if TYRIAN_GBA_PERF_TIMER
+static IWRAM_CODE ARM_CODE u8 background_prefetch_frame_budget(
+    u32 frame_cycle_start,
+    u8 requested
+)
+{
+    u32 elapsed =
+        stress_cycle_counter_read() - frame_cycle_start;
+    u32 deadline = GBA_DISPLAY_FRAME_CYCLES;
+    u32 remaining;
+    u32 budget;
+
+    if (
+        telemetry_perf_vblank_irq_cycles_last +
+            PRESENTATION_DEADLINE_GUARD_CYCLES <
+        deadline
+    ) {
+        deadline -=
+            telemetry_perf_vblank_irq_cycles_last +
+            PRESENTATION_DEADLINE_GUARD_CYCLES;
+    } else {
+        background_prefetch_cycle_limit = 0;
+        return 0;
+    }
+    if (
+        elapsed + BACKGROUND_PREFETCH_DEADLINE_RESERVE_CYCLES >=
+        deadline
+    ) {
+        background_prefetch_cycle_limit = 0;
+        return 0;
+    }
+    background_prefetch_cycle_start = frame_cycle_start;
+    background_prefetch_cycle_limit =
+        deadline - BACKGROUND_PREFETCH_DEADLINE_RESERVE_CYCLES;
+    remaining =
+        deadline - elapsed -
+        BACKGROUND_PREFETCH_DEADLINE_RESERVE_CYCLES;
+    budget = remaining >> BACKGROUND_PREFETCH_MISS_CYCLE_SHIFT;
+    if (budget > requested) budget = requested;
+    return (u8)budget;
+}
+#define BACKGROUND_PREFETCH_FRAME_BUDGET(requested) \
+    background_prefetch_frame_budget( \
+        perf_frame_cycle_start, \
+        (requested) \
+    )
+#else
+#define BACKGROUND_PREFETCH_FRAME_BUDGET(requested) (requested)
+#endif
+
 static void commit_vblank_work(void)
 {
     volatile u16 *boss_palette =
@@ -313,11 +383,7 @@ static void commit_vblank_work(void)
         }
         return;
     }
-    if (bg1_row_pending) {
-        background_commit_row_uploads(0);
-        commit_background_row(bg1_row_source, bg1_row_target);
-        bg1_row_pending = 0;
-    }
+    commit_background_rows(0);
     if (source_background2_upload_pending) {
         /*
          * Low detail leaves this 20 KiB BG layer unallocated.  Match the PC
@@ -332,18 +398,12 @@ static void commit_vblank_work(void)
             ) >> 3,
             BG1_SCREEN_BLOCK
         );
-        bg2_row_pending = 0;
+        background_pending_rows[1].count = 0;
         source_background2_upload_pending = 0;
-    } else if (bg2_row_pending) {
-        background_commit_row_uploads(1);
-        commit_background_row(bg2_row_source, bg2_row_target);
-        bg2_row_pending = 0;
+    } else {
+        commit_background_rows(1);
     }
-    if (bg3_row_pending) {
-        background_commit_row_uploads(2);
-        commit_background_row(bg3_row_source, bg3_row_target);
-        bg3_row_pending = 0;
-    }
+    commit_background_rows(2);
     if (
         game_state == STATE_PLAY ||
         game_state == STATE_GAME_OVER

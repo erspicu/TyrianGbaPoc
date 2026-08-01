@@ -74,8 +74,10 @@ Save-name editor:
 - Start: save
 - Hold Select: clear the whole name
 
-`Load Game` is visible but intentionally disabled on the title page. Campaign
-saves are loaded from `Game Menu > Options > Load`.
+`Load Game` on the title page opens the real 11-slot SRAM browser. Loading an
+occupied slot restores the campaign and continues at Game Menu; `B` returns to
+the highlighted title item. The same load browser remains available through
+`Game Menu > Options > Load`.
 
 ## Downloads
 

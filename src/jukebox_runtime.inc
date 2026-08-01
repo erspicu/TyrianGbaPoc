@@ -468,9 +468,9 @@ static void jukebox_enter(void)
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
-    bg1_row_pending = 0;
-    bg2_row_pending = 0;
-    bg3_row_pending = 0;
+    background_pending_rows[0].count = 0;
+    background_pending_rows[1].count = 0;
+    background_pending_rows[2].count = 0;
     source_background2_upload_pending = 0;
     game_paused = 0;
     jukebox_song = (
