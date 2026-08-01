@@ -222,7 +222,21 @@ enum {
 #define MAX_ENEMY_SHOTS 60
 /* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
 #define MAX_EFFECTS 200
+/*
+ * Presentation-only budgets.  Gameplay allocators, collisions and authored
+ * timing remain at their PC sizes; these limits decide which already-live
+ * objects fit in one 128-entry GBA OAM scene.  Structural sprites are
+ * reserved dynamically before these decorative/projectile groups render.
+ */
+#if TYRIAN_GBA_STRESS_LOADOUT
 #define MAX_VISIBLE_EFFECTS 48
+#define MAX_VISIBLE_ENEMY_SHOTS MAX_ENEMY_SHOTS
+#define MAX_VISIBLE_PLAYER_SHOTS MAX_PLAYER_SHOTS
+#else
+#define MAX_VISIBLE_EFFECTS 21
+#define MAX_VISIBLE_ENEMY_SHOTS 32
+#define MAX_VISIBLE_PLAYER_SHOTS 36
+#endif
 /*
  * Source rewards live in the 100-entry enemy pool.  This legacy animation
  * pool remains only for the isolated visual regression fixture.
@@ -397,13 +411,16 @@ enum {
 #define SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT 10
 #else
 /*
- * Episode 4 can present nine or ten distinct authored projectile frames in
- * one scanout.  Reserve two 16x16 slots from the otherwise overprovisioned
- * explosion cache tail instead of dropping a visible shot.  Twenty-eight
- * explosion slots remain, above the measured high-detail peak of seventeen.
+ * Real campaign saves can combine a power-11 front/rear weapon with two
+ * sidekicks and request more than ten distinct 8bpp projectile frames in one
+ * scanout.  Keep the fragmented Sprite2 top half at OBJ 160..175, then use
+ * the released contiguous explosion tail at OBJ 176..223 for six projectile
+ * slots.  Together with the legacy lower/upper regions this yields fourteen
+ * slots without changing any PC weapon or collision state.
  */
-#define SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE 208
-#define SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT 2
+#define SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE \
+    (OBJ_TILE_EXPLOSION + 16u * EXPLOSION_TILES_PER_FRAME + 16u)
+#define SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT 6
 #endif
 #define SOURCE_PROJECTILE_CACHE_SLOT_COUNT \
     (SOURCE_PROJECTILE_CACHE_LOWER_SLOT_COUNT + \
@@ -461,23 +478,24 @@ enum {
  * Enemy 8bpp frames reclaim the middle of the old fully-resident explosion
  * atlas.  Active 16x16 explosion frames are therefore streamed into a 4bpp
  * cache at the original explosion base.  Stress builds retain all 32 slots.
- * Release telemetry reaches 27 unique frames in Episode 3. Keep 24 in the
- * contiguous explosion bank, place one overflow frame in the four-tile
+ * Release telemetry reaches 27 unique frames only when every PC explosion
+ * is submitted without an OAM budget.  Keep 16 in the contiguous explosion
+ * bank, place one overflow frame in the four-tile
  * alignment gap between the generated static OBJ bank and the upper Sprite2
  * cache, time-share one more with the boss-bar tiles only while no boss bar
  * is active, reclaim the final frame of the legacy POC reward atlas, and
  * time-share the unused lower half of the GAME OVER / SECRET LEVEL /
  * INSERT COIN runtime bank. Those labels atomically restore their eight
- * characters when active. The next four contiguous frame slots remain
- * available to the fragmented 32x32 Sprite2 overflow canvas required by
- * Episode 4/SAVARA.
+ * characters when active.  The released contiguous characters expand the
+ * 8bpp projectile cache; one 32x16 region remains available to the
+ * fragmented 32x32 Sprite2 overflow canvas required by Episode 4/SAVARA.
  */
 #define SOURCE_EFFECT_CACHE_TILE_BASE OBJ_TILE_EXPLOSION
 #if TYRIAN_GBA_STRESS_LOADOUT
 #define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 32
 #define SOURCE_EFFECT_CACHE_SLOT_COUNT 32
 #else
-#define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 24
+#define SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT 16
 #define SOURCE_EFFECT_CACHE_OVERFLOW_SLOT \
     SOURCE_EFFECT_CACHE_PRIMARY_SLOT_COUNT
 #define SOURCE_EFFECT_CACHE_OVERFLOW_TILE_BASE OBJ_STATIC_TILE_COUNT
@@ -767,9 +785,16 @@ _Static_assert(
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE +
-        SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES <=
+        SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES ==
         SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE,
-    "split Sprite2 top half overlaps the Episode 4 projectile cache"
+    "split Sprite2 top half must border the expanded projectile cache"
+);
+_Static_assert(
+    SOURCE_PROJECTILE_CACHE_EXTRA_TILE_BASE +
+            SOURCE_PROJECTILE_CACHE_EXTRA_SLOT_COUNT *
+                SOURCE_PROJECTILE_TILES_PER_SLOT ==
+        SOURCE_ENEMY_CACHE_LOWER_TILE_BASE,
+    "expanded projectile cache must exactly fill the released OBJ gap"
 );
 _Static_assert(
     SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE +
@@ -1754,6 +1779,11 @@ volatile u32 telemetry_projectile_cache_uploads;
 volatile u32 telemetry_projectile_cache_upload_coalesces EWRAM_BSS;
 volatile u32 telemetry_projectile_cache_max_uploads;
 volatile u32 telemetry_projectile_cache_max_visible_unique;
+volatile u32 telemetry_projectile_visible_capacity_drops;
+volatile u32 telemetry_structural_oam_required_max;
+volatile u32 telemetry_effect_oam_culls;
+volatile u32 telemetry_enemy_shot_oam_culls;
+volatile u32 telemetry_player_shot_oam_culls;
 volatile u32 telemetry_player_shot_spawns;
 volatile u32 telemetry_player_shot_drops;
 volatile u32 telemetry_player_shot_max_active;
@@ -1766,7 +1796,6 @@ volatile u32 telemetry_stress_psg_triggers;
 volatile u32 telemetry_projectile_culled_offscreen_before_cache;
 volatile u32 telemetry_projectile_culled_oam_full_before_cache;
 volatile u32 telemetry_projectile_post_visibility_acquires;
-volatile u32 telemetry_projectile_visible_capacity_drops;
 #endif
 volatile u32 telemetry_detail_lava_frames;
 volatile u32 telemetry_detail_water_frames;

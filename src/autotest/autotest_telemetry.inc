@@ -949,6 +949,11 @@ static void autotest_finish(void)
     );
     sram_write_u32(8696, source_projectile_upload_count);
     sram_write_u32(8700, source_effect_upload_count);
+    sram_write_u32(8704, telemetry_structural_oam_required_max);
+    sram_write_u32(8708, telemetry_effect_oam_culls);
+    sram_write_u32(8712, telemetry_enemy_shot_oam_culls);
+    sram_write_u32(8716, telemetry_player_shot_oam_culls);
+    sram_write_u32(8720, telemetry_projectile_visible_capacity_drops);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;

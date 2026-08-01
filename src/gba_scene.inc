@@ -226,13 +226,21 @@ static void render_player_sidekicks(u8 priority)
 }
 
 #if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
-static void render_player_shots(u8 priority)
+static void render_player_shots(u8 priority, u8 oam_limit)
 {
     s16 index;
+    u8 submitted = 0;
 
     /* PC blits ascending slots; later slots must win the GBA OBJ tie. */
     for (index = MAX_PLAYER_SHOTS - 1; index >= 0; index--) {
         if (!player_shots[index].active) continue;
+        if (
+            submitted >= MAX_VISIBLE_PLAYER_SHOTS ||
+            oam_count >= oam_limit
+        ) {
+            telemetry_player_shot_oam_culls++;
+            break;
+        }
         {
             u16 frame = player_shots[index].render_graphic;
             u8 shape_table;
@@ -258,6 +266,12 @@ static void render_player_shots(u8 priority)
                 screen_y = source_player_shot_screen_y(
                     &player_shots[index]
                 );
+                if (
+                    screen_x <= -64 || screen_x >= SCREEN_WIDTH ||
+                    screen_y <= -64 || screen_y >= SCREEN_HEIGHT
+                ) {
+                    continue;
+                }
                 put_sprite_8bpp_64_blended(
                     screen_x,
                     screen_y,
@@ -265,6 +279,7 @@ static void render_player_shots(u8 priority)
                     priority
                 );
                 telemetry_stress_option_blend_draws++;
+                submitted++;
 #else
                 u16 option_graphic = (u16)(frame - 60001u);
                 u8 option_frame;
@@ -296,6 +311,12 @@ static void render_player_shots(u8 priority)
                 screen_y = source_player_shot_screen_y(
                     &player_shots[index]
                 );
+                if (
+                    screen_x <= -64 || screen_x >= SCREEN_WIDTH ||
+                    screen_y <= -32 || screen_y >= SCREEN_HEIGHT
+                ) {
+                    continue;
+                }
                 put_sprite_4bpp_64x32_blended(
                     screen_x,
                     screen_y,
@@ -306,6 +327,7 @@ static void render_player_shots(u8 priority)
                     ),
                     priority
                 );
+                submitted++;
 #endif
                 continue;
             }
@@ -316,12 +338,6 @@ static void render_player_shots(u8 priority)
                     OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
             graphic = frame > 500 ? (u16)(frame - 500) : frame;
 #if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-            if (oam_count >= SPRITE_LIMIT) {
-#if TYRIAN_GBA_STRESS_LOADOUT
-                telemetry_projectile_culled_oam_full_before_cache++;
-#endif
-                continue;
-            }
             screen_x = source_player_shot_screen_x(
                 &player_shots[index]
             );
@@ -362,12 +378,13 @@ static void render_player_shots(u8 priority)
                 tile,
                 priority
             );
+            submitted++;
         }
     }
 }
 #endif
 
-static void render_effect_sprites(u8 priority)
+static void render_effect_sprites(u8 priority, u8 oam_limit)
 {
     s16 index;
     u8 submitted = 0;
@@ -376,13 +393,27 @@ static void render_effect_sprites(u8 priority)
         u16 tile;
 
         if (!effects[index].active) continue;
+        if (
+            submitted >= MAX_VISIBLE_EFFECTS ||
+            oam_count >= oam_limit
+        ) {
+            telemetry_effect_oam_culls++;
+            break;
+        }
+        if (
+            effects[index].x <= -16 ||
+            effects[index].x >= SCREEN_WIDTH ||
+            effects[index].y <= -16 ||
+            effects[index].y >= SCREEN_HEIGHT
+        ) {
+            continue;
+        }
         /*
          * Keep OpenTyrian's full 200-entry allocator and lifecycle, then
          * apply a presentation-only GBA budget. Newer (later PC blits)
          * survive first, while the 128-entry hardware OAM remains available
          * for enemies, projectiles, HUD and the GAME OVER overlay.
          */
-        if (submitted >= MAX_VISIBLE_EFFECTS) continue;
         tile = source_effect_cache_acquire(
             effects[index].sequence,
             effects[index].frame
@@ -461,7 +492,7 @@ static void render_source_enemy_cached_sprite(
     }
 }
 
-static void render_source_pickup_explosions(u8 priority)
+static void render_source_pickup_explosions(u8 priority, u8 oam_limit)
 {
     s16 index;
 
@@ -470,8 +501,15 @@ static void render_source_pickup_explosions(u8 priority)
             &pickup_explosions[index];
         OtEnemyDrawCommand draw;
         u16 tile;
+        s16 screen_x;
+        s16 screen_y;
+        u8 oam_required;
 
         if (!explosion->active) continue;
+        if (oam_count >= oam_limit) {
+            telemetry_effect_oam_culls++;
+            break;
+        }
         draw = (OtEnemyDrawCommand){
             .active = true,
             .x = explosion->x,
@@ -482,11 +520,24 @@ static void render_source_pickup_explosions(u8 priority)
             .filter = 0,
             .pool = 0,
         };
+        screen_x = source_enemy_draw_screen_x(&draw);
+        screen_y = source_enemy_draw_screen_y(&draw);
+        if (
+            screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
+            screen_y <= -32 || screen_y >= SCREEN_HEIGHT
+        ) {
+            continue;
+        }
         tile = source_enemy_cache_acquire(&draw);
         if (tile == 0xffff) continue;
+        oam_required = source_enemy_cache_tile_is_split(tile) ? 2u : 1u;
+        if (oam_count + oam_required > oam_limit) {
+            telemetry_effect_oam_culls++;
+            continue;
+        }
         render_source_enemy_cached_sprite(
-            source_enemy_draw_screen_x(&draw),
-            source_enemy_draw_screen_y(&draw),
+            screen_x,
+            screen_y,
             tile,
             priority
         );
@@ -535,9 +586,10 @@ static void render_source_enemy_pool(
     }
 }
 
-static void render_source_enemy_shots(u8 priority)
+static void render_source_enemy_shots(u8 priority, u8 oam_limit)
 {
     s16 index;
+    u8 submitted = 0;
 
     for (index = OT_ENEMY_SHOT_COUNT - 1; index >= 0; index--) {
         const OtEnemyShot *source_shot =
@@ -550,11 +602,15 @@ static void render_source_enemy_shots(u8 priority)
 
         if (!source_shot->active) continue;
 #if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-        if (oam_count >= SPRITE_LIMIT) {
+        if (
+            submitted >= MAX_VISIBLE_ENEMY_SHOTS ||
+            oam_count >= oam_limit
+        ) {
+            telemetry_enemy_shot_oam_culls++;
 #if TYRIAN_GBA_STRESS_LOADOUT
             telemetry_projectile_culled_oam_full_before_cache++;
 #endif
-            continue;
+            break;
         }
         screen_x = source_enemy_shot_screen_x(source_shot);
         screen_y = source_enemy_shot_screen_y(source_shot);
@@ -599,17 +655,104 @@ static void render_source_enemy_shots(u8 priority)
             tile,
             priority
         );
+        submitted++;
     }
+}
+
+/*
+ * Count the OAM entries that must survive presentation pressure.  The PC
+ * renderer has no object-count ceiling, while GBA has exactly 128 entries.
+ * A streamed Sprite2 frame can occupy two 32x16 entries when it lands in the
+ * fragmented cache slot, so reserve two entries per visible authored object.
+ * This is deliberately conservative: unused reserve becomes headroom, never
+ * a missing player, enemy, or Boss component.
+ */
+static u8 source_structural_oam_required(void)
+{
+    u16 required = 0;
+    u8 index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemyDrawCommand *draw =
+            &source_parity_level.enemy_draw[index];
+        s16 screen_x;
+        s16 screen_y;
+
+        if (!draw->active) continue;
+        screen_x = source_enemy_draw_screen_x(draw);
+        screen_y = source_enemy_draw_screen_y(draw);
+        if (
+            screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
+            screen_y <= -32 || screen_y >= SCREEN_HEIGHT
+        ) {
+            continue;
+        }
+#if TYRIAN_GBA_STRESS_LOADOUT
+        required++;
+#else
+        required += 2u;
+#endif
+    }
+
+    if (player_alive) {
+        if (
+            source_parity_level.end_level &&
+            source_parity_level.level_end != 0
+        ) {
+            /* JE_playerMovement() can emit at most nineteen exit copies. */
+            required += 19u;
+        } else {
+            required++;
+#if TYRIAN_GBA_STRESS_LOADOUT
+            if (stress_loadout_valid) required += 2u;
+#else
+            for (index = 0; index < 2; index++) {
+                const SourceSidekickRuntime *runtime =
+                    &source_sidekick[index];
+
+                if (
+                    runtime->valid &&
+                    runtime->option.option != 0 &&
+                    runtime->option.animation_count != 0 &&
+                    runtime->animation_frame <
+                        runtime->option.animation_count
+                ) {
+                    required += 2u;
+                }
+            }
+#endif
+        }
+    }
+
+    if (required > SPRITE_LIMIT) required = SPRITE_LIMIT;
+    if (required > telemetry_structural_oam_required_max) {
+        telemetry_structural_oam_required_max = required;
+    }
+    return (u8)required;
 }
 
 static void render_source_play_scene(void)
 {
     u8 visible_source_enemies = 0;
+    u8 nonstructural_oam_limit = SPRITE_LIMIT;
+    u8 effect_oam_limit;
 
     source_sprite2_l2_begin_frame();
     source_enemy_cache_begin_frame();
     source_projectile_cache_begin_frame();
     render_source_boss_bars();
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    {
+        u8 structural_oam = source_structural_oam_required();
+
+        nonstructural_oam_limit =
+            structural_oam >= SPRITE_LIMIT - oam_count ?
+                oam_count :
+                (u8)(SPRITE_LIMIT - structural_oam);
+    }
+#else
+    (void)source_structural_oam_required();
+#endif
 
     /*
      * PC is a software renderer: the last blit is in front.  GBA resolves
@@ -617,10 +760,24 @@ static void render_source_play_scene(void)
      * the complete JE_main() sequence in reverse.
      */
     render_source_pickup_explosions(
-        source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
+        source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+        nonstructural_oam_limit
     );
+    effect_oam_limit = nonstructural_oam_limit;
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    {
+        u8 available = source_effect_cache_available_slots();
+        u8 budget = available < MAX_VISIBLE_EFFECTS ?
+            available : MAX_VISIBLE_EFFECTS;
+
+        if (budget < effect_oam_limit - oam_count) {
+            effect_oam_limit = (u8)(oam_count + budget);
+        }
+    }
+#endif
     render_effect_sprites(
-        source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
+        source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+        effect_oam_limit
     );
     render_legacy_rewards(
         source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
@@ -640,7 +797,8 @@ static void render_source_play_scene(void)
         );
     }
     render_source_enemy_shots(
-        source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT)
+        source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT),
+        nonstructural_oam_limit
     );
     render_player_sidekicks(
         source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
@@ -650,7 +808,8 @@ static void render_source_play_scene(void)
     );
 #if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
     render_player_shots(
-        source_object_priority(SOURCE_DRAW_STAGE_PLAYER_SHOT)
+        source_object_priority(SOURCE_DRAW_STAGE_PLAYER_SHOT),
+        nonstructural_oam_limit
     );
 #endif
     if (!source_parity_level.top_enemy_over) {

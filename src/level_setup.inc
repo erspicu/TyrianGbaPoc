@@ -642,6 +642,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_projectile_cache_upload_coalesces = 0;
     telemetry_projectile_cache_max_uploads = 0;
     telemetry_projectile_cache_max_visible_unique = 0;
+    telemetry_structural_oam_required_max = 0;
+    telemetry_effect_oam_culls = 0;
+    telemetry_enemy_shot_oam_culls = 0;
+    telemetry_player_shot_oam_culls = 0;
     telemetry_player_shot_spawns = 0;
     telemetry_player_shot_drops = 0;
     telemetry_player_shot_max_active = 0;
@@ -663,11 +667,11 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_background_held_rows_max = 0;
     telemetry_vblank_recovery_loops = 0;
     telemetry_audio_frames = 0;
+    telemetry_projectile_visible_capacity_drops = 0;
 #if TYRIAN_GBA_STRESS_LOADOUT
     telemetry_projectile_culled_offscreen_before_cache = 0;
     telemetry_projectile_culled_oam_full_before_cache = 0;
     telemetry_projectile_post_visibility_acquires = 0;
-    telemetry_projectile_visible_capacity_drops = 0;
 #endif
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
     telemetry_stress_logic_cycles_total = 0;
