@@ -821,11 +821,16 @@ static u8 frontend_demo_apply_input(void)
 
 static void frontend_advance_episode(void)
 {
-    if (frontend_episode + 1u >= OT_EPISODE_COUNT) {
-        enter_title();
-        return;
-    }
-    frontend_episode++;
+    /*
+     * JE_nextEpisode()/JE_findNextEpisode() is cyclic.  Completing Episode
+     * 4 (including its authored "Skip It" destination) wraps to Episode 1,
+     * sets mainLevel/saveLevel to FIRST_LEVEL and continues the campaign;
+     * it does not return to the title screen.
+     */
+    frontend_episode =
+        frontend_episode + 1u >= OT_EPISODE_COUNT ?
+            0 :
+            (u8)(frontend_episode + 1u);
     frontend_main_section = 1;
     frontend_map = (OtEpisodeMap){0};
     frontend_level = (OtEpisodeLevel){0};

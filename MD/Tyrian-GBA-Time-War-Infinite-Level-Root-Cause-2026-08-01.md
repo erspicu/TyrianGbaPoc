@@ -67,8 +67,11 @@ section）與 `]b[`（建立進入小遊戲前的備份）。PC `JE_loadMap()`
    Arcade/Galaga 重生規則。
 3. 補回 Galaga 的無護盾、敵方開火頻率、難度護甲倍率與分數換命規則。
 4. 最後一命死亡後回到正確的 section 44 備份／選單流程。
-5. 開發無敵旗標在「死亡就是關卡完成條件」的生存小遊戲中不攔截
-   正常離場；一般關卡仍可維持使用者要求的無敵測試模式。
+5. 開發無敵旗標維持「全程無敵」的單一、可預期語意；此模式下
+   Time War 不可能藉由死亡離場，開發測試改用原始 Next Level
+   section 44 的 `Skip It` 路線。生存關正常死亡回歸的自動測試會
+   以 `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0` 單獨編譯，不改動 release
+   的開發無敵設定。
 6. 新增 `scripted-survival-autotest`，固定驗證三命、GAME OVER、
    checkpoint 與 Game Menu 回復，不依賴單一使用者存檔。
 
@@ -95,3 +98,8 @@ map 維持 `6144 bytes` EWRAM link-time 餘量。
 `TGD2 game_over_pass=1, full_pass=1, normal_weapon_pass=1`，且死亡音樂
 自然停止一次、回到 Game Menu 的 exit count 為 1，證明特殊處理沒有
 改壞普通死亡流程。
+
+2026-08-01 追加驗證：無敵開發版從 section 44 選擇
+`Skip It` 後，現在依 PC `JE_nextEpisode()` 週期轉到 Episode 1
+section 1 的 Game Menu，不再錯誤回到程式首頁。獨立回歸簽章為
+`TGSI schema=1, pass=1`。

@@ -224,6 +224,7 @@ ROMFS_MATRIX_TEST_TARGET := tyrian_gba_romfs_all_levels_matrix_v40_$(CONFIG_SUFF
 ROUTE_TEST_TARGET := tyrian_gba_route_smoke_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_v40_$(CONFIG_SUFFIX)
 ARCADE_ROUTE_TEST_TARGET := tyrian_gba_arcade_route_smoke_ep1_section1_v40_$(CONFIG_SUFFIX)
 SCRIPTED_SURVIVAL_TEST_TARGET := tyrian_gba_time_war_exit_autotest_v64_$(CONFIG_SUFFIX)
+EPISODE_WRAP_TEST_TARGET := tyrian_gba_episode4_skip_it_autotest_v65_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v40_$(CONFIG_SUFFIX)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
@@ -421,7 +422,7 @@ MAIN_INCLUDES := \
 .PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
 	save-autotest \
 	romfs-matrix-autotest route-smoke-autotest arcade-route-smoke-autotest \
-	scripted-survival-autotest \
+	scripted-survival-autotest episode-wrap-autotest \
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
 	frontend-menu-stress frontend-nav-stress frontend-nav-camera-stress \
@@ -447,6 +448,8 @@ route-smoke-autotest: $(BUILD)/$(ROUTE_TEST_TARGET).gba
 arcade-route-smoke-autotest: $(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).gba
 
 scripted-survival-autotest: $(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).gba
+
+episode-wrap-autotest: $(BUILD)/$(EPISODE_WRAP_TEST_TARGET).gba
 
 campaign-smoke-autotest: $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba
 
@@ -597,6 +600,19 @@ $(BUILD)/main_scripted_survival_test_$(CONFIG_SUFFIX).o: \
 		-DAUTOTEST_SCRIPTED_SURVIVAL_FLOW \
 		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=4 \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=37 \
+		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=0 \
+		-MMD -MP -c $< -o $@
+
+$(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) $(BUILD_VERSION_HEADER) | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST \
+		-DAUTOTEST_EPISODE_WRAP_FLOW \
+		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=4 \
+		-DAUTOTEST_FRONTEND_ROUTE_SECTION=44 \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1 \
 		-MMD -MP -c $< -o $@
 
@@ -792,6 +808,13 @@ $(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).elf: \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
+$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).elf: \
+		$(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).map $^ \
+		-lmm -lgba -o $@
+	$(SIZE) $@
+
 $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf: \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
@@ -891,6 +914,11 @@ $(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR TIME WAR" -cTYGH -m00
 
+$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).gba: \
+		$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR SKIP IT" -cTYGI -m00
+
 $(BUILD)/$(CAMPAIGN_TEST_TARGET).gba: $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYRIAN CAMP" -cTYGC -m00
@@ -951,6 +979,8 @@ clean:
 		$(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_scripted_survival_test_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_scripted_survival_test_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
@@ -1002,6 +1032,12 @@ clean:
 		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).elf \
 		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).gba \
 		$(BUILD)/$(ARCADE_ROUTE_TEST_TARGET).map \
+		$(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).elf \
+		$(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).gba \
+		$(BUILD)/$(SCRIPTED_SURVIVAL_TEST_TARGET).map \
+		$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).elf \
+		$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).gba \
+		$(BUILD)/$(EPISODE_WRAP_TEST_TARGET).map \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).elf \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).gba \
 		$(BUILD)/$(CAMPAIGN_TEST_TARGET).map \
@@ -1044,6 +1080,8 @@ distclean: clean
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_scripted_survival_test_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d
 -include $(STRESS_LEVEL_OBJECT:.o=.d)

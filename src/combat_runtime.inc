@@ -856,12 +856,12 @@ static u16 player_damage(u16 damage)
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
     /*
      * Development validation still records the collision, but deliberately
-     * leaves the translated shield, armor and death state untouched.  The
-     * authored ENGAGE survival games are the exception: final death is their
-     * only exit condition, so blocking damage there creates an infinite
-     * level that cannot exist in the PC flow.
+     * leaves the translated shield, armor and death state untouched.  This
+     * flag is intentionally absolute: an authored survival game cannot end
+     * through death while it is enabled, so developers use its source
+     * Next-Level "Skip It" route instead.
      */
-    if (!source_parity_level.engage_mode) return 0;
+    return 0;
 #endif
 #if defined(AUTOTEST) && !defined(AUTOTEST_FORCE_PLAYER_DEATH)
     /*

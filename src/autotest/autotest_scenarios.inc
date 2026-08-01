@@ -225,6 +225,85 @@ static void autotest_full_loadout_stress_finish(void)
 }
 #endif
 
+#ifdef AUTOTEST_EPISODE_WRAP_FLOW
+static u8 autotest_episode_wrap_selected;
+static u8 autotest_episode_wrap_source_pass;
+
+static u16 autotest_episode_wrap_input(void)
+{
+    if (frontend_transition_busy() || frontend_frame_pending) return 0;
+    if (
+        game_state == STATE_NEXT_LEVEL_MENU &&
+        !autotest_episode_wrap_selected
+    ) {
+        autotest_episode_wrap_source_pass = (u8)(
+            frontend_episode == 3 &&
+            frontend_main_section == 44 &&
+            frontend_map_ready &&
+            frontend_map.requested_section == 44 &&
+            frontend_map.choice_count == 2 &&
+            frontend_map.map_planet[1] == 21 &&
+            frontend_map.map_section[1] == 42 &&
+            frontend_map_level[1].episode_complete
+        );
+        frontend_selection = 1;
+        autotest_episode_wrap_selected = 1;
+        return KEY_A;
+    }
+    return 0;
+}
+
+static void autotest_episode_wrap_finish_update(void)
+{
+    const OtDataCatalog *catalog;
+    volatile u8 *sram;
+    u8 passed;
+
+    if (
+        !autotest_episode_wrap_selected ||
+        game_state != STATE_GAME_MENU ||
+        frontend_transition_busy() ||
+        frontend_frame_pending
+    ) {
+        return;
+    }
+
+    catalog = ot_data_catalog();
+    passed = (u8)(
+        autotest_episode_wrap_source_pass &&
+        frontend_episode == 0 &&
+        frontend_main_section == 1 &&
+        frontend_map_ready &&
+        frontend_map.requested_section == 1 &&
+        !frontend_map.episode_complete &&
+        frontend_selection == 4 &&
+        game_state == STATE_GAME_MENU &&
+        frontend_mode4_active &&
+        catalog != 0 &&
+        mmActive()
+    );
+
+    sram = (volatile u8 *)0x0e000000;
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'S';
+    sram[3] = 'I';
+    sram[4] = 1;
+    sram[5] = passed;
+    sram_write_u32(8, autotest_episode_wrap_source_pass);
+    sram_write_u32(12, frontend_episode);
+    sram_write_u32(16, frontend_main_section);
+    sram_write_u32(20, frontend_map.requested_section);
+    sram_write_u32(24, game_state);
+    sram_write_u32(28, frontend_selection);
+    sram_write_u32(32, frontend_map.choice_count);
+    sram_write_u32(36, frontend_map.resolved_section);
+    sram_write_u32(40, TYRIAN_GBA_DEV_PLAYER_INVINCIBLE);
+    sram_write_u32(44, mmActive());
+    __asm__ volatile("swi 3");
+}
+#endif
+
 #ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
 static u8 autotest_scripted_survival_exit_pending;
 static u8 autotest_scripted_survival_game_over_pass;

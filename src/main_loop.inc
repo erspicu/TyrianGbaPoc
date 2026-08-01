@@ -459,6 +459,8 @@ int main(void)
             pad_pressed = autotest_jukebox_input();
 #elif defined(AUTOTEST_DEMO_FLOW)
             pad_pressed = autotest_demo_input();
+#elif defined(AUTOTEST_EPISODE_WRAP_FLOW)
+            pad_pressed = autotest_episode_wrap_input();
 #elif defined(AUTOTEST_FRONTEND_STRESS)
             pad_pressed =
                 game_state == STATE_GAME_MENU ?
@@ -1239,6 +1241,9 @@ int main(void)
 #endif
 #ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
             autotest_scripted_survival_finish_update();
+#endif
+#ifdef AUTOTEST_EPISODE_WRAP_FLOW
+            autotest_episode_wrap_finish_update();
 #endif
 #ifdef AUTOTEST
             if (
