@@ -324,6 +324,8 @@ static u8 source_player_equipment_apply(void)
 
 static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
 {
+    u8 scripted_arcade;
+
     if (
         selected_level == 0 ||
         selected_level->episode == 0 ||
@@ -341,6 +343,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     }
     frontend_level = *selected_level;
     frontend_level_ready = 1;
+    scripted_arcade = (u8)(
+        selected_level->engage_mode || selected_level->galaga_mode
+    );
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
         return 0;
@@ -471,7 +476,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     ot_level_port_init(
         &source_parity_level,
         frontend_difficulty,
-        frontend_play_mode == FRONTEND_PLAY_ARCADE,
+        frontend_play_mode == FRONTEND_PLAY_ARCADE || scripted_arcade,
         false
     );
 #ifdef AUTOTEST
@@ -485,7 +490,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     ot_level_port_init(
         &source_parity_level,
         frontend_difficulty,
-        frontend_play_mode == FRONTEND_PLAY_ARCADE,
+        frontend_play_mode == FRONTEND_PLAY_ARCADE || scripted_arcade,
         false
     );
 #ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
@@ -499,6 +504,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     );
 #endif
 #endif
+    source_parity_level.engage_mode = selected_level->engage_mode;
+    source_parity_level.galaga_mode = selected_level->galaga_mode;
+    if (source_parity_level.galaga_mode) {
+        /* tyrian2.c start_level_first: Galaga always begins at Normal. */
+        source_parity_level.difficulty_level =
+            FRONTEND_DIFFICULTY_NORMAL;
+    }
     if (frontend_demo_active) {
         source_parity_level.player_front_weapon_id =
             frontend_demo_header.front_weapon;
@@ -526,9 +538,30 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
             frontend_demo_header.sidekick_level;
         source_parity_level.player_sidekick_series =
             frontend_demo_header.sidekick_series;
+    } else if (selected_level->engage_mode) {
+        /*
+         * Literal levelsN.dat ]e branch from JE_loadMap().  These values are
+         * level-local: the ]b checkpoint restores the campaign equipment and
+         * cash when the scripted survival game consumes its final life.
+         */
+        source_parity_level.player_ship = 13;
+        source_parity_level.player_front_weapon_id = 39;
+        source_parity_level.player_front_weapon_power = 3;
+        source_parity_level.player_rear_weapon_id = 0;
+        source_parity_level.player_rear_weapon_power = 1;
+        source_parity_level.player_sidekick[0] = 0;
+        source_parity_level.player_sidekick[1] = 0;
+        source_parity_level.player_generator = 2;
+        source_parity_level.player_shield_item = 4;
+        source_parity_level.player_special = 0;
+        source_parity_level.player_weapon_mode = 1;
+        player_cash = 0;
     } else {
         frontend_campaign_apply_to_level();
     }
+    frontend_script_game_active = (u8)(
+        !frontend_demo_active && selected_level->engage_mode
+    );
     player_lives = source_parity_level.arcade_mode ?
         source_parity_level.player_front_weapon_power :
         1;
@@ -789,6 +822,9 @@ static u8 enter_level(u16 selected_section)
     ) {
         frontend_level_ready = 0;
         return 0;
+    }
+    if (frontend_map_ready && frontend_map.extra_game) {
+        selected_level.extra_game = true;
     }
     return enter_selected_level(&selected_level);
 }

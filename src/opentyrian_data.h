@@ -270,9 +270,13 @@ typedef struct {
         cube_operation[OT_EPISODE_CUBE_OPERATION_CAPACITY];
     uint8_t cube_operation_count;
     uint8_t menu_song;
+    uint16_t save_section;
     bool item_inventory_valid;
     bool cube_list_valid;
     bool menu_song_valid;
+    bool save_section_valid;
+    bool backup_requested;
+    bool extra_game;
     bool direct_level;
     bool episode_complete;
 } OtEpisodeMap;
@@ -290,6 +294,9 @@ typedef struct {
     uint16_t source_song;
     bool bonus_level;
     bool normal_bonus_level;
+    bool engage_mode;
+    bool galaga_mode;
+    bool extra_game;
     bool episode_complete;
     char level_name[10];
     uint8_t cube_list[OT_EPISODE_CUBE_CAPACITY];

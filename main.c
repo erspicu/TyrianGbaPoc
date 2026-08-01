@@ -1040,6 +1040,27 @@ typedef struct {
     u8 weapon_mode;
 } FrontendPlayerItems;
 
+/*
+ * JE_loadMap()'s ]s / ]b "LAST LEVEL" checkpoint.  The PC stores this in
+ * its reserved backup slot before entering ENGAGE/GALAGA bonus games.  The
+ * GBA front end keeps the equivalent campaign snapshot separate from the
+ * eleven user-visible save slots so a scripted survival game can restore
+ * the exact pre-game route, equipment, cash and cube state on final death.
+ */
+typedef struct {
+    FrontendPlayerItems items;
+    u32 cash;
+    u16 main_section;
+    u8 play_mode;
+    u8 episode;
+    u8 difficulty;
+    u8 armor;
+    u8 shield;
+    u8 shield_max;
+    u8 cube_count;
+    u8 cube_list[OT_EPISODE_CUBE_CAPACITY];
+} FrontendScriptCheckpoint;
+
 #define BOX_OVERLAPS(ax, ay, aw, ah, bx, by, bw, bh) \
     ((ax) + (aw) > (bx) && (bx) + (bw) > (ax) && \
      (ay) + (ah) > (by) && (by) + (bh) > (ay))
@@ -1290,6 +1311,7 @@ static u8 frontend_text_ready;
 static u8 frontend_map_ready;
 static u8 frontend_level_ready;
 static FrontendPlayerItems frontend_player_items EWRAM_BSS;
+static u8 frontend_script_game_active EWRAM_BSS;
 /* OpenTyrian game_menu.c old_items[0]: entry loadout, then the accepted
  * preview after the first confirm while the cursor advances to Done. */
 static FrontendPlayerItems frontend_upgrade_accepted_items EWRAM_BSS;
@@ -2307,6 +2329,14 @@ static void frontend_campaign_apply_level_script(
     const OtEpisodeLevel *level
 );
 static void frontend_campaign_sync_from_level(void);
+static void frontend_script_checkpoint_apply_map(
+    const OtEpisodeMap *map
+);
+static void frontend_script_checkpoint_clear(void);
+static u8 frontend_script_checkpoint_read(
+    FrontendScriptCheckpoint *checkpoint
+);
+static u8 frontend_script_checkpoint_restore(void);
 static void jukebox_commit_vblank(void);
 static void jukebox_enter(void);
 static void jukebox_update(void);

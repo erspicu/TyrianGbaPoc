@@ -216,6 +216,17 @@ int main(void)
         __asm__ volatile("swi 3");
     }
 #endif
+#if defined(AUTOTEST_SCRIPTED_SURVIVAL_FLOW) && \
+    !defined(AUTOTEST_LOAD_SAVE_SLOT)
+    /*
+     * Keep the permanent Time War regression self-contained.  A separate
+     * diagnostic build may still define AUTOTEST_LOAD_SAVE_SLOT to replay
+     * an exact user SRAM image through the same production path.
+     */
+    frontend_episode = 3;
+    frontend_play_mode = FRONTEND_PLAY_FULL_GAME;
+    frontend_campaign_initialize();
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     /*
      * Visual/test-only direct route entry.  Release builds always traverse
@@ -619,6 +630,9 @@ int main(void)
                 telemetry_display_frames++;
 #ifdef AUTOTEST_DEATH_FLOW
                 autotest_death_update();
+#endif
+#ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
+                autotest_scripted_survival_update();
 #endif
             }
         } else if (game_state == STATE_JUKEBOX) {
@@ -1222,6 +1236,9 @@ int main(void)
 #endif
 #ifdef AUTOTEST_DEATH_FLOW
             autotest_death_finish_update();
+#endif
+#ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
+            autotest_scripted_survival_finish_update();
 #endif
 #ifdef AUTOTEST
             if (

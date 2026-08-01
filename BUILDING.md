@@ -92,6 +92,11 @@ Game Menu 的 Options 提供 Load、Save、Done，並沿用 PC 單人模式的
 commit byte；每個 VBlank 最多寫 64 bytes，寫入中斷時仍可回退到上一個
 完整 bank。
 
+`0x5FC0..0x5FFF` 另保留 64 bytes 給 PC `LAST LEVEL` 的隱藏 rollback
+checkpoint；它不會出現在玩家可選的 11 個槽中。這筆資料同樣有 schema、
+CRC32 與最後 commit byte，只在進入 `]s`／`]b` 特殊關及最終死亡回復時
+讀寫，因此不占用 gameplay EWRAM，也不影響一般存檔 bank 格式。
+
 首頁的 `Load Game` 目前依需求只顯示為停用項目；實際讀檔入口是
 `Game Menu > Options > Load`。格式、欄位、手把命名操作與自動測試詳見
 `MD/Tyrian-GBA-Save-Load-Build-ID-v61.md`。

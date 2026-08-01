@@ -419,6 +419,8 @@ static void frontend_campaign_initialize(void)
         player_shield_max = 0;
     }
     frontend_player_items_valid = 1;
+    frontend_script_checkpoint_clear();
+    frontend_script_game_active = 0;
 }
 
 static void frontend_campaign_apply_to_level(void)
@@ -1165,6 +1167,12 @@ static u8 frontend_prepare_map_begin(void)
     ) {
         return 0;
     }
+    /*
+     * JE_loadMap() executes ]s / ]b only after following the authored
+     * section chain.  Apply the resolved directives while campaign state
+     * still describes the level preceding a scripted bonus game.
+     */
+    frontend_script_checkpoint_apply_map(&frontend_map);
     /*
      * JE_loadMap() executes ]?, ]! and ]+ before ]I opens Game Menu.
      * Applying them here makes the four stock Data cubes visible on the

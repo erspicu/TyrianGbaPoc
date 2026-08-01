@@ -344,6 +344,7 @@ typedef struct {
     uint16_t level_enemy_frequency;
     uint16_t super_enemy_254_jump;
     uint16_t galaga_shot_frequency;
+    uint32_t galaga_life_threshold;
     int16_t current_song;
     uint8_t music_fade_volume;
     uint8_t level_end;
@@ -399,6 +400,9 @@ typedef struct {
     bool random_explosions;
     bool small_enemy_adjust;
     bool arcade_mode;
+    /* levelsN.dat ]e / ]g are independent of the user's Play Mode. */
+    bool engage_mode;
+    bool galaga_mode;
     bool level_timer;
     bool return_active;
     bool filter_active;

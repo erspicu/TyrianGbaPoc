@@ -1776,7 +1776,7 @@ bool ot_data_episode_level_resolve(
                 break;
 
             case '2':
-                if (play_mode != 0) {
+                if (play_mode != 0 || resolved.engage_mode) {
                     section = script_number(line + 3);
                     jumped = true;
                 }
@@ -1836,6 +1836,20 @@ bool ot_data_episode_level_resolve(
                         return false;
                     }
                 } while (line[0] != '#');
+                break;
+
+            case 'e':
+                /* JE_loadMap(): fixed ENGAGE loadout / onePlayerAction. */
+                resolved.engage_mode = true;
+                break;
+
+            case 'g':
+                /* JE_loadMap(): GALAGA survival rules. */
+                resolved.galaga_mode = true;
+                break;
+
+            case 'x':
+                resolved.extra_game = true;
                 break;
 
             case '?':
@@ -1954,6 +1968,7 @@ bool ot_data_episode_map_resolve(
     char line[256];
     uint16_t section = main_section;
     uint8_t jump_count;
+    bool scripted_arcade = false;
 
     if (!initialization_attempted) ot_data_init();
     if (
@@ -2002,7 +2017,7 @@ bool ot_data_episode_map_resolve(
                 break;
 
             case '2':
-                if (play_mode != 0) {
+                if (play_mode != 0 || scripted_arcade) {
                     section = script_number(line + 3);
                     jumped = true;
                 }
@@ -2083,6 +2098,26 @@ bool ot_data_episode_map_resolve(
                         return false;
                     }
                 } while (line[0] != '#');
+                break;
+
+            case 's':
+                /* JE_loadMap(): saveLevel = mainLevel. */
+                resolved.save_section = section;
+                resolved.save_section_valid = true;
+                break;
+
+            case 'b':
+                /* JE_loadMap(): explicit LAST LEVEL backup. */
+                resolved.backup_requested = true;
+                break;
+
+            case 'x':
+                resolved.extra_game = true;
+                break;
+
+            case 'e':
+                /* ]e enables onePlayerAction before any later ]2 branch. */
+                scripted_arcade = true;
                 break;
 
             case '?':

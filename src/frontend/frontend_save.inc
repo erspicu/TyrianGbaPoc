@@ -24,6 +24,11 @@ enum {
     FRONTEND_SAVE_PAGE_BYTES =
         FRONTEND_SAVE_HEADER_BYTES + FRONTEND_SAVE_PAYLOAD_BYTES,
     FRONTEND_SAVE_BANK_BYTES = 0x1000,
+    /* PC LAST LEVEL is an internal slot, not one of the eleven named saves. */
+    FRONTEND_SCRIPT_CHECKPOINT_OFFSET = 0x5fc0,
+    FRONTEND_SCRIPT_CHECKPOINT_BYTES = 64,
+    FRONTEND_SCRIPT_CHECKPOINT_COMMIT = 0xc7,
+    FRONTEND_SCRIPT_CHECKPOINT_SCHEMA = 1,
     FRONTEND_SAVE_BANK_0_OFFSET = 0x6000,
     FRONTEND_SAVE_BANK_1_OFFSET = 0x7000,
     FRONTEND_SAVE_COMMIT = 0xa5,
@@ -190,6 +195,202 @@ static void frontend_save_string_copy(
     }
     destination[index] = '\0';
     while (++index < capacity) destination[index] = '\0';
+}
+
+static u32 frontend_script_checkpoint_crc(const u8 *page)
+{
+    u32 crc = 0xffffffffu;
+    u8 index;
+
+    /* Commit byte and the stored CRC at bytes 40..43 are excluded. */
+    for (index = 1; index < 40; index++) {
+        crc = frontend_save_crc_byte(crc, page[index]);
+    }
+    for (index = 44; index < FRONTEND_SCRIPT_CHECKPOINT_BYTES; index++) {
+        crc = frontend_save_crc_byte(crc, page[index]);
+    }
+    return crc ^ 0xffffffffu;
+}
+
+static void frontend_script_checkpoint_clear(void)
+{
+    frontend_save_sram()[FRONTEND_SCRIPT_CHECKPOINT_OFFSET] = 0;
+}
+
+static void frontend_script_checkpoint_write(u16 main_section)
+{
+    volatile u8 *sram = frontend_save_sram();
+    u8 page[FRONTEND_SCRIPT_CHECKPOINT_BYTES];
+    u8 index;
+
+    memset(page, 0, sizeof(page));
+    page[1] = 'A';
+    page[2] = 'T';
+    page[3] = 'G';
+    page[4] = 'C';
+    page[5] = FRONTEND_SCRIPT_CHECKPOINT_SCHEMA;
+    page[6] = frontend_play_mode;
+    page[7] = frontend_episode;
+    page[8] = frontend_difficulty;
+    page[9] = player_armor;
+    page[10] = player_shield;
+    page[11] = player_shield_max;
+    page[12] = frontend_data_cube_count;
+    memcpy(page + 13, frontend_data_cube_list, OT_EPISODE_CUBE_CAPACITY);
+    page[17] = frontend_player_items.ship;
+    page[18] = frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id;
+    page[19] = frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power;
+    page[20] = frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id;
+    page[21] = frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power;
+    page[22] = frontend_player_items.shield;
+    page[23] = frontend_player_items.generator;
+    page[24] = frontend_player_items.sidekick[0];
+    page[25] = frontend_player_items.sidekick[1];
+    page[26] = frontend_player_items.special;
+    page[27] = frontend_player_items.sidekick_level;
+    page[28] = frontend_player_items.sidekick_series;
+    page[29] = frontend_player_items.super_arcade_mode;
+    page[30] = frontend_player_items.weapon_mode;
+    frontend_save_u32_write(page + 32, player_cash);
+    frontend_save_u16_write(page + 36, main_section);
+    frontend_save_u32_write(page + 40, frontend_script_checkpoint_crc(page));
+
+    /* Power-loss safety: invalidate first and commit only after the payload. */
+    sram[FRONTEND_SCRIPT_CHECKPOINT_OFFSET] = 0;
+    for (index = 1; index < FRONTEND_SCRIPT_CHECKPOINT_BYTES; index++) {
+        sram[FRONTEND_SCRIPT_CHECKPOINT_OFFSET + index] = page[index];
+    }
+    sram[FRONTEND_SCRIPT_CHECKPOINT_OFFSET] =
+        FRONTEND_SCRIPT_CHECKPOINT_COMMIT;
+}
+
+static u8 frontend_script_checkpoint_read(
+    FrontendScriptCheckpoint *checkpoint
+)
+{
+    volatile u8 *sram = frontend_save_sram();
+    u8 page[FRONTEND_SCRIPT_CHECKPOINT_BYTES];
+    u8 index;
+
+    if (
+        checkpoint == 0 ||
+        sram[FRONTEND_SCRIPT_CHECKPOINT_OFFSET] !=
+            FRONTEND_SCRIPT_CHECKPOINT_COMMIT
+    ) {
+        return 0;
+    }
+    for (index = 0; index < FRONTEND_SCRIPT_CHECKPOINT_BYTES; index++) {
+        page[index] = sram[FRONTEND_SCRIPT_CHECKPOINT_OFFSET + index];
+    }
+    if (
+        page[0] != FRONTEND_SCRIPT_CHECKPOINT_COMMIT ||
+        page[1] != 'A' ||
+        page[2] != 'T' ||
+        page[3] != 'G' ||
+        page[4] != 'C' ||
+        page[5] != FRONTEND_SCRIPT_CHECKPOINT_SCHEMA ||
+        page[6] > FRONTEND_PLAY_ARCADE ||
+        page[7] >= OT_EPISODE_COUNT ||
+        page[8] < FRONTEND_DIFFICULTY_EASY ||
+        page[8] > FRONTEND_DIFFICULTY_HARD ||
+        page[12] > OT_EPISODE_CUBE_CAPACITY ||
+        frontend_save_u16_read(page + 36) == 0 ||
+        frontend_save_u32_read(page + 40) !=
+            frontend_script_checkpoint_crc(page)
+    ) {
+        return 0;
+    }
+
+    memset(checkpoint, 0, sizeof(*checkpoint));
+    checkpoint->play_mode = page[6];
+    checkpoint->episode = page[7];
+    checkpoint->difficulty = page[8];
+    checkpoint->armor = page[9];
+    checkpoint->shield = page[10];
+    checkpoint->shield_max = page[11];
+    checkpoint->cube_count = page[12];
+    memcpy(
+        checkpoint->cube_list,
+        page + 13,
+        OT_EPISODE_CUBE_CAPACITY
+    );
+    checkpoint->items.ship = page[17];
+    checkpoint->items.weapon[FRONTEND_WEAPON_FRONT].id = page[18];
+    checkpoint->items.weapon[FRONTEND_WEAPON_FRONT].power = page[19];
+    checkpoint->items.weapon[FRONTEND_WEAPON_REAR].id = page[20];
+    checkpoint->items.weapon[FRONTEND_WEAPON_REAR].power = page[21];
+    checkpoint->items.shield = page[22];
+    checkpoint->items.generator = page[23];
+    checkpoint->items.sidekick[0] = page[24];
+    checkpoint->items.sidekick[1] = page[25];
+    checkpoint->items.special = page[26];
+    checkpoint->items.sidekick_level = page[27];
+    checkpoint->items.sidekick_series = page[28];
+    checkpoint->items.super_arcade_mode = page[29];
+    checkpoint->items.weapon_mode = page[30];
+    checkpoint->cash = frontend_save_u32_read(page + 32);
+    checkpoint->main_section = frontend_save_u16_read(page + 36);
+    return 1;
+}
+
+/*
+ * Direct campaign-state counterpart of levelsN.dat ]s / ]b.  This is kept
+ * separate from the user slot encoder because OpenTyrian's LAST LEVEL slot
+ * is an internal rollback point, not a player-selected save destination.
+ * A compact atomic SRAM record also avoids permanently charging scarce EWRAM.
+ */
+static void frontend_script_checkpoint_apply_map(
+    const OtEpisodeMap *map
+)
+{
+    u16 checkpoint_section;
+
+    if (map == 0) return;
+    checkpoint_section = map->save_section_valid ?
+        map->save_section :
+        frontend_main_section;
+    if (map->backup_requested) {
+        frontend_script_checkpoint_write(checkpoint_section);
+    }
+    if (map->save_section_valid) {
+        frontend_main_section = map->save_section;
+    }
+}
+
+static u8 frontend_script_checkpoint_restore(void)
+{
+    FrontendScriptCheckpoint checkpoint;
+
+    if (!frontend_script_checkpoint_read(&checkpoint)) return 0;
+
+    frontend_player_items = checkpoint.items;
+    frontend_player_items_valid = 1;
+    player_cash = checkpoint.cash;
+    frontend_main_section = checkpoint.main_section;
+    frontend_play_mode = checkpoint.play_mode;
+    frontend_episode = checkpoint.episode;
+    frontend_difficulty = checkpoint.difficulty;
+    player_armor = checkpoint.armor;
+    player_shield = checkpoint.shield;
+    player_shield_max = checkpoint.shield_max;
+    frontend_data_cube_count = checkpoint.cube_count;
+    memcpy(
+        frontend_data_cube_list,
+        checkpoint.cube_list,
+        sizeof(frontend_data_cube_list)
+    );
+    frontend_data_page_count = 0;
+    frontend_data_cache_valid = 0;
+    frontend_level_cube_start_count = frontend_data_cube_count;
+    frontend_ship_panel_cache_valid = 0;
+    frontend_map = (OtEpisodeMap){0};
+    memset(frontend_map_level, 0, sizeof(frontend_map_level));
+    frontend_level = (OtEpisodeLevel){0};
+    frontend_map_ready = 0;
+    frontend_level_ready = 0;
+    frontend_level_completed = 0;
+    frontend_script_game_active = 0;
+    return 1;
 }
 
 static void frontend_save_slot_encode(u8 *output, const FrontendSaveSlot *slot)
@@ -1237,6 +1438,8 @@ static u8 frontend_save_apply_slot(u8 slot)
     frontend_map_ready = 0;
     frontend_level_ready = 0;
     frontend_level_completed = 0;
+    frontend_script_checkpoint_clear();
+    frontend_script_game_active = 0;
     return 1;
 }
 
@@ -1547,6 +1750,12 @@ static u8 frontend_save_frontend_update(void)
 _Static_assert(
     FRONTEND_SAVE_PAGE_BYTES < FRONTEND_SAVE_BANK_BYTES,
     "serialized campaign snapshot must fit one SRAM bank"
+);
+_Static_assert(
+    FRONTEND_SCRIPT_CHECKPOINT_OFFSET +
+        FRONTEND_SCRIPT_CHECKPOINT_BYTES <=
+        FRONTEND_SAVE_BANK_0_OFFSET,
+    "internal checkpoint must not overlap named save banks"
 );
 _Static_assert(
     FRONTEND_SAVE_BANK_1_OFFSET + FRONTEND_SAVE_BANK_BYTES <= 0x8000,

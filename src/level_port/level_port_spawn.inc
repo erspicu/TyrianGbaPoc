@@ -866,6 +866,7 @@ void ot_level_port_init(
     state->player_shield_item = 4;
     state->player_ship = 1;
     state->super_arcade_power_up = 1;
+    state->galaga_life_threshold = 10000;
     state->player_armor = 10;
     state->player_shot_hit_area_x = 11;
     state->player_shot_hit_area_y = 14;

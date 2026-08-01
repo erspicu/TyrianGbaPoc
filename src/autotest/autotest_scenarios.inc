@@ -225,6 +225,103 @@ static void autotest_full_loadout_stress_finish(void)
 }
 #endif
 
+#ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
+static u8 autotest_scripted_survival_exit_pending;
+static u8 autotest_scripted_survival_game_over_pass;
+
+static void autotest_scripted_survival_update(void)
+{
+    static u8 settled_frames;
+    FrontendScriptCheckpoint checkpoint;
+    u8 checkpoint_valid;
+
+    if (autotest_scripted_survival_exit_pending) return;
+    if (++settled_frames < 4) return;
+    checkpoint_valid = frontend_script_checkpoint_read(&checkpoint);
+
+    autotest_scripted_survival_game_over_pass = (u8)(
+        game_state == STATE_GAME_OVER &&
+        frontend_script_game_active &&
+        checkpoint_valid &&
+        checkpoint.main_section == 44 &&
+        source_parity_level.arcade_mode &&
+        source_parity_level.engage_mode &&
+        source_parity_level.galaga_mode &&
+        source_parity_level.player_ship == 13 &&
+        source_parity_level.player_front_weapon_id == 39 &&
+        source_parity_level.player_front_weapon_power == 1 &&
+        player_lives == 1 &&
+        !player_alive &&
+        telemetry_game_over_music_starts == 1
+    );
+
+    /* A real player may dismiss GAME OVER immediately. */
+    pad_pressed = KEY_A;
+    game_over_update();
+    autotest_scripted_survival_exit_pending = 1;
+}
+
+static void autotest_scripted_survival_finish_update(void)
+{
+    volatile u8 *sram;
+    FrontendScriptCheckpoint checkpoint;
+    u8 checkpoint_valid;
+    u8 restored;
+
+    if (
+        !autotest_scripted_survival_exit_pending ||
+        game_state != STATE_GAME_MENU ||
+        frontend_transition_busy() ||
+        frontend_frame_pending
+    ) {
+        return;
+    }
+    checkpoint_valid = frontend_script_checkpoint_read(&checkpoint);
+
+    restored = (u8)(
+        autotest_scripted_survival_game_over_pass &&
+        !frontend_script_game_active &&
+        checkpoint_valid &&
+        frontend_main_section == 44 &&
+        frontend_map.requested_section == 44 &&
+        frontend_map_ready &&
+        frontend_player_items_valid &&
+        player_cash == checkpoint.cash &&
+        memcmp(
+            &frontend_player_items,
+            &checkpoint.items,
+            sizeof(frontend_player_items)
+        ) == 0 &&
+        frontend_selection == 4 &&
+        frontend_mode4_active &&
+        telemetry_game_over_exits == 1
+    );
+
+    sram = (volatile u8 *)0x0e000000;
+    sram[0] = 'T';
+    sram[1] = 'G';
+    sram[2] = 'S';
+    sram[3] = 'X';
+    sram[4] = 1;
+    sram[5] = restored;
+    sram_write_u32(8, checkpoint.main_section);
+    sram_write_u32(12, frontend_main_section);
+    sram_write_u32(16, frontend_map.requested_section);
+    sram_write_u32(20, game_state);
+    sram_write_u32(24, frontend_selection);
+    sram_write_u32(28, source_parity_level.player_front_weapon_power);
+    sram_write_u32(32, player_lives);
+    sram_write_u32(36, telemetry_game_over_exits);
+    sram_write_u32(40, checkpoint.cash);
+    sram_write_u32(44, player_cash);
+    sram_write_u32(48, source_parity_level.engage_mode);
+    sram_write_u32(52, source_parity_level.galaga_mode);
+    sram_write_u32(56, frontend_map.choice_count);
+    sram_write_u32(60, frontend_map.resolved_section);
+    __asm__ volatile("swi 3");
+}
+#endif
+
 #ifdef AUTOTEST_DEATH_FLOW
 static u8 autotest_death_exit_pending;
 static u8 autotest_death_game_over_pass;

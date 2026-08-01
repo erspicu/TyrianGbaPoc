@@ -443,12 +443,12 @@ static bool apply_event(
                 event->eventdat4 == 0 ||
                 state->enemy[index].linknum == event->eventdat4
             ) {
-                /*
-                 * galagaMode is false in both supported one-player modes,
-                 * matching the ordinary OpenTyrian branch.
-                 */
-                state->enemy[index].armorleft =
-                    (uint8_t)event->eventdat;
+                state->enemy[index].armorleft = (uint8_t)(
+                    state->galaga_mode ?
+                        (uint16_t)event->eventdat *
+                            (uint16_t)(state->difficulty_level / 2u) :
+                        (uint16_t)event->eventdat
+                );
                 state->enemy_control_write_count++;
             }
         }

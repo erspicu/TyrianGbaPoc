@@ -168,6 +168,22 @@ static bool ot_enemy_fire_slots(
             }
         }
 
+        /*
+         * tyrian2.c JE_drawEnemy(): Galaga suppresses stationary turrets and
+         * gates moving-enemy fire with the authored galagaShotFreq ramp.
+         * Keep the MT19937 draw at this exact post-wait-reset phase.
+         */
+        if (
+            state->galaga_mode &&
+            (
+                enemy->eyc == 0 ||
+                ot_mt_rand(state) % 400u >=
+                    state->galaga_shot_frequency
+            )
+        ) {
+            return false;
+        }
+
         /* Direct tyrian2.c JE_drawEnemy() control-opcode switch. */
         if (turret >= 251) {
             int16_t source_player_x_minus_25 =

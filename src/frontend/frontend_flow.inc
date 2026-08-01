@@ -1781,8 +1781,23 @@ static void game_over_update(void)
     }
     if (pad_pressed == 0) return;
 
-    frontend_start_game_menu_transition(
-        FRONTEND_GAME_MENU_JOB_LOAD_SONG
-    );
+    if (
+        frontend_script_game_active &&
+        frontend_script_checkpoint_restore()
+    ) {
+        /*
+         * tyrian2.c start_level death branch: ]e sets doNotSaveBackup, so
+         * the final arcade life reloads the ]s/]b LAST LEVEL checkpoint.
+         */
+        frontend_start_game_menu_transition(
+            FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
+                FRONTEND_GAME_MENU_JOB_LOAD_SONG
+        );
+    } else {
+        frontend_script_game_active = 0;
+        frontend_start_game_menu_transition(
+            FRONTEND_GAME_MENU_JOB_LOAD_SONG
+        );
+    }
     telemetry_game_over_exits++;
 }

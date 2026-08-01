@@ -15,6 +15,32 @@ static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
  */
 static void source_player_energy_update(void)
 {
+    if (source_parity_level.galaga_mode) {
+        /*
+         * Literal tyrian2.c Galaga block.  Front-weapon power aliases the
+         * remaining lives, the shield stays empty, and score thresholds
+         * award additional lives up to the source cap.
+         */
+        player_shield = 0;
+        if (player_cash >= source_parity_level.galaga_life_threshold) {
+            source_parity_level.frame_sound_queue[6] = 11;
+            source_parity_level.frame_sound_queue[7] = 21;
+            if (source_parity_level.player_front_weapon_power < 11) {
+                source_parity_level.player_front_weapon_power++;
+                player_lives =
+                    source_parity_level.player_front_weapon_power;
+            } else {
+                player_cash += 1000;
+            }
+            if (source_parity_level.galaga_life_threshold == 10000) {
+                source_parity_level.galaga_life_threshold = 20000;
+            } else {
+                source_parity_level.galaga_life_threshold += 25000;
+            }
+        }
+        player_weapon_energy = 900;
+        return;
+    }
 #ifdef AUTOTEST
     if (autotest_unlimited_weapon_energy) {
         player_weapon_energy = 900;
@@ -70,7 +96,10 @@ static u8 source_front_weapon_sync(void)
 {
     OtWeaponPortDefinition front_port;
     u8 port_id = source_parity_level.player_front_weapon_id;
-    u8 power = source_parity_level.player_front_weapon_power;
+    /* mainint.c uses power row zero while galagaMode owns power as lives. */
+    u8 power = source_parity_level.galaga_mode ?
+        1 :
+        source_parity_level.player_front_weapon_power;
     u16 weapon_id;
 
     if (
@@ -827,9 +856,12 @@ static u16 player_damage(u16 damage)
 #if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
     /*
      * Development validation still records the collision, but deliberately
-     * leaves the translated shield, armor and death state untouched.
+     * leaves the translated shield, armor and death state untouched.  The
+     * authored ENGAGE survival games are the exception: final death is their
+     * only exit condition, so blocking damage there creates an infinite
+     * level that cannot exist in the PC flow.
      */
-    return 0;
+    if (!source_parity_level.engage_mode) return 0;
 #endif
 #if defined(AUTOTEST) && !defined(AUTOTEST_FORCE_PLAYER_DEATH)
     /*
@@ -1757,10 +1789,15 @@ static u8 source_player_arcade_respawn(void)
     player_source_y = 160;
     player_invulnerable = 100;
     player_alive = 1;
-    player_armor = frontend_level.episode == 4 ?
+    player_armor = (
+        source_parity_level.galaga_mode ||
+        frontend_level.episode == 4
+    ) ?
         player_initial_armor :
         (u8)(player_initial_armor / 2u);
-    player_shield = (u8)(player_shield_max / 2u);
+    player_shield = source_parity_level.galaga_mode ?
+        0 :
+        (u8)(player_shield_max / 2u);
     source_parity_level.player_armor = player_armor;
     player_death_music_volume = 255;
     player_death_music_fade_active = 0;
@@ -1777,7 +1814,15 @@ static void update_player(void)
     s16 ship_banking;
 
 #ifdef AUTOTEST_FORCE_PLAYER_DEATH
+#ifdef AUTOTEST_SCRIPTED_SURVIVAL_FLOW
+    if (
+        source_parity_level.engage_mode &&
+        player_alive &&
+        player_invulnerable == 0
+    ) {
+#else
     if (level_tick == 2 && player_alive) {
+#endif
         player_shield = 0;
         player_armor = 0;
         player_damage(1);
