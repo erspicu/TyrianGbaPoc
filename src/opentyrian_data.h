@@ -307,6 +307,77 @@ typedef struct {
     uint8_t cube_operation_count;
 } OtEpisodeLevel;
 
+/*
+ * JE_loadMap() evaluates these three values while walking levelsN.dat.
+ * They deliberately describe the level which has just ended; the script
+ * may inspect them before the next LVL section resets gameplay state.
+ */
+typedef struct {
+    bool player_alive;
+    bool level_timer_expired;
+    uint8_t player_ship;
+} OtEpisodeRouteState;
+
+enum {
+    OT_EPISODE_SCENE_TEXT_LINE_COUNT = 10,
+    OT_EPISODE_SCENE_TEXT_LINE_BYTES = 61,
+    OT_EPISODE_SCENE_ACTION_END_MAP = 1,
+    OT_EPISODE_SCENE_ACTION_PICTURE,
+    OT_EPISODE_SCENE_ACTION_PAN_UP,
+    OT_EPISODE_SCENE_ACTION_SLIDE_UP,
+    OT_EPISODE_SCENE_ACTION_PAN_RIGHT,
+    OT_EPISODE_SCENE_ACTION_MUSIC,
+    OT_EPISODE_SCENE_ACTION_TEXT,
+    OT_EPISODE_SCENE_ACTION_CLEAR,
+    OT_EPISODE_SCENE_ACTION_FADE_BLACK,
+    OT_EPISODE_SCENE_ACTION_FLASH_CLEAR,
+    OT_EPISODE_SCENE_ACTION_ANIMATION,
+    OT_EPISODE_SCENE_ACTION_SELECT_END_HINT,
+    OT_EPISODE_SCENE_ACTION_END_EPISODE,
+};
+
+/* One source presentation command yielded by the direct script reader. */
+typedef struct {
+    uint8_t type;
+    uint8_t text_line_count;
+    uint8_t text_bank;
+    bool warning;
+    bool warning_red;
+    uint16_t value;
+    char text[
+        OT_EPISODE_SCENE_TEXT_LINE_COUNT
+    ][OT_EPISODE_SCENE_TEXT_LINE_BYTES];
+} OtEpisodeSceneAction;
+
+/*
+ * Resumable levelsN.dat reader.  data points into memory-mapped ROMFS; no
+ * generated scene table or copied script is retained in RAM.
+ */
+typedef struct {
+    OtDataView script;
+    OtEpisodeRouteState route;
+    uint32_t position;
+    uint16_t section;
+    uint8_t episode;
+    uint8_t play_mode;
+    uint8_t difficulty;
+    uint8_t jump_count;
+    uint8_t text_bank;
+    bool engage_mode;
+    bool end_hint_pending;
+    bool valid;
+    bool done;
+} OtEpisodeSceneReader;
+
+/* Sequential ANM decoder which writes only the 240x160 sampled pixels. */
+typedef struct {
+    OtDataView file;
+    uint32_t record_count;
+    uint16_t page_count;
+    uint16_t next_record;
+    bool valid;
+} OtAnmReader;
+
 typedef struct {
     bool populated;
     uint16_t width;
@@ -451,6 +522,14 @@ bool ot_data_episode_level_resolve(
     uint8_t difficulty,
     OtEpisodeLevel *level
 );
+bool ot_data_episode_level_resolve_with_route(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    const OtEpisodeRouteState *route,
+    OtEpisodeLevel *level
+);
 
 /*
  * Resolve the stock script through its ]G map-choice directive and the ]I
@@ -465,6 +544,32 @@ bool ot_data_episode_map_resolve(
     uint8_t play_mode,
     uint8_t difficulty,
     OtEpisodeMap *map
+);
+bool ot_data_episode_map_resolve_with_route(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    const OtEpisodeRouteState *route,
+    OtEpisodeMap *map
+);
+
+/*
+ * Yield the original inter-level presentation stream one blocking action at
+ * a time.  secret_hint is the source 1..9 hint block selected for ]Q.
+ */
+bool ot_data_episode_scene_begin(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    const OtEpisodeRouteState *route,
+    OtEpisodeSceneReader *reader
+);
+int8_t ot_data_episode_scene_step(
+    OtEpisodeSceneReader *reader,
+    uint8_t secret_hint,
+    OtEpisodeSceneAction *action
 );
 
 /*
@@ -549,6 +654,20 @@ bool ot_data_pic_decode(
     uint8_t picture_number,
     uint8_t *destination,
     uint32_t destination_bytes
+);
+bool ot_data_pcx_decode(
+    const char *filename,
+    uint8_t *destination,
+    uint32_t destination_bytes,
+    OtDataView *palette
+);
+bool ot_data_anm_begin(OtAnmReader *reader, OtDataView *palette);
+int8_t ot_data_anm_decode_next(
+    OtAnmReader *reader,
+    uint8_t *destination,
+    uint32_t destination_bytes,
+    uint16_t destination_width,
+    uint16_t destination_height
 );
 
 /*

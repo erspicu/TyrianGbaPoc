@@ -187,6 +187,28 @@ int main(void)
     telemetry_state_transitions = 0;
     hide_all_sprites();
     frontend_begin();
+#if defined(AUTOTEST_FRONTEND_CAPTURE_SECTION) && \
+    defined(AUTOTEST_FRONTEND_CAPTURE_EPISODE)
+    if (AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_EPISODE_SCENE) {
+        frontend_episode = AUTOTEST_FRONTEND_CAPTURE_EPISODE - 1;
+        frontend_main_section = AUTOTEST_FRONTEND_CAPTURE_SECTION;
+        frontend_play_mode = FRONTEND_PLAY_FULL_GAME;
+        frontend_campaign_initialize();
+        if (!frontend_episode_scene_begin(
+                frontend_main_section,
+                FRONTEND_SCENE_RETURN_GAME_MENU,
+                0
+            )) {
+            volatile u8 *failure_sram = (volatile u8 *)0x0e000000;
+
+            failure_sram[0] = 'T';
+            failure_sram[1] = 'G';
+            failure_sram[2] = 'S';
+            failure_sram[3] = 'F';
+            __asm__ volatile("swi 3");
+        }
+    }
+#endif
 #if TYRIAN_GBA_RECOVER_MISSED_VBLANK
     /*
      * mmVBlank() owns the physical double-buffer cadence.  Recovery may run

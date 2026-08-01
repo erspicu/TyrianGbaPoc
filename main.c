@@ -956,6 +956,12 @@ enum {
     STATE_OPTIONS_MENU = 18,
     STATE_SAVE_SLOTS = 19,
     STATE_SAVE_NAME = 20,
+    STATE_EPISODE_SCENE = 21,
+};
+
+enum {
+    FRONTEND_SCENE_RETURN_GAME_MENU = 0,
+    FRONTEND_SCENE_RETURN_LEVEL = 1,
 };
 
 enum {
@@ -1061,6 +1067,7 @@ typedef struct {
     u8 shield_max;
     u8 cube_count;
     u8 cube_list[OT_EPISODE_CUBE_CAPACITY];
+    u8 secret_hint;
 } FrontendScriptCheckpoint;
 
 #define BOX_OVERLAPS(ax, ay, aw, ah, bx, by, bw, bh) \
@@ -1308,6 +1315,25 @@ static OtEpisodeMap frontend_map EWRAM_BSS;
 static OtEpisodeLevel
     frontend_map_level[OT_EPISODE_MAP_CHOICE_COUNT] EWRAM_BSS;
 static OtEpisodeLevel frontend_level EWRAM_BSS;
+static OtEpisodeRouteState frontend_route_state EWRAM_BSS;
+static OtEpisodeSceneReader frontend_scene_reader EWRAM_BSS;
+static OtEpisodeSceneAction frontend_scene_action EWRAM_BSS;
+static OtAnmReader frontend_scene_anm EWRAM_BSS;
+static u16 frontend_scene_palette[OT_PALETTE_COLOUR_COUNT] EWRAM_BSS;
+static u16 frontend_scene_target_section EWRAM_BSS;
+static u8 frontend_scene_return_mode EWRAM_BSS;
+static u8 frontend_scene_waiting_input EWRAM_BSS;
+static u8 frontend_scene_finish_pending EWRAM_BSS;
+static u8 frontend_scene_end_episode EWRAM_BSS;
+static u8 frontend_scene_animation_active EWRAM_BSS;
+static u8 frontend_scene_episode_announcement EWRAM_BSS;
+static u8 frontend_scene_animation_wait EWRAM_BSS;
+static u8 frontend_scene_warning_delay EWRAM_BSS;
+static u8 frontend_scene_warning_bar_delay EWRAM_BSS;
+static u8 frontend_scene_warning_colour EWRAM_BSS;
+static s8 frontend_scene_warning_direction EWRAM_BSS;
+static u8 frontend_scene_secret_hint EWRAM_BSS;
+static u8 frontend_secret_hint EWRAM_BSS;
 static OtFrontendText frontend_text EWRAM_BSS;
 static u8 frontend_text_ready;
 static u8 frontend_map_ready;
@@ -2331,6 +2357,13 @@ static void frontend_campaign_apply_level_script(
     const OtEpisodeLevel *level
 );
 static void frontend_campaign_sync_from_level(void);
+static u8 frontend_episode_scene_begin(
+    u16 section,
+    u8 return_mode,
+    u16 target_section
+);
+static void frontend_episode_announcement_begin(void);
+static void frontend_episode_scene_update(void);
 static void frontend_script_checkpoint_apply_map(
     const OtEpisodeMap *map
 );

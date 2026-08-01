@@ -60,6 +60,7 @@ typedef struct {
     u8 shield_max;
     u8 cube_count;
     u8 cube_list[OT_EPISODE_CUBE_CAPACITY];
+    u8 secret_hint;
 } FrontendSaveSlot;
 
 static FrontendSaveSlot
@@ -226,6 +227,7 @@ static void frontend_script_checkpoint_write(u16 main_section)
     page[28] = frontend_player_items.sidekick_series;
     page[29] = frontend_player_items.super_arcade_mode;
     page[30] = frontend_player_items.weapon_mode;
+    page[31] = frontend_secret_hint;
     frontend_save_u32_write(page + 32, player_cash);
     frontend_save_u16_write(page + 36, main_section);
     frontend_save_u32_write(page + 40, frontend_script_checkpoint_crc(page));
@@ -303,6 +305,8 @@ static u8 frontend_script_checkpoint_read(
     checkpoint->items.sidekick_series = page[28];
     checkpoint->items.super_arcade_mode = page[29];
     checkpoint->items.weapon_mode = page[30];
+    checkpoint->secret_hint =
+        page[31] >= 1 && page[31] <= 3 ? page[31] : 1;
     checkpoint->cash = frontend_save_u32_read(page + 32);
     checkpoint->main_section = frontend_save_u16_read(page + 36);
     return 1;
@@ -356,6 +360,10 @@ static u8 frontend_script_checkpoint_restore(void)
     );
     frontend_data_page_count = 0;
     frontend_data_cache_valid = 0;
+    frontend_secret_hint = checkpoint.secret_hint;
+    frontend_route_state.player_alive = true;
+    frontend_route_state.level_timer_expired = false;
+    frontend_route_state.player_ship = checkpoint.items.ship;
     frontend_level_cube_start_count = frontend_data_cube_count;
     frontend_ship_panel_cache_valid = 0;
     frontend_map = (OtEpisodeMap){0};
@@ -402,6 +410,8 @@ static void frontend_save_slot_encode(u8 *output, const FrontendSaveSlot *slot)
         slot->level_name,
         FRONTEND_SAVE_LEVEL_NAME_BYTES
     );
+    /* Reserved byte 58 stores PC secretHint; zero is an old-save default. */
+    output[58] = slot->secret_hint;
 }
 
 static u8 frontend_save_slot_decode(
@@ -453,6 +463,8 @@ static u8 frontend_save_slot_decode(
         input + 47,
         FRONTEND_SAVE_LEVEL_NAME_BYTES
     );
+    slot->secret_hint =
+        input[58] >= 1 && input[58] <= 3 ? input[58] : 1;
     slot->name[FRONTEND_SAVE_NAME_LENGTH] = '\0';
     slot->level_name[FRONTEND_SAVE_LEVEL_NAME_BYTES - 1u] = '\0';
     return slot->name[0] != '\0';
@@ -1194,6 +1206,7 @@ static void frontend_save_capture_slot(u8 slot)
         frontend_data_cube_count > OT_EPISODE_CUBE_CAPACITY ?
             OT_EPISODE_CUBE_CAPACITY :
             frontend_data_cube_count;
+    destination->secret_hint = frontend_secret_hint;
     memcpy(
         destination->cube_list,
         frontend_data_cube_list,
@@ -1290,6 +1303,10 @@ static u8 frontend_save_apply_slot(u8 slot)
     );
     frontend_data_page_count = 0;
     frontend_data_cache_valid = 0;
+    frontend_secret_hint = source->secret_hint;
+    frontend_route_state.player_alive = true;
+    frontend_route_state.level_timer_expired = false;
+    frontend_route_state.player_ship = source->items.ship;
     frontend_level_cube_start_count = frontend_data_cube_count;
     frontend_ship_panel_cache_valid = 0;
     frontend_map = (OtEpisodeMap){0};

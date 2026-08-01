@@ -1717,11 +1717,12 @@ const OtDataCatalog *ot_data_catalog(void)
     return &catalog;
 }
 
-bool ot_data_episode_level_resolve(
+bool ot_data_episode_level_resolve_with_route(
     uint8_t episode,
     uint16_t main_section,
     uint8_t play_mode,
     uint8_t difficulty,
+    const OtEpisodeRouteState *route,
     OtEpisodeLevel *level
 )
 {
@@ -1777,6 +1778,27 @@ bool ot_data_episode_level_resolve(
 
             case '2':
                 if (play_mode != 0 || resolved.engage_mode) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'w':
+                if (route != 0 && route->player_ship == 13) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 't':
+                if (route != 0 && route->level_timer_expired) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'l':
+                if (route != 0 && !route->player_alive) {
                     section = script_number(line + 3);
                     jumped = true;
                 }
@@ -1954,11 +1976,36 @@ bool ot_data_episode_level_resolve(
     return false;
 }
 
-bool ot_data_episode_map_resolve(
+bool ot_data_episode_level_resolve(
     uint8_t episode,
     uint16_t main_section,
     uint8_t play_mode,
     uint8_t difficulty,
+    OtEpisodeLevel *level
+)
+{
+    static const OtEpisodeRouteState default_route = {
+        true,
+        false,
+        0,
+    };
+
+    return ot_data_episode_level_resolve_with_route(
+        episode,
+        main_section,
+        play_mode,
+        difficulty,
+        &default_route,
+        level
+    );
+}
+
+bool ot_data_episode_map_resolve_with_route(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    const OtEpisodeRouteState *route,
     OtEpisodeMap *map
 )
 {
@@ -2018,6 +2065,27 @@ bool ot_data_episode_map_resolve(
 
             case '2':
                 if (play_mode != 0 || scripted_arcade) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'w':
+                if (route != 0 && route->player_ship == 13) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 't':
+                if (route != 0 && route->level_timer_expired) {
+                    section = script_number(line + 3);
+                    jumped = true;
+                }
+                break;
+
+            case 'l':
+                if (route != 0 && !route->player_alive) {
                     section = script_number(line + 3);
                     jumped = true;
                 }
@@ -2196,6 +2264,32 @@ bool ot_data_episode_map_resolve(
     }
     return false;
 }
+
+bool ot_data_episode_map_resolve(
+    uint8_t episode,
+    uint16_t main_section,
+    uint8_t play_mode,
+    uint8_t difficulty,
+    OtEpisodeMap *map
+)
+{
+    static const OtEpisodeRouteState default_route = {
+        true,
+        false,
+        0,
+    };
+
+    return ot_data_episode_map_resolve_with_route(
+        episode,
+        main_section,
+        play_mode,
+        difficulty,
+        &default_route,
+        map
+    );
+}
+
+#include "opentyrian_data_episode_scene.inc"
 
 bool ot_data_episode_lvl_count(
     uint8_t episode,
@@ -2814,6 +2908,8 @@ bool ot_data_pic_decode(
     return source_offset + 1 == view.size &&
            view.data[source_offset] == 0x0c;
 }
+
+#include "opentyrian_data_presentation.inc"
 
 bool ot_data_shp_section_view(uint8_t section_number, OtDataView *view)
 {

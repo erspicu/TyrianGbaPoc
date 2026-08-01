@@ -284,7 +284,16 @@ static void frontend_transition_fail_to_title(void)
  * presented page remains stable.  mmFrame() still runs once per VBlank;
  * only the final phase schedules the atomic Mode-4 page flip.
  */
-static void frontend_transition_update(void)
+static __attribute__((
+    noinline,
+    noclone,
+    optimize(
+        "Os",
+        "no-inline-functions",
+        "no-inline-small-functions",
+        "no-inline-functions-called-once"
+    )
+)) void frontend_transition_update(void)
 {
     if (
         frontend_transition_job == FRONTEND_TRANSITION_JOB_NONE ||

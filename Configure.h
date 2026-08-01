@@ -333,6 +333,43 @@
 #define TYRIAN_GBA_LAYOUT_STATS_PROMPT_Y 148
 #endif
 
+/*
+ * Inter-level story text is rendered over the stock PC picture after a
+ * 320x200 -> 240x160 scale.  Normal prose keeps the PC y=55 relationship;
+ * warning prose begins below the flashing top bar.
+ *
+ * 關卡間劇情文字會疊在由 320x200 縮至 240x160 的 PC 原圖上。
+ * 一般文字保留 PC y=55 的相對位置；警告文字則避開頂端閃爍列。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_TEXT_X
+#define TYRIAN_GBA_LAYOUT_SCENE_TEXT_X 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_TEXT_Y
+#define TYRIAN_GBA_LAYOUT_SCENE_TEXT_Y 44
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_WARNING_TEXT_Y
+#define TYRIAN_GBA_LAYOUT_SCENE_WARNING_TEXT_Y 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT
+#define TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT 238
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_TEXT_LINE_STEP
+#define TYRIAN_GBA_LAYOUT_SCENE_TEXT_LINE_STEP 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_PROMPT_Y
+#define TYRIAN_GBA_LAYOUT_SCENE_PROMPT_Y 148
+#endif
+
+/*
+ * ZH: levelsN.dat 的 W??1x 紅色文字模式，其按鍵提示沿用 PC y=118
+ *     經 200->160 縮放的位置；這與 Wy 警告閃爍條是不同旗標。
+ * EN: Prompt Y for the W??1x red-text mode (PC y=118 scaled to 160).
+ *     This is deliberately independent from the Wy warning-bar flag.
+ */
+#ifndef TYRIAN_GBA_LAYOUT_SCENE_WARNING_PROMPT_Y
+#define TYRIAN_GBA_LAYOUT_SCENE_WARNING_PROMPT_Y 94
+#endif
+
 /* ------------------------------------------------------------------------- */
 /* Pre-GameMenu setup pages / 進入 GameMenu 前的設定頁                      */
 /* ------------------------------------------------------------------------- */

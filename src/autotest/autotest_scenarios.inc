@@ -228,6 +228,8 @@ static void autotest_full_loadout_stress_finish(void)
 #ifdef AUTOTEST_EPISODE_WRAP_FLOW
 static u8 autotest_episode_wrap_selected;
 static u8 autotest_episode_wrap_source_pass;
+static u8 autotest_episode_wrap_story_seen;
+static u8 autotest_episode_wrap_announcement_seen;
 
 static u16 autotest_episode_wrap_input(void)
 {
@@ -250,6 +252,17 @@ static u16 autotest_episode_wrap_input(void)
         autotest_episode_wrap_selected = 1;
         return KEY_A;
     }
+    if (game_state == STATE_EPISODE_SCENE) {
+        if (frontend_scene_episode_announcement) {
+            autotest_episode_wrap_announcement_seen = 1;
+            return KEY_A;
+        }
+        if (frontend_scene_waiting_input) {
+            autotest_episode_wrap_story_seen = 1;
+            return KEY_A;
+        }
+        if (frontend_scene_animation_active) return KEY_A;
+    }
     return 0;
 }
 
@@ -271,6 +284,8 @@ static void autotest_episode_wrap_finish_update(void)
     catalog = ot_data_catalog();
     passed = (u8)(
         autotest_episode_wrap_source_pass &&
+        autotest_episode_wrap_story_seen &&
+        autotest_episode_wrap_announcement_seen &&
         frontend_episode == 0 &&
         frontend_main_section == 1 &&
         frontend_map_ready &&
@@ -300,6 +315,8 @@ static void autotest_episode_wrap_finish_update(void)
     sram_write_u32(36, frontend_map.resolved_section);
     sram_write_u32(40, TYRIAN_GBA_DEV_PLAYER_INVINCIBLE);
     sram_write_u32(44, mmActive());
+    sram_write_u32(48, autotest_episode_wrap_story_seen);
+    sram_write_u32(52, autotest_episode_wrap_announcement_seen);
     __asm__ volatile("swi 3");
 }
 #endif

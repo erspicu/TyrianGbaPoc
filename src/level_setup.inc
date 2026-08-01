@@ -559,6 +559,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     } else {
         frontend_campaign_apply_to_level();
     }
+    frontend_route_state.player_alive = true;
+    frontend_route_state.level_timer_expired = false;
+    frontend_route_state.player_ship =
+        source_parity_level.player_ship;
     frontend_script_game_active = (u8)(
         !frontend_demo_active && selected_level->engage_mode
     );
@@ -811,11 +815,12 @@ static u8 enter_level(u16 selected_section)
 
     if (
         selected_section == 0 ||
-        !ot_data_episode_level_resolve(
+        !ot_data_episode_level_resolve_with_route(
             (u8)(frontend_episode + 1u),
             selected_section,
             frontend_play_mode,
             frontend_difficulty,
+            &frontend_route_state,
             &selected_level
         ) ||
         selected_level.episode_complete

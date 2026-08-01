@@ -37,6 +37,7 @@ static void autotest_save_flow(void)
     frontend_data_cube_list[1] = 4;
     frontend_data_cube_list[2] = 7;
     frontend_data_cube_list[3] = 2;
+    frontend_secret_hint = 3;
     frontend_save_string_copy(
         frontend_save_name,
         sizeof(frontend_save_name),
@@ -107,6 +108,7 @@ static void autotest_save_flow(void)
     player_shield = 0;
     player_shield_max = 0;
     frontend_data_cube_count = 0;
+    frontend_secret_hint = 0;
     memset(frontend_data_cube_list, 0, sizeof(frontend_data_cube_list));
     if (!frontend_save_apply_slot(slot)) {
         failures |= 1u << 3;
@@ -144,6 +146,7 @@ static void autotest_save_flow(void)
         frontend_data_cube_list[1] != 4 ||
         frontend_data_cube_list[2] != 7 ||
         frontend_data_cube_list[3] != 2 ||
+        frontend_secret_hint != 3 ||
         strcmp(frontend_save_slot[slot].name, "AprPilot") != 0
     ) {
         failures |= 1u << 6;

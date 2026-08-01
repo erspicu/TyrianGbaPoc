@@ -390,7 +390,16 @@ static u8 frontend_static_frame_for_state(
     }
 }
 
-static void frontend_redraw(void)
+static __attribute__((
+    noinline,
+    noclone,
+    optimize(
+        "Os",
+        "no-inline-functions",
+        "no-inline-small-functions",
+        "no-inline-functions-called-once"
+    )
+)) void frontend_redraw(void)
 {
     u8 frame;
 
@@ -836,10 +845,10 @@ static void frontend_advance_episode(void)
     frontend_level = (OtEpisodeLevel){0};
     frontend_map_ready = 0;
     frontend_level_ready = 0;
-    frontend_start_game_menu_transition(
-        FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
-        FRONTEND_GAME_MENU_JOB_LOAD_SONG
-    );
+    frontend_route_state.player_alive = true;
+    frontend_route_state.level_timer_expired = false;
+    frontend_route_state.player_ship = frontend_player_items.ship;
+    frontend_episode_announcement_begin();
 }
 
 static void frontend_begin(void)
@@ -855,6 +864,24 @@ static void frontend_begin(void)
         sizeof(frontend_map_level)
     );
     frontend_level = (OtEpisodeLevel){0};
+    frontend_route_state = (OtEpisodeRouteState){true, false, 1};
+    frontend_scene_reader = (OtEpisodeSceneReader){0};
+    frontend_scene_action = (OtEpisodeSceneAction){0};
+    frontend_scene_anm = (OtAnmReader){0};
+    frontend_scene_target_section = 0;
+    frontend_scene_return_mode = FRONTEND_SCENE_RETURN_GAME_MENU;
+    frontend_scene_waiting_input = 0;
+    frontend_scene_finish_pending = 0;
+    frontend_scene_end_episode = 0;
+    frontend_scene_animation_active = 0;
+    frontend_scene_episode_announcement = 0;
+    frontend_scene_animation_wait = 0;
+    frontend_scene_warning_delay = 0;
+    frontend_scene_warning_bar_delay = 0;
+    frontend_scene_warning_colour = (14u << 4) | 5u;
+    frontend_scene_warning_direction = 1;
+    frontend_scene_secret_hint = 1;
+    frontend_secret_hint = 1;
     frontend_text_ready =
         ot_data_frontend_text_load(&frontend_text);
     frontend_map_ready = 0;
@@ -954,7 +981,16 @@ static void frontend_move_selection(u8 item_count, s8 direction)
 /* Incremental static-menu transition jobs and their state machine. */
 #include "frontend_transition_flow.inc"
 
-static void frontend_update(void)
+static __attribute__((
+    noinline,
+    noclone,
+    optimize(
+        "Os",
+        "no-inline-functions",
+        "no-inline-small-functions",
+        "no-inline-functions-called-once"
+    )
+)) void frontend_update(void)
 {
     u16 confirm = pad_pressed & (KEY_A | KEY_START);
 
@@ -967,6 +1003,11 @@ static void frontend_update(void)
         } else {
             frontend_timer--;
         }
+        return;
+    }
+
+    if (game_state == STATE_EPISODE_SCENE) {
+        frontend_episode_scene_update();
         return;
     }
 
@@ -1125,10 +1166,16 @@ static void frontend_update(void)
                 ) {
                     frontend_main_section = frontend_level.next_section;
                 }
-                frontend_start_game_menu_transition(
-                    FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
-                    FRONTEND_GAME_MENU_JOB_LOAD_SONG
-                );
+                if (!frontend_episode_scene_begin(
+                        frontend_main_section,
+                        FRONTEND_SCENE_RETURN_GAME_MENU,
+                        0
+                    )) {
+                    frontend_start_game_menu_transition(
+                        FRONTEND_GAME_MENU_JOB_PREPARE_MAP |
+                            FRONTEND_GAME_MENU_JOB_LOAD_SONG
+                    );
+                }
 #ifdef AUTOTEST
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
                 if (
@@ -1458,7 +1505,13 @@ static void frontend_update(void)
             ) {
                 frontend_load_game_menu_song();
             } else if (frontend_map.episode_complete) {
-                frontend_advance_episode();
+                if (!frontend_episode_scene_begin(
+                        frontend_main_section,
+                        FRONTEND_SCENE_RETURN_GAME_MENU,
+                        0
+                    )) {
+                    frontend_advance_episode();
+                }
             } else {
                 frontend_nav_reset();
                 frontend_start_next_level_transition();
@@ -1551,7 +1604,13 @@ static void frontend_update(void)
                 frontend_next_map_choice(frontend_selection);
 
             if (frontend_map_level[map_choice].episode_complete) {
-                frontend_advance_episode();
+                if (!frontend_episode_scene_begin(
+                        frontend_map.map_section[map_choice],
+                        FRONTEND_SCENE_RETURN_GAME_MENU,
+                        0
+                    )) {
+                    frontend_advance_episode();
+                }
             } else {
                 frontend_start_level_entry_transition(
                     frontend_map.map_section[map_choice]

@@ -46,7 +46,7 @@ typedef struct {
 static AutotestFrontendTransitionResult
     autotest_frontend_transition_result[
         FRONTEND_TRANSITION_PATH_COUNT
-    ];
+    ] EWRAM_BSS;
 static u8 autotest_frontend_transition_phase;
 static u8 autotest_frontend_transition_path;
 static u16 autotest_frontend_transition_count;

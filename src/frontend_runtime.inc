@@ -12,3 +12,4 @@
 #include "frontend/frontend_navigation.inc"
 #include "frontend/frontend_upgrade_sim.inc"
 #include "frontend/frontend_flow.inc"
+#include "frontend/frontend_episode_scene.inc"

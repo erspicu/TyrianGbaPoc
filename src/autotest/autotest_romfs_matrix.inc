@@ -33,6 +33,7 @@ enum {
     ROMFS_MATRIX_FAIL_DATA_CUBE = 27,
     ROMFS_MATRIX_FAIL_SHIP_INFO = 28,
     ROMFS_MATRIX_FAIL_ROUTE_ITEMS = 29,
+    ROMFS_MATRIX_FAIL_EPISODE_SCENE = 30,
 };
 
 typedef struct {
@@ -1065,6 +1066,259 @@ static void romfs_matrix_validate_frontend_documents(
     }
 }
 
+static void romfs_matrix_validate_episode_scenes(
+    RomfsMatrixTelemetry *telemetry
+)
+{
+    static const OtEpisodeRouteState normal = {true, false, 1};
+    static const OtEpisodeRouteState timed_out = {true, true, 1};
+    OtEpisodeSceneReader reader;
+    OtEpisodeSceneAction action;
+    u8 animation_seen = 0;
+    u8 hint_select_seen = 0;
+    u8 fallthrough_hint_seen = 0;
+    u8 pcx_seen = 0;
+    u8 step;
+    u32 failure = 0;
+
+    if (
+        !ot_data_episode_scene_begin(
+            1, 39, FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+        ) ||
+        ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+        action.type != OT_EPISODE_SCENE_ACTION_MUSIC ||
+        action.value != 8 ||
+        ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+        action.type != OT_EPISODE_SCENE_ACTION_PICTURE ||
+        action.value != 5 ||
+        ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+        action.type != OT_EPISODE_SCENE_ACTION_TEXT ||
+        strncmp(action.text[0], "Now that you've", 15) != 0
+    ) {
+        failure = 1;
+    }
+
+    if (
+        failure == 0 &&
+        (
+            !ot_data_episode_scene_begin(
+                4, 32, FRONTEND_PLAY_FULL_GAME,
+                FRONTEND_DIFFICULTY_NORMAL, &timed_out, &reader
+            ) ||
+            ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+            action.type != OT_EPISODE_SCENE_ACTION_END_MAP
+        )
+    ) {
+        failure = 2;
+    }
+    if (
+        failure == 0 &&
+        (
+            !ot_data_episode_scene_begin(
+                4, 32, FRONTEND_PLAY_FULL_GAME,
+                FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+            ) ||
+            ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+            action.type != OT_EPISODE_SCENE_ACTION_PICTURE ||
+            action.value != 13
+        )
+    ) {
+        failure = 3;
+    }
+    if (
+        failure == 0 &&
+        (
+            ot_data_episode_scene_step(&reader, 0, &action) != 1 ||
+            action.type != OT_EPISODE_SCENE_ACTION_TEXT ||
+            action.warning ||
+            !action.warning_red ||
+            action.text_bank != 7
+        )
+    ) {
+        failure = 18;
+    }
+    if (
+        failure == 0 &&
+        !ot_data_episode_scene_begin(
+            1, 11, FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+        )
+    ) {
+        failure = 19;
+    }
+    for (step = 0; failure == 0 && step < 4; step++) {
+        if (ot_data_episode_scene_step(&reader, 0, &action) != 1) {
+            failure = 20;
+            break;
+        }
+        if (action.type == OT_EPISODE_SCENE_ACTION_TEXT) break;
+    }
+    if (
+        failure == 0 &&
+        (
+            action.type != OT_EPISODE_SCENE_ACTION_TEXT ||
+            !action.warning ||
+            action.warning_red ||
+            action.text_bank != 14
+        )
+    ) {
+        failure = 21;
+    }
+
+    if (
+        failure == 0 &&
+        !ot_data_episode_scene_begin(
+            3, 13, FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+        )
+    ) {
+        failure = 4;
+    }
+    for (step = 0; failure == 0 && step < 24; step++) {
+        if (ot_data_episode_scene_step(&reader, 0, &action) != 1) {
+            failure = 5;
+            break;
+        }
+        if (action.type == OT_EPISODE_SCENE_ACTION_ANIMATION) {
+            animation_seen = 1;
+        }
+        if (action.type == OT_EPISODE_SCENE_ACTION_SELECT_END_HINT) {
+            hint_select_seen = 1;
+            break;
+        }
+    }
+    if (failure == 0 && (!animation_seen || !hint_select_seen)) {
+        failure = 6;
+    }
+    if (
+        failure == 0 &&
+        (
+            ot_data_episode_scene_step(&reader, 9, &action) != 1 ||
+            action.type != OT_EPISODE_SCENE_ACTION_END_EPISODE ||
+            strncmp(action.text[0], "Secret Hint 3-3-3:", 18) != 0
+        )
+    ) {
+        failure = 7;
+    }
+
+    if (
+        failure == 0 &&
+        !ot_data_episode_scene_begin(
+            4, 41, FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+        )
+    ) {
+        failure = 8;
+    }
+    for (step = 0; failure == 0 && step < 24; step++) {
+        if (ot_data_episode_scene_step(&reader, 0, &action) != 1) {
+            failure = 9;
+            break;
+        }
+        if (
+            action.type == OT_EPISODE_SCENE_ACTION_PICTURE &&
+            action.value == 0
+        ) {
+            pcx_seen = 1;
+        }
+        if (
+            action.type == OT_EPISODE_SCENE_ACTION_END_MAP ||
+            action.type == OT_EPISODE_SCENE_ACTION_SELECT_END_HINT
+        ) {
+            break;
+        }
+    }
+    if (failure == 0 && !pcx_seen) failure = 10;
+
+    if (
+        failure == 0 &&
+        !ot_data_episode_scene_begin(
+            4, 42, FRONTEND_PLAY_FULL_GAME,
+            FRONTEND_DIFFICULTY_NORMAL, &normal, &reader
+        )
+    ) {
+        failure = 14;
+    }
+    for (step = 0; failure == 0 && step < 16; step++) {
+        if (ot_data_episode_scene_step(&reader, 0, &action) != 1) {
+            failure = 15;
+            break;
+        }
+        if (action.type == OT_EPISODE_SCENE_ACTION_SELECT_END_HINT) {
+            fallthrough_hint_seen = 1;
+            break;
+        }
+    }
+    if (failure == 0 && !fallthrough_hint_seen) failure = 16;
+    if (
+        failure == 0 &&
+        (
+            ot_data_episode_scene_step(&reader, 1, &action) != 1 ||
+            action.type != OT_EPISODE_SCENE_ACTION_END_EPISODE ||
+            strncmp(action.text[0], "Secret Hint 4-1-1:", 18) != 0
+        )
+    ) {
+        failure = 17;
+    }
+
+    if (failure == 0) {
+        OtDataView palette;
+
+        if (!ot_data_pcx_decode(
+                "tshp2.pcx",
+                (u8 *)(void *)&frontend_gameplay_arena,
+                sizeof(frontend_gameplay_arena),
+                &palette
+            ) || palette.size != OT_PALETTE_BYTES) {
+            failure = 11;
+        }
+    }
+    if (failure == 0) {
+        OtAnmReader animation;
+        OtDataView palette;
+        int8_t status;
+        u32 frames = 0;
+        u32 expected_frames;
+
+        memset(frontend_frame_scratch, 0, FRONTEND_FRAME_BYTES);
+        if (!ot_data_anm_begin(&animation, &palette)) {
+            failure = 12;
+        } else {
+            expected_frames = animation.record_count - 1u;
+            do {
+                status = ot_data_anm_decode_next(
+                    &animation,
+                    frontend_frame_scratch,
+                    FRONTEND_FRAME_BYTES,
+                    SCREEN_WIDTH,
+                    SCREEN_HEIGHT
+                );
+                if (status > 0) frames++;
+            } while (status > 0 && frames <= expected_frames);
+            if (
+                status != 0 ||
+                frames != expected_frames ||
+                palette.size != 4u * OT_PALETTE_COLOUR_COUNT
+            ) {
+                failure = 13;
+            }
+        }
+    }
+
+    if (failure != 0) {
+        romfs_matrix_fail(
+            telemetry,
+            ROMFS_MATRIX_FAIL_EPISODE_SCENE,
+            0,
+            0,
+            failure,
+            0
+        );
+        telemetry->route_failures++;
+    }
+}
+
 static void autotest_romfs_level_matrix(void)
 {
     RomfsMatrixTelemetry telemetry = {0};
@@ -1095,6 +1349,7 @@ static void autotest_romfs_level_matrix(void)
         );
     }
     romfs_matrix_validate_frontend_documents(&telemetry);
+    romfs_matrix_validate_episode_scenes(&telemetry);
 
     for (episode = 1; episode <= OT_EPISODE_COUNT; episode++) {
         u16 level_count;

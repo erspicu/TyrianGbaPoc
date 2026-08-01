@@ -423,6 +423,11 @@ static void frontend_campaign_initialize(void)
         player_shield_max = 0;
     }
     frontend_player_items_valid = 1;
+    frontend_route_state.player_alive = true;
+    frontend_route_state.level_timer_expired = false;
+    frontend_route_state.player_ship = frontend_player_items.ship;
+    /* OpenTyrian chooses one of three persistent hint columns per game. */
+    frontend_secret_hint = (u8)(1u + telemetry_vblank_irqs % 3u);
     frontend_script_checkpoint_clear();
     frontend_script_game_active = 0;
 }
@@ -574,6 +579,17 @@ static void frontend_campaign_capture_level_cubes(void)
 static void frontend_campaign_sync_from_level(void)
 {
     if (!frontend_player_items_valid || frontend_demo_active) return;
+
+    /*
+     * Capture JE_loadMap()'s post-level conditional inputs before the next
+     * LVL initialization resets them.  Episode 4 relies on all three.
+     */
+    frontend_route_state.player_alive = player_alive != 0;
+    frontend_route_state.level_timer_expired =
+        source_parity_level.level_timer &&
+        source_parity_level.level_timer_countdown == 0;
+    frontend_route_state.player_ship =
+        source_parity_level.player_ship;
 
     frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id =
         source_parity_level.player_front_weapon_id;
@@ -1161,11 +1177,12 @@ static u8 frontend_prepare_map_begin(void)
      */
     frontend_ship_panel_cache_valid = 0;
     if (
-        !ot_data_episode_map_resolve(
+        !ot_data_episode_map_resolve_with_route(
             (u8)(frontend_episode + 1u),
             frontend_main_section,
             frontend_play_mode,
             frontend_difficulty,
+            &frontend_route_state,
             &frontend_map
         )
     ) {
@@ -1198,11 +1215,12 @@ static u8 frontend_prepare_map_choice(u8 choice)
         return 1;
     }
     if (
-        !ot_data_episode_level_resolve(
+        !ot_data_episode_level_resolve_with_route(
             (u8)(frontend_episode + 1u),
             frontend_map.map_section[choice],
             frontend_play_mode,
             frontend_difficulty,
+            &frontend_route_state,
             &frontend_map_level[choice]
         )
     ) {
