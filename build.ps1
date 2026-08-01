@@ -603,6 +603,16 @@ function Test-GbaMemoryBudget {
     $iwramFree = 0x03008000L - $iwramStart
     $iwramUserStackBytes = [int64]$userStackTop - $iwramStart
     $iwramReservedAboveStack = 0x03008000L - $userStackTop
+    $routeHarnessNames = @(
+        "campaign_autotest",
+        "episode2_autotest",
+        "episode3_autotest",
+        "episode4_autotest",
+        "arcade_autotest",
+        "episode_wrap_autotest"
+    )
+    $iwramUserStackFloor =
+        if ($Name -in $routeHarnessNames) { 2400 } else { 2816 }
     # Static front-end transitions keep a 19.2 KiB packed ship-panel cache
     # in EWRAM. Gameplay reuses the separate Mode-4/Sprite2 union. Maxmod is
     # the only observed heap client: AUTOTEST has measured at most 3,892
@@ -615,13 +625,15 @@ function Test-GbaMemoryBudget {
     # IWRAM. Full gameplay measured a conservative 2,028-byte peak and the
     # complete static-menu transition matrix measured 1,288 bytes.  This
     # link floor is a project guard, not a Nintendo/GBA ABI requirement.
-    # Keep 2.75 KiB statically available; the stronger runtime stack canary
-    # independently requires at least 1.5 KiB untouched on every exercised
-    # gameplay and static-menu path.  This keeps measured hot code in IWRAM
-    # instead of reserving unused policy padding.
+    # Keep 2.75 KiB statically available in retail and ordinary test ROMs.
+    # The six route harnesses link extra scripted-driver state that never
+    # exists in retail; give only those synthetic ROMs a 2,400-byte floor.
+    # The stronger runtime stack canary independently requires at least
+    # 1.5 KiB untouched on exercised gameplay/static-menu paths.  This keeps
+    # measured hot code in IWRAM instead of reserving unused policy padding.
     if (
         $ewramFree -lt 12KB -or
-        $iwramUserStackBytes -lt 2816 -or
+        $iwramUserStackBytes -lt $iwramUserStackFloor -or
         $iwramReservedAboveStack -ne 256
     ) {
         throw (
@@ -639,6 +651,7 @@ function Test-GbaMemoryBudget {
         iwram_free_bytes = $iwramFree
         iwram_user_stack_top = "0x$($userStackTop.ToString('X8'))"
         iwram_user_stack_bytes = $iwramUserStackBytes
+        iwram_user_stack_floor_bytes = $iwramUserStackFloor
         iwram_reserved_above_stack_bytes = $iwramReservedAboveStack
     }
 }
