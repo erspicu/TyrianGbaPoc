@@ -595,7 +595,8 @@ int main(void)
                                 0
                     ) :
                     (
-                        autotest_frontend_finish_pending ?
+                        autotest_frontend_finish_pending &&
+                            game_state != STATE_EPISODE_SCENE ?
                             0 :
                             KEY_A
                     );
@@ -1285,6 +1286,7 @@ int main(void)
 #ifdef AUTOTEST
             if (
                 autotest_frontend_finish_pending &&
+                game_state == STATE_GAME_MENU &&
                 !frontend_frame_pending &&
                 !frontend_transition_busy()
             ) {

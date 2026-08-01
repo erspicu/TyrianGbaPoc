@@ -54,6 +54,7 @@ PC 劇情底圖是 320×200，GBA 以 Mode 4 在載入時一次縮成 240×160�
 
 - `romfs-matrix-autotest`：62/62 LVL 路徑及四 Episode 劇情指令矩陣通過，0 route failure、0 ROMFS failure。
 - `episode-wrap-autotest`：Episode 4 section 44 的 `Skip It`、故事、Episode announcement、回 Episode 1 Game Menu 全部通過。
+- `campaign-smoke-autotest`：連續四關後會實際送出按鍵走完新加入的來源劇情，確認最後回到 Game Menu；不再於劇情第一幀提早結束測試。
 - `save-autotest`：新版 `secretHint` 欄位 round-trip 通過，舊版存檔仍由相容讀取路徑處理。
 - `frontend-transition-stress`：17 條靜態選單路徑各 120 次，0 failure、0 missed VBlank。
 - 實際截圖檢查過一般長文、`Wy` 警告及紅色文字三種版面，未再出現 240 像素右側截字。
