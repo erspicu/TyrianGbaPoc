@@ -189,6 +189,11 @@ static u32 frontend_scene_total_score(void)
  * source-derived 5-row face used by the Data reader, not a second baked
  * alphabet.
  */
+static char frontend_scene_wrap_scratch[
+    OT_EPISODE_SCENE_TEXT_LINE_BYTES
+] EWRAM_BSS;
+static char frontend_scene_score_scratch[61] EWRAM_BSS;
+
 static const char *frontend_scene_wrap_segment(
     const char *text,
     char segment[OT_EPISODE_SCENE_TEXT_LINE_BYTES],
@@ -245,7 +250,7 @@ static u8 frontend_scene_wrapped_rows(
     s16 maximum_width
 )
 {
-    char segment[OT_EPISODE_SCENE_TEXT_LINE_BYTES];
+    char *segment = frontend_scene_wrap_scratch;
     const char *remaining = text;
     u8 rows = 0;
 
@@ -269,7 +274,7 @@ static s16 frontend_scene_draw_wrapped_line(
     u8 shadow
 )
 {
-    char segment[OT_EPISODE_SCENE_TEXT_LINE_BYTES];
+    char *segment = frontend_scene_wrap_scratch;
     const char *remaining = text;
     const s16 maximum_width =
         TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT -
@@ -312,7 +317,7 @@ static void frontend_scene_draw_text(
     u8 colour;
     u8 shadow;
     const char *prompt = frontend_stats_text(4, "PRESS A KEY");
-    char score[61];
+    char *score = frontend_scene_score_scratch;
 
     if (action == 0) return;
     frontend_data_reader_font_prepare();
@@ -351,7 +356,7 @@ static void frontend_scene_draw_text(
 
         frontend_text_with_u32(
             score,
-            sizeof(score),
+            sizeof(frontend_scene_score_scratch),
             prefix,
             frontend_scene_total_score()
         );

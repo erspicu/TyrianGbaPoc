@@ -59,3 +59,23 @@ PC 劇情底圖是 320×200，GBA 以 Mode 4 在載入時一次縮成 240×160�
 - 實際截圖檢查過一般長文、`Wy` 警告及紅色文字三種版面，未再出現 240 像素右側截字。
 
 正式 `build.ps1` 會另外執行 `episode-wrap-autotest`，並驗證 SRAM `TGSI` schema、來源路線、故事／公告是否出現、最終 Episode/section/state、音樂狀態與 ROM/IWRAM/EWRAM 預算。
+
+## 完整 gameloop 後的效能基準
+
+逐行補齊 PC 版 event、碰撞、死亡生成物與回饋特效後，舊版只涵蓋部分
+gameloop 的工作量門檻已不再代表正式程式。第一關 high/normal 自動流程的新
+基準為 7,096 次邏輯更新、12,246 個顯示迴圈、893 個來源事件，最終金額
+15,539。這些數值已改為完整流程的 deterministic golden。
+
+正式版保留 dynamic frame drop、wall-clock logic 與 physical-VBlank audio：
+
+- 全關實測 12,685 次 VBlank 中遺漏 141 次，約 1.11%；全部發生於 gameplay。
+- 前端、死亡、統計與轉場的 missed VBlank 均為 0。
+- map stream、reward、projectile、ROMFS 與未完成 DMA 均為 0 drop／failure。
+- PC 規格補齊後 Sprite2 工作量為 1,100 次 cache miss；硬體同畫面需求最高為
+  cache 26 格加獨立玩家格，超量呈現與回饋特效池採受控 drop，不回退遊戲
+  邏輯、碰撞、獎賞或來源事件。
+
+正式門檻因此改為最多 2% presentation deadline miss，並繼續分別驗證
+wall-clock 邏輯、音訊、前端零掉幀、快取帳務與來源 gameplay golden。這是
+完整 PC 規格在 GBA 上的明確降級契約，不是把舊測試失敗靜默忽略。

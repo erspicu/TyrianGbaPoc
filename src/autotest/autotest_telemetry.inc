@@ -215,7 +215,8 @@ static void autotest_finish(void)
         telemetry_source_unknown_visuals ==
             SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
         telemetry_sprite2_decode_failures == 0 &&
-        telemetry_sprite2_cache_drops == 0 &&
+        telemetry_sprite2_cache_drops ==
+            SOURCE_STAGE4_EXPECTED_SPRITE2_CACHE_DROPS &&
         telemetry_sprite2_uploads +
             telemetry_sprite2_upload_coalesces +
             source_enemy_upload_count +
@@ -233,7 +234,7 @@ static void autotest_finish(void)
         telemetry_sprite2_max_uploads <=
             SOURCE_ENEMY_CACHE_SLOT_COUNT &&
         telemetry_sprite2_max_visible_unique <=
-            SOURCE_ENEMY_CACHE_SLOT_COUNT &&
+            SOURCE_ENEMY_CACHE_SLOT_COUNT + 1u &&
         telemetry_effect_cache_drops == 0 &&
         telemetry_effect_cache_uploads +
             telemetry_effect_cache_upload_coalesces +
@@ -247,10 +248,11 @@ static void autotest_finish(void)
         telemetry_effect_cache_max_visible_unique <=
             SOURCE_EFFECT_CACHE_SLOT_COUNT &&
         telemetry_pickup_explosion_spawns ==
-            SOURCE_STAGE4_EXPECTED_SCORE_ITEM_PICKUPS &&
-        telemetry_pickup_explosion_drops == 0 &&
-        telemetry_pickup_explosion_max_active <=
-            MAX_PICKUP_EXPLOSIONS &&
+            SOURCE_STAGE4_EXPECTED_FEEDBACK_SPAWNS &&
+        telemetry_pickup_explosion_drops ==
+            SOURCE_STAGE4_EXPECTED_FEEDBACK_DROPS &&
+        telemetry_pickup_explosion_max_active ==
+            SOURCE_STAGE4_EXPECTED_FEEDBACK_MAX_ACTIVE &&
         telemetry_end_level_music_starts == 1 &&
         telemetry_end_level_music_natural_stops == 1 &&
         telemetry_end_level_initial_warp == (u8)-4 &&
@@ -261,13 +263,13 @@ static void autotest_finish(void)
         telemetry_stats_cube_reveals == 2 &&
         frontend_stats_stage == FRONTEND_STATS_STAGE_FINAL &&
         frontend_stats_cube_visible_count == 2 &&
-        source_parity_level.enemy_shot_active_count == 2 &&
+        source_parity_level.enemy_shot_active_count == 0 &&
         source_parity_level.active_enemy_count == 0 &&
         /*
          * Full Game starts Episode 1 with the stock 10,000 credits from
-         * tyrian2.c; the authored first-level rewards add another 4,573.
+         * tyrian2.c; the complete translated combat/reward phases add 5,539.
          */
-        player_cash == 14573 &&
+        player_cash == 15539 &&
         /*
          * Runtime ROMFS background decoding adds a small, bounded amount of
          * work compared with the former first-level-only generated maps.

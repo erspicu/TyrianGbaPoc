@@ -4,6 +4,11 @@
  * This implementation unit is included by opentyrian_data.c so it can reuse
  * the ROMFS and encrypted-string helpers without exporting internal symbols.
  */
+enum { EPISODE_SCENE_LINE_BYTES = 256 };
+static char episode_scene_line[
+    EPISODE_SCENE_LINE_BYTES
+] __attribute__((section(".sbss")));
+
 static bool episode_scene_jump(
     OtEpisodeSceneReader *reader,
     uint16_t section
@@ -60,11 +65,16 @@ static bool episode_scene_read_text_block(
     const OtRomFsStat *script,
     uint32_t *position,
     OtEpisodeSceneAction *action,
-    char line[256]
+    char line[EPISODE_SCENE_LINE_BYTES]
 )
 {
     for (;;) {
-        if (!encrypted_pascal_read(script, position, line, 256)) {
+        if (!encrypted_pascal_read(
+                script,
+                position,
+                line,
+                EPISODE_SCENE_LINE_BYTES
+            )) {
             return false;
         }
         if (line[0] == '#') return true;
@@ -124,7 +134,7 @@ int8_t ot_data_episode_scene_step(
 )
 {
     OtRomFsStat script = {0};
-    char line[256];
+    char *line = episode_scene_line;
     uint16_t line_count;
 
     if (
@@ -149,7 +159,7 @@ int8_t ot_data_episode_scene_step(
                         &script,
                         &reader->position,
                         line,
-                        sizeof(line)
+                        sizeof(episode_scene_line)
                     )) {
                     reader->valid = false;
                     return -1;
@@ -179,7 +189,7 @@ int8_t ot_data_episode_scene_step(
                 &script,
                 &reader->position,
                 line,
-                sizeof(line)
+                sizeof(episode_scene_line)
             )) {
             reader->valid = false;
             return -1;
@@ -238,7 +248,7 @@ int8_t ot_data_episode_scene_step(
                     &script,
                     &reader->position,
                     line,
-                    sizeof(line)
+                    sizeof(episode_scene_line)
                 )
             ) {
                 reader->valid = false;
@@ -262,7 +272,7 @@ int8_t ot_data_episode_scene_step(
                         &script,
                         &reader->position,
                         line,
-                        sizeof(line)
+                        sizeof(episode_scene_line)
                     )) {
                     reader->valid = false;
                     return -1;
