@@ -470,6 +470,149 @@ static void gameplay_overlay_draw_text(
     }
 }
 
+/*
+ * In-level notices share the thin 4x8 mixed-case face used by the clear
+ * episode-scene reference.  The old notice path drew the full-width 6x8
+ * pre-game face, which made adjacent strokes merge in the bottom row.
+ */
+static u8 gameplay_overlay_fine_glyph_width(
+    char character,
+    u8 *tile_out
+)
+{
+    u8 tile;
+
+    if (character == ' ') {
+        *tile_out = 0;
+        return 0;
+    }
+    if (
+        character == '*' ||
+        character == '<' ||
+        character == '>'
+    ) {
+        *tile_out = 0xff;
+        return 5;
+    }
+    tile = frontend_pregame_font_tile(character);
+    *tile_out = tile;
+    return frontend_small_mixed_font_width(tile);
+}
+
+static void gameplay_overlay_draw_fine_glyph(
+    char character,
+    s16 x,
+    s16 y,
+    u8 bank,
+    u8 nibble
+)
+{
+    u8 tile;
+    u8 target_width = gameplay_overlay_fine_glyph_width(
+        character,
+        &tile
+    );
+    u8 source_width = tile == 0xff ?
+        target_width :
+        frontend_pregame_font_width(tile);
+    u8 row;
+
+    if (target_width == 0 || source_width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 bits = tile == 0xff ?
+            gameplay_overlay_custom_glyph_row(character, row) :
+            frontend_pregame_font_row(tile, row);
+        u8 column;
+
+        for (column = 0; column < target_width; column++) {
+            u8 source_column = tile == 0xff ?
+                column :
+                frontend_small_mixed_source_column(
+                    source_width,
+                    target_width,
+                    column
+                );
+
+            if (
+                bits &
+                    (1u << (source_width - source_column - 1u))
+            ) {
+                gameplay_overlay_set_pixel(
+                    (s16)(x + column),
+                    (s16)(y + row),
+                    bank,
+                    nibble
+                );
+            }
+        }
+    }
+}
+
+static s16 gameplay_overlay_fine_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        u8 tile;
+        u8 glyph_width;
+
+        if (*text == '~') {
+            text++;
+            continue;
+        }
+        glyph_width = gameplay_overlay_fine_glyph_width(*text, &tile);
+        width = (s16)(
+            width +
+            (
+                *text == ' ' ?
+                    frontend_small_mixed_font_advance(0) :
+                    glyph_width + 1u
+            )
+        );
+        text++;
+    }
+    return width;
+}
+
+static void gameplay_overlay_draw_fine_text(
+    const char *text,
+    s16 x,
+    s16 y,
+    u8 bank,
+    u8 normal_nibble,
+    u8 bright_nibble
+)
+{
+    u8 bright = 0;
+
+    while (text != 0 && *text != '\0') {
+        u8 tile;
+        u8 width;
+
+        if (*text == '~') {
+            bright ^= 1u;
+            text++;
+            continue;
+        }
+        width = gameplay_overlay_fine_glyph_width(*text, &tile);
+        if (*text == ' ') {
+            x = (s16)(
+                x + frontend_small_mixed_font_advance(0)
+            );
+        } else {
+            gameplay_overlay_draw_fine_glyph(
+                *text,
+                x,
+                y,
+                bank,
+                bright ? bright_nibble : normal_nibble
+            );
+            x = (s16)(x + width + 1u);
+        }
+        text++;
+    }
+}
+
 static void gameplay_overlay_draw_starfield(void)
 {
     int16_t index;
@@ -615,7 +758,7 @@ static void gameplay_overlay_draw_event_message(void)
     if (text == 0) return;
     if (text[0] == '\0') return;
     gameplay_overlay_clear_row(GAMEPLAY_OVERLAY_MAP_ROWS - 1u);
-    gameplay_overlay_draw_text(
+    gameplay_overlay_draw_fine_text(
         text,
         x,
         SCREEN_HEIGHT - 8,
@@ -624,8 +767,8 @@ static void gameplay_overlay_draw_event_message(void)
         gameplay_overlay_event_nibble[1]
     );
     if (item_name != 0 && item_name[0] != '\0') {
-        x = (s16)(x + gameplay_overlay_text_width(text) + 6);
-        gameplay_overlay_draw_text(
+        x = (s16)(x + gameplay_overlay_fine_text_width(text) + 6);
+        gameplay_overlay_draw_fine_text(
             item_name,
             x,
             SCREEN_HEIGHT - 8,

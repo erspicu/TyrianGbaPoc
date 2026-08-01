@@ -2494,28 +2494,6 @@ static void frontend_draw_pregame_text_clipped(
     }
 }
 
-/* One-pixel authored face without the usual drop shadow.  The title build
- * identity uses this path so the larger mixed-case label remains crisp over
- * the detailed PC title artwork instead of merging into a dark block. */
-static void frontend_draw_pregame_text_clipped_no_shadow(
-    u8 *frame,
-    const char *text,
-    s16 x,
-    s16 y,
-    s16 right,
-    u8 colour
-)
-{
-    while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_pregame_font_tile(*text++);
-        u8 advance = frontend_pregame_font_advance(tile_index);
-
-        if (x + advance > right) break;
-        frontend_blit_pregame_font(frame, tile_index, x, y, colour);
-        x = (s16)(x + advance);
-    }
-}
-
 static void frontend_draw_pregame_text_centered(
     u8 *frame,
     const char *text,
@@ -2738,6 +2716,31 @@ static void frontend_draw_small_mixed_text_clipped_colours(
             (s16)(y + 1),
             shadow_colour
         );
+        frontend_blit_small_mixed_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_draw_small_mixed_text_clipped_no_shadow(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_small_mixed_font_advance(tile_index);
+
+        if (x + advance > right) break;
         frontend_blit_small_mixed_font(
             frame,
             tile_index,

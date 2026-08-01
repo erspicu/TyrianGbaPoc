@@ -890,9 +890,6 @@ static __attribute__((
             frontend_transition_phase = 3;
             break;
         case 3:
-            if (!frontend_data_reader_font_prepare_step(16)) {
-                break;
-            }
             frontend_copy_frame_rows(
                 FRONTEND_FRAME_MENU_CHROME,
                 0,
@@ -1250,9 +1247,6 @@ static __attribute__((
     case FRONTEND_TRANSITION_JOB_DATA_READER:
         switch (frontend_transition_phase) {
         case 0:
-            if (!frontend_data_reader_font_prepare_step(8)) {
-                break;
-            }
             frontend_transition_phase = 1;
             break;
         case 1:

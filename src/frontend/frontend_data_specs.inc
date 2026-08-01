@@ -17,7 +17,7 @@ enum {
     FRONTEND_DATA_RIGHT_HEIGHT = 110,
     FRONTEND_DATA_TEXT_X = 154,
     FRONTEND_DATA_TEXT_RIGHT = 239,
-    FRONTEND_DATA_TEXT_LINE_HEIGHT = 7,
+    FRONTEND_DATA_TEXT_LINE_HEIGHT = 9,
     FRONTEND_DATA_READER_X = 129,
     FRONTEND_DATA_READER_Y = 40,
     FRONTEND_DATA_READER_LINE_HEIGHT = 9,
@@ -176,6 +176,16 @@ static void frontend_data_wrapped_text_job_begin(
 static void frontend_data_reader_font_prepare(void);
 static s16 frontend_data_tiny_text_width(const char *text);
 static void frontend_data_tiny_text_clipped_colours(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour,
+    u8 shadow_colour
+);
+static s16 frontend_data_fine_text_width(const char *text);
+static void frontend_data_fine_text_clipped_colours(
     u8 *frame,
     const char *text,
     s16 x,
@@ -651,12 +661,12 @@ static void frontend_data_draw_selected_header(void)
         const OtDataCube *cube =
             &frontend_data_cube_cache[frontend_selection];
 
-        frontend_data_tiny_text_clipped_colours(
+        frontend_data_fine_text_clipped_colours(
             frontend_frame_scratch,
             cube->header,
             (s16)(
                 frontend_source_to_screen_x(75) -
-                frontend_data_tiny_text_width(cube->header) / 2
+                frontend_data_fine_text_width(cube->header) / 2
             ),
             frontend_source_to_screen_y(173),
             FRONTEND_DATA_LEFT_WIDTH,
@@ -730,7 +740,7 @@ static void frontend_data_selected_header_job_begin(void)
             frontend_data_cube_cache[frontend_selection].header;
         x = (s16)(
             frontend_source_to_screen_x(75) -
-            frontend_data_tiny_text_width(header) / 2
+            frontend_data_fine_text_width(header) / 2
         );
     }
     frontend_data_wrapped_text_job_begin(
@@ -807,7 +817,7 @@ static void frontend_data_draw_exit_item(void)
         160 :
         (s16)(44 + done_slot * 28);
 
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         frontend_data_text(5, "Exit to Game Menu"),
         frontend_source_to_screen_x(172),
@@ -943,7 +953,6 @@ static void frontend_data_draw_list(void)
 
 static void frontend_data_compose_list(void)
 {
-    frontend_data_reader_font_prepare();
     memcpy(
         frontend_frame_scratch,
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
@@ -1012,12 +1021,10 @@ static void frontend_render_data_selection(u8 old_selection)
 }
 
 /*
- * Data pages use a 3/4x5 projection of the shared mixed-case pre-game face.
- * Build the tiny masks once in EWRAM.  The previous per-character renderer
- * repeatedly searched source row/column spans, making ten lines cost several
- * display frames even though the final glyph contains at most 20 pixels.
- * Wide M/W/m/w glyphs retain four columns so the source "Mom" cannot collapse
- * visually into "Non" after the 320x200 -> 240x160 presentation reduction.
+ * Compact episode-scene layouts can use a 3/4x5 projection of the shared
+ * mixed-case face.  Build those masks once in EWRAM; Data pages deliberately
+ * retain the clearer eight authored rows through frontend_data_fine_*().
+ * Wide M/W/m/w glyphs keep four columns so "Mom" cannot collapse into "Non".
  */
 static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
 {
@@ -1190,6 +1197,75 @@ static u8 frontend_data_tiny_highlight_colour(u8 colour)
 }
 
 /*
+ * Data pages use the same thin 4x8 mixed-case face as the clear episode
+ * scene reference.  Keep Data's source '~' brightness control, but do not
+ * collapse eight authored rows into the dense five-row projection.
+ */
+static s16 frontend_data_fine_text_width(const char *text)
+{
+    s16 width = 0;
+
+    while (text != 0 && *text != '\0') {
+        char character = *text++;
+
+        if (character == '~') continue;
+        width = (s16)(
+            width +
+            frontend_small_mixed_font_advance(
+                frontend_pregame_font_tile(character)
+            )
+        );
+    }
+    return width;
+}
+
+static void frontend_data_fine_text_clipped_colours(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour,
+    u8 shadow_colour
+)
+{
+    u8 highlight = 0;
+
+    while (text != 0 && *text != '\0' && x < right) {
+        char character = *text++;
+        u8 tile;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile = frontend_pregame_font_tile(character);
+        advance = frontend_small_mixed_font_advance(tile);
+        if (x + advance > right) break;
+        if (tile != 0) {
+            frontend_blit_small_mixed_font(
+                frame,
+                tile,
+                (s16)(x + 1),
+                (s16)(y + 1),
+                shadow_colour
+            );
+            frontend_blit_small_mixed_font(
+                frame,
+                tile,
+                x,
+                y,
+                highlight ?
+                    frontend_data_tiny_highlight_colour(colour) :
+                    colour
+            );
+        }
+        x = (s16)(x + advance);
+    }
+}
+
+/*
  * Ship Specs is drawn through JE_helpBox() -> JE_textShade() on PC.
  * JE_outText() treats '~' as a +4 brightness toggle rather than a glyph.
  * Keep the marker in the source-backed string, but exclude it from the GBA
@@ -1321,14 +1397,19 @@ static void frontend_data_reader_draw_glyph(
     u8 colour
 )
 {
-    frontend_data_tiny_draw_glyph(
+    frontend_blit_small_mixed_font(
+        frontend_frame_scratch,
+        tile,
+        (s16)(x + 1),
+        (s16)(y + 1),
+        0xe2u
+    );
+    frontend_blit_small_mixed_font(
         frontend_frame_scratch,
         tile,
         x,
         y,
-        SCREEN_WIDTH,
-        colour,
-        0xe2u
+        colour
     );
 }
 
@@ -1339,7 +1420,7 @@ static void frontend_data_reader_draw_line(u8 source_line, s16 y)
     const OtDataCube *cube =
         &frontend_data_cube_cache[frontend_data_reader_index];
     if (source_line >= cube->last_line) return;
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         cube->text[source_line],
         FRONTEND_DATA_READER_X,
@@ -1513,7 +1594,6 @@ static void frontend_data_reader_scroll_incremental(
 
 static void frontend_data_reader_panel_job_begin(void)
 {
-    frontend_data_reader_font_prepare();
     frontend_data_reader_panel_job =
         (FrontendDataReaderPanelJob){0};
     frontend_data_reader_panel_job.first_line =
@@ -1589,7 +1669,7 @@ static u8 frontend_data_reader_panel_job_step(u8 glyph_budget)
             }
             tile = frontend_pregame_font_tile(character);
         }
-        target_width = frontend_data_tiny_font_advance(tile);
+        target_width = frontend_small_mixed_font_advance(tile);
         if (
             frontend_data_reader_panel_job.draw_x +
                 target_width >
@@ -1697,7 +1777,7 @@ static void frontend_data_draw_reader_chrome(void)
         percent_text[length++] = '%';
         percent_text[length] = '\0';
     }
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         percent_text,
         frontend_source_to_screen_x(176),
@@ -1706,7 +1786,7 @@ static void frontend_data_draw_reader_chrome(void)
         0xebu,
         0xe2u
     );
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         frontend_data_text(12, "EXIT"),
         frontend_source_to_screen_x(260),
@@ -1825,12 +1905,6 @@ static void frontend_data_animate(void)
     u16 y1;
     s16 source_y;
 
-    if (
-        game_state == STATE_DATA_CUBES &&
-        !frontend_data_reader_font_ready
-    ) {
-        (void)frontend_data_reader_font_prepare_step(2);
-    }
     if (
         game_state != STATE_DATA_CUBES ||
         frontend_selection >= frontend_data_page_count ||
@@ -2091,7 +2165,7 @@ static void frontend_data_wrapped_text_job_begin(
         max_lines,
         colour
     );
-    job->font_mode = 1;
+    job->font_mode = 2;
 }
 
 static void frontend_wrapped_text_job_prepare_line(
@@ -2141,9 +2215,12 @@ static void frontend_wrapped_text_job_prepare_line(
             memcpy(job->line, word, word_length);
             job->line[word_length] = '\0';
         }
-        candidate_width = job->font_mode ?
-            frontend_data_tiny_text_width(job->line) :
-            frontend_ship_specs_text_width(job->line);
+        candidate_width =
+            job->font_mode == 1 ?
+                frontend_data_tiny_text_width(job->line) :
+            job->font_mode == 2 ?
+                frontend_data_fine_text_width(job->line) :
+                frontend_ship_specs_text_width(job->line);
         if (
             candidate_width > job->right - job->x &&
             line_length != 0
@@ -2203,7 +2280,7 @@ static u8 frontend_wrapped_text_job_step(
             continue;
         }
         tile_index = frontend_pregame_font_tile(character);
-        advance = job->font_mode ?
+        advance = job->font_mode == 1 ?
             frontend_data_tiny_font_advance(tile_index) :
             frontend_small_mixed_font_advance(tile_index);
 
@@ -2211,7 +2288,7 @@ static u8 frontend_wrapped_text_job_step(
             job->draw_index = job->line_length;
             break;
         }
-        if (job->font_mode) {
+        if (job->font_mode == 1) {
             if (tile_index != 0) {
                 frontend_data_tiny_draw_glyph(
                     frontend_frame_scratch,
@@ -2229,7 +2306,11 @@ static u8 frontend_wrapped_text_job_step(
             }
         } else {
             u8 foreground_colour = job->highlight ?
-                frontend_ship_specs_highlight_colour(job->colour) :
+                (
+                    job->font_mode == 2 ?
+                        frontend_data_tiny_highlight_colour(job->colour) :
+                        frontend_ship_specs_highlight_colour(job->colour)
+                ) :
                 job->colour;
 
             frontend_blit_small_mixed_font(
