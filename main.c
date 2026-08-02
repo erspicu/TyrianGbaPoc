@@ -2318,7 +2318,15 @@ static u8 autotest_frontend_finish_pending;
  * Focused energy tests temporarily clear this flag and therefore still
  * validate the exact OpenTyrian consumption and recharge rules.
  */
-static u8 autotest_unlimited_weapon_energy = 1;
+#ifndef AUTOTEST_UNLIMITED_WEAPON_ENERGY
+#define AUTOTEST_UNLIMITED_WEAPON_ENERGY 1
+#endif
+#if AUTOTEST_UNLIMITED_WEAPON_ENERGY != 0 && \
+    AUTOTEST_UNLIMITED_WEAPON_ENERGY != 1
+#error AUTOTEST_UNLIMITED_WEAPON_ENERGY must be 0 or 1
+#endif
+static u8 autotest_unlimited_weapon_energy =
+    AUTOTEST_UNLIMITED_WEAPON_ENERGY;
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
 static u8 autotest_frontend_transition_ready;
 #endif

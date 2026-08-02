@@ -991,6 +991,7 @@ source_process_player_collisions(bool collide_player)
 #endif
     u8 effect_index;
     OtPlayerCollisionResult player_result;
+    bool player_contact_vulnerable;
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
     u32 collision_cycle_start = stress_cycle_counter_read();
 #endif
@@ -1188,9 +1189,28 @@ source_process_player_collisions(bool collide_player)
     if (!collide_player) return;
 
     source_parity_level.player_armor = player_armor;
+#if TYRIAN_GBA_DEV_PLAYER_INVINCIBLE && \
+    (!defined(AUTOTEST) || defined(AUTOTEST_FRONTEND_ROUTE_SECTION))
+    /*
+     * The development flag represents the same collision gate as a non-zero
+     * PC invulnerable_ticks value.  Merely suppressing player_damage() is not
+     * sufficient: JE_playerCollide() would still let the invincible ship ram
+     * a low-armour link-254 boss component, clear the entire linked group via
+     * its contact-death path, and bypass the player-shot-only event jump.
+     * Pickups remain active because ot_level_port_collide_player() gates only
+     * the damaging-contact tail with this boolean.
+     * The historical first-level golden AUTOTEST deliberately keeps its own
+     * deterministic contact trace; arbitrary route-smoke tests use the real
+     * development-flag semantics so linked bosses cannot be bypassed.
+     */
+    player_contact_vulnerable = false;
+#else
+    player_contact_vulnerable =
+        player_alive && player_invulnerable == 0;
+#endif
     ot_level_port_collide_player(
         &source_parity_level,
-        player_alive && player_invulnerable == 0,
+        player_contact_vulnerable,
         &player_result
     );
     player_armor = source_parity_level.player_armor;

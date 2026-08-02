@@ -128,6 +128,38 @@ static u8 autotest_secret_level_collision(void)
         source_parity_level.enemy_avail[0] == 1 &&
         source_parity_level.enemy_avail[1] == 1 &&
         result.effect_count == 2;
+
+    /*
+     * A non-vulnerable player still scans pickups, but the damaging contact
+     * tail must neither hurt nor destroy an overlapping linked enemy.  The
+     * development invincibility adapter relies on this exact PC gate.
+     */
+    memset(portal, 0, sizeof(*portal));
+    memset(&source_parity_level.enemy[1], 0, sizeof(OtEnemy));
+    source_parity_level.enemy_avail[0] = 0;
+    source_parity_level.enemy_avail[1] = 0;
+    portal->ex = 80;
+    portal->ey = 96;
+    portal->enemyground = true;
+    portal->armorleft = 2;
+    portal->linknum = 254;
+    source_parity_level.enemy[1].ex = 160;
+    source_parity_level.enemy[1].ey = 80;
+    source_parity_level.enemy[1].enemyground = true;
+    source_parity_level.enemy[1].armorleft = 9;
+    source_parity_level.enemy[1].linknum = 254;
+    ot_level_port_collide_player(
+        &source_parity_level,
+        false,
+        &result
+    );
+    pass =
+        pass &&
+        result.contact_count == 0 &&
+        result.damage == 0 &&
+        portal->armorleft == 2 &&
+        source_parity_level.enemy_avail[0] == 0 &&
+        source_parity_level.enemy_avail[1] == 0;
     return pass;
 }
 
