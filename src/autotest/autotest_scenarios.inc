@@ -1,4 +1,101 @@
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static u8 autotest_detail_adapter_self_test(void)
+{
+    u8 pass = 1;
+
+    memset(
+        source_parity_level.smoothies,
+        0,
+        sizeof(source_parity_level.smoothies)
+    );
+    memset(
+        source_parity_level.smoothie_data,
+        0,
+        sizeof(source_parity_level.smoothie_data)
+    );
+    source_parity_level.filter_active = false;
+    source_parity_level.level_filter = -99;
+    source_parity_level.level_brightness = -99;
+    source_parity_level.background2_over = 0;
+    source_parity_level.background2_not_transparent = false;
+
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
+    source_parity_level.smoothies[0] = 1;
+    source_parity_level.smoothies[2] = 1;
+    source_parity_level.smoothies[3] = 1;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        !source_detail_iced_requested &&
+        !source_detail_blur_requested &&
+        !source_detail_wave_requested &&
+        !source_detail_wild_active &&
+        !source_detail_palette_mode_pending
+    );
+#elif TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_NORMAL
+    source_parity_level.smoothies[2] = 1;
+    source_parity_level.smoothies[3] = 1;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        source_detail_iced_requested &&
+        source_detail_blur_requested &&
+        !source_detail_wave_requested &&
+        !source_detail_wild_active &&
+        source_detail_palette_mode_pending &&
+        source_detail_effect_kind_pending ==
+            SOURCE_DETAIL_EFFECT_GLOBAL_HUE &&
+        source_detail_effect_hue_pending == 8u
+    );
+#elif TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_HIGH
+    source_parity_level.smoothies[0] = 1;
+    source_parity_level.smoothie_data[0] = 0;
+    source_parity_level.smoothies[1] = 1;
+    source_parity_level.smoothie_data[1] = 13;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        source_detail_wave_requested &&
+        !source_detail_wild_active &&
+        source_detail_palette_mode_pending &&
+        source_detail_effect_kind_pending ==
+            SOURCE_DETAIL_EFFECT_WATER_HUE &&
+        source_detail_effect_hue_pending == 13u
+    );
+#else
+    source_parity_level.smoothies[1] = 1;
+    source_parity_level.smoothie_data[1] = 13;
+    source_parity_level.filter_active = true;
+    source_parity_level.level_filter = 6;
+    source_parity_level.level_brightness = -3;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        source_detail_wave_requested &&
+        source_detail_wild_active &&
+        source_detail_palette_mode_pending &&
+        source_detail_effect_kind_pending ==
+            SOURCE_DETAIL_EFFECT_GLOBAL_HUE &&
+        source_detail_effect_hue_pending == 6u &&
+        source_detail_effect_brightness_pending == -3 &&
+        source_detail_effect_objects_pending &&
+        source_detail_filtered_source_index(
+            0x35u,
+            SOURCE_DETAIL_EFFECT_WATER_HUE,
+            13u,
+            0
+        ) == 0xd5u &&
+        source_detail_filtered_source_index(
+            0x85u,
+            SOURCE_DETAIL_EFFECT_WATER_HUE,
+            13u,
+            0
+        ) == 0x85u
+    );
+    /* Event 48 must switch already-visible BG2 tiles back to opaque. */
+    source_parity_level.background2_not_transparent = true;
+    source_detail_prepare_scene();
+    pass = (u8)(pass && !source_detail_wild_active);
+#endif
+    return pass;
+}
+
 static void autotest_full_loadout_stress_finish(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0E000000;
@@ -217,6 +314,13 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(360, rng_benchmark_elapsed);
     sram_write_u32(364, rng_benchmark_sink);
     sram_write_u32(368, 10000);
+    sram_write_u32(372, telemetry_detail_filter_hue_frames);
+    sram_write_u32(376, telemetry_detail_palette_rebuilds);
+    sram_write_u32(380, telemetry_detail_wave_frames);
+    sram_write_u32(384, telemetry_detail_wild_dither_frames);
+    sram_write_u32(388, TYRIAN_GBA_DEV_PLAYER_INVINCIBLE);
+    sram_write_u32(392, TYRIAN_GBA_STRESS_LOADOUT);
+    sram_write_u32(396, autotest_detail_adapter_self_test());
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

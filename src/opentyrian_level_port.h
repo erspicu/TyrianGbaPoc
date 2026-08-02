@@ -573,7 +573,7 @@ void ot_level_port_update_level_timer(OtLevelPortState *state);
 void ot_level_port_recalculate_player_power_progress(
     OtLevelPortState *state
 );
-IWRAM_CODE ARM_CODE void ot_level_port_update_enemy_shots(
+void ot_level_port_update_enemy_shots(
     OtLevelPortState *state,
     OtEnemyShotImpactHandler impact_handler,
     void *impact_context

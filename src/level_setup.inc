@@ -351,12 +351,27 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_detail_spotlight_requested = 0;
     source_detail_iced_requested = 0;
     source_detail_blur_requested = 0;
+    source_detail_wave_requested = 0;
     source_detail_shadow_windows_active = 0;
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    /* JE_initProcessorType(4): wild=true at every level entrance. */
+    source_detail_wild_active = 1;
+#else
+    source_detail_wild_active = 0;
+#endif
     source_detail_palette_mode_active = 0;
     source_detail_palette_mode_pending = 0;
     source_detail_palette_dirty = 0;
+    source_detail_palette_indices_valid = 0;
+    source_detail_obj_palette_base_valid = 0;
+    source_detail_effect_kind_pending = SOURCE_DETAIL_EFFECT_NONE;
+    source_detail_effect_hue_pending = SOURCE_DETAIL_HUE_NONE;
+    source_detail_effect_brightness_pending = 0;
+    source_detail_effect_objects_pending = 0;
     source_detail_spotlight_table_active = 0;
     source_detail_spotlight_table_pending = 0;
+    source_detail_wave_table_active = 0;
+    source_detail_wave_table_pending = 0;
     REG_DMA0CNT = 0;
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
@@ -752,6 +767,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_detail_iced_frames = 0;
     telemetry_detail_blur_frames = 0;
     telemetry_detail_wild_frames = 0;
+    telemetry_detail_filter_hue_frames = 0;
+    telemetry_detail_palette_rebuilds = 0;
+    telemetry_detail_wave_frames = 0;
+    telemetry_detail_wild_dither_frames = 0;
     telemetry_stress_loadout_failures =
 #if TYRIAN_GBA_STRESS_LOADOUT
         stress_loadout_valid ? 0 : 1;

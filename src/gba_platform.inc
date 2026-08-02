@@ -101,7 +101,8 @@ static void commit_background_rows(u8 layer)
 
 static u8 gameplay_filter_brightness_level(void)
 {
-#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
+#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW && \
+    TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_PENTIUM
     int16_t brightness;
 
     if (
@@ -115,7 +116,11 @@ static u8 gameplay_filter_brightness_level(void)
     if (brightness > 16) brightness = 16;
     return (u8)brightness;
 #else
-    /* PC processor type 1 disables explosionTransparent/brightness filters. */
+    /*
+     * Low/386 disables brightness filtering.  Pentium applies the source
+     * palette-nibble transform below so OBJ-window shadows retain the single
+     * GBA colour-effects unit instead of silently overriding filtration.
+     */
     return 0;
 #endif
 }
@@ -174,61 +179,316 @@ static void source_detail_spotlight_prepare(
     source_detail_spotlight_table_pending = table_index;
 }
 
-static void source_detail_spotlight_commit(
-    u8 active,
-    u8 table_index
+enum {
+    SOURCE_DETAIL_EFFECT_NONE = 0,
+    SOURCE_DETAIL_EFFECT_GLOBAL_HUE = 1,
+    SOURCE_DETAIL_EFFECT_WATER_HUE = 2,
+    SOURCE_DETAIL_HUE_NONE = 0xff,
+};
+
+static u16 source_detail_palette_colour(
+    const OtDataView *palette,
+    u8 index
 )
 {
-    REG_DMA0CNT = 0;
-    if (!active) {
-        return;
-    }
-    table_index &= 1u;
-    REG_WIN0H = source_detail_spotlight_table[table_index][0];
-    REG_DMA0SAD = (u32)&source_detail_spotlight_table[table_index][1];
-    REG_DMA0DAD = (u32)&REG_WIN0H;
-    REG_DMA0CNT = (u32)(
-        DMA_ENABLE | DMA_HBLANK | DMA_REPEAT |
-        DMA_SRC_INC | DMA_DST_FIXED | DMA16 | 1u
+    const u8 *rgb = palette->data + (u32)index * 3u;
+
+    return (u16)(
+        (rgb[0] >> 1) |
+        ((rgb[1] >> 1) << 5) |
+        ((rgb[2] >> 1) << 10)
     );
-    source_detail_spotlight_table_active = table_index;
 }
 
-static void source_detail_build_iced_palette(void)
+static u32 source_detail_palette_distance(u16 colour, const u8 *rgb)
+{
+    s16 red = (s16)(colour & 31u) - (s16)(rgb[0] >> 1);
+    s16 green =
+        (s16)((colour >> 5) & 31u) - (s16)(rgb[1] >> 1);
+    s16 blue =
+        (s16)((colour >> 10) & 31u) - (s16)(rgb[2] >> 1);
+
+    return
+        (u32)(red * red) +
+        (u32)(green * green) +
+        (u32)(blue * blue);
+}
+
+static u8 source_detail_nearest_source_index(
+    u16 colour,
+    const OtDataView *palette
+)
+{
+    u32 best_distance = 0xffffffffu;
+    u16 red = colour & 31u;
+    u16 green = (colour >> 5) & 31u;
+    u16 blue = (colour >> 10) & 31u;
+    u16 luminance = (u16)(
+        (red * 3u + green * 6u + blue + 5u) / 10u
+    );
+    u8 brightness = (u8)((luminance + 1u) >> 1);
+    u8 hue;
+    u8 best = 0;
+
+    if (brightness > 15u) brightness = 15u;
+    /*
+     * Tyrian's low nibble is an authored brightness coordinate.  Estimate
+     * it once from GBA luminance, then search only the 16 source hues.  This
+     * is both more semantically stable than an unrestricted RGB match and
+     * avoids delaying Maxmod by several LCD frames at level entry.
+     */
+    for (hue = 0; hue < 16u; hue++) {
+        u8 candidate = (u8)((hue << 4) | brightness);
+        u32 distance = source_detail_palette_distance(
+            colour,
+            palette->data + (u32)candidate * 3u
+        );
+
+        if (distance < best_distance) {
+            best_distance = distance;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
+static void source_detail_prepare_palette_indices(void)
 {
     OtDataView palette;
-    u16 ice_ramp[16];
     u16 index;
 
+    source_detail_palette_indices_valid = 0;
     if (
         background_gba_palette_active == 0 ||
+        !source_detail_obj_palette_base_valid ||
         !ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)
     ) {
         return;
     }
-    for (index = 0; index < 16; index++) {
-        const u8 *rgb = palette.data + (u32)(0x80u + index) * 3u;
-
-        ice_ramp[index] = (u16)(
-            (rgb[0] >> 1) |
-            ((rgb[1] >> 1) << 5) |
-            ((rgb[2] >> 1) << 10)
-        );
+    /*
+     * This O(256*16) source-hue pass runs once while entering a level.
+     * Every later fade/filter tick is O(512), preserving gameplay budget.
+     */
+    for (index = 0; index < 256u; index++) {
+        source_detail_bg_source_index[index] =
+            source_detail_nearest_source_index(
+                background_gba_palette_active[index],
+                &palette
+            );
+        source_detail_obj_source_index[index] =
+            source_detail_nearest_source_index(
+                source_detail_obj_palette_base[index],
+                &palette
+            );
     }
-    for (index = 0; index < 256; index++) {
-        u16 colour = background_gba_palette_active[index];
-        u16 red = colour & 31u;
-        u16 green = (colour >> 5) & 31u;
-        u16 blue = (colour >> 10) & 31u;
-        u16 luminance = (u16)(
-            (red * 3u + green * 6u + blue + 5u) / 10u
-        );
-        u16 brightness = (u16)((luminance + 1u) >> 1);
+    source_detail_palette_indices_valid = 1;
+}
 
-        if (brightness > 15u) brightness = 15u;
-        source_detail_iced_bg_palette[index] = ice_ramp[brightness];
+static void source_detail_capture_obj_palette(void)
+{
+    u16 index;
+
+    for (index = 0; index < 256u; index++) {
+        source_detail_obj_palette_base[index] = SPRITE_PALETTE[index];
+    }
+    source_detail_obj_palette_base_valid = 1;
+    source_detail_prepare_palette_indices();
+}
+
+static u8 source_detail_world_obj_palette_entry(u16 index)
+{
+    u8 bank = (u8)(index >> 4);
+
+    /* 0..8 are gameplay actors; 13/15 are Sprite2 time-share banks. */
+    return bank <= 8u || bank == 13u || bank == 15u;
+}
+
+static u8 source_detail_filtered_source_index(
+    u8 source_index,
+    u8 effect_kind,
+    u8 effect_hue,
+    s8 brightness
+)
+{
+    s16 value = (s16)(source_index & 0x0fu) + brightness;
+    u8 hue = (u8)(source_index >> 4);
+
+    if (
+        effect_kind == SOURCE_DETAIL_EFFECT_GLOBAL_HUE ||
+        (
+            effect_kind == SOURCE_DETAIL_EFFECT_WATER_HUE &&
+            (source_index & 0x30u) != 0
+        )
+    ) {
+        hue = effect_hue & 0x0fu;
+    }
+    if (value < 0) value = 0;
+    if (value > 15) value = 15;
+    return (u8)((hue << 4) | (u8)value);
+}
+
+static u8 source_detail_build_effect_palette(
+    u8 effect_kind,
+    u8 effect_hue,
+    s8 brightness,
+    u8 filter_objects
+)
+{
+    OtDataView palette;
+    u16 index;
+
+    if (
+        !source_detail_palette_indices_valid ||
+        !ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)
+    ) {
+        return 0;
+    }
+    for (index = 0; index < 256u; index++) {
+        u8 bg_source = source_detail_filtered_source_index(
+            source_detail_bg_source_index[index],
+            effect_kind,
+            effect_hue,
+            brightness
+        );
+
+        source_detail_effect_bg_palette[index] =
+            source_detail_palette_colour(&palette, bg_source);
+        if (
+            filter_objects &&
+            source_detail_world_obj_palette_entry(index)
+        ) {
+            u8 obj_source = source_detail_filtered_source_index(
+                source_detail_obj_source_index[index],
+                effect_kind,
+                effect_hue,
+                brightness
+            );
+
+            source_detail_effect_obj_palette[index] =
+                source_detail_palette_colour(&palette, obj_source);
+        } else {
+            source_detail_effect_obj_palette[index] =
+                source_detail_obj_palette_base[index];
+        }
+    }
+    telemetry_detail_palette_rebuilds++;
+    return 1;
+}
+
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+static s8 source_detail_wave_amount(u8 water, u16 screen_line)
+{
+    u32 source_y = (u32)(SOURCE_PRESENTATION_Y_ORIGIN + screen_line);
+    u32 linear = source_y * 320u + 156u;
+    s16 centre = water ? 4 : 8;
+    s16 value = water ?
+        (s16)((linear >> 10) & 7u) :
+        (s16)((linear >> 9) & 15u);
+    s16 delta = (s16)(value - centre);
+
+    if (delta < 0) delta = (s16)-delta;
+    return (s8)(delta - 1);
+}
+
+static void source_detail_wave_prepare(u8 water)
+{
+    u8 table_index = (u8)(source_detail_wave_table_active ^ 1u);
+    u16 bg0_hofs = source_background_hofs(0);
+    u16 bg1_hofs = source_background_hofs(1);
+    u16 bg0_vofs = source_background_vofs(0);
+    u16 bg1_vofs = source_background_vofs(1);
+    u16 line;
+
+    for (line = 0; line <= SCREEN_HEIGHT; line++) {
+        s8 wave = source_detail_wave_amount(water, line);
+
+        source_detail_wave_table[table_index][line][0] =
+            (u16)(bg0_hofs + wave);
+        source_detail_wave_table[table_index][line][1] = bg0_vofs;
+        source_detail_wave_table[table_index][line][2] =
+            (u16)(bg1_hofs + wave);
+        source_detail_wave_table[table_index][line][3] = bg1_vofs;
+    }
+    source_detail_wave_table_pending = table_index;
+}
+#endif
+
+static void source_detail_scanline_commit(
+    u8 spotlight_active,
+    u8 spotlight_table_index,
+    u8 wave_active,
+    u8 wave_table_index
+)
+{
+    REG_DMA0CNT = 0;
+    if (spotlight_active) {
+        spotlight_table_index &= 1u;
+        REG_WIN0H =
+            source_detail_spotlight_table[spotlight_table_index][0];
+        REG_DMA0SAD = (u32)&source_detail_spotlight_table[
+            spotlight_table_index
+        ][1];
+        REG_DMA0DAD = (u32)&REG_WIN0H;
+        REG_DMA0CNT = (u32)(
+            DMA_ENABLE | DMA_HBLANK | DMA_REPEAT |
+            DMA_SRC_INC | DMA_DST_FIXED | DMA16 | 1u
+        );
+        source_detail_spotlight_table_active = spotlight_table_index;
+        return;
+    }
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    if (wave_active) {
+        const u16 *first;
+
+        wave_table_index &= 1u;
+        first = source_detail_wave_table[wave_table_index][0];
+        REG_BG0HOFS = first[0];
+        REG_BG0VOFS = first[1];
+        REG_BG1HOFS = first[2];
+        REG_BG1VOFS = first[3];
+        REG_DMA0SAD = (u32)&source_detail_wave_table[
+            wave_table_index
+        ][1][0];
+        REG_DMA0DAD = (u32)&REG_BG0HOFS;
+        REG_DMA0CNT = (u32)(
+            DMA_ENABLE | DMA_HBLANK | DMA_REPEAT |
+            DMA_SRC_INC | DMA_DST_RELOAD | DMA16 | 4u
+        );
+        source_detail_wave_table_active = wave_table_index;
+    }
+#else
+    (void)wave_active;
+    (void)wave_table_index;
+#endif
+}
+
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+static void source_detail_set_wild_active(u8 active)
+{
+    u16 top_row;
+
+    active = active != 0;
+    if (source_detail_wild_active == active) return;
+    source_detail_wild_active = active;
+    if (
+        !source_background2_enabled ||
+        !background_layer_cache[1].prepared
+    ) {
+        return;
+    }
+    top_row = (u16)(
+        background_presentation_scroll_pixel(
+            1,
+            source_camera_offset_y
+        ) >> 3
+    );
+    if (background_prepare_layer(1, top_row)) {
+        source_background2_upload_pending = 1;
+    } else {
+        source_parity_level.assets_valid = false;
     }
 }
+#endif
 
 static void source_detail_prepare_scene(void)
 {
@@ -237,6 +497,11 @@ static void source_detail_prepare_scene(void)
         (source_parity_level.smoothies[5] ? 2u : 0u)
     );
     u8 vertical_flip = special_code == 1u;
+    u8 effect_kind = SOURCE_DETAIL_EFFECT_NONE;
+    u8 effect_hue = SOURCE_DETAIL_HUE_NONE;
+    s8 effect_brightness = 0;
+    u8 effect_objects = 0;
+    u8 effect_active;
 
     background_set_vertical_flip(vertical_flip);
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_NORMAL
@@ -251,39 +516,134 @@ static void source_detail_prepare_scene(void)
     source_detail_iced_requested = 0;
     source_detail_blur_requested = 0;
 #endif
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    source_detail_wave_requested =
+        source_parity_level.smoothies[0] ||
+        source_parity_level.smoothies[1];
+#else
+    source_detail_wave_requested = 0;
+#endif
     source_detail_shadow_windows_active = 0;
     if (source_detail_spotlight_requested) {
         source_detail_spotlight_prepare(
             (s16)(source_player_screen_x() + 16),
             source_world_to_screen_y((s16)(player_source_y + 12))
         );
+        /* starShowVGASpecialCode is later than the smoothie raster pass. */
+        source_detail_wave_requested = 0;
+    }
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    else if (source_detail_wave_requested) {
+        source_detail_wave_prepare(
+            source_parity_level.smoothies[1] != 0
+        );
+    }
+#endif
+
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    source_detail_set_wild_active(
+        source_background2_present() &&
+        source_parity_level.background2_over != 3u &&
+        !source_parity_level.background2_not_transparent
+    );
+#endif
+
+    /* Exact tyrian2.c filter order, represented by GBA palette adapters. */
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_NORMAL
+    if (source_parity_level.smoothies[4]) {
+        effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+        effect_hue = 8u;
+    }
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    if (
+        source_parity_level.smoothies[0] &&
+        source_parity_level.smoothie_data[0] == 0
+    ) {
+        effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+        effect_hue = 7u;
+    }
+    if (source_parity_level.smoothies[1]) {
+        effect_kind = SOURCE_DETAIL_EFFECT_WATER_HUE;
+        effect_hue = source_parity_level.smoothie_data[1] & 0x0fu;
     }
     if (
-        source_detail_palette_mode_pending !=
-            source_detail_iced_requested
+        source_parity_level.smoothies[0] &&
+        source_parity_level.smoothie_data[0] > 0
     ) {
-        source_detail_palette_mode_pending =
-            source_detail_iced_requested;
-        if (source_detail_iced_requested) {
-            source_detail_build_iced_palette();
+        effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+        effect_hue = 7u;
+        effect_objects = 1;
+    }
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_NORMAL
+    if (source_parity_level.smoothies[2]) {
+        effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+        effect_hue = 8u;
+        effect_objects = 1;
+    }
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    if (source_parity_level.filter_active) {
+        if (source_parity_level.level_filter != -99) {
+            effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+            effect_hue =
+                (u8)source_parity_level.level_filter & 0x0fu;
+            effect_objects = 1;
+        }
+        if (source_parity_level.level_brightness != -99) {
+            effect_brightness =
+                source_parity_level.level_brightness;
+            if (effect_brightness < -15) effect_brightness = -15;
+            if (effect_brightness > 15) effect_brightness = 15;
+            effect_objects = 1;
+        }
+    }
+#endif
+    effect_active = (u8)(
+        effect_kind != SOURCE_DETAIL_EFFECT_NONE ||
+        effect_brightness != 0
+    );
+    if (
+        source_detail_palette_mode_pending != effect_active ||
+        source_detail_effect_kind_pending != effect_kind ||
+        source_detail_effect_hue_pending != effect_hue ||
+        source_detail_effect_brightness_pending != effect_brightness ||
+        source_detail_effect_objects_pending != effect_objects
+    ) {
+        source_detail_palette_mode_pending = effect_active;
+        source_detail_effect_kind_pending = effect_kind;
+        source_detail_effect_hue_pending = effect_hue;
+        source_detail_effect_brightness_pending = effect_brightness;
+        source_detail_effect_objects_pending = effect_objects;
+        if (
+            effect_active &&
+            !source_detail_build_effect_palette(
+                effect_kind,
+                effect_hue,
+                effect_brightness,
+                effect_objects
+            )
+        ) {
+            source_parity_level.assets_valid = false;
         }
         source_detail_palette_dirty = 1;
     }
 }
 
-static void source_detail_palette_commit(u8 iced)
+static void source_detail_palette_commit(u8 effect_active)
 {
     if (
-        source_detail_palette_mode_active == iced &&
+        source_detail_palette_mode_active == effect_active &&
         !source_detail_palette_dirty
     ) {
         return;
     }
-    if (iced) {
+    if (effect_active) {
         dmaCopy(
-            source_detail_iced_bg_palette,
+            source_detail_effect_bg_palette,
             BG_PALETTE,
-            sizeof(source_detail_iced_bg_palette)
+            sizeof(source_detail_effect_bg_palette)
         );
     } else if (background_gba_palette_active != 0) {
         dmaCopy(
@@ -292,7 +652,16 @@ static void source_detail_palette_commit(u8 iced)
             BACKGROUND_GBA_PALETTE_VARIANT_BYTES
         );
     }
-    source_detail_palette_mode_active = iced;
+    if (source_detail_obj_palette_base_valid) {
+        dmaCopy(
+            effect_active ?
+                source_detail_effect_obj_palette :
+                source_detail_obj_palette_base,
+            SPRITE_PALETTE,
+            sizeof(source_detail_obj_palette_base)
+        );
+    }
+    source_detail_palette_mode_active = effect_active;
     source_detail_palette_dirty = 0;
 }
 
@@ -316,6 +685,7 @@ static void source_detail_compose_effect_registers(
     *win0v = 0;
     *winin = 0;
     *winout = 0;
+    (void)background2_present;
 #if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
     /* Semi-transparent explosions blend with any already-rendered layer. */
     blend_second = 0x003fu;
@@ -324,17 +694,7 @@ static void source_detail_compose_effect_registers(
     blend_first |= 1u << 4;
     blend_second |= 1u | 2u | 4u | 8u | 16u | 32u;
 #endif
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
-    if (
-        background2_present &&
-        !source_parity_level.background2_not_transparent
-    ) {
-        blend_first |= 1u << 1;
-        blend_second |= 1u | 4u | 32u;
-    }
-#else
-    (void)background2_present;
-#endif
+    /* Pentium wild BG2 is spatially blended in the tile cache. */
     if (source_detail_spotlight_requested) {
         *window_enable = WIN0_ON;
         *win0h = source_detail_spotlight_window_value(
@@ -460,8 +820,12 @@ static void gameplay_presentation_capture_registers(void)
         source_detail_spotlight_requested;
     gameplay_presentation.spotlight_table_index =
         source_detail_spotlight_table_pending;
-    gameplay_presentation.iced_palette_active =
-        source_detail_iced_requested;
+    gameplay_presentation.wave_active =
+        source_detail_wave_requested;
+    gameplay_presentation.wave_table_index =
+        source_detail_wave_table_pending;
+    gameplay_presentation.effect_palette_active =
+        source_detail_palette_mode_pending;
     presentation_registers_valid = 1;
 }
 
@@ -664,7 +1028,7 @@ static void commit_vblank_work(void)
         (volatile u16 *)SPRITE_PALETTE + OBJ_PAL_BOSS_BAR * 16;
 
     if (frontend_mode4_active) {
-        source_detail_spotlight_commit(0, 0);
+        source_detail_scanline_commit(0, 0, 0, 0);
         frontend_commit_vblank();
         if (oam_dirty) {
             dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
@@ -673,7 +1037,7 @@ static void commit_vblank_work(void)
         return;
     }
     if (game_state == STATE_JUKEBOX) {
-        source_detail_spotlight_commit(0, 0);
+        source_detail_scanline_commit(0, 0, 0, 0);
         jukebox_commit_vblank();
         if (oam_dirty) {
             dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
@@ -690,7 +1054,7 @@ static void commit_vblank_work(void)
          * active.  Those are presentation-only states and must not leak into
          * the Mode-0 result/statistics screen that follows gameplay.
          */
-        source_detail_spotlight_commit(0, 0);
+        source_detail_scanline_commit(0, 0, 0, 0);
         source_detail_palette_commit(0);
         REG_MOSAIC = 0;
         REG_WIN0H = 0;
@@ -794,11 +1158,13 @@ static void commit_vblank_work(void)
         REG_WININ = gameplay_presentation.winin;
         REG_WINOUT = gameplay_presentation.winout;
         source_detail_palette_commit(
-            gameplay_presentation.iced_palette_active
+            gameplay_presentation.effect_palette_active
         );
-        source_detail_spotlight_commit(
+        source_detail_scanline_commit(
             gameplay_presentation.spotlight_active,
-            gameplay_presentation.spotlight_table_index
+            gameplay_presentation.spotlight_table_index,
+            gameplay_presentation.wave_active,
+            gameplay_presentation.wave_table_index
         );
 #else
         u8 background2_priority = 2;
@@ -875,10 +1241,14 @@ static void commit_vblank_work(void)
         REG_WIN0V = win0v;
         REG_WININ = winin;
         REG_WINOUT = winout;
-        source_detail_palette_commit(source_detail_iced_requested);
-        source_detail_spotlight_commit(
+        source_detail_palette_commit(
+            source_detail_palette_mode_pending
+        );
+        source_detail_scanline_commit(
             source_detail_spotlight_requested,
-            source_detail_spotlight_table_pending
+            source_detail_spotlight_table_pending,
+            source_detail_wave_requested,
+            source_detail_wave_table_pending
         );
 #endif
         /*
@@ -907,13 +1277,20 @@ static void commit_vblank_work(void)
         }
 #endif
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
-        if (
-            source_background2_present() &&
-            !source_parity_level.background2_not_transparent
-        ) {
+        if (source_detail_wild_active) {
             telemetry_detail_wild_frames++;
+            telemetry_detail_wild_dither_frames++;
+        }
+        if (
+            source_parity_level.filter_active &&
+            source_parity_level.level_filter != -99
+        ) {
+            telemetry_detail_filter_hue_frames++;
         }
 #endif
+        if (source_detail_wave_requested) {
+            telemetry_detail_wave_frames++;
+        }
         if (boss_obj_palette_restore_pending) {
             dmaCopy(
                 obj_palette,
@@ -921,6 +1298,10 @@ static void commit_vblank_work(void)
                 512
             );
             boss_obj_palette_restore_pending = 0;
+            /* Reapply an active source filter after this one-frame restore. */
+            if (source_detail_palette_mode_pending) {
+                source_detail_palette_dirty = 1;
+            }
         }
     }
     if (

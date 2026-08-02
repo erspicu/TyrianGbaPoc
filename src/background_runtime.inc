@@ -956,6 +956,22 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
     u8 column_budget
 );
 
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+static IWRAM_CODE THUMB_CODE __attribute__((noinline, noclone)) void
+background_wild_dither_pattern(u8 *pattern)
+{
+    u32 *rows = (u32 *)pattern;
+    u8 row;
+
+    /* Keep this rare cache-miss transform compact in Thumb IWRAM. */
+    for (row = 0; row < 8u; row++) {
+        rows[row] &= (row & 1u) != 0 ?
+            0x0f0f0f0fu :
+            0xf0f0f0f0u;
+    }
+}
+#endif
+
 static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     u8 layer,
     u32 key,
@@ -963,10 +979,24 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     u8 *rendered
 )
 {
-    u8 pattern[BACKGROUND_TILE_BYTES];
+    u8 pattern[BACKGROUND_TILE_BYTES] __attribute__((aligned(4)));
     u8 palette_bank;
     u16 slot;
     u16 word;
+
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    /*
+     * backgrnd.c::draw_background_2_blend() averages the BG2 brightness
+     * nibble with the pixel already in the PC framebuffer.  GBA has only one
+     * global colour-effects unit, which is also required by source shadows
+     * and translucent explosions.  Give the semantic tile a distinct key
+     * and spatially mix its non-transparent pixels instead; this retains the
+     * source draw stage and lets all three effects coexist.
+     */
+    if (layer == 1u && source_detail_wild_active) {
+        key |= 0x80000000u;
+    }
+#endif
 
     if (background_semantic_lookup(layer, key, &word)) {
         if (rendered != 0) *rendered = 0;
@@ -975,6 +1005,15 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     if (rendered != 0) *rendered = 1;
     background_tile_render_count++;
     background_render_tile(key, pattern, &palette_bank);
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    if (layer == 1u && (key & 0x80000000u) != 0) {
+        /*
+         * 50% checkerboard clears only the selected nibble, including
+         * transparent zero at no extra cost.
+         */
+        background_wild_dither_pattern(pattern);
+    }
+#endif
     slot = background_cache_acquire(
         layer,
         pattern,

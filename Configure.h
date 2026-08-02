@@ -72,10 +72,11 @@
  *   NORMAL  : PC 486 profile.  Keeps BG2, translucent explosions, shadows,
  *             brightness, iced/blur and special-light presentation through
  *             GBA hardware adapters; this is the recommended balance.
- *   HIGH    : Experimental PC High Detail profile.  Normal behavior remains,
- *             while higher software-filter gates are retained for research.
- *   PENTIUM : Experimental maximum profile retained for research/stress use;
- *             not every PC full-frame software filter is pixel-identical.
+ *   HIGH    : PC High Detail gates.  Adds the authored lava/water palette and
+ *             scanline-wave passes through GBA hardware adapters.
+ *   PENTIUM : PC Pentium gates.  Adds wild BG2 colour blending and final
+ *             filtration.  Their GBA tile/palette adapters preserve source
+ *             timing and intent, but are not a pixel-identical framebuffer.
  *
  * A command-line build such as
  *   Build-GBA-ROM.bat -DetailLevel low
@@ -89,10 +90,10 @@
  *             原始關卡的 background2over==3 事件仍可照 PC 規則恢復 BG2。
  *   NORMAL  ：PC 486 等級；以 GBA 硬體方式保留 BG2、透明爆炸、陰影、
  *             亮暗、iced／blur 與特殊光照，建議作為正式版平衡值。
- *   HIGH    ：實驗性 PC High Detail；完整承接 Normal，並保留更高階的
- *             software-filter 事件門檻供研究。
- *   PENTIUM ：研究與壓力測試用最高等級；部分 PC 全畫面軟體濾鏡仍非
- *             逐像素相同實作。
+ *   HIGH    ：PC High Detail 門檻；用 GBA 調色盤與掃描線硬體適配加入
+ *             關卡定義的 lava／water 效果。
+ *   PENTIUM ：PC Pentium 門檻；再加入 wild BG2 混色與最終 filtration。
+ *             GBA 版保留原始觸發時序與視覺意圖，但不是逐像素 framebuffer。
  *
  * 命令列例如 Build-GBA-ROM.bat -DetailLevel low，只會暫時覆寫該次建置。
  */

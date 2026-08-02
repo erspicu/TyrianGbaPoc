@@ -1761,11 +1761,25 @@ static u8 source_detail_vertical_flip;
 static u8 source_detail_spotlight_requested;
 static u8 source_detail_iced_requested;
 static u8 source_detail_blur_requested;
+static u8 source_detail_wave_requested;
 static u8 source_detail_shadow_windows_active;
+static u8 source_detail_wild_active;
 static u8 source_detail_palette_mode_active;
 static u8 source_detail_palette_mode_pending;
 static u8 source_detail_palette_dirty;
-static u16 source_detail_iced_bg_palette[256]
+static u8 source_detail_palette_indices_valid;
+static u8 source_detail_obj_palette_base_valid;
+static u8 source_detail_effect_kind_pending;
+static u8 source_detail_effect_hue_pending;
+static s8 source_detail_effect_brightness_pending;
+static u8 source_detail_effect_objects_pending;
+static u8 source_detail_bg_source_index[256] EWRAM_BSS;
+static u8 source_detail_obj_source_index[256] EWRAM_BSS;
+static u16 source_detail_effect_bg_palette[256]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 source_detail_effect_obj_palette[256]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 source_detail_obj_palette_base[256]
     EWRAM_BSS __attribute__((aligned(4)));
 /*
  * Double-buffered WIN0H scanline tables.  DMA0 streams one halfword at each
@@ -1779,6 +1793,20 @@ static u16 source_detail_spotlight_table[2]
     EWRAM_BSS __attribute__((aligned(4)));
 static u8 source_detail_spotlight_table_active;
 static u8 source_detail_spotlight_table_pending;
+/*
+ * Pentium/High lava and water are source framebuffer filters.  Mode 0 cannot
+ * rewrite a complete 240x160 framebuffer, so DMA0 streams the closest native
+ * text-BG equivalent: per-scanline BG0/BG1 scroll pairs.  The inactive table
+ * is prepared while the LCD consumes the active one, exactly like WIN0H.
+ */
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+#define SOURCE_DETAIL_WAVE_SCANLINES (SCREEN_HEIGHT + 1u)
+static u16 source_detail_wave_table[2]
+    [SOURCE_DETAIL_WAVE_SCANLINES][4]
+    EWRAM_BSS __attribute__((aligned(4)));
+#endif
+static u8 source_detail_wave_table_active;
+static u8 source_detail_wave_table_pending;
 /* Transparent hardware BG3: source starfield and in-level text/warnings. */
 static u8 gameplay_overlay_tiles[
     GAMEPLAY_OVERLAY_TILE_BYTES
@@ -1834,7 +1862,9 @@ typedef struct {
     u16 full_scroll_pixel[3];
     u8 spotlight_active;
     u8 spotlight_table_index;
-    u8 iced_palette_active;
+    u8 wave_active;
+    u8 wave_table_index;
+    u8 effect_palette_active;
 } GameplayPresentationRegisters;
 
 static GameplayPresentationRegisters gameplay_presentation;
@@ -1966,6 +1996,10 @@ volatile u32 telemetry_detail_water_frames;
 volatile u32 telemetry_detail_iced_frames;
 volatile u32 telemetry_detail_blur_frames;
 volatile u32 telemetry_detail_wild_frames;
+volatile u32 telemetry_detail_filter_hue_frames;
+volatile u32 telemetry_detail_palette_rebuilds;
+volatile u32 telemetry_detail_wave_frames;
+volatile u32 telemetry_detail_wild_dither_frames;
 volatile u32 telemetry_effect_cache_hits;
 volatile u32 telemetry_effect_cache_misses;
 volatile u32 telemetry_effect_cache_evictions;

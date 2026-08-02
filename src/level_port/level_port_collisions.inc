@@ -1312,7 +1312,14 @@ void ot_level_port_collide_player(
     }
 }
 
-IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+/*
+ * This scan runs every logic tick, but its callback-heavy ARM form consumed
+ * 1.25 KiB of the 32 KiB IWRAM while the EP2 stress trace updated only 74
+ * active enemy shots.  Keep it as compact Thumb ROM code: the measured gain
+ * from placement is smaller than the IWRAM needed by the source-parity stack,
+ * Sprite2 cache path, background decoder and Maxmod mixer.
+ */
+__attribute__((noinline, noclone)) void
 ot_level_port_update_enemy_shots(
     OtLevelPortState *state,
     OtEnemyShotImpactHandler impact_handler,

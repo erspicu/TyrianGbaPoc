@@ -125,7 +125,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 372) {
+if ($bytes.Length -lt 400) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -153,6 +153,7 @@ $diagnosticFlags = Read-U32 200
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
+$audioFrameLoss = [math]::Max(0, $displayFrames - $audioFrames)
 $telemetry = [ordered]@{
     schema = $magic
     variant = $Variant
@@ -238,6 +239,12 @@ $telemetry = [ordered]@{
     vblank_recovery_loops = $vblankRecoveryLoops
     vblank_commit_frames = $commitFrames
     audio_frames = $audioFrames
+    audio_frame_loss = $audioFrameLoss
+    audio_frame_loss_percent = if ($displayFrames) {
+        [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
+    } else {
+        0
+    }
     rng_calls = Read-U32 336
     enemy_motion_updates = Read-U32 340
     enemy_shot_motion_updates = Read-U32 344
@@ -247,6 +254,13 @@ $telemetry = [ordered]@{
     rng_benchmark_cycles = Read-U32 360
     rng_benchmark_sink = Read-U32 364
     rng_benchmark_calls = Read-U32 368
+    detail_filter_hue_frames = Read-U32 372
+    detail_palette_rebuilds = Read-U32 376
+    detail_wave_frames = Read-U32 380
+    detail_wild_dither_frames = Read-U32 384
+    invincible_enabled = Read-U32 388
+    stress_loadout_enabled = Read-U32 392
+    detail_adapter_self_test = Read-U32 396
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
         2
@@ -309,6 +323,9 @@ if (
     $bytes[5] -ne 1 -or
     $telemetry.loadout_failures -ne 0 -or
     $telemetry.source_assets_valid -ne 1 -or
+    $telemetry.invincible_enabled -ne 1 -or
+    $telemetry.stress_loadout_enabled -ne 1 -or
+    $telemetry.detail_adapter_self_test -ne 1 -or
     $telemetry.rng_benchmark_calls -ne 10000 -or
     $telemetry.rng_benchmark_cycles -eq 0
 ) {
@@ -316,14 +333,16 @@ if (
 }
 if (($diagnosticFlags -band 0x1000) -ne 0) {
     if (
-        $audioFrames -ne $telemetry.wall_vblanks -or
         $displayFrames -ne $telemetry.wall_vblanks -or
-        $vblankRecoveryLoops -ne $telemetry.missed_vblanks
+        $vblankRecoveryLoops -ne $telemetry.missed_vblanks -or
+        $audioFrames -gt $telemetry.wall_vblanks -or
+        ($audioFrameLoss * 100) -gt $displayFrames
     ) {
         throw (
             "VBlank recovery lost timing parity: " +
             "audio=$audioFrames display=$displayFrames " +
             "wall=$($telemetry.wall_vblanks) " +
+            "audioLoss=$audioFrameLoss " +
             "recoveries=$vblankRecoveryLoops " +
             "missed=$($telemetry.missed_vblanks)"
         )

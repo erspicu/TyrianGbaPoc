@@ -188,6 +188,23 @@ static u16 source_background_hofs(u8 layer)
         );
     }
     if (layer == 1) {
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+        /*
+         * backgrnd.c::draw_background_2() synchronizes water's BG2 x source
+         * to BG1.  The wild blend path deliberately keeps mapX2Pos, so only
+         * the authored opaque/event-48 path (and background2over==3) shares
+         * BG1's offset.
+         */
+        if (
+            state->smoothies[1] &&
+            (
+                state->background2_not_transparent ||
+                state->background2_over == 3u
+            )
+        ) {
+            return source_background_hofs(0);
+        }
+#endif
         return (u16)(
             SOURCE_BG12_PARALLAX_BASE_X -
             state->presentation_map_x2_offset +
@@ -1376,6 +1393,12 @@ static void source_runtime_reset(void)
         stress_loadout_valid = 0;
 #endif
     }
+    /*
+     * Capture the authoritative post-Sprite2/post-projectile OBJ palette once
+     * per level.  Pentium filtration then derives reversible palette states
+     * without ever filtering an already-filtered result.
+     */
+    source_detail_capture_obj_palette();
     if (
         !source_layer_priority_self_test(
             &layer_passed_checks,

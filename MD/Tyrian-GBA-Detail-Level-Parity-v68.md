@@ -2,6 +2,11 @@
 
 日期：2026-08-02
 
+> 後續狀態：High／Pentium 的 lava、water、wild 與 filtration 已在 v69
+> 完成來源規則核對、GBA 硬體適配及四檔效能矩陣；請參閱
+> `Tyrian-GBA-Pentium-Source-Parity-Performance-v69.md`。本文件以下內容保留
+> v68 當時的 Low／Normal 里程碑紀錄。
+
 ## 結論
 
 `LOW` 與 `NORMAL` 已按 OpenTyrian 的 `JE_initProcessorType()`、
