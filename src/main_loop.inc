@@ -1585,10 +1585,17 @@ int main(void)
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
             if (
                 game_state == STATE_PLAY &&
-#if TYRIAN_GBA_WALL_CLOCK_LOGIC
-                telemetry_wall_vblanks >= 3600
+#if AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION != 0
+                level_position >=
+                    AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION
 #else
-                telemetry_display_frames >= 3600
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+                telemetry_wall_vblanks >=
+                    AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS
+#else
+                telemetry_display_frames >=
+                    AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS
+#endif
 #endif
             ) {
                 autotest_full_loadout_stress_finish();

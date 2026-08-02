@@ -8,7 +8,11 @@ ROUTE_FRONT_WEAPON_POWER ?= 11
 CAMPAIGN_EPISODE ?= 1
 CAMPAIGN_SECTION ?= 1
 CAMPAIGN_LEVELS ?= 4
-STRESS_DIAGNOSTIC ?= active_mask
+STRESS_DIAGNOSTIC ?= active_mask_fast_wall_lazy_packed
+STRESS_EPISODE ?= 2
+STRESS_SECTION ?= 1
+STRESS_END_POSITION ?= 0
+STRESS_DURATION_VBLANKS ?= 3600
 CAPTURE_STATE ?= 7
 CAPTURE_EPISODE ?= 1
 CAPTURE_SELECTION ?=
@@ -233,7 +237,9 @@ ARCADE_ROUTE_TEST_TARGET := tyrian_gba_arcade_route_smoke_ep1_section1_v40_$(CON
 SCRIPTED_SURVIVAL_TEST_TARGET := tyrian_gba_time_war_exit_autotest_v64_$(CONFIG_SUFFIX)
 EPISODE_WRAP_TEST_TARGET := tyrian_gba_episode4_skip_it_autotest_v65_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v40_$(CONFIG_SUFFIX)
-STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_ep2_v36_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
+STRESS_STOP_TAG := $(if $(filter-out 0,$(STRESS_END_POSITION)),pos$(STRESS_END_POSITION),vb$(STRESS_DURATION_VBLANKS))
+STRESS_RUN_TAG := ep$(STRESS_EPISODE)_section$(STRESS_SECTION)_$(STRESS_STOP_TAG)
+STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_$(STRESS_RUN_TAG)_v70_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_TAG := _sel$(CAPTURE_SELECTION)
@@ -260,6 +266,8 @@ FRONTEND_NAV_CAMERA_STRESS_TARGET := tyrian_gba_frontend_nav_camera_stress_v43_$
 FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v48_$(CONFIG_SUFFIX)
 BUILD := build
 RES := res
+STRESS_MAIN_OBJECT := \
+	$(BUILD)/main_full_loadout_stress_$(STRESS_RUN_TAG)_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o
 
 PROJECT_ROOT := $(CURDIR)
 VENDOR_ROOT := $(PROJECT_ROOT)/vendor
@@ -637,7 +645,7 @@ $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_lev
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
-$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o: \
+$(STRESS_MAIN_OBJECT): \
 		main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
@@ -645,8 +653,11 @@ $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o: \
 		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST \
 		-DAUTOTEST_FULL_LOADOUT_STRESS \
-		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=2 \
-		-DAUTOTEST_FRONTEND_ROUTE_SECTION=1 \
+		-DAUTOTEST_FRONTEND_ROUTE_EPISODE=$(STRESS_EPISODE) \
+		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(STRESS_SECTION) \
+		-DAUTOTEST_FULL_LOADOUT_STRESS_END_POSITION=$(STRESS_END_POSITION) \
+		-DAUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS=$(STRESS_DURATION_VBLANKS) \
+		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1 \
 		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
 		$(STRESS_DIAGNOSTIC_FLAGS) \
 		-MMD -MP -c $< -o $@
@@ -833,7 +844,7 @@ $(BUILD)/$(CAMPAIGN_TEST_TARGET).elf: \
 	$(SIZE) $@
 
 $(BUILD)/$(STRESS_TARGET).elf: \
-		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
+		$(STRESS_MAIN_OBJECT) \
 		$(STRESS_COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(STRESS_TARGET).map $^ \
 		-lmm -lgba -o $@
@@ -993,8 +1004,8 @@ clean:
 		$(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d \
-		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o \
-		$(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d \
+		$(STRESS_MAIN_OBJECT) \
+		$(STRESS_MAIN_OBJECT:.o=.d) \
 		$(STRESS_LEVEL_OBJECT) \
 		$(STRESS_LEVEL_OBJECT:.o=.d) \
 		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
@@ -1093,7 +1104,7 @@ distclean: clean
 -include $(BUILD)/main_scripted_survival_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_episode_wrap_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
--include $(BUILD)/main_full_loadout_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).d
+-include $(STRESS_MAIN_OBJECT:.o=.d)
 -include $(STRESS_LEVEL_OBJECT:.o=.d)
 -include $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_$(CONFIG_SUFFIX).d

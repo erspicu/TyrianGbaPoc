@@ -320,6 +320,23 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(384, telemetry_detail_wild_dither_frames);
     sram_write_u32(388, TYRIAN_GBA_DEV_PLAYER_INVINCIBLE);
     sram_write_u32(392, TYRIAN_GBA_STRESS_LOADOUT);
+    /* Additive TGW8 route/transition diagnostics. */
+    sram_write_u32(400, AUTOTEST_FRONTEND_ROUTE_EPISODE);
+    sram_write_u32(404, AUTOTEST_FRONTEND_ROUTE_SECTION);
+    sram_write_u32(408, frontend_level.lvl_file_number);
+    sram_write_u32(
+        412,
+        AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION
+    );
+    sram_write_u32(
+        416,
+        AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS
+    );
+    sram_write_u32(420, source_parity_level.smoothies[0] != 0);
+    sram_write_u32(424, source_parity_level.smoothies[1] != 0);
+    sram_write_u32(428, source_parity_level.smoothie_data[0]);
+    sram_write_u32(432, source_parity_level.smoothie_data[1]);
+    /* The self-test mutates smoothie state, so run it after the snapshot. */
     sram_write_u32(396, autotest_detail_adapter_self_test());
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");

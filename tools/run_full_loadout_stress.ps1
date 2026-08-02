@@ -20,7 +20,16 @@ param(
         "active_mask_fast_wall_bg_live",
         "active_mask_range_fast"
     )]
-    [string]$Variant = "active_mask",
+    [string]$Variant = "active_mask_fast_wall_lazy_packed",
+    [ValidateRange(1, 4)]
+    [int]$Episode = 2,
+    [ValidateRange(1, 65535)]
+    [int]$Section = 1,
+    [ValidateRange(0, 65535)]
+    [int]$EndPosition = 0,
+    [ValidateRange(1, 20000)]
+    [int]$DurationVBlanks = 3600,
+    [string]$ScreenshotPath = "",
     [switch]$NoBuild
 )
 
@@ -41,8 +50,14 @@ $pythonPath = if (Test-Path -LiteralPath $venvPython -PathType Leaf) {
 } else {
     (Get-Command python -ErrorAction Stop).Source
 }
+$stopTag = if ($EndPosition -gt 0) {
+    "pos$EndPosition"
+} else {
+    "vb$DurationVBlanks"
+}
 $name = (
-    "tyrian_gba_full_loadout_sprite_stress_ep2_v36_" +
+    "tyrian_gba_full_loadout_sprite_stress_" +
+    "ep${Episode}_section${Section}_${stopTag}_v70_" +
     "${Variant}_detail_${DetailLevel}_speed_normal"
 )
 $rom = Join-Path $buildDir "$name.gba"
@@ -50,6 +65,11 @@ $save = Join-Path $buildDir "$name.sav"
 $stdout = Join-Path $buildDir "${name}_mgba_stdout.txt"
 $stderr = Join-Path $buildDir "${name}_mgba_stderr.txt"
 $json = Join-Path $buildDir "${name}_telemetry.json"
+$screenshot = if ([string]::IsNullOrWhiteSpace($ScreenshotPath)) {
+    Join-Path $buildDir "${name}.png"
+} else {
+    [IO.Path]::GetFullPath($ScreenshotPath)
+}
 
 function Convert-ToMsysPath {
     param(
@@ -80,6 +100,9 @@ if (-not $NoBuild) {
         "cd '$msysProject'; " +
         "make -j2 PYTHON=$python " +
         "DETAIL_LEVEL=$DetailLevel GAME_SPEED=normal " +
+        "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
+        "STRESS_END_POSITION=$EndPosition " +
+        "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
         "STRESS_DIAGNOSTIC=$Variant full-loadout-stress"
     )
     & $bash -lc $command
@@ -91,7 +114,7 @@ if (-not (Test-Path -LiteralPath $rom -PathType Leaf)) {
     throw "Stress ROM is missing: $rom"
 }
 
-foreach ($old in @($save, $stdout, $stderr, $json)) {
+foreach ($old in @($save, $stdout, $stderr, $json, $screenshot)) {
     if (Test-Path -LiteralPath $old -PathType Leaf) {
         Remove-Item -LiteralPath $old -Force
     }
@@ -99,7 +122,7 @@ foreach ($old in @($save, $stdout, $stderr, $json)) {
 $env:PATH = "$mgbaRoot;$armBin;$env:PATH"
 $process = Start-Process `
     -FilePath $headless `
-    -ArgumentList @("-S", "3", "$name.gba") `
+    -ArgumentList @("-O", $screenshot, "-S", "3", "$name.gba") `
     -WorkingDirectory $buildDir `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdout `
@@ -115,6 +138,9 @@ if ($process.ExitCode -ne 0) {
 if (-not (Test-Path -LiteralPath $save -PathType Leaf)) {
     throw "Stress runtime did not produce SRAM: $save"
 }
+if (-not (Test-Path -LiteralPath $screenshot -PathType Leaf)) {
+    throw "Stress runtime did not produce a screenshot: $screenshot"
+}
 $runtimeErrors = @(
     Select-String `
         -Path $stdout, $stderr `
@@ -125,7 +151,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 400) {
+if ($bytes.Length -lt 436) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -261,6 +287,16 @@ $telemetry = [ordered]@{
     invincible_enabled = Read-U32 388
     stress_loadout_enabled = Read-U32 392
     detail_adapter_self_test = Read-U32 396
+    route_episode = Read-U32 400
+    route_section = Read-U32 404
+    route_lvl_file_number = Read-U32 408
+    stop_end_position = Read-U32 412
+    stop_duration_vblanks = Read-U32 416
+    lava_active_at_finish = Read-U32 420
+    water_active_at_finish = Read-U32 424
+    lava_data_at_finish = Read-U32 428
+    water_data_at_finish = Read-U32 432
+    screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
         2
@@ -326,6 +362,14 @@ if (
     $telemetry.invincible_enabled -ne 1 -or
     $telemetry.stress_loadout_enabled -ne 1 -or
     $telemetry.detail_adapter_self_test -ne 1 -or
+    $telemetry.route_episode -ne $Episode -or
+    $telemetry.route_section -ne $Section -or
+    $telemetry.stop_end_position -ne $EndPosition -or
+    $telemetry.stop_duration_vblanks -ne $DurationVBlanks -or
+    (
+        $EndPosition -gt 0 -and
+        $telemetry.level_position -lt $EndPosition
+    ) -or
     $telemetry.rng_benchmark_calls -ne 10000 -or
     $telemetry.rng_benchmark_cycles -eq 0
 ) {

@@ -104,6 +104,24 @@ _Static_assert(
 #if !defined(AUTOTEST) && TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER != 0
 #error Fixed front-weapon power is restricted to AUTOTEST builds
 #endif
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+/*
+ * Generic route stress stop controls.  A non-zero source event position has
+ * priority over the historical fixed-duration benchmark so authored visual
+ * transitions can be sampled at exact points without depending on display
+ * rate or dropped presentation frames.
+ */
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION
+#define AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION 0
+#endif
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS
+#define AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS 3600
+#endif
+#if AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS < 1
+#error AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS must be positive
+#endif
+#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
 /*
  * The upper-bound build spends IWRAM on larger hot collision/render paths.
