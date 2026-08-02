@@ -5,9 +5,10 @@
 ## 字體與文字來源
 
 章節／關卡之間的 `levelsN.dat` prose 現在統一使用 Data Cube reader 的
-source-derived 5-row 細字體；Episode announcement 也改用同一字面，不再
-混用較粗的 pre-game 小字。240x160 capture 已確認筆畫與大小符合
-`episode_scene_v67/ep4_section32_red.png` 的基準風格。
+4x8 mixed-case 細字體；Episode announcement 也改用同一字面。原 v71
+第一次提交誤用了 source-derived 5-row 投影，實際畫面接近
+`ep4_section32_red_wrapped.png`，並不符合需求；後續修正已明確改用
+`episode_scene_v67/ep4_section32_red.png` 的基準字面，避免筆畫黏成一團。
 
 新增 `TextRes/Episode1`～`Episode4` 共 67 個 UTF-8 文字檔。檔案中的
 換行會成為 GBA presentation 的人工斷行；建置器限制每區塊 10 行、每行
@@ -34,7 +35,7 @@ source-derived 5-row 細字體；Episode announcement 也改用同一字面，�
 - 320x200 → 240x160 每幀處理 24 rows。
 - 縮放使用精確 4:3 x／5:4 y 的 ARM SWAR word pack；每 16 個來源 pixel
   直接組成 12 個目標 pixel，不再逐 pixel 做乘除與位址計算。
-- 細字型每幀準備 12 glyph，正文每幀 raster 2 列。
+- 4x8 細字型已在 ROM 內預烘焙，不需進場時解碼；正文每幀 raster 2 列。
 - 完整 inactive Mode-4 page 只在內容完成後由 VBlank present。
 
 Episode 4 section 44 的完整故事、秘密提示、episode announcement 與返回

@@ -173,17 +173,7 @@ static void frontend_data_wrapped_text_job_begin(
     u8 max_lines,
     u8 colour
 );
-static void frontend_data_reader_font_prepare(void);
 static s16 frontend_data_tiny_text_width(const char *text);
-static void frontend_data_tiny_text_clipped_colours(
-    u8 *frame,
-    const char *text,
-    s16 x,
-    s16 y,
-    s16 right,
-    u8 colour,
-    u8 shadow_colour
-);
 static s16 frontend_data_fine_text_width(const char *text);
 static void frontend_data_fine_text_clipped_colours(
     u8 *frame,
@@ -1026,7 +1016,8 @@ static void frontend_render_data_selection(u8 old_selection)
  * retain the clearer eight authored rows through frontend_data_fine_*().
  * Wide M/W/m/w glyphs keep four columns so "Mom" cannot collapse into "Non".
  */
-static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
+static u8 __attribute__((unused))
+frontend_data_reader_font_prepare_step(u8 glyph_budget)
 {
     static const u8 source_y0[5] = {0, 1, 3, 4, 6};
     static const u8 source_y1[5] = {2, 4, 5, 7, 8};
@@ -1154,13 +1145,6 @@ static u8 frontend_data_reader_font_prepare_step(u8 glyph_budget)
         frontend_data_reader_font_ready = 1;
     }
     return frontend_data_reader_font_ready;
-}
-
-static void frontend_data_reader_font_prepare(void)
-{
-    while (!frontend_data_reader_font_prepare_step(255)) {
-        /* Synchronous fallback outside the cooperative transition path. */
-    }
 }
 
 static u8 frontend_data_tiny_font_advance(u8 tile)
@@ -1346,47 +1330,6 @@ static void frontend_data_tiny_draw_glyph(
                 (u16)pixel_x
             ] = colour;
         }
-    }
-}
-
-static void frontend_data_tiny_text_clipped_colours(
-    u8 *frame,
-    const char *text,
-    s16 x,
-    s16 y,
-    s16 right,
-    u8 colour,
-    u8 shadow_colour
-)
-{
-    u8 highlight = 0;
-
-    while (text != 0 && *text != '\0' && x < right) {
-        char character = *text++;
-        u8 tile;
-        u8 advance;
-
-        if (character == '~') {
-            highlight ^= 1u;
-            continue;
-        }
-        tile = frontend_pregame_font_tile(character);
-        advance = frontend_data_tiny_font_advance(tile);
-        if (x + advance > right) break;
-        if (tile != 0) {
-            frontend_data_tiny_draw_glyph(
-                frame,
-                tile,
-                x,
-                y,
-                right,
-                highlight ?
-                    frontend_data_tiny_highlight_colour(colour) :
-                    colour,
-                shadow_colour
-            );
-        }
-        x = (s16)(x + advance);
     }
 }
 

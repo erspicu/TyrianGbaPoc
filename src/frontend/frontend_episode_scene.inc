@@ -11,7 +11,6 @@ enum {
     FRONTEND_SCENE_WARNING_SOUND_VBLANKS = 90,
     FRONTEND_SCENE_PIC_OUTPUT_BUDGET = 2048,
     FRONTEND_SCENE_SCALE_ROW_BUDGET = 24,
-    FRONTEND_SCENE_FONT_GLYPH_BUDGET = 12,
     FRONTEND_SCENE_TEXT_ROW_BUDGET = 2,
     FRONTEND_SCENE_PICTURE_JOB_NONE = 0,
     FRONTEND_SCENE_PICTURE_JOB_DECODE,
@@ -316,9 +315,11 @@ static u32 frontend_scene_total_score(void)
  * OpenTyrian renders levelsN.dat prose with TINY_FONT at x=10 on a
  * 320-pixel-wide surface.  A literal one-line copy does not fit after the
  * front-end is adapted to 240 pixels.  Keep every source string intact and
- * wrap only at this final presentation boundary.  The font is the same
- * source-derived 5-row face used by the Data reader, not a second baked
- * alphabet.
+ * wrap only at this final presentation boundary.  Use the thin authored
+ * 4x8 mixed-case face shown by the clear v67 story reference and used by
+ * the current Data reader.  The older source-derived 5-row projection makes
+ * neighbouring strokes merge into the blocky appearance explicitly rejected
+ * for story prose.
  */
 static char frontend_scene_wrap_scratch[
     OT_EPISODE_SCENE_TEXT_LINE_BYTES
@@ -347,7 +348,7 @@ static const char *frontend_scene_wrap_segment(
     ) {
         char character = text[length];
         u8 advance = character == '~' ? 0u :
-            frontend_data_tiny_font_advance(
+            frontend_small_mixed_font_advance(
                 frontend_pregame_font_tile(character)
             );
 
@@ -415,7 +416,7 @@ static const char *frontend_scene_draw_text_segment(
         segment,
         maximum_width
     );
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         segment,
         TYRIAN_GBA_LAYOUT_SCENE_TEXT_X,
@@ -545,11 +546,6 @@ static void frontend_scene_text_update(void)
         frontend_scene_text_job.phase ==
             FRONTEND_SCENE_TEXT_PHASE_PREPARE
     ) {
-        if (!frontend_data_reader_font_prepare_step(
-                FRONTEND_SCENE_FONT_GLYPH_BUDGET
-            )) {
-            return;
-        }
         frontend_scene_text_prepare_layout(
             &frontend_scene_action,
             frontend_scene_text_job.episode_end
@@ -629,12 +625,12 @@ static void frontend_scene_text_update(void)
             }
             continue;
         }
-        frontend_data_tiny_text_clipped_colours(
+        frontend_data_fine_text_clipped_colours(
             frontend_frame_scratch,
             prompt,
             (s16)(
                 SCREEN_WIDTH / 2 -
-                frontend_data_tiny_text_width(prompt) / 2
+                frontend_data_fine_text_width(prompt) / 2
             ),
             frontend_scene_text_job.prompt_y,
             SCREEN_WIDTH,
@@ -732,25 +728,24 @@ static void frontend_episode_announcement_begin(void)
     game_state = STATE_EPISODE_SCENE;
     frontend_selection = 0;
     frontend_scene_clear(5); /* OpenTyrian palettes[6 - 1]. */
-    frontend_data_reader_font_prepare();
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         episode_name,
         (s16)(
             SCREEN_WIDTH / 2 -
-            frontend_data_tiny_text_width(episode_name) / 2
+            frontend_data_fine_text_width(episode_name) / 2
         ),
         104, /* source y=130 scaled from 200 to 160 */
         SCREEN_WIDTH,
         colour,
         shadow
     );
-    frontend_data_tiny_text_clipped_colours(
+    frontend_data_fine_text_clipped_colours(
         frontend_frame_scratch,
         prompt,
         (s16)(
             SCREEN_WIDTH / 2 -
-            frontend_data_tiny_text_width(prompt) / 2
+            frontend_data_fine_text_width(prompt) / 2
         ),
         148, /* source y=185 scaled from 200 to 160 */
         SCREEN_WIDTH,
