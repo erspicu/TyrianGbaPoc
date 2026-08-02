@@ -9,7 +9,38 @@
 enum {
     FRONTEND_SCENE_ANM_FRAME_VBLANKS = 7,
     FRONTEND_SCENE_WARNING_SOUND_VBLANKS = 90,
+    FRONTEND_SCENE_PIC_OUTPUT_BUDGET = 2048,
+    FRONTEND_SCENE_SCALE_ROW_BUDGET = 24,
+    FRONTEND_SCENE_FONT_GLYPH_BUDGET = 12,
+    FRONTEND_SCENE_TEXT_ROW_BUDGET = 2,
+    FRONTEND_SCENE_PICTURE_JOB_NONE = 0,
+    FRONTEND_SCENE_PICTURE_JOB_DECODE,
+    FRONTEND_SCENE_PICTURE_JOB_SCALE,
+    FRONTEND_SCENE_PICTURE_JOB_PRESENT,
+    FRONTEND_SCENE_TEXT_PHASE_PREPARE = 1,
+    FRONTEND_SCENE_TEXT_PHASE_SCORE,
+    FRONTEND_SCENE_TEXT_PHASE_LINES,
+    FRONTEND_SCENE_TEXT_PHASE_PROMPT,
 };
+
+typedef struct {
+    const char *remaining;
+    s16 y;
+    s16 prompt_y;
+    u8 active;
+    u8 episode_end;
+    u8 phase;
+    u8 line;
+    u8 line_started;
+    u8 row_step;
+    u8 colour;
+    u8 shadow;
+} FrontendSceneTextJob;
+
+static OtPicReader frontend_scene_pic_reader EWRAM_BSS;
+static FrontendSceneTextJob frontend_scene_text_job EWRAM_BSS;
+static u8 frontend_scene_picture_job EWRAM_BSS;
+static u8 frontend_scene_picture_scale_row EWRAM_BSS;
 
 static void frontend_scene_palette_rgb(
     const OtDataView *palette,
@@ -61,37 +92,77 @@ static void frontend_scene_palette_anm(const OtDataView *palette)
     }
 }
 
-static void frontend_scene_scale_pc_frame(void)
+static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+frontend_scene_scale_pc_frame_rows(
+    u8 first_row,
+    u8 row_count
+)
 {
     u8 *frame = (u8 *)(void *)&frontend_gameplay_arena;
-    u16 y;
+    u8 y;
 
     /*
      * Destination addresses always precede unread source addresses, so the
      * stock 64,000-byte decode can be reduced in place without a second
      * frame buffer.  This is the exact 3/4 x 4/5 full-screen transform.
      */
-    for (y = 0; y < SCREEN_HEIGHT; y++) {
-        u16 source_y = (u16)(((u32)y * OT_PIC_DECODED_HEIGHT) /
-            SCREEN_HEIGHT);
-        u16 x;
+    if (first_row >= SCREEN_HEIGHT) return;
+    if (first_row + row_count > SCREEN_HEIGHT) {
+        row_count = (u8)(SCREEN_HEIGHT - first_row);
+    }
+    for (y = first_row; y < first_row + row_count; y++) {
+        /* floor(y * 5 / 4), matching the former 200/160 expression. */
+        u16 source_y = (u16)(y + (y >> 2));
+        const u32 *source = (const u32 *)(const void *)(
+            frame + (u32)source_y * OT_PIC_DECODED_WIDTH
+        );
+        u32 *destination = (u32 *)(void *)(
+            frame + (u32)y * SCREEN_WIDTH
+        );
+        u8 block;
 
-        for (x = 0; x < SCREEN_WIDTH; x++) {
-            u16 source_x = (u16)(((u32)x * OT_PIC_DECODED_WIDTH) /
-                SCREEN_WIDTH);
+        /*
+         * Exact floor(x * 4 / 3) nearest-neighbour projection.  Every four
+         * aligned source words become three destination words, discarding
+         * source columns 3, 7, 11 and 15.  This SWAR path replaces 5,760
+         * per-pixel address calculations in a 24-row slice with 480 compact
+         * register packs and is safe in-place because destination trails the
+         * unread 320-wide source.
+         */
+        for (block = 0; block < SCREEN_WIDTH / 12u; block++) {
+            u32 source0 = source[0];
+            u32 source1 = source[1];
+            u32 source2 = source[2];
+            u32 source3 = source[3];
 
-            frame[(u32)y * SCREEN_WIDTH + x] =
-                frame[(u32)source_y * OT_PIC_DECODED_WIDTH + source_x];
+            destination[0] =
+                (source0 & 0x00ffffffu) |
+                ((source1 & 0x000000ffu) << 24);
+            destination[1] =
+                ((source1 >> 8) & 0x0000ffffu) |
+                ((source2 & 0x0000ffffu) << 16);
+            destination[2] =
+                ((source2 >> 16) & 0x000000ffu) |
+                ((source3 & 0x00ffffffu) << 8);
+            source += 4;
+            destination += 3;
         }
     }
 }
 
-static u8 frontend_scene_load_picture(u16 picture)
+/*
+ * Begin one source picture without monopolising a host frame.  Stock PIC RLE
+ * decoding and the 320x200 -> 240x160 projection continue cooperatively from
+ * frontend_episode_scene_update(), keeping maxmod input and VBlank service
+ * alive during story transitions.
+ */
+static int8_t frontend_scene_picture_begin(u16 picture)
 {
     u8 *decode = (u8 *)(void *)&frontend_gameplay_arena;
     OtDataView palette;
-    u8 decoded = 0;
 
+    frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+    frontend_scene_picture_scale_row = 0;
     if (picture > 900u) {
         u16 source_picture = (u16)(picture - 900u);
 
@@ -100,10 +171,15 @@ static u8 frontend_scene_load_picture(u16 picture)
             source_picture > OT_PIC_COUNT ||
             !ot_data_pic_palette_view((u8)source_picture, &palette)
         ) {
-            return 0;
+            return -1;
         }
         frontend_scene_palette_rgb(&palette, 0);
         memset(frontend_frame_scratch, 0, FRONTEND_FRAME_BYTES);
+        frontend_present(
+            frontend_frame_scratch,
+            (const u8 *)(const void *)frontend_scene_palette
+        );
+        return 0;
     } else if (picture == 0) {
         if (!ot_data_pcx_decode(
                 "tshp2.pcx",
@@ -111,31 +187,86 @@ static u8 frontend_scene_load_picture(u16 picture)
                 sizeof(frontend_gameplay_arena),
                 &palette
             )) {
-            return 0;
+            return -1;
         }
         frontend_scene_palette_rgb(&palette, 1);
-        decoded = 1;
+        frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_SCALE;
+        return 1;
     } else {
         if (
             picture > OT_PIC_COUNT ||
-            !ot_data_pic_decode(
+            !ot_data_pic_decode_begin(
                 (u8)picture,
-                decode,
-                sizeof(frontend_gameplay_arena)
+                &frontend_scene_pic_reader
             ) ||
             !ot_data_pic_palette_view((u8)picture, &palette)
         ) {
-            return 0;
+            return -1;
         }
         frontend_scene_palette_rgb(&palette, 0);
-        decoded = 1;
+        frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_DECODE;
+        return 1;
     }
-    if (decoded) frontend_scene_scale_pc_frame();
-    frontend_present(
-        frontend_frame_scratch,
-        (const u8 *)(const void *)frontend_scene_palette
-    );
-    return 1;
+}
+
+static void frontend_scene_dispatch(u8 action_ready);
+
+static void frontend_scene_picture_update(void)
+{
+    u8 *decode = (u8 *)(void *)&frontend_gameplay_arena;
+
+    if (
+        frontend_scene_picture_job == FRONTEND_SCENE_PICTURE_JOB_NONE ||
+        frontend_frame_pending
+    ) {
+        return;
+    }
+    if (frontend_scene_picture_job == FRONTEND_SCENE_PICTURE_JOB_DECODE) {
+        int8_t status = ot_data_pic_decode_step(
+            &frontend_scene_pic_reader,
+            decode,
+            sizeof(frontend_gameplay_arena),
+            FRONTEND_SCENE_PIC_OUTPUT_BUDGET
+        );
+
+        if (status > 0) return;
+        if (status < 0) {
+            frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+            frontend_scene_dispatch(0);
+            return;
+        }
+        frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_SCALE;
+        frontend_scene_picture_scale_row = 0;
+    }
+    if (frontend_scene_picture_job == FRONTEND_SCENE_PICTURE_JOB_SCALE) {
+        u8 rows = FRONTEND_SCENE_SCALE_ROW_BUDGET;
+
+        if (
+            frontend_scene_picture_scale_row + rows > SCREEN_HEIGHT
+        ) {
+            rows = (u8)(
+                SCREEN_HEIGHT - frontend_scene_picture_scale_row
+            );
+        }
+        frontend_scene_scale_pc_frame_rows(
+            frontend_scene_picture_scale_row,
+            rows
+        );
+        frontend_scene_picture_scale_row = (u8)(
+            frontend_scene_picture_scale_row + rows
+        );
+        if (frontend_scene_picture_scale_row < SCREEN_HEIGHT) return;
+        frontend_present(
+            frontend_frame_scratch,
+            (const u8 *)(const void *)frontend_scene_palette
+        );
+        frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_PRESENT;
+        return;
+    }
+    if (frontend_scene_picture_job == FRONTEND_SCENE_PICTURE_JOB_PRESENT) {
+        frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+        frontend_scene_dispatch(0);
+    }
 }
 
 static u32 frontend_scene_total_score(void)
@@ -266,42 +397,37 @@ static u8 frontend_scene_wrapped_rows(
     return rows;
 }
 
-static s16 frontend_scene_draw_wrapped_line(
+static const char *frontend_scene_draw_text_segment(
     const char *text,
     s16 y,
-    u8 row_step,
     u8 colour,
     u8 shadow
 )
 {
     char *segment = frontend_scene_wrap_scratch;
-    const char *remaining = text;
+    const char *remaining;
     const s16 maximum_width =
         TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT -
         TYRIAN_GBA_LAYOUT_SCENE_TEXT_X;
 
-    if (text == 0 || *text == '\0') return (s16)(y + row_step);
-    do {
-        remaining = frontend_scene_wrap_segment(
-            remaining,
-            segment,
-            maximum_width
-        );
-        frontend_data_tiny_text_clipped_colours(
-            frontend_frame_scratch,
-            segment,
-            TYRIAN_GBA_LAYOUT_SCENE_TEXT_X,
-            y,
-            TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT,
-            colour,
-            shadow
-        );
-        y = (s16)(y + row_step);
-    } while (remaining != 0);
-    return y;
+    remaining = frontend_scene_wrap_segment(
+        text,
+        segment,
+        maximum_width
+    );
+    frontend_data_tiny_text_clipped_colours(
+        frontend_frame_scratch,
+        segment,
+        TYRIAN_GBA_LAYOUT_SCENE_TEXT_X,
+        y,
+        TYRIAN_GBA_LAYOUT_SCENE_TEXT_RIGHT,
+        colour,
+        shadow
+    );
+    return remaining;
 }
 
-static void frontend_scene_draw_text(
+static void frontend_scene_text_prepare_layout(
     const OtEpisodeSceneAction *action,
     u8 episode_end
 )
@@ -316,11 +442,9 @@ static void frontend_scene_draw_text(
     u8 line;
     u8 colour;
     u8 shadow;
-    const char *prompt = frontend_stats_text(4, "PRESS A KEY");
     char *score = frontend_scene_score_scratch;
 
     if (action == 0) return;
-    frontend_data_reader_font_prepare();
     colour = (u8)((action->text_bank << 4) | 15u);
     shadow = (u8)((action->text_bank << 4) | 2u);
     if (action->warning) {
@@ -389,41 +513,141 @@ static void frontend_scene_draw_text(
         y = (s16)(prompt_y - 2 - required_height);
     }
     if (y < minimum_y) y = minimum_y;
-    if (episode_end) {
-        y = frontend_scene_draw_wrapped_line(
-            score,
-            y,
-            row_step,
-            colour,
-            shadow
+    frontend_scene_text_job.y = y;
+    frontend_scene_text_job.prompt_y = prompt_y;
+    frontend_scene_text_job.row_step = row_step;
+    frontend_scene_text_job.colour = colour;
+    frontend_scene_text_job.shadow = shadow;
+    frontend_scene_text_job.line = 0;
+    frontend_scene_text_job.line_started = 0;
+    frontend_scene_text_job.remaining = episode_end ? score : 0;
+    frontend_scene_text_job.phase = episode_end ?
+        FRONTEND_SCENE_TEXT_PHASE_SCORE :
+        FRONTEND_SCENE_TEXT_PHASE_LINES;
+}
+
+static void frontend_scene_text_begin(u8 episode_end)
+{
+    frontend_scene_text_job = (FrontendSceneTextJob){0};
+    frontend_scene_text_job.active = 1;
+    frontend_scene_text_job.episode_end = episode_end;
+    frontend_scene_text_job.phase = FRONTEND_SCENE_TEXT_PHASE_PREPARE;
+    frontend_scene_waiting_input = 0;
+}
+
+static void frontend_scene_text_update(void)
+{
+    u8 row_budget = FRONTEND_SCENE_TEXT_ROW_BUDGET;
+    const char *prompt = frontend_stats_text(4, "PRESS A KEY");
+
+    if (!frontend_scene_text_job.active || frontend_frame_pending) return;
+    if (
+        frontend_scene_text_job.phase ==
+            FRONTEND_SCENE_TEXT_PHASE_PREPARE
+    ) {
+        if (!frontend_data_reader_font_prepare_step(
+                FRONTEND_SCENE_FONT_GLYPH_BUDGET
+            )) {
+            return;
+        }
+        frontend_scene_text_prepare_layout(
+            &frontend_scene_action,
+            frontend_scene_text_job.episode_end
         );
-        y = (s16)(y + row_step);
     }
-    for (line = 0; line < action->text_line_count; line++) {
-        y = frontend_scene_draw_wrapped_line(
-            action->text[line],
-            y,
-            row_step,
-            colour,
-            shadow
+    while (frontend_scene_text_job.active && row_budget != 0) {
+        if (
+            frontend_scene_text_job.phase ==
+                FRONTEND_SCENE_TEXT_PHASE_SCORE
+        ) {
+            frontend_scene_text_job.remaining =
+                frontend_scene_draw_text_segment(
+                    frontend_scene_text_job.remaining,
+                    frontend_scene_text_job.y,
+                    frontend_scene_text_job.colour,
+                    frontend_scene_text_job.shadow
+                );
+            frontend_scene_text_job.y = (s16)(
+                frontend_scene_text_job.y +
+                frontend_scene_text_job.row_step
+            );
+            row_budget--;
+            if (frontend_scene_text_job.remaining == 0) {
+                frontend_scene_text_job.y = (s16)(
+                    frontend_scene_text_job.y +
+                    frontend_scene_text_job.row_step
+                );
+                frontend_scene_text_job.phase =
+                    FRONTEND_SCENE_TEXT_PHASE_LINES;
+            }
+            continue;
+        }
+        if (
+            frontend_scene_text_job.phase ==
+                FRONTEND_SCENE_TEXT_PHASE_LINES
+        ) {
+            if (
+                frontend_scene_text_job.line >=
+                    frontend_scene_action.text_line_count
+            ) {
+                frontend_scene_text_job.phase =
+                    FRONTEND_SCENE_TEXT_PHASE_PROMPT;
+                continue;
+            }
+            if (!frontend_scene_text_job.line_started) {
+                frontend_scene_text_job.remaining =
+                    frontend_scene_action.text[
+                        frontend_scene_text_job.line
+                    ];
+                frontend_scene_text_job.line_started = 1;
+                if (*frontend_scene_text_job.remaining == '\0') {
+                    frontend_scene_text_job.y = (s16)(
+                        frontend_scene_text_job.y +
+                        frontend_scene_text_job.row_step
+                    );
+                    frontend_scene_text_job.line++;
+                    frontend_scene_text_job.line_started = 0;
+                    row_budget--;
+                    continue;
+                }
+            }
+            frontend_scene_text_job.remaining =
+                frontend_scene_draw_text_segment(
+                    frontend_scene_text_job.remaining,
+                    frontend_scene_text_job.y,
+                    frontend_scene_text_job.colour,
+                    frontend_scene_text_job.shadow
+                );
+            frontend_scene_text_job.y = (s16)(
+                frontend_scene_text_job.y +
+                frontend_scene_text_job.row_step
+            );
+            row_budget--;
+            if (frontend_scene_text_job.remaining == 0) {
+                frontend_scene_text_job.line++;
+                frontend_scene_text_job.line_started = 0;
+            }
+            continue;
+        }
+        frontend_data_tiny_text_clipped_colours(
+            frontend_frame_scratch,
+            prompt,
+            (s16)(
+                SCREEN_WIDTH / 2 -
+                frontend_data_tiny_text_width(prompt) / 2
+            ),
+            frontend_scene_text_job.prompt_y,
+            SCREEN_WIDTH,
+            frontend_scene_text_job.colour,
+            frontend_scene_text_job.shadow
         );
+        frontend_present(
+            frontend_frame_scratch,
+            (const u8 *)(const void *)frontend_scene_palette
+        );
+        frontend_scene_text_job.active = 0;
+        frontend_scene_waiting_input = 1;
     }
-    frontend_data_tiny_text_clipped_colours(
-        frontend_frame_scratch,
-        prompt,
-        (s16)(
-            SCREEN_WIDTH / 2 -
-            frontend_data_tiny_text_width(prompt) / 2
-        ),
-        prompt_y,
-        SCREEN_WIDTH,
-        colour,
-        shadow
-    );
-    frontend_present(
-        frontend_frame_scratch,
-        (const u8 *)(const void *)frontend_scene_palette
-    );
 }
 
 static void frontend_scene_clear(u8 palette_index)
@@ -461,6 +685,8 @@ static void frontend_scene_finish(void)
     frontend_scene_finish_pending = 0;
     frontend_scene_waiting_input = 0;
     frontend_scene_animation_active = 0;
+    frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+    frontend_scene_text_job.active = 0;
     if (frontend_scene_end_episode) {
         frontend_scene_end_episode = 0;
         frontend_advance_episode();
@@ -498,30 +724,33 @@ static void frontend_episode_announcement_begin(void)
     frontend_scene_animation_wait = 0;
     frontend_scene_warning_delay = 0;
     frontend_scene_warning_bar_delay = 0;
+    frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+    frontend_scene_text_job = (FrontendSceneTextJob){0};
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = FRONTEND_PENDING_NONE;
     game_state = STATE_EPISODE_SCENE;
     frontend_selection = 0;
     frontend_scene_clear(5); /* OpenTyrian palettes[6 - 1]. */
-    frontend_draw_small_mixed_text_clipped_colours(
+    frontend_data_reader_font_prepare();
+    frontend_data_tiny_text_clipped_colours(
         frontend_frame_scratch,
         episode_name,
         (s16)(
             SCREEN_WIDTH / 2 -
-            frontend_small_mixed_text_width(episode_name) / 2
+            frontend_data_tiny_text_width(episode_name) / 2
         ),
         104, /* source y=130 scaled from 200 to 160 */
         SCREEN_WIDTH,
         colour,
         shadow
     );
-    frontend_draw_small_mixed_text_clipped_colours(
+    frontend_data_tiny_text_clipped_colours(
         frontend_frame_scratch,
         prompt,
         (s16)(
             SCREEN_WIDTH / 2 -
-            frontend_small_mixed_text_width(prompt) / 2
+            frontend_data_tiny_text_width(prompt) / 2
         ),
         148, /* source y=185 scaled from 200 to 160 */
         SCREEN_WIDTH,
@@ -570,9 +799,13 @@ static void frontend_scene_dispatch(u8 action_ready)
              * GBA adaptation: retain the exact destination art and palette;
              * omit only the 200/320 intermediate software-scroll frames.
              */
-            (void)frontend_scene_load_picture(
-                frontend_scene_action.value
-            );
+            if (
+                frontend_scene_picture_begin(
+                    frontend_scene_action.value
+                ) > 0
+            ) {
+                return;
+            }
             break;
 
         case OT_EPISODE_SCENE_ACTION_MUSIC:
@@ -584,8 +817,7 @@ static void frontend_scene_dispatch(u8 action_ready)
             break;
 
         case OT_EPISODE_SCENE_ACTION_TEXT:
-            frontend_scene_draw_text(&frontend_scene_action, 0);
-            frontend_scene_waiting_input = 1;
+            frontend_scene_text_begin(0);
             frontend_scene_warning_delay = 0;
             frontend_scene_warning_bar_delay = 0;
             return;
@@ -613,8 +845,7 @@ static void frontend_scene_dispatch(u8 action_ready)
 
         case OT_EPISODE_SCENE_ACTION_END_EPISODE:
             frontend_scene_end_episode = 1;
-            frontend_scene_draw_text(&frontend_scene_action, 1);
-            frontend_scene_waiting_input = 1;
+            frontend_scene_text_begin(1);
             return;
 
         default:
@@ -664,6 +895,9 @@ static u8 frontend_episode_scene_begin(
     frontend_scene_animation_wait = 0;
     frontend_scene_warning_delay = 0;
     frontend_scene_warning_bar_delay = 0;
+    frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
+    frontend_scene_picture_scale_row = 0;
+    frontend_scene_text_job = (FrontendSceneTextJob){0};
     frontend_scene_secret_hint = frontend_secret_hint;
     if (
         old_state == STATE_NEXT_LEVEL_MENU &&
@@ -699,6 +933,14 @@ static void frontend_episode_scene_update(void)
     }
     if (frontend_scene_finish_pending) {
         frontend_scene_finish();
+        return;
+    }
+    if (frontend_scene_picture_job != FRONTEND_SCENE_PICTURE_JOB_NONE) {
+        frontend_scene_picture_update();
+        return;
+    }
+    if (frontend_scene_text_job.active) {
+        frontend_scene_text_update();
         return;
     }
     if (frontend_scene_animation_active) {

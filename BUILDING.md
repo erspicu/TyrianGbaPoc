@@ -117,6 +117,7 @@ CRC32 與最後 commit byte，只在進入 `]s`／`]b` 特殊關及最終死亡�
 | 路徑 | 用途 | Git |
 |---|---|---|
 | `src/`、`main.c` | GBA runtime 與 OpenTyrian 翻寫層 | 提交 |
+| `TextRes/` | 關卡／章節故事的 GBA 人工斷行文字；流程仍讀 `levelsN.dat` | 提交 |
 | `vendor/tyrian/data/` | Tyrian 2.1 原始遊戲資料 | 提交 |
 | `vendor/tyrian/image/` | 建置使用的原始圖像工作資料 | 提交 |
 | `vendor/opentyrian/` | 固定 revision 的 OpenTyrian 參考 source | 提交 |
@@ -160,6 +161,11 @@ Windows 路徑後仍可建置。
 關卡、敵人、武器、事件、獎賞與流程仍由 ROMFS 內的 stock
 MUS/SHP/PIC/HDT/LVL 等資料和 OpenTyrian 語意決定。不要為單一關卡建立
 專用表格或手工修補資源；新增關卡支援時應修正共用 loader／adapter。
+
+唯一可人工編輯的劇情 presentation adapter 位於 `TextRes/`。建置器以
+原始 `levelsN.dat` 文字區塊 offset 建立查找表，只覆蓋顯示文字與斷行；
+圖片、音樂、條件分支及 section parser 仍直接讀 stock data。詳細限制與
+重新匯出指令請見 `TextRes/README.md`。
 
 背景 8bpp → GBA 4bpp 調色盤是平台限制下唯一必要的有損 adapter。
 `tools/background_palette_training.py` 會從全部 62 關重建真正的

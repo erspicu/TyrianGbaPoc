@@ -308,6 +308,12 @@ VFS_INPUTS := \
 	$(VFS_MANIFEST) \
 	$(wildcard $(VFS_SOURCE_ROOT)/*)
 
+TEXTRES_ROOT := TextRes
+TEXTRES_IMAGE := $(RES)/textres_scene.bin
+TEXTRES_INPUTS := \
+	tools/build_textres.py \
+	$(wildcard $(TEXTRES_ROOT)/Episode*/*.txt)
+
 ASSET_INPUTS := \
 	Configure.h \
 	tools/audit_project_independence.py \
@@ -520,6 +526,11 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 		--output "$(VFS_IMAGE)" \
 		--meta-header "$(VFS_META)" \
 		--audit "$(VFS_AUDIT)"
+
+$(TEXTRES_IMAGE): $(TEXTRES_INPUTS) | $(RES)
+	$(PYTHON) tools/build_textres.py build \
+		--input "$(TEXTRES_ROOT)" \
+		--output "$(TEXTRES_IMAGE)"
 
 $(BUILD)/main_release_$(CONFIG_SUFFIX).o: main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
@@ -762,7 +773,7 @@ $(BUILD)/opentyrian_rom_io.o: src/opentyrian_rom_io.c \
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/assets.o: assets.s $(ASSET_BINARIES) \
-		$(RES)/soundbank.bin $(VFS_IMAGE) \
+		$(RES)/soundbank.bin $(VFS_IMAGE) $(TEXTRES_IMAGE) \
 		$(RES)/sprite2_raw_meta.h | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@
 

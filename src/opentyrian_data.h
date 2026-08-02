@@ -369,6 +369,16 @@ typedef struct {
     bool done;
 } OtEpisodeSceneReader;
 
+/* Resumable 320x200 PIC RLE decoder used by audio-safe scene transitions. */
+typedef struct {
+    OtDataView file;
+    uint32_t source_offset;
+    uint32_t output_offset;
+    uint8_t run_remaining;
+    uint8_t run_colour;
+    bool valid;
+} OtPicReader;
+
 /* Sequential ANM decoder which writes only the 240x160 sampled pixels. */
 typedef struct {
     OtDataView file;
@@ -571,6 +581,7 @@ int8_t ot_data_episode_scene_step(
     uint8_t secret_hint,
     OtEpisodeSceneAction *action
 );
+uint32_t ot_data_episode_scene_textres_hits(void);
 
 /*
  * Return the number of playable data sections in one stock tyrianN.lvl.
@@ -654,6 +665,16 @@ bool ot_data_pic_decode(
     uint8_t picture_number,
     uint8_t *destination,
     uint32_t destination_bytes
+);
+bool ot_data_pic_decode_begin(
+    uint8_t picture_number,
+    OtPicReader *reader
+);
+int8_t ot_data_pic_decode_step(
+    OtPicReader *reader,
+    uint8_t *destination,
+    uint32_t destination_bytes,
+    uint32_t output_budget
 );
 bool ot_data_pcx_decode(
     const char *filename,

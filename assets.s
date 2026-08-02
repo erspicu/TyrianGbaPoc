@@ -188,6 +188,13 @@ sprite2_raw_components:
 sprite2_raw_components_end:
 
 	.balign 4
+	.global textres_scene
+textres_scene:
+	.incbin "res/textres_scene.bin"
+	.global textres_scene_end
+textres_scene_end:
+
+	.balign 4
 	.global soundbank
 soundbank:
 	.incbin "res/soundbank.bin"

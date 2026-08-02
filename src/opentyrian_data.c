@@ -2881,32 +2881,118 @@ bool ot_data_pic_decode(
     uint32_t destination_bytes
 )
 {
-    OtDataView view;
-    uint32_t source_offset = 0;
-    uint32_t output_offset = 0;
+    OtPicReader reader;
+    int8_t status;
 
     if (
         destination == 0 ||
         destination_bytes < OT_PIC_DECODED_BYTES ||
-        !ot_data_pic_view(picture_number, &view)
+        !ot_data_pic_decode_begin(picture_number, &reader)
     ) {
         return false;
     }
-    while (output_offset < OT_PIC_DECODED_BYTES) {
-        uint8_t code = view.data[source_offset++];
+    do {
+        status = ot_data_pic_decode_step(
+            &reader,
+            destination,
+            destination_bytes,
+            OT_PIC_DECODED_BYTES
+        );
+    } while (status > 0);
+    return status == 0;
+}
 
-        if ((code & 0xc0u) == 0xc0u) {
-            uint8_t count = code & 0x3fu;
-            uint8_t colour = view.data[source_offset++];
+bool ot_data_pic_decode_begin(
+    uint8_t picture_number,
+    OtPicReader *reader
+)
+{
+    OtDataView view;
 
-            memset(destination + output_offset, colour, count);
-            output_offset += count;
-        } else {
-            destination[output_offset++] = code;
+    if (reader == 0 || !ot_data_pic_view(picture_number, &view)) return false;
+    *reader = (OtPicReader){0};
+    reader->file = view;
+    reader->valid = true;
+    return true;
+}
+
+int8_t ot_data_pic_decode_step(
+    OtPicReader *reader,
+    uint8_t *destination,
+    uint32_t destination_bytes,
+    uint32_t output_budget
+)
+{
+    uint32_t written = 0;
+
+    if (
+        reader == 0 ||
+        destination == 0 ||
+        destination_bytes < OT_PIC_DECODED_BYTES ||
+        output_budget == 0 ||
+        !reader->valid
+    ) {
+        return -1;
+    }
+    while (
+        reader->output_offset < OT_PIC_DECODED_BYTES &&
+        written < output_budget
+    ) {
+        if (reader->run_remaining != 0) {
+            uint32_t take = reader->run_remaining;
+            uint32_t remaining_budget = output_budget - written;
+            uint32_t remaining_output =
+                OT_PIC_DECODED_BYTES - reader->output_offset;
+
+            if (take > remaining_budget) take = remaining_budget;
+            if (take > remaining_output) take = remaining_output;
+            memset(
+                destination + reader->output_offset,
+                reader->run_colour,
+                take
+            );
+            reader->output_offset += take;
+            reader->run_remaining = (uint8_t)(
+                reader->run_remaining - take
+            );
+            written += take;
+            continue;
+        }
+        if (reader->source_offset >= reader->file.size) {
+            reader->valid = false;
+            return -1;
+        }
+        {
+            uint8_t code = reader->file.data[reader->source_offset++];
+
+            if ((code & 0xc0u) == 0xc0u) {
+                reader->run_remaining = code & 0x3fu;
+                if (
+                    reader->run_remaining == 0 ||
+                    reader->source_offset >= reader->file.size
+                ) {
+                    reader->valid = false;
+                    return -1;
+                }
+                reader->run_colour =
+                    reader->file.data[reader->source_offset++];
+            } else {
+                destination[reader->output_offset++] = code;
+                written++;
+            }
         }
     }
-    return source_offset + 1 == view.size &&
-           view.data[source_offset] == 0x0c;
+    if (reader->output_offset < OT_PIC_DECODED_BYTES) return 1;
+    if (
+        reader->run_remaining != 0 ||
+        reader->source_offset + 1u != reader->file.size ||
+        reader->file.data[reader->source_offset] != 0x0cu
+    ) {
+        reader->valid = false;
+        return -1;
+    }
+    reader->valid = false;
+    return 0;
 }
 
 #include "opentyrian_data_presentation.inc"

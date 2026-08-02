@@ -5,9 +5,136 @@
  * the ROMFS and encrypted-string helpers without exporting internal symbols.
  */
 enum { EPISODE_SCENE_LINE_BYTES = 256 };
+enum {
+    EPISODE_TEXTRES_HEADER_BYTES = 16,
+    EPISODE_TEXTRES_ENTRY_BYTES = 12,
+    EPISODE_TEXTRES_VERSION = 1,
+};
+extern const uint8_t textres_scene[];
+extern const uint8_t textres_scene_end[];
 static char episode_scene_line[
     EPISODE_SCENE_LINE_BYTES
 ] __attribute__((section(".sbss")));
+static uint32_t episode_textres_hit_count;
+
+static uint16_t episode_textres_u16(const uint8_t *source)
+{
+    return (uint16_t)(source[0] | ((uint16_t)source[1] << 8));
+}
+
+static uint32_t episode_textres_u32(const uint8_t *source)
+{
+    return
+        (uint32_t)source[0] |
+        ((uint32_t)source[1] << 8) |
+        ((uint32_t)source[2] << 16) |
+        ((uint32_t)source[3] << 24);
+}
+
+/*
+ * TextRes deliberately overrides prose only.  The stock encrypted script has
+ * already been consumed before this lookup, so pictures, music, branches and
+ * parser position retain direct OpenTyrian semantics even when a human edits
+ * the GBA-specific line breaks.
+ */
+static bool episode_scene_apply_textres(
+    uint8_t episode,
+    uint32_t source_offset,
+    OtEpisodeSceneAction *action
+)
+{
+    const uint8_t *pack = textres_scene;
+    uint32_t pack_size = (uint32_t)(textres_scene_end - textres_scene);
+    uint32_t index_offset;
+    uint16_t entry_count;
+    uint16_t low = 0;
+    uint16_t high;
+
+    if (
+        action == 0 ||
+        pack_size < EPISODE_TEXTRES_HEADER_BYTES ||
+        memcmp(pack, "ATXT", 4) != 0 ||
+        episode_textres_u16(pack + 4) != EPISODE_TEXTRES_VERSION
+    ) {
+        return false;
+    }
+    entry_count = episode_textres_u16(pack + 6);
+    index_offset = episode_textres_u32(pack + 8);
+    if (
+        index_offset > pack_size ||
+        (uint32_t)entry_count * EPISODE_TEXTRES_ENTRY_BYTES >
+            pack_size - index_offset
+    ) {
+        return false;
+    }
+    high = entry_count;
+    while (low < high) {
+        uint16_t middle = (uint16_t)(low + (high - low) / 2u);
+        const uint8_t *entry = pack + index_offset +
+            (uint32_t)middle * EPISODE_TEXTRES_ENTRY_BYTES;
+        uint8_t entry_episode = entry[0];
+        uint32_t entry_offset = episode_textres_u32(entry + 4);
+
+        if (
+            entry_episode < episode ||
+            (entry_episode == episode && entry_offset < source_offset)
+        ) {
+            low = (uint16_t)(middle + 1u);
+        } else {
+            high = middle;
+        }
+    }
+    if (low < entry_count) {
+        const uint8_t *entry = pack + index_offset +
+            (uint32_t)low * EPISODE_TEXTRES_ENTRY_BYTES;
+        uint8_t line_count = entry[1];
+        uint32_t payload = episode_textres_u32(entry + 8);
+        uint32_t cursor = payload;
+        uint8_t line;
+
+        if (
+            entry[0] != episode ||
+            episode_textres_u32(entry + 4) != source_offset ||
+            line_count == 0 ||
+            line_count > OT_EPISODE_SCENE_TEXT_LINE_COUNT ||
+            payload > pack_size
+        ) {
+            return false;
+        }
+        /* Validate the complete block before replacing the stock fallback. */
+        for (line = 0; line < line_count; line++) {
+            uint8_t length;
+
+            if (cursor >= pack_size) return false;
+            length = pack[cursor++];
+            if (
+                length >= OT_EPISODE_SCENE_TEXT_LINE_BYTES ||
+                length > pack_size - cursor
+            ) {
+                return false;
+            }
+            cursor += length;
+        }
+        action->text_line_count = 0;
+        cursor = payload;
+        for (line = 0; line < line_count; line++) {
+            uint8_t length = pack[cursor++];
+
+            memcpy(action->text[line], pack + cursor, length);
+            action->text[line][length] = '\0';
+            action->text_line_count++;
+            cursor += length;
+        }
+        episode_textres_hit_count++;
+        return true;
+    }
+    return false;
+}
+
+uint32_t ot_data_episode_scene_textres_hits(void)
+{
+    return episode_textres_hit_count;
+}
 
 static bool episode_scene_jump(
     OtEpisodeSceneReader *reader,
@@ -150,6 +277,7 @@ int8_t ot_data_episode_scene_step(
     *action = (OtEpisodeSceneAction){0};
     if (reader->end_hint_pending) {
         uint8_t block;
+        uint32_t text_source_offset;
 
         if (secret_hint == 0) secret_hint = 1;
         if (secret_hint > 9) secret_hint = 9;
@@ -168,6 +296,7 @@ int8_t ot_data_episode_scene_step(
         }
         action->type = OT_EPISODE_SCENE_ACTION_END_EPISODE;
         action->text_bank = reader->text_bank;
+        text_source_offset = reader->position;
         if (!episode_scene_read_text_block(
                 &script,
                 &reader->position,
@@ -177,6 +306,11 @@ int8_t ot_data_episode_scene_step(
             reader->valid = false;
             return -1;
         }
+        (void)episode_scene_apply_textres(
+            reader->episode,
+            text_source_offset,
+            action
+        );
         reader->end_hint_pending = false;
         reader->done = true;
         return 1;
@@ -317,6 +451,9 @@ int8_t ot_data_episode_scene_step(
         }
 
         case 'W':
+        {
+            uint32_t text_source_offset = reader->position;
+
             action->type = OT_EPISODE_SCENE_ACTION_TEXT;
             action->warning = line[2] == 'y';
             action->value = script_number(line + 4);
@@ -332,7 +469,13 @@ int8_t ot_data_episode_scene_step(
                 reader->valid = false;
                 return -1;
             }
+            (void)episode_scene_apply_textres(
+                reader->episode,
+                text_source_offset,
+                action
+            );
             return 1;
+        }
 
         case 'C':
             action->type = OT_EPISODE_SCENE_ACTION_CLEAR;

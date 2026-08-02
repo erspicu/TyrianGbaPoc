@@ -443,6 +443,18 @@ static void autotest_episode_wrap_finish_update(void)
     sram_write_u32(44, mmActive());
     sram_write_u32(48, autotest_episode_wrap_story_seen);
     sram_write_u32(52, autotest_episode_wrap_announcement_seen);
+    sram_write_u32(56, telemetry_missed_vblanks);
+    sram_write_u32(60, telemetry_audio_frames);
+    sram_write_u32(64, telemetry_frontend_full_redraws);
+    sram_write_u32(68, ot_data_episode_scene_textres_hits());
+    sram_write_u32(72, telemetry_missed_vblanks_episode_scene);
+    sram_write_u32(76, telemetry_missed_vblanks_scene_picture);
+    sram_write_u32(80, telemetry_missed_vblanks_scene_text);
+    sram_write_u32(84, telemetry_missed_vblanks_scene_animation);
+    sram_write_u32(88, telemetry_missed_vblanks_frontend_other);
+    sram_write_u32(92, telemetry_missed_vblanks_scene_picture_decode);
+    sram_write_u32(96, telemetry_missed_vblanks_scene_picture_scale);
+    sram_write_u32(100, telemetry_missed_vblanks_scene_picture_present);
     __asm__ volatile("swi 3");
 }
 #endif

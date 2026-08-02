@@ -1,0 +1,10 @@
+Warning:
+Trajectory heading intercepts hydroponic labs surrounding
+station Gryphon.
+
+The hydroponic laboratories are not as heavily guarded and
+may allow easy access into the station.  Two routes are
+available through the defenses.  The first is on the outer
+rim of the station and will allow room for ships to attack.
+The second is, unfortunately, heavily guarded by automatic
+turrets.

@@ -2050,6 +2050,13 @@ volatile u32 telemetry_missed_vblanks_game_over;
 volatile u32 telemetry_missed_vblanks_stats;
 volatile u32 telemetry_missed_vblanks_transition;
 volatile u32 telemetry_missed_vblanks_frontend_other;
+volatile u32 telemetry_missed_vblanks_episode_scene;
+volatile u32 telemetry_missed_vblanks_scene_picture;
+volatile u32 telemetry_missed_vblanks_scene_picture_decode;
+volatile u32 telemetry_missed_vblanks_scene_picture_scale;
+volatile u32 telemetry_missed_vblanks_scene_picture_present;
+volatile u32 telemetry_missed_vblanks_scene_text;
+volatile u32 telemetry_missed_vblanks_scene_animation;
 volatile u32 telemetry_missed_vblank_transition_job_last;
 volatile u32 telemetry_missed_vblank_transition_phase_next;
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION

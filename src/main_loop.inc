@@ -80,6 +80,33 @@ static void telemetry_record_missed_vblank_state(u32 count)
 #endif
     } else if (game_state == STATE_GAME_OVER) {
         telemetry_missed_vblanks_game_over += count;
+    } else if (game_state == STATE_EPISODE_SCENE) {
+        telemetry_missed_vblanks_frontend += count;
+        telemetry_missed_vblanks_frontend_other += count;
+        telemetry_missed_vblanks_episode_scene += count;
+        if (
+            frontend_scene_picture_job !=
+                FRONTEND_SCENE_PICTURE_JOB_NONE
+        ) {
+            telemetry_missed_vblanks_scene_picture += count;
+            if (
+                frontend_scene_picture_job ==
+                    FRONTEND_SCENE_PICTURE_JOB_DECODE
+            ) {
+                telemetry_missed_vblanks_scene_picture_decode += count;
+            } else if (
+                frontend_scene_picture_job ==
+                    FRONTEND_SCENE_PICTURE_JOB_SCALE
+            ) {
+                telemetry_missed_vblanks_scene_picture_scale += count;
+            } else {
+                telemetry_missed_vblanks_scene_picture_present += count;
+            }
+        } else if (frontend_scene_text_job.active) {
+            telemetry_missed_vblanks_scene_text += count;
+        } else if (frontend_scene_animation_active) {
+            telemetry_missed_vblanks_scene_animation += count;
+        }
     } else {
         telemetry_missed_vblanks_frontend += count;
         if (game_state == STATE_LEVEL_STATS) {
@@ -737,6 +764,16 @@ int main(void)
                         frontend_stats_stage >=
                             FRONTEND_STATS_STAGE_FINAL &&
                         frontend_stats_timer == 0
+                    )
+                ) &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE !=
+                        STATE_EPISODE_SCENE ||
+                    (
+                        frontend_scene_waiting_input &&
+                        frontend_scene_picture_job ==
+                            FRONTEND_SCENE_PICTURE_JOB_NONE &&
+                        !frontend_scene_text_job.active
                     )
                 )
             ) {

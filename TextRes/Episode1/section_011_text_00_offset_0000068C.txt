@@ -1,0 +1,6 @@
+Warning:
+Trajectory heading intercepts minefield surrounding Deliani.
+
+Navigation through minefield necessary to reach Deliani.
+
+Unknown magnetic forces detected ahead.  

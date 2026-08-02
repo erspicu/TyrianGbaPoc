@@ -1263,6 +1263,32 @@ static void romfs_matrix_validate_episode_scenes(
     }
 
     if (failure == 0) {
+        OtPicReader picture;
+        int8_t status;
+        u8 steps = 0;
+
+        if (!ot_data_pic_decode_begin(5, &picture)) {
+            failure = 22;
+        } else {
+            do {
+                status = ot_data_pic_decode_step(
+                    &picture,
+                    (u8 *)(void *)&frontend_gameplay_arena,
+                    sizeof(frontend_gameplay_arena),
+                    4096
+                );
+                steps++;
+            } while (status > 0 && steps < 32u);
+            if (status != 0 || steps != 16u) failure = 23;
+        }
+    }
+    if (
+        failure == 0 &&
+        ot_data_episode_scene_textres_hits() == 0
+    ) {
+        failure = 24;
+    }
+    if (failure == 0) {
         OtDataView palette;
 
         if (!ot_data_pcx_decode(
@@ -1689,6 +1715,7 @@ static void autotest_romfs_level_matrix(void)
     sram_write_u32(6012, ot_sprite2_raw_catalog_valid() ? 1 : 0);
     sram_write_u32(6016, SPRITE2_RAW_DATA_BYTES);
     sram_write_u32(6020, SPRITE2_RAW_DATA_CRC32);
+    sram_write_u32(6024, ot_data_episode_scene_textres_hits());
     for (delay = 0; delay < 10000; delay++) {
         __asm__ volatile("" ::: "memory");
     }
