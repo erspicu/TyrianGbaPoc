@@ -1,0 +1,3321 @@
+{
+  "schema": 1,
+  "episodes": [
+    {
+      "episode": 1,
+      "initialCash": 10000,
+      "defaultArmor": 10,
+      "defaultShield": 5,
+      "defaultShieldMaximum": 10,
+      "progress": [
+        {
+          "mainSection": 1,
+          "label": "TYRIAN",
+          "levelName": "TYRIAN"
+        },
+        {
+          "mainSection": 4,
+          "label": "ASTEROID1 / ASTEROID2",
+          "levelName": "ASTEROID1"
+        },
+        {
+          "mainSection": 7,
+          "label": "SAVARA",
+          "levelName": "SAVARA"
+        },
+        {
+          "mainSection": 8,
+          "label": "SAVARA",
+          "levelName": "SAVARA"
+        },
+        {
+          "mainSection": 11,
+          "label": "MINES",
+          "levelName": "MINES"
+        },
+        {
+          "mainSection": 17,
+          "label": "ASTEROID1 / ASTEROID2",
+          "levelName": "ASTEROID1"
+        },
+        {
+          "mainSection": 18,
+          "label": "DELIANI",
+          "levelName": "DELIANI"
+        },
+        {
+          "mainSection": 24,
+          "label": "BONUS",
+          "levelName": "BONUS"
+        },
+        {
+          "mainSection": 26,
+          "label": "Episode ending / secret route",
+          "levelName": "Episode en"
+        },
+        {
+          "mainSection": 37,
+          "label": "SAVARA V",
+          "levelName": "SAVARA V"
+        },
+        {
+          "mainSection": 39,
+          "label": "ASSASSIN",
+          "levelName": "ASSASSIN"
+        },
+        {
+          "mainSection": 42,
+          "label": "** ALE ** / Episode ending / secret route",
+          "levelName": "** ALE **"
+        }
+      ],
+      "weaponPorts": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Pulse-Cannon",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 3,
+          "name": "Mega Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 4,
+          "name": "Laser",
+          "cost": 900
+        },
+        {
+          "id": 5,
+          "name": "Zica Laser",
+          "cost": 1100
+        },
+        {
+          "id": 6,
+          "name": "Protron Z",
+          "cost": 900
+        },
+        {
+          "id": 7,
+          "name": "Vulcan Cannon",
+          "cost": 600
+        },
+        {
+          "id": 8,
+          "name": "Lightning Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 9,
+          "name": "Starburst",
+          "cost": 900
+        },
+        {
+          "id": 10,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 11,
+          "name": "Sonic Wave",
+          "cost": 950
+        },
+        {
+          "id": 12,
+          "name": "Protron",
+          "cost": 650
+        },
+        {
+          "id": 13,
+          "name": "Protron",
+          "cost": 600
+        },
+        {
+          "id": 14,
+          "name": "Wild Ball",
+          "cost": 800
+        },
+        {
+          "id": 15,
+          "name": "Vulcan Cannon",
+          "cost": 500
+        },
+        {
+          "id": 16,
+          "name": "Miscellaneous Option Weapons",
+          "cost": 0
+        },
+        {
+          "id": 17,
+          "name": "Missile Launcher",
+          "cost": 850
+        },
+        {
+          "id": 18,
+          "name": "Fireball",
+          "cost": 1000
+        },
+        {
+          "id": 19,
+          "name": "Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 20,
+          "name": "Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 21,
+          "name": "Rear Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 22,
+          "name": "Rear Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 23,
+          "name": "Banana Blast",
+          "cost": 950
+        },
+        {
+          "id": 24,
+          "name": "Banana Blast Rear",
+          "cost": 1100
+        },
+        {
+          "id": 25,
+          "name": "HotDog Front",
+          "cost": 1100
+        },
+        {
+          "id": 26,
+          "name": "HotDog Rear",
+          "cost": 1100
+        },
+        {
+          "id": 27,
+          "name": "Hyper Pulse",
+          "cost": 1050
+        },
+        {
+          "id": 28,
+          "name": "Guided Micro Bombs",
+          "cost": 1100
+        },
+        {
+          "id": 29,
+          "name": "Heavy Guided Bombs",
+          "cost": 1000
+        },
+        {
+          "id": 30,
+          "name": "Scatter Wave",
+          "cost": 900
+        },
+        {
+          "id": 31,
+          "name": "Guided Bombs",
+          "cost": 800
+        },
+        {
+          "id": 32,
+          "name": "Shuruiken Field",
+          "cost": 850
+        },
+        {
+          "id": 33,
+          "name": "Poison Bomb",
+          "cost": 800
+        },
+        {
+          "id": 34,
+          "name": "Protron Wave",
+          "cost": 750
+        },
+        {
+          "id": 35,
+          "name": "The Orange Juicer",
+          "cost": 900
+        },
+        {
+          "id": 36,
+          "name": "NortShip Super Pulse",
+          "cost": 1100
+        },
+        {
+          "id": 37,
+          "name": "NortShip Spreader",
+          "cost": 1100
+        },
+        {
+          "id": 38,
+          "name": "NortShip Spreader B",
+          "cost": 1100
+        },
+        {
+          "id": 39,
+          "name": "Atomic RailGun",
+          "cost": 1101
+        },
+        {
+          "id": 40,
+          "name": "Widget Beam",
+          "cost": 950
+        },
+        {
+          "id": 41,
+          "name": "Sonic Impulse",
+          "cost": 1000
+        },
+        {
+          "id": 42,
+          "name": "RetroBall",
+          "cost": 1000
+        }
+      ],
+      "specialWeapons": [
+        {
+          "id": 0,
+          "name": "None"
+        },
+        {
+          "id": 1,
+          "name": "Repulsor"
+        },
+        {
+          "id": 2,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 3,
+          "name": "Soul of Zinglon"
+        },
+        {
+          "id": 4,
+          "name": "Attractor"
+        },
+        {
+          "id": 5,
+          "name": "Ice Beam"
+        },
+        {
+          "id": 6,
+          "name": "Flare"
+        },
+        {
+          "id": 7,
+          "name": "Blade Field"
+        },
+        {
+          "id": 8,
+          "name": "SandStorm"
+        },
+        {
+          "id": 9,
+          "name": "MineField"
+        },
+        {
+          "id": 10,
+          "name": "Dual Vulcan"
+        },
+        {
+          "id": 11,
+          "name": "Banana Bomb"
+        },
+        {
+          "id": 12,
+          "name": "Protron Dispersal"
+        },
+        {
+          "id": 13,
+          "name": "Astral Zone"
+        },
+        {
+          "id": 14,
+          "name": "Xega Ball"
+        },
+        {
+          "id": 15,
+          "name": "MegaLaser Dual"
+        },
+        {
+          "id": 16,
+          "name": "Orange Shield"
+        },
+        {
+          "id": 17,
+          "name": "Pulse Blast"
+        },
+        {
+          "id": 18,
+          "name": "MegaLaser"
+        },
+        {
+          "id": 19,
+          "name": "Missile Pod"
+        },
+        {
+          "id": 20,
+          "name": "Minefield"
+        },
+        {
+          "id": 21,
+          "name": "Post-It Blast"
+        },
+        {
+          "id": 22,
+          "name": "Drone **"
+        },
+        {
+          "id": 23,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 24,
+          "name": "Super Bomb"
+        },
+        {
+          "id": 25,
+          "name": "Hot Dog"
+        },
+        {
+          "id": 26,
+          "name": "Lightning UP"
+        },
+        {
+          "id": 27,
+          "name": "Lightning UP+LEFT"
+        },
+        {
+          "id": 28,
+          "name": "Lightning UP+RIGHT"
+        },
+        {
+          "id": 29,
+          "name": "Lightning LEFT"
+        },
+        {
+          "id": 30,
+          "name": "Lightning RIGHT"
+        },
+        {
+          "id": 31,
+          "name": "MicroSol Option"
+        },
+        {
+          "id": 32,
+          "name": "MicroSol Option2"
+        },
+        {
+          "id": 33,
+          "name": "MicroSol Option3"
+        },
+        {
+          "id": 34,
+          "name": "MicroSol Option4"
+        },
+        {
+          "id": 35,
+          "name": "MicroSol Option5"
+        },
+        {
+          "id": 36,
+          "name": "MicroSol Option6"
+        },
+        {
+          "id": 37,
+          "name": "Invulnerability"
+        },
+        {
+          "id": 38,
+          "name": "Atom Bomb"
+        },
+        {
+          "id": 39,
+          "name": "Seeker Bombs"
+        },
+        {
+          "id": 40,
+          "name": "Lightning Zone"
+        },
+        {
+          "id": 41,
+          "name": "SDF Main Gun"
+        },
+        {
+          "id": 42,
+          "name": "Ice Blast"
+        },
+        {
+          "id": 43,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 44,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 45,
+          "name": "8-Way Microbomb"
+        },
+        {
+          "id": 46,
+          "name": "Protron Field"
+        }
+      ],
+      "generators": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Standard MR-9",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Advanced MR-12",
+          "cost": 2000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Custom MR-12",
+          "cost": 5000
+        },
+        {
+          "id": 4,
+          "name": "Standard MicroFusion",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Advanced MircoFusion",
+          "cost": 15000
+        },
+        {
+          "id": 6,
+          "name": "Gravitron Pulse-Wave",
+          "cost": 50000
+        }
+      ],
+      "ships": [
+        {
+          "id": 0,
+          "name": "None",
+          "armor": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "USP Talon   Light Fighter",
+          "armor": 10,
+          "cost": 6000
+        },
+        {
+          "id": 2,
+          "name": "SuperCarrot",
+          "armor": 26,
+          "cost": 65000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Phoenix",
+          "armor": 17,
+          "cost": 12000
+        },
+        {
+          "id": 4,
+          "name": "Gencore Maelstrom",
+          "armor": 20,
+          "cost": 15000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp Stalker",
+          "armor": 25,
+          "cost": 20000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp Stalker-B",
+          "armor": 27,
+          "cost": 25000
+        },
+        {
+          "id": 7,
+          "name": "Prototype Stalker-C",
+          "armor": 28,
+          "cost": 50000
+        },
+        {
+          "id": 8,
+          "name": "Stalker",
+          "armor": 15,
+          "cost": 10000
+        },
+        {
+          "id": 9,
+          "name": "USP Fang    Light Fighter",
+          "armor": 14,
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "U-Ship",
+          "armor": 8,
+          "cost": 8000
+        },
+        {
+          "id": 11,
+          "name": "Silver Ship",
+          "armor": 10,
+          "cost": 8000
+        },
+        {
+          "id": 12,
+          "name": "Nort Ship",
+          "armor": 30,
+          "cost": 65000
+        },
+        {
+          "id": 13,
+          "name": "The Stalker 21.126",
+          "armor": 30,
+          "cost": 65535
+        }
+      ],
+      "sidekicks": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Single Shot Option",
+          "cost": 3000
+        },
+        {
+          "id": 2,
+          "name": "Dual Shot Option",
+          "cost": 6000
+        },
+        {
+          "id": 3,
+          "name": "Charge Cannon",
+          "cost": 15000
+        },
+        {
+          "id": 4,
+          "name": "Vulcan Shot Option",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Wobbley",
+          "cost": 25000
+        },
+        {
+          "id": 6,
+          "name": "MegaMissile    Ammo 5",
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "Atom Bombs     Ammo 20",
+          "cost": 8000
+        },
+        {
+          "id": 8,
+          "name": "Phoenix Device Ammo 8",
+          "cost": 8000
+        },
+        {
+          "id": 9,
+          "name": "Plasma Storm   Ammo 10",
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "Mini-Missile   Ammo 100",
+          "cost": 1000
+        },
+        {
+          "id": 11,
+          "name": "Buster Rocket  Ammo 30",
+          "cost": 12500
+        },
+        {
+          "id": 12,
+          "name": "Zica SuperCharger",
+          "cost": 50000
+        },
+        {
+          "id": 13,
+          "name": "MicroBomb      Ammo 60",
+          "cost": 4000
+        },
+        {
+          "id": 14,
+          "name": "8-Way MicroBomb  Ammo 30",
+          "cost": 7500
+        },
+        {
+          "id": 15,
+          "name": "Post-It Mine   Ammo 20",
+          "cost": 7000
+        },
+        {
+          "id": 16,
+          "name": "Mint-O-Ship",
+          "cost": 5000
+        },
+        {
+          "id": 17,
+          "name": "Zica Flamethrower",
+          "cost": 20000
+        },
+        {
+          "id": 18,
+          "name": "Side Ship      Ammo 100",
+          "cost": 3000
+        },
+        {
+          "id": 19,
+          "name": "Companion Ship Warfly",
+          "cost": 5000
+        },
+        {
+          "id": 20,
+          "name": "MicroSol FrontBlaster",
+          "cost": 8000
+        },
+        {
+          "id": 21,
+          "name": "Companion Ship Gerund",
+          "cost": 10000
+        },
+        {
+          "id": 22,
+          "name": "BattleShip-Class Firebomb",
+          "cost": 65000
+        },
+        {
+          "id": 23,
+          "name": "Protron Cannon Indigo",
+          "cost": 12000
+        },
+        {
+          "id": 24,
+          "name": "Companion Ship Quicksilver",
+          "cost": 65000
+        },
+        {
+          "id": 25,
+          "name": "Protron Cannon Tangerine",
+          "cost": 30000
+        },
+        {
+          "id": 26,
+          "name": "MicroSol FrontBlaster II",
+          "cost": 14000
+        },
+        {
+          "id": 27,
+          "name": "Beno Wallop Beam",
+          "cost": 20000
+        },
+        {
+          "id": 28,
+          "name": "Beno Protron System -B-",
+          "cost": 30000
+        },
+        {
+          "id": 29,
+          "name": "Tropical Cherry Companion",
+          "cost": 8000
+        },
+        {
+          "id": 30,
+          "name": "Satellite Marlo",
+          "cost": 2000
+        }
+      ],
+      "shields": [
+        {
+          "id": 0,
+          "name": "None",
+          "maximum": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Structural Integrity Field",
+          "maximum": 2,
+          "cost": 100
+        },
+        {
+          "id": 2,
+          "name": "Advanced Integrity Field",
+          "maximum": 3,
+          "cost": 250
+        },
+        {
+          "id": 3,
+          "name": "Gencore Low Energy Shield",
+          "maximum": 4,
+          "cost": 500
+        },
+        {
+          "id": 4,
+          "name": "Gencore High Energy Shield",
+          "maximum": 5,
+          "cost": 1000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp LXS Class A",
+          "maximum": 6,
+          "cost": 2000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp LXS Class B",
+          "maximum": 7,
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "MicroCorp LXS Class C",
+          "maximum": 9,
+          "cost": 5000
+        },
+        {
+          "id": 8,
+          "name": "MicroCorp HXS Class A",
+          "maximum": 10,
+          "cost": 12000
+        },
+        {
+          "id": 9,
+          "name": "MicroCorp HXS Class B",
+          "maximum": 12,
+          "cost": 20000
+        },
+        {
+          "id": 10,
+          "name": "MicroCorp HXS Class C",
+          "maximum": 14,
+          "cost": 25000
+        }
+      ]
+    },
+    {
+      "episode": 2,
+      "initialCash": 15000,
+      "defaultArmor": 10,
+      "defaultShield": 5,
+      "defaultShieldMaximum": 10,
+      "progress": [
+        {
+          "mainSection": 1,
+          "label": "TORM",
+          "levelName": "TORM"
+        },
+        {
+          "mainSection": 3,
+          "label": "GYGES",
+          "levelName": "GYGES"
+        },
+        {
+          "mainSection": 5,
+          "label": "BONUS",
+          "levelName": "BONUS"
+        },
+        {
+          "mainSection": 7,
+          "label": "ASTCITY",
+          "levelName": "ASTCITY"
+        },
+        {
+          "mainSection": 9,
+          "label": "SOH JIN",
+          "levelName": "SOH JIN"
+        },
+        {
+          "mainSection": 11,
+          "label": "GRYPHON",
+          "levelName": "GRYPHON"
+        },
+        {
+          "mainSection": 13,
+          "label": "Episode ending / secret route",
+          "levelName": "Episode en"
+        },
+        {
+          "mainSection": 16,
+          "label": "MARKERS",
+          "levelName": "MARKERS"
+        },
+        {
+          "mainSection": 18,
+          "label": "MISTAKES",
+          "levelName": "MISTAKES"
+        },
+        {
+          "mainSection": 20,
+          "label": "BOTANY A / BOTANY B",
+          "levelName": "BOTANY A"
+        },
+        {
+          "mainSection": 23,
+          "label": "BONUS",
+          "levelName": "BONUS"
+        }
+      ],
+      "weaponPorts": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Pulse-Cannon",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 3,
+          "name": "Mega Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 4,
+          "name": "Laser",
+          "cost": 900
+        },
+        {
+          "id": 5,
+          "name": "Zica Laser",
+          "cost": 1100
+        },
+        {
+          "id": 6,
+          "name": "Protron Z",
+          "cost": 900
+        },
+        {
+          "id": 7,
+          "name": "Vulcan Cannon",
+          "cost": 600
+        },
+        {
+          "id": 8,
+          "name": "Lightning Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 9,
+          "name": "Starburst",
+          "cost": 900
+        },
+        {
+          "id": 10,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 11,
+          "name": "Sonic Wave",
+          "cost": 950
+        },
+        {
+          "id": 12,
+          "name": "Protron",
+          "cost": 650
+        },
+        {
+          "id": 13,
+          "name": "Protron",
+          "cost": 600
+        },
+        {
+          "id": 14,
+          "name": "Wild Ball",
+          "cost": 800
+        },
+        {
+          "id": 15,
+          "name": "Vulcan Cannon",
+          "cost": 500
+        },
+        {
+          "id": 16,
+          "name": "Miscellaneous Option Weapons",
+          "cost": 0
+        },
+        {
+          "id": 17,
+          "name": "Missile Launcher",
+          "cost": 850
+        },
+        {
+          "id": 18,
+          "name": "Fireball",
+          "cost": 1000
+        },
+        {
+          "id": 19,
+          "name": "Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 20,
+          "name": "Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 21,
+          "name": "Rear Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 22,
+          "name": "Rear Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 23,
+          "name": "Banana Blast",
+          "cost": 950
+        },
+        {
+          "id": 24,
+          "name": "Banana Blast Rear",
+          "cost": 1100
+        },
+        {
+          "id": 25,
+          "name": "HotDog Front",
+          "cost": 1100
+        },
+        {
+          "id": 26,
+          "name": "HotDog Rear",
+          "cost": 1100
+        },
+        {
+          "id": 27,
+          "name": "Hyper Pulse",
+          "cost": 1050
+        },
+        {
+          "id": 28,
+          "name": "Guided Micro Bombs",
+          "cost": 1100
+        },
+        {
+          "id": 29,
+          "name": "Heavy Guided Bombs",
+          "cost": 1000
+        },
+        {
+          "id": 30,
+          "name": "Scatter Wave",
+          "cost": 900
+        },
+        {
+          "id": 31,
+          "name": "Guided Bombs",
+          "cost": 800
+        },
+        {
+          "id": 32,
+          "name": "Shuruiken Field",
+          "cost": 850
+        },
+        {
+          "id": 33,
+          "name": "Poison Bomb",
+          "cost": 800
+        },
+        {
+          "id": 34,
+          "name": "Protron Wave",
+          "cost": 750
+        },
+        {
+          "id": 35,
+          "name": "The Orange Juicer",
+          "cost": 900
+        },
+        {
+          "id": 36,
+          "name": "NortShip Super Pulse",
+          "cost": 1100
+        },
+        {
+          "id": 37,
+          "name": "NortShip Spreader",
+          "cost": 1100
+        },
+        {
+          "id": 38,
+          "name": "NortShip Spreader B",
+          "cost": 1100
+        },
+        {
+          "id": 39,
+          "name": "Atomic RailGun",
+          "cost": 1101
+        },
+        {
+          "id": 40,
+          "name": "Widget Beam",
+          "cost": 950
+        },
+        {
+          "id": 41,
+          "name": "Sonic Impulse",
+          "cost": 1000
+        },
+        {
+          "id": 42,
+          "name": "RetroBall",
+          "cost": 1000
+        }
+      ],
+      "specialWeapons": [
+        {
+          "id": 0,
+          "name": "None"
+        },
+        {
+          "id": 1,
+          "name": "Repulsor"
+        },
+        {
+          "id": 2,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 3,
+          "name": "Soul of Zinglon"
+        },
+        {
+          "id": 4,
+          "name": "Attractor"
+        },
+        {
+          "id": 5,
+          "name": "Ice Beam"
+        },
+        {
+          "id": 6,
+          "name": "Flare"
+        },
+        {
+          "id": 7,
+          "name": "Blade Field"
+        },
+        {
+          "id": 8,
+          "name": "SandStorm"
+        },
+        {
+          "id": 9,
+          "name": "MineField"
+        },
+        {
+          "id": 10,
+          "name": "Dual Vulcan"
+        },
+        {
+          "id": 11,
+          "name": "Banana Bomb"
+        },
+        {
+          "id": 12,
+          "name": "Protron Dispersal"
+        },
+        {
+          "id": 13,
+          "name": "Astral Zone"
+        },
+        {
+          "id": 14,
+          "name": "Xega Ball"
+        },
+        {
+          "id": 15,
+          "name": "MegaLaser Dual"
+        },
+        {
+          "id": 16,
+          "name": "Orange Shield"
+        },
+        {
+          "id": 17,
+          "name": "Pulse Blast"
+        },
+        {
+          "id": 18,
+          "name": "MegaLaser"
+        },
+        {
+          "id": 19,
+          "name": "Missile Pod"
+        },
+        {
+          "id": 20,
+          "name": "Minefield"
+        },
+        {
+          "id": 21,
+          "name": "Post-It Blast"
+        },
+        {
+          "id": 22,
+          "name": "Drone **"
+        },
+        {
+          "id": 23,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 24,
+          "name": "Super Bomb"
+        },
+        {
+          "id": 25,
+          "name": "Hot Dog"
+        },
+        {
+          "id": 26,
+          "name": "Lightning UP"
+        },
+        {
+          "id": 27,
+          "name": "Lightning UP+LEFT"
+        },
+        {
+          "id": 28,
+          "name": "Lightning UP+RIGHT"
+        },
+        {
+          "id": 29,
+          "name": "Lightning LEFT"
+        },
+        {
+          "id": 30,
+          "name": "Lightning RIGHT"
+        },
+        {
+          "id": 31,
+          "name": "MicroSol Option"
+        },
+        {
+          "id": 32,
+          "name": "MicroSol Option2"
+        },
+        {
+          "id": 33,
+          "name": "MicroSol Option3"
+        },
+        {
+          "id": 34,
+          "name": "MicroSol Option4"
+        },
+        {
+          "id": 35,
+          "name": "MicroSol Option5"
+        },
+        {
+          "id": 36,
+          "name": "MicroSol Option6"
+        },
+        {
+          "id": 37,
+          "name": "Invulnerability"
+        },
+        {
+          "id": 38,
+          "name": "Atom Bomb"
+        },
+        {
+          "id": 39,
+          "name": "Seeker Bombs"
+        },
+        {
+          "id": 40,
+          "name": "Lightning Zone"
+        },
+        {
+          "id": 41,
+          "name": "SDF Main Gun"
+        },
+        {
+          "id": 42,
+          "name": "Ice Blast"
+        },
+        {
+          "id": 43,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 44,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 45,
+          "name": "8-Way Microbomb"
+        },
+        {
+          "id": 46,
+          "name": "Protron Field"
+        }
+      ],
+      "generators": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Standard MR-9",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Advanced MR-12",
+          "cost": 2000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Custom MR-12",
+          "cost": 5000
+        },
+        {
+          "id": 4,
+          "name": "Standard MicroFusion",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Advanced MircoFusion",
+          "cost": 15000
+        },
+        {
+          "id": 6,
+          "name": "Gravitron Pulse-Wave",
+          "cost": 50000
+        }
+      ],
+      "ships": [
+        {
+          "id": 0,
+          "name": "None",
+          "armor": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "USP Talon   Light Fighter",
+          "armor": 10,
+          "cost": 6000
+        },
+        {
+          "id": 2,
+          "name": "SuperCarrot",
+          "armor": 26,
+          "cost": 65000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Phoenix",
+          "armor": 17,
+          "cost": 12000
+        },
+        {
+          "id": 4,
+          "name": "Gencore Maelstrom",
+          "armor": 20,
+          "cost": 15000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp Stalker",
+          "armor": 25,
+          "cost": 20000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp Stalker-B",
+          "armor": 27,
+          "cost": 25000
+        },
+        {
+          "id": 7,
+          "name": "Prototype Stalker-C",
+          "armor": 28,
+          "cost": 50000
+        },
+        {
+          "id": 8,
+          "name": "Stalker",
+          "armor": 15,
+          "cost": 10000
+        },
+        {
+          "id": 9,
+          "name": "USP Fang    Light Fighter",
+          "armor": 14,
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "U-Ship",
+          "armor": 8,
+          "cost": 8000
+        },
+        {
+          "id": 11,
+          "name": "Silver Ship",
+          "armor": 10,
+          "cost": 8000
+        },
+        {
+          "id": 12,
+          "name": "Nort Ship",
+          "armor": 30,
+          "cost": 65000
+        },
+        {
+          "id": 13,
+          "name": "The Stalker 21.126",
+          "armor": 30,
+          "cost": 65535
+        }
+      ],
+      "sidekicks": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Single Shot Option",
+          "cost": 3000
+        },
+        {
+          "id": 2,
+          "name": "Dual Shot Option",
+          "cost": 6000
+        },
+        {
+          "id": 3,
+          "name": "Charge Cannon",
+          "cost": 15000
+        },
+        {
+          "id": 4,
+          "name": "Vulcan Shot Option",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Wobbley",
+          "cost": 25000
+        },
+        {
+          "id": 6,
+          "name": "MegaMissile    Ammo 5",
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "Atom Bombs     Ammo 20",
+          "cost": 8000
+        },
+        {
+          "id": 8,
+          "name": "Phoenix Device Ammo 8",
+          "cost": 8000
+        },
+        {
+          "id": 9,
+          "name": "Plasma Storm   Ammo 10",
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "Mini-Missile   Ammo 100",
+          "cost": 1000
+        },
+        {
+          "id": 11,
+          "name": "Buster Rocket  Ammo 30",
+          "cost": 12500
+        },
+        {
+          "id": 12,
+          "name": "Zica SuperCharger",
+          "cost": 50000
+        },
+        {
+          "id": 13,
+          "name": "MicroBomb      Ammo 60",
+          "cost": 4000
+        },
+        {
+          "id": 14,
+          "name": "8-Way MicroBomb  Ammo 30",
+          "cost": 7500
+        },
+        {
+          "id": 15,
+          "name": "Post-It Mine   Ammo 20",
+          "cost": 7000
+        },
+        {
+          "id": 16,
+          "name": "Mint-O-Ship",
+          "cost": 5000
+        },
+        {
+          "id": 17,
+          "name": "Zica Flamethrower",
+          "cost": 20000
+        },
+        {
+          "id": 18,
+          "name": "Side Ship      Ammo 100",
+          "cost": 3000
+        },
+        {
+          "id": 19,
+          "name": "Companion Ship Warfly",
+          "cost": 5000
+        },
+        {
+          "id": 20,
+          "name": "MicroSol FrontBlaster",
+          "cost": 8000
+        },
+        {
+          "id": 21,
+          "name": "Companion Ship Gerund",
+          "cost": 10000
+        },
+        {
+          "id": 22,
+          "name": "BattleShip-Class Firebomb",
+          "cost": 65000
+        },
+        {
+          "id": 23,
+          "name": "Protron Cannon Indigo",
+          "cost": 12000
+        },
+        {
+          "id": 24,
+          "name": "Companion Ship Quicksilver",
+          "cost": 65000
+        },
+        {
+          "id": 25,
+          "name": "Protron Cannon Tangerine",
+          "cost": 30000
+        },
+        {
+          "id": 26,
+          "name": "MicroSol FrontBlaster II",
+          "cost": 14000
+        },
+        {
+          "id": 27,
+          "name": "Beno Wallop Beam",
+          "cost": 20000
+        },
+        {
+          "id": 28,
+          "name": "Beno Protron System -B-",
+          "cost": 30000
+        },
+        {
+          "id": 29,
+          "name": "Tropical Cherry Companion",
+          "cost": 8000
+        },
+        {
+          "id": 30,
+          "name": "Satellite Marlo",
+          "cost": 2000
+        }
+      ],
+      "shields": [
+        {
+          "id": 0,
+          "name": "None",
+          "maximum": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Structural Integrity Field",
+          "maximum": 2,
+          "cost": 100
+        },
+        {
+          "id": 2,
+          "name": "Advanced Integrity Field",
+          "maximum": 3,
+          "cost": 250
+        },
+        {
+          "id": 3,
+          "name": "Gencore Low Energy Shield",
+          "maximum": 4,
+          "cost": 500
+        },
+        {
+          "id": 4,
+          "name": "Gencore High Energy Shield",
+          "maximum": 5,
+          "cost": 1000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp LXS Class A",
+          "maximum": 6,
+          "cost": 2000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp LXS Class B",
+          "maximum": 7,
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "MicroCorp LXS Class C",
+          "maximum": 9,
+          "cost": 5000
+        },
+        {
+          "id": 8,
+          "name": "MicroCorp HXS Class A",
+          "maximum": 10,
+          "cost": 12000
+        },
+        {
+          "id": 9,
+          "name": "MicroCorp HXS Class B",
+          "maximum": 12,
+          "cost": 20000
+        },
+        {
+          "id": 10,
+          "name": "MicroCorp HXS Class C",
+          "maximum": 14,
+          "cost": 25000
+        }
+      ]
+    },
+    {
+      "episode": 3,
+      "initialCash": 20000,
+      "defaultArmor": 10,
+      "defaultShield": 5,
+      "defaultShieldMaximum": 10,
+      "progress": [
+        {
+          "mainSection": 1,
+          "label": "GAUNTLET",
+          "levelName": "GAUNTLET"
+        },
+        {
+          "mainSection": 3,
+          "label": "IXMUCANE",
+          "levelName": "IXMUCANE"
+        },
+        {
+          "mainSection": 5,
+          "label": "BONUS",
+          "levelName": "BONUS"
+        },
+        {
+          "mainSection": 7,
+          "label": "STARGATE",
+          "levelName": "STARGATE"
+        },
+        {
+          "mainSection": 9,
+          "label": "CAMANIS",
+          "levelName": "CAMANIS"
+        },
+        {
+          "mainSection": 11,
+          "label": "FLEET",
+          "levelName": "FLEET"
+        },
+        {
+          "mainSection": 13,
+          "label": "Episode ending / secret route",
+          "levelName": "Episode en"
+        },
+        {
+          "mainSection": 16,
+          "label": "TYRIAN X",
+          "levelName": "TYRIAN X"
+        },
+        {
+          "mainSection": 20,
+          "label": "SAVARA Y",
+          "levelName": "SAVARA Y"
+        },
+        {
+          "mainSection": 22,
+          "label": "New Deli",
+          "levelName": "New Deli"
+        },
+        {
+          "mainSection": 24,
+          "label": "MACES",
+          "levelName": "MACES"
+        }
+      ],
+      "weaponPorts": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Pulse-Cannon",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 3,
+          "name": "Mega Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 4,
+          "name": "Laser",
+          "cost": 900
+        },
+        {
+          "id": 5,
+          "name": "Zica Laser",
+          "cost": 1100
+        },
+        {
+          "id": 6,
+          "name": "Protron Z",
+          "cost": 900
+        },
+        {
+          "id": 7,
+          "name": "Vulcan Cannon",
+          "cost": 600
+        },
+        {
+          "id": 8,
+          "name": "Lightning Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 9,
+          "name": "Starburst",
+          "cost": 900
+        },
+        {
+          "id": 10,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 11,
+          "name": "Sonic Wave",
+          "cost": 950
+        },
+        {
+          "id": 12,
+          "name": "Protron",
+          "cost": 650
+        },
+        {
+          "id": 13,
+          "name": "Protron",
+          "cost": 600
+        },
+        {
+          "id": 14,
+          "name": "Wild Ball",
+          "cost": 800
+        },
+        {
+          "id": 15,
+          "name": "Vulcan Cannon",
+          "cost": 500
+        },
+        {
+          "id": 16,
+          "name": "Miscellaneous Option Weapons",
+          "cost": 0
+        },
+        {
+          "id": 17,
+          "name": "Missile Launcher",
+          "cost": 850
+        },
+        {
+          "id": 18,
+          "name": "Fireball",
+          "cost": 1000
+        },
+        {
+          "id": 19,
+          "name": "Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 20,
+          "name": "Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 21,
+          "name": "Rear Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 22,
+          "name": "Rear Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 23,
+          "name": "Banana Blast",
+          "cost": 950
+        },
+        {
+          "id": 24,
+          "name": "Banana Blast Rear",
+          "cost": 1100
+        },
+        {
+          "id": 25,
+          "name": "HotDog Front",
+          "cost": 1100
+        },
+        {
+          "id": 26,
+          "name": "HotDog Rear",
+          "cost": 1100
+        },
+        {
+          "id": 27,
+          "name": "Hyper Pulse",
+          "cost": 1050
+        },
+        {
+          "id": 28,
+          "name": "Guided Micro Bombs",
+          "cost": 1100
+        },
+        {
+          "id": 29,
+          "name": "Heavy Guided Bombs",
+          "cost": 1000
+        },
+        {
+          "id": 30,
+          "name": "Scatter Wave",
+          "cost": 900
+        },
+        {
+          "id": 31,
+          "name": "Guided Bombs",
+          "cost": 800
+        },
+        {
+          "id": 32,
+          "name": "Shuruiken Field",
+          "cost": 850
+        },
+        {
+          "id": 33,
+          "name": "Poison Bomb",
+          "cost": 800
+        },
+        {
+          "id": 34,
+          "name": "Protron Wave",
+          "cost": 750
+        },
+        {
+          "id": 35,
+          "name": "The Orange Juicer",
+          "cost": 900
+        },
+        {
+          "id": 36,
+          "name": "NortShip Super Pulse",
+          "cost": 1100
+        },
+        {
+          "id": 37,
+          "name": "NortShip Spreader",
+          "cost": 1100
+        },
+        {
+          "id": 38,
+          "name": "NortShip Spreader B",
+          "cost": 1100
+        },
+        {
+          "id": 39,
+          "name": "Atomic RailGun",
+          "cost": 1101
+        },
+        {
+          "id": 40,
+          "name": "Widget Beam",
+          "cost": 950
+        },
+        {
+          "id": 41,
+          "name": "Sonic Impulse",
+          "cost": 1000
+        },
+        {
+          "id": 42,
+          "name": "RetroBall",
+          "cost": 1000
+        }
+      ],
+      "specialWeapons": [
+        {
+          "id": 0,
+          "name": "None"
+        },
+        {
+          "id": 1,
+          "name": "Repulsor"
+        },
+        {
+          "id": 2,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 3,
+          "name": "Soul of Zinglon"
+        },
+        {
+          "id": 4,
+          "name": "Attractor"
+        },
+        {
+          "id": 5,
+          "name": "Ice Beam"
+        },
+        {
+          "id": 6,
+          "name": "Flare"
+        },
+        {
+          "id": 7,
+          "name": "Blade Field"
+        },
+        {
+          "id": 8,
+          "name": "SandStorm"
+        },
+        {
+          "id": 9,
+          "name": "MineField"
+        },
+        {
+          "id": 10,
+          "name": "Dual Vulcan"
+        },
+        {
+          "id": 11,
+          "name": "Banana Bomb"
+        },
+        {
+          "id": 12,
+          "name": "Protron Dispersal"
+        },
+        {
+          "id": 13,
+          "name": "Astral Zone"
+        },
+        {
+          "id": 14,
+          "name": "Xega Ball"
+        },
+        {
+          "id": 15,
+          "name": "MegaLaser Dual"
+        },
+        {
+          "id": 16,
+          "name": "Orange Shield"
+        },
+        {
+          "id": 17,
+          "name": "Pulse Blast"
+        },
+        {
+          "id": 18,
+          "name": "MegaLaser"
+        },
+        {
+          "id": 19,
+          "name": "Missile Pod"
+        },
+        {
+          "id": 20,
+          "name": "Minefield"
+        },
+        {
+          "id": 21,
+          "name": "Post-It Blast"
+        },
+        {
+          "id": 22,
+          "name": "Drone **"
+        },
+        {
+          "id": 23,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 24,
+          "name": "Super Bomb"
+        },
+        {
+          "id": 25,
+          "name": "Hot Dog"
+        },
+        {
+          "id": 26,
+          "name": "Lightning UP"
+        },
+        {
+          "id": 27,
+          "name": "Lightning UP+LEFT"
+        },
+        {
+          "id": 28,
+          "name": "Lightning UP+RIGHT"
+        },
+        {
+          "id": 29,
+          "name": "Lightning LEFT"
+        },
+        {
+          "id": 30,
+          "name": "Lightning RIGHT"
+        },
+        {
+          "id": 31,
+          "name": "MicroSol Option"
+        },
+        {
+          "id": 32,
+          "name": "MicroSol Option2"
+        },
+        {
+          "id": 33,
+          "name": "MicroSol Option3"
+        },
+        {
+          "id": 34,
+          "name": "MicroSol Option4"
+        },
+        {
+          "id": 35,
+          "name": "MicroSol Option5"
+        },
+        {
+          "id": 36,
+          "name": "MicroSol Option6"
+        },
+        {
+          "id": 37,
+          "name": "Invulnerability"
+        },
+        {
+          "id": 38,
+          "name": "Atom Bomb"
+        },
+        {
+          "id": 39,
+          "name": "Seeker Bombs"
+        },
+        {
+          "id": 40,
+          "name": "Lightning Zone"
+        },
+        {
+          "id": 41,
+          "name": "SDF Main Gun"
+        },
+        {
+          "id": 42,
+          "name": "Ice Blast"
+        },
+        {
+          "id": 43,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 44,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 45,
+          "name": "8-Way Microbomb"
+        },
+        {
+          "id": 46,
+          "name": "Protron Field"
+        }
+      ],
+      "generators": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Standard MR-9",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Advanced MR-12",
+          "cost": 2000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Custom MR-12",
+          "cost": 5000
+        },
+        {
+          "id": 4,
+          "name": "Standard MicroFusion",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Advanced MircoFusion",
+          "cost": 15000
+        },
+        {
+          "id": 6,
+          "name": "Gravitron Pulse-Wave",
+          "cost": 50000
+        }
+      ],
+      "ships": [
+        {
+          "id": 0,
+          "name": "None",
+          "armor": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "USP Talon   Light Fighter",
+          "armor": 10,
+          "cost": 6000
+        },
+        {
+          "id": 2,
+          "name": "SuperCarrot",
+          "armor": 26,
+          "cost": 65000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Phoenix",
+          "armor": 17,
+          "cost": 12000
+        },
+        {
+          "id": 4,
+          "name": "Gencore Maelstrom",
+          "armor": 20,
+          "cost": 15000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp Stalker",
+          "armor": 25,
+          "cost": 20000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp Stalker-B",
+          "armor": 27,
+          "cost": 25000
+        },
+        {
+          "id": 7,
+          "name": "Prototype Stalker-C",
+          "armor": 28,
+          "cost": 50000
+        },
+        {
+          "id": 8,
+          "name": "Stalker",
+          "armor": 15,
+          "cost": 10000
+        },
+        {
+          "id": 9,
+          "name": "USP Fang    Light Fighter",
+          "armor": 14,
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "U-Ship",
+          "armor": 8,
+          "cost": 8000
+        },
+        {
+          "id": 11,
+          "name": "Silver Ship",
+          "armor": 10,
+          "cost": 8000
+        },
+        {
+          "id": 12,
+          "name": "Nort Ship",
+          "armor": 30,
+          "cost": 65000
+        },
+        {
+          "id": 13,
+          "name": "The Stalker 21.126",
+          "armor": 30,
+          "cost": 65535
+        }
+      ],
+      "sidekicks": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Single Shot Option",
+          "cost": 3000
+        },
+        {
+          "id": 2,
+          "name": "Dual Shot Option",
+          "cost": 6000
+        },
+        {
+          "id": 3,
+          "name": "Charge Cannon",
+          "cost": 15000
+        },
+        {
+          "id": 4,
+          "name": "Vulcan Shot Option",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Wobbley",
+          "cost": 25000
+        },
+        {
+          "id": 6,
+          "name": "MegaMissile    Ammo 5",
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "Atom Bombs     Ammo 20",
+          "cost": 8000
+        },
+        {
+          "id": 8,
+          "name": "Phoenix Device Ammo 8",
+          "cost": 8000
+        },
+        {
+          "id": 9,
+          "name": "Plasma Storm   Ammo 10",
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "Mini-Missile   Ammo 100",
+          "cost": 1000
+        },
+        {
+          "id": 11,
+          "name": "Buster Rocket  Ammo 30",
+          "cost": 12500
+        },
+        {
+          "id": 12,
+          "name": "Zica SuperCharger",
+          "cost": 50000
+        },
+        {
+          "id": 13,
+          "name": "MicroBomb      Ammo 60",
+          "cost": 4000
+        },
+        {
+          "id": 14,
+          "name": "8-Way MicroBomb  Ammo 30",
+          "cost": 7500
+        },
+        {
+          "id": 15,
+          "name": "Post-It Mine   Ammo 20",
+          "cost": 7000
+        },
+        {
+          "id": 16,
+          "name": "Mint-O-Ship",
+          "cost": 5000
+        },
+        {
+          "id": 17,
+          "name": "Zica Flamethrower",
+          "cost": 20000
+        },
+        {
+          "id": 18,
+          "name": "Side Ship      Ammo 100",
+          "cost": 3000
+        },
+        {
+          "id": 19,
+          "name": "Companion Ship Warfly",
+          "cost": 5000
+        },
+        {
+          "id": 20,
+          "name": "MicroSol FrontBlaster",
+          "cost": 8000
+        },
+        {
+          "id": 21,
+          "name": "Companion Ship Gerund",
+          "cost": 10000
+        },
+        {
+          "id": 22,
+          "name": "BattleShip-Class Firebomb",
+          "cost": 65000
+        },
+        {
+          "id": 23,
+          "name": "Protron Cannon Indigo",
+          "cost": 12000
+        },
+        {
+          "id": 24,
+          "name": "Companion Ship Quicksilver",
+          "cost": 65000
+        },
+        {
+          "id": 25,
+          "name": "Protron Cannon Tangerine",
+          "cost": 30000
+        },
+        {
+          "id": 26,
+          "name": "MicroSol FrontBlaster II",
+          "cost": 14000
+        },
+        {
+          "id": 27,
+          "name": "Beno Wallop Beam",
+          "cost": 20000
+        },
+        {
+          "id": 28,
+          "name": "Beno Protron System -B-",
+          "cost": 30000
+        },
+        {
+          "id": 29,
+          "name": "Tropical Cherry Companion",
+          "cost": 8000
+        },
+        {
+          "id": 30,
+          "name": "Satellite Marlo",
+          "cost": 2000
+        }
+      ],
+      "shields": [
+        {
+          "id": 0,
+          "name": "None",
+          "maximum": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Structural Integrity Field",
+          "maximum": 2,
+          "cost": 100
+        },
+        {
+          "id": 2,
+          "name": "Advanced Integrity Field",
+          "maximum": 3,
+          "cost": 250
+        },
+        {
+          "id": 3,
+          "name": "Gencore Low Energy Shield",
+          "maximum": 4,
+          "cost": 500
+        },
+        {
+          "id": 4,
+          "name": "Gencore High Energy Shield",
+          "maximum": 5,
+          "cost": 1000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp LXS Class A",
+          "maximum": 6,
+          "cost": 2000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp LXS Class B",
+          "maximum": 7,
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "MicroCorp LXS Class C",
+          "maximum": 9,
+          "cost": 5000
+        },
+        {
+          "id": 8,
+          "name": "MicroCorp HXS Class A",
+          "maximum": 10,
+          "cost": 12000
+        },
+        {
+          "id": 9,
+          "name": "MicroCorp HXS Class B",
+          "maximum": 12,
+          "cost": 20000
+        },
+        {
+          "id": 10,
+          "name": "MicroCorp HXS Class C",
+          "maximum": 14,
+          "cost": 25000
+        }
+      ]
+    },
+    {
+      "episode": 4,
+      "initialCash": 30000,
+      "defaultArmor": 10,
+      "defaultShield": 5,
+      "defaultShieldMaximum": 10,
+      "progress": [
+        {
+          "mainSection": 1,
+          "label": "SURFACE",
+          "levelName": "SURFACE"
+        },
+        {
+          "mainSection": 3,
+          "label": "LAVA RUN",
+          "levelName": "LAVA RUN"
+        },
+        {
+          "mainSection": 5,
+          "label": "CORE",
+          "levelName": "CORE"
+        },
+        {
+          "mainSection": 7,
+          "label": "?TUNNEL?",
+          "levelName": "?TUNNEL?"
+        },
+        {
+          "mainSection": 11,
+          "label": "HARVEST",
+          "levelName": "HARVEST"
+        },
+        {
+          "mainSection": 13,
+          "label": "UNDERDELI",
+          "levelName": "UNDERDELI"
+        },
+        {
+          "mainSection": 15,
+          "label": "SAVARA IV",
+          "levelName": "SAVARA IV"
+        },
+        {
+          "mainSection": 17,
+          "label": "DREAD-NOT",
+          "levelName": "DREAD-NOT"
+        },
+        {
+          "mainSection": 19,
+          "label": "EYESPY",
+          "levelName": "EYESPY"
+        },
+        {
+          "mainSection": 21,
+          "label": "BRAINIAC",
+          "levelName": "BRAINIAC"
+        },
+        {
+          "mainSection": 23,
+          "label": "NOSE DRIP",
+          "levelName": "NOSE DRIP"
+        },
+        {
+          "mainSection": 32,
+          "label": "ICE EXIT",
+          "levelName": "ICE EXIT"
+        },
+        {
+          "mainSection": 34,
+          "label": "SIDE EXIT",
+          "levelName": "SIDE EXIT"
+        },
+        {
+          "mainSection": 37,
+          "label": "SQUADRON",
+          "levelName": "SQUADRON"
+        },
+        {
+          "mainSection": 41,
+          "label": "Episode ending / secret route",
+          "levelName": "Episode en"
+        },
+        {
+          "mainSection": 43,
+          "label": "Episode ending / secret route",
+          "levelName": "Episode en"
+        },
+        {
+          "mainSection": 46,
+          "label": "APPROACH",
+          "levelName": "APPROACH"
+        },
+        {
+          "mainSection": 51,
+          "label": "HARVEST",
+          "levelName": "HARVEST"
+        }
+      ],
+      "weaponPorts": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Pulse-Cannon",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 3,
+          "name": "Mega Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 4,
+          "name": "Laser",
+          "cost": 900
+        },
+        {
+          "id": 5,
+          "name": "Zica Laser",
+          "cost": 1100
+        },
+        {
+          "id": 6,
+          "name": "Protron Z",
+          "cost": 900
+        },
+        {
+          "id": 7,
+          "name": "Vulcan Cannon",
+          "cost": 600
+        },
+        {
+          "id": 8,
+          "name": "Lightning Cannon",
+          "cost": 1000
+        },
+        {
+          "id": 9,
+          "name": "Starburst",
+          "cost": 900
+        },
+        {
+          "id": 10,
+          "name": "Multi-Cannon",
+          "cost": 750
+        },
+        {
+          "id": 11,
+          "name": "Sonic Wave",
+          "cost": 950
+        },
+        {
+          "id": 12,
+          "name": "Protron",
+          "cost": 650
+        },
+        {
+          "id": 13,
+          "name": "Protron",
+          "cost": 600
+        },
+        {
+          "id": 14,
+          "name": "Wild Ball",
+          "cost": 800
+        },
+        {
+          "id": 15,
+          "name": "Vulcan Cannon",
+          "cost": 500
+        },
+        {
+          "id": 16,
+          "name": "Miscellaneous Option Weapons",
+          "cost": 0
+        },
+        {
+          "id": 17,
+          "name": "Missile Launcher",
+          "cost": 850
+        },
+        {
+          "id": 18,
+          "name": "Fireball",
+          "cost": 1000
+        },
+        {
+          "id": 19,
+          "name": "Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 20,
+          "name": "Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 21,
+          "name": "Rear Heavy Missile Launcher",
+          "cost": 1000
+        },
+        {
+          "id": 22,
+          "name": "Rear Mega Pulse",
+          "cost": 900
+        },
+        {
+          "id": 23,
+          "name": "Banana Blast",
+          "cost": 950
+        },
+        {
+          "id": 24,
+          "name": "Banana Blast Rear",
+          "cost": 1100
+        },
+        {
+          "id": 25,
+          "name": "HotDog Front",
+          "cost": 1100
+        },
+        {
+          "id": 26,
+          "name": "HotDog Rear",
+          "cost": 1100
+        },
+        {
+          "id": 27,
+          "name": "Hyper Pulse",
+          "cost": 1050
+        },
+        {
+          "id": 28,
+          "name": "Guided Micro Bombs",
+          "cost": 1100
+        },
+        {
+          "id": 29,
+          "name": "Heavy Guided Bombs",
+          "cost": 1000
+        },
+        {
+          "id": 30,
+          "name": "Scatter Wave",
+          "cost": 900
+        },
+        {
+          "id": 31,
+          "name": "Guided Bombs",
+          "cost": 800
+        },
+        {
+          "id": 32,
+          "name": "Shuruiken Field",
+          "cost": 850
+        },
+        {
+          "id": 33,
+          "name": "Poison Bomb",
+          "cost": 800
+        },
+        {
+          "id": 34,
+          "name": "Protron Wave",
+          "cost": 750
+        },
+        {
+          "id": 35,
+          "name": "The Orange Juicer",
+          "cost": 900
+        },
+        {
+          "id": 36,
+          "name": "NortShip Super Pulse",
+          "cost": 1100
+        },
+        {
+          "id": 37,
+          "name": "NortShip Spreader",
+          "cost": 1100
+        },
+        {
+          "id": 38,
+          "name": "NortShip Spreader B",
+          "cost": 1100
+        },
+        {
+          "id": 39,
+          "name": "Atomic RailGun",
+          "cost": 1101
+        },
+        {
+          "id": 40,
+          "name": "Widget Beam",
+          "cost": 950
+        },
+        {
+          "id": 41,
+          "name": "Sonic Impulse",
+          "cost": 1000
+        },
+        {
+          "id": 42,
+          "name": "RetroBall",
+          "cost": 1000
+        }
+      ],
+      "specialWeapons": [
+        {
+          "id": 0,
+          "name": "None"
+        },
+        {
+          "id": 1,
+          "name": "Repulsor"
+        },
+        {
+          "id": 2,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 3,
+          "name": "Soul of Zinglon"
+        },
+        {
+          "id": 4,
+          "name": "Attractor"
+        },
+        {
+          "id": 5,
+          "name": "Ice Beam"
+        },
+        {
+          "id": 6,
+          "name": "Flare"
+        },
+        {
+          "id": 7,
+          "name": "Blade Field"
+        },
+        {
+          "id": 8,
+          "name": "SandStorm"
+        },
+        {
+          "id": 9,
+          "name": "MineField"
+        },
+        {
+          "id": 10,
+          "name": "Dual Vulcan"
+        },
+        {
+          "id": 11,
+          "name": "Banana Bomb"
+        },
+        {
+          "id": 12,
+          "name": "Protron Dispersal"
+        },
+        {
+          "id": 13,
+          "name": "Astral Zone"
+        },
+        {
+          "id": 14,
+          "name": "Xega Ball"
+        },
+        {
+          "id": 15,
+          "name": "MegaLaser Dual"
+        },
+        {
+          "id": 16,
+          "name": "Orange Shield"
+        },
+        {
+          "id": 17,
+          "name": "Pulse Blast"
+        },
+        {
+          "id": 18,
+          "name": "MegaLaser"
+        },
+        {
+          "id": 19,
+          "name": "Missile Pod"
+        },
+        {
+          "id": 20,
+          "name": "Minefield"
+        },
+        {
+          "id": 21,
+          "name": "Post-It Blast"
+        },
+        {
+          "id": 22,
+          "name": "Drone **"
+        },
+        {
+          "id": 23,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 24,
+          "name": "Super Bomb"
+        },
+        {
+          "id": 25,
+          "name": "Hot Dog"
+        },
+        {
+          "id": 26,
+          "name": "Lightning UP"
+        },
+        {
+          "id": 27,
+          "name": "Lightning UP+LEFT"
+        },
+        {
+          "id": 28,
+          "name": "Lightning UP+RIGHT"
+        },
+        {
+          "id": 29,
+          "name": "Lightning LEFT"
+        },
+        {
+          "id": 30,
+          "name": "Lightning RIGHT"
+        },
+        {
+          "id": 31,
+          "name": "MicroSol Option"
+        },
+        {
+          "id": 32,
+          "name": "MicroSol Option2"
+        },
+        {
+          "id": 33,
+          "name": "MicroSol Option3"
+        },
+        {
+          "id": 34,
+          "name": "MicroSol Option4"
+        },
+        {
+          "id": 35,
+          "name": "MicroSol Option5"
+        },
+        {
+          "id": 36,
+          "name": "MicroSol Option6"
+        },
+        {
+          "id": 37,
+          "name": "Invulnerability"
+        },
+        {
+          "id": 38,
+          "name": "Atom Bomb"
+        },
+        {
+          "id": 39,
+          "name": "Seeker Bombs"
+        },
+        {
+          "id": 40,
+          "name": "Lightning Zone"
+        },
+        {
+          "id": 41,
+          "name": "SDF Main Gun"
+        },
+        {
+          "id": 42,
+          "name": "Ice Blast"
+        },
+        {
+          "id": 43,
+          "name": "Repair Player 1"
+        },
+        {
+          "id": 44,
+          "name": "Pearl Wind"
+        },
+        {
+          "id": 45,
+          "name": "8-Way Microbomb"
+        },
+        {
+          "id": 46,
+          "name": "Protron Field"
+        }
+      ],
+      "generators": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Standard MR-9",
+          "cost": 500
+        },
+        {
+          "id": 2,
+          "name": "Advanced MR-12",
+          "cost": 2000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Custom MR-12",
+          "cost": 5000
+        },
+        {
+          "id": 4,
+          "name": "Standard MicroFusion",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Advanced MircoFusion",
+          "cost": 15000
+        },
+        {
+          "id": 6,
+          "name": "Gravitron Pulse-Wave",
+          "cost": 50000
+        }
+      ],
+      "ships": [
+        {
+          "id": 0,
+          "name": "None",
+          "armor": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "USP Talon   Light Fighter",
+          "armor": 10,
+          "cost": 6000
+        },
+        {
+          "id": 2,
+          "name": "SuperCarrot",
+          "armor": 26,
+          "cost": 65000
+        },
+        {
+          "id": 3,
+          "name": "Gencore Phoenix",
+          "armor": 17,
+          "cost": 12000
+        },
+        {
+          "id": 4,
+          "name": "Gencore Maelstrom",
+          "armor": 20,
+          "cost": 15000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp Stalker",
+          "armor": 25,
+          "cost": 20000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp Stalker-B",
+          "armor": 27,
+          "cost": 25000
+        },
+        {
+          "id": 7,
+          "name": "Prototype Stalker-C",
+          "armor": 28,
+          "cost": 50000
+        },
+        {
+          "id": 8,
+          "name": "Stalker",
+          "armor": 15,
+          "cost": 10000
+        },
+        {
+          "id": 9,
+          "name": "USP Fang    Light Fighter",
+          "armor": 14,
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "U-Ship",
+          "armor": 8,
+          "cost": 8000
+        },
+        {
+          "id": 11,
+          "name": "Silver Ship",
+          "armor": 10,
+          "cost": 8000
+        },
+        {
+          "id": 12,
+          "name": "Nort Ship",
+          "armor": 30,
+          "cost": 65000
+        },
+        {
+          "id": 13,
+          "name": "The Stalker 21.126",
+          "armor": 30,
+          "cost": 30000
+        }
+      ],
+      "sidekicks": [
+        {
+          "id": 0,
+          "name": "None",
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Single Shot Option",
+          "cost": 3000
+        },
+        {
+          "id": 2,
+          "name": "Dual Shot Option",
+          "cost": 6000
+        },
+        {
+          "id": 3,
+          "name": "Charge Cannon",
+          "cost": 15000
+        },
+        {
+          "id": 4,
+          "name": "Vulcan Shot Option",
+          "cost": 10000
+        },
+        {
+          "id": 5,
+          "name": "Wobbley",
+          "cost": 25000
+        },
+        {
+          "id": 6,
+          "name": "MegaMissile    Ammo 5",
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "Atom Bombs     Ammo 20",
+          "cost": 8000
+        },
+        {
+          "id": 8,
+          "name": "Phoenix Device Ammo 8",
+          "cost": 8000
+        },
+        {
+          "id": 9,
+          "name": "Plasma Storm   Ammo 10",
+          "cost": 8000
+        },
+        {
+          "id": 10,
+          "name": "Mini-Missile   Ammo 100",
+          "cost": 1000
+        },
+        {
+          "id": 11,
+          "name": "Buster Rocket  Ammo 30",
+          "cost": 12500
+        },
+        {
+          "id": 12,
+          "name": "Zica SuperCharger",
+          "cost": 50000
+        },
+        {
+          "id": 13,
+          "name": "MicroBomb      Ammo 60",
+          "cost": 4000
+        },
+        {
+          "id": 14,
+          "name": "8-Way MicroBomb  Ammo 30",
+          "cost": 7500
+        },
+        {
+          "id": 15,
+          "name": "Post-It Mine   Ammo 20",
+          "cost": 7000
+        },
+        {
+          "id": 16,
+          "name": "Mint-O-Ship",
+          "cost": 5000
+        },
+        {
+          "id": 17,
+          "name": "Zica Flamethrower",
+          "cost": 20000
+        },
+        {
+          "id": 18,
+          "name": "Side Ship      Ammo 100",
+          "cost": 3000
+        },
+        {
+          "id": 19,
+          "name": "Companion Ship Warfly",
+          "cost": 5000
+        },
+        {
+          "id": 20,
+          "name": "MicroSol FrontBlaster",
+          "cost": 8000
+        },
+        {
+          "id": 21,
+          "name": "Companion Ship Gerund",
+          "cost": 10000
+        },
+        {
+          "id": 22,
+          "name": "BattleShip-Class Firebomb",
+          "cost": 65000
+        },
+        {
+          "id": 23,
+          "name": "Protron Cannon Indigo",
+          "cost": 12000
+        },
+        {
+          "id": 24,
+          "name": "Companion Ship Quicksilver",
+          "cost": 65000
+        },
+        {
+          "id": 25,
+          "name": "Protron Cannon Tangerine",
+          "cost": 30000
+        },
+        {
+          "id": 26,
+          "name": "MicroSol FrontBlaster II",
+          "cost": 14000
+        },
+        {
+          "id": 27,
+          "name": "Beno Wallop Beam",
+          "cost": 20000
+        },
+        {
+          "id": 28,
+          "name": "Beno Protron System -B-",
+          "cost": 30000
+        },
+        {
+          "id": 29,
+          "name": "Tropical Cherry Companion",
+          "cost": 8000
+        },
+        {
+          "id": 30,
+          "name": "Satellite Marlo",
+          "cost": 2000
+        }
+      ],
+      "shields": [
+        {
+          "id": 0,
+          "name": "None",
+          "maximum": 0,
+          "cost": 0
+        },
+        {
+          "id": 1,
+          "name": "Structural Integrity Field",
+          "maximum": 2,
+          "cost": 100
+        },
+        {
+          "id": 2,
+          "name": "Advanced Integrity Field",
+          "maximum": 3,
+          "cost": 250
+        },
+        {
+          "id": 3,
+          "name": "Gencore Low Energy Shield",
+          "maximum": 4,
+          "cost": 500
+        },
+        {
+          "id": 4,
+          "name": "Gencore High Energy Shield",
+          "maximum": 5,
+          "cost": 1000
+        },
+        {
+          "id": 5,
+          "name": "MicroCorp LXS Class A",
+          "maximum": 6,
+          "cost": 2000
+        },
+        {
+          "id": 6,
+          "name": "MicroCorp LXS Class B",
+          "maximum": 7,
+          "cost": 4000
+        },
+        {
+          "id": 7,
+          "name": "MicroCorp LXS Class C",
+          "maximum": 9,
+          "cost": 5000
+        },
+        {
+          "id": 8,
+          "name": "MicroCorp HXS Class A",
+          "maximum": 10,
+          "cost": 12000
+        },
+        {
+          "id": 9,
+          "name": "MicroCorp HXS Class B",
+          "maximum": 12,
+          "cost": 20000
+        },
+        {
+          "id": 10,
+          "name": "MicroCorp HXS Class C",
+          "maximum": 14,
+          "cost": 25000
+        }
+      ]
+    }
+  ]
+}

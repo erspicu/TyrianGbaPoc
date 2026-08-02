@@ -22,6 +22,11 @@
 __pycache__/
 *.py[cod]
 
+# TyrianSaveEditor .NET build products
+/TyrianSaveEditor/bin/
+/TyrianSaveEditor/obj/
+/TyrianSaveEditor/publish/
+
 # Local capture sessions can contain thousands of raw frames.  Keep only the
 # curated PC/GBA parity references used by the maintained documentation.
 /temp/*

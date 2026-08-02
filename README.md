@@ -55,6 +55,10 @@ regression commands, see [BUILDING.md](BUILDING.md).
 Developer switches and all supported HUD/menu coordinates are documented
 directly in the bilingual [Configure.h](Configure.h).
 
+The optional Windows [TyrianSaveEditor](TyrianSaveEditor/README.md) provides
+both a WinForms UI and CLI for creating, inspecting and editing emulator
+`.sav` files without weakening the game's dual-bank/CRC format.
+
 ## Controls
 
 - D-pad Up/Down: select menu items
@@ -94,6 +98,7 @@ appropriate for your jurisdiction.
 - `src/`, `main.c`: GBA runtime and source-parity translation.
 - `vendor/`: pinned Tyrian data, OpenTyrian snapshot, SDK and build inputs.
 - `tools/`: reproducible asset/build/test scripts.
+- `TyrianSaveEditor/`: source-data-backed WinForms and CLI SRAM editor.
 - `MD/`: detailed parity, architecture and performance research notes.
 - `Website/`: local project website source.
 
