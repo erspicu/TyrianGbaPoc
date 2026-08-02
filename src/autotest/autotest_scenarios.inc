@@ -346,6 +346,9 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(424, source_parity_level.smoothies[1] != 0);
     sram_write_u32(428, source_parity_level.smoothie_data[0]);
     sram_write_u32(432, source_parity_level.smoothie_data[1]);
+    sram_write_u32(436, telemetry_detail_wave_attenuated_frames);
+    sram_write_u32(440, telemetry_detail_wave_pressure_score_max);
+    sram_write_u32(444, telemetry_detail_wave_strength_min_q8);
     /* The self-test mutates smoothie state, so run it after the snapshot. */
     sram_write_u32(396, autotest_detail_adapter_self_test());
     sram[124] = *(volatile const u8 *)save_type_marker;

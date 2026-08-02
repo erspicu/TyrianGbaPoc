@@ -169,6 +169,16 @@ int main(void)
      */
     GBA_WAITCNT = GBA_WAITCNT_ROM_PREFETCH_3_1;
     telemetry_waitcnt = GBA_WAITCNT;
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    /*
+     * These two fixed source-derived profiles are moderately expensive to
+     * build.  Prepare them before IRQ/audio startup so the first lava/water
+     * event cannot steal mixer frames or create a one-off gameplay hitch.
+     */
+    source_detail_wave_profile_prepare(0);
+    source_detail_wave_profile_prepare(1);
+    source_detail_wave_runtime_reset();
+#endif
     irqInit();
     irqSet(IRQ_VBLANK, vblank_handler);
     irqEnable(IRQ_VBLANK);

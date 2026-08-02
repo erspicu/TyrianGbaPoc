@@ -376,10 +376,23 @@ static u8 source_detail_build_effect_palette(
 }
 
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
-static s8 source_detail_wave_amount(u8 water, u16 screen_line)
+#define SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8 256u
+#define SOURCE_DETAIL_WAVE_STRENGTH_BUSY_Q8 160u
+#define SOURCE_DETAIL_WAVE_STRENGTH_SEVERE_Q8 0u
+#define SOURCE_DETAIL_WAVE_PRESSURE_MAX 24u
+#define SOURCE_DETAIL_WAVE_PRESSURE_ENTER 6u
+#define SOURCE_DETAIL_WAVE_PRESSURE_SEVERE 24u
+#define SOURCE_DETAIL_WAVE_PRESSURE_EXIT 2u
+#define SOURCE_DETAIL_WAVE_RENDER_HEAVY_CYCLES 220000u
+
+static s8 source_detail_wave_source_amount(
+    u8 water,
+    u16 screen_line,
+    u16 source_x
+)
 {
     u32 source_y = (u32)(SOURCE_PRESENTATION_Y_ORIGIN + screen_line);
-    u32 linear = source_y * 320u + 156u;
+    u32 linear = source_y * 320u + source_x;
     s16 centre = water ? 4 : 8;
     s16 value = water ?
         (s16)((linear >> 10) & 7u) :
@@ -390,17 +403,224 @@ static s8 source_detail_wave_amount(u8 water, u16 screen_line)
     return (s8)(delta - 1);
 }
 
+static s16 source_detail_wave_horizontal_sum(u8 water, u16 screen_line)
+{
+    const u16 visible_left = SOURCE_PRESENTATION_X_ORIGIN;
+    const u16 visible_right = (u16)(
+        SOURCE_PRESENTATION_X_ORIGIN + SCREEN_WIDTH - 1u
+    );
+    u16 block_end = (u16)(visible_left | 7u);
+    s16 sum = 0;
+
+    /*
+     * OpenTyrian computes one waver value for each eight-pixel block.  Weight
+     * the two cropped edge blocks by their visible pixels and every complete
+     * block by eight, yielding the exact mean over the 240-pixel GBA crop.
+     */
+    while (block_end <= visible_right + 7u) {
+        u16 block_start = (u16)(block_end - 7u);
+        u16 sample_start = block_start < visible_left ?
+            visible_left : block_start;
+        u16 sample_end = block_end > visible_right ?
+            visible_right : block_end;
+
+        if (sample_start <= sample_end) {
+            u16 weight = (u16)(sample_end - sample_start + 1u);
+
+            sum = (s16)(
+                sum +
+                source_detail_wave_source_amount(
+                    water,
+                    screen_line,
+                    block_end
+                ) * (s16)weight
+            );
+        }
+        block_end = (u16)(block_end + 8u);
+    }
+    return sum;
+}
+
+static void source_detail_wave_profile_prepare(u8 water)
+{
+    u8 profile_index = water != 0;
+    u8 profile_bit = (u8)(1u << profile_index);
+    u16 line;
+
+    if (source_detail_wave_profile_valid & profile_bit) return;
+    for (line = 0; line <= SCREEN_HEIGHT; line++) {
+        s32 sum = 0;
+        s8 offset;
+        s16 average;
+        s16 dc_bias = water ? 1 : 3;
+
+        /*
+         * The PC filter also mixes neighbouring destination rows.  A five-row
+         * box filter is deliberately used here because one GBA scroll value
+         * moves a whole row instead of just an eight-pixel sample block.
+         */
+        for (offset = -2; offset <= 2; offset++) {
+            s16 sample_line = (s16)line + offset;
+
+            if (sample_line < 0) sample_line = 0;
+            if (sample_line > SCREEN_HEIGHT) sample_line = SCREEN_HEIGHT;
+            sum += source_detail_wave_horizontal_sum(
+                water,
+                (u16)sample_line
+            );
+        }
+        /* 240 visible pixels times five rows, rounded symmetrically. */
+        if (sum >= 0) {
+            average = (s16)((sum + 600) / 1200);
+        } else {
+            average = (s16)-(((-sum) + 600) / 1200);
+        }
+        /*
+         * The source offset's positive DC component changes colour samples;
+         * it is not a camera translation.  Palette adaptation already models
+         * that colour result, so retain only the oscillating displacement.
+         */
+        source_detail_wave_profile[profile_index][line] =
+            (s8)(average - dc_bias);
+    }
+    source_detail_wave_profile_valid |= profile_bit;
+}
+
+static void source_detail_wave_runtime_reset(void)
+{
+    source_detail_wave_strength_q8 =
+        SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8;
+    source_detail_wave_pressure_score = 0;
+    source_detail_wave_pressure_active = 0;
+}
+
+static void source_detail_wave_record_pressure_score(void)
+{
+    if (
+        source_detail_wave_pressure_score >
+        telemetry_detail_wave_pressure_score_max
+    ) {
+        telemetry_detail_wave_pressure_score_max =
+            source_detail_wave_pressure_score;
+    }
+}
+
+static void source_detail_wave_note_render_deferred(void)
+{
+    u16 score;
+
+    if (!source_detail_wave_requested) return;
+    score = (u16)source_detail_wave_pressure_score + 3u;
+    if (score > SOURCE_DETAIL_WAVE_PRESSURE_MAX) {
+        score = SOURCE_DETAIL_WAVE_PRESSURE_MAX;
+    }
+    source_detail_wave_pressure_score = (u8)score;
+    if (
+        source_detail_wave_pressure_score >=
+        SOURCE_DETAIL_WAVE_PRESSURE_ENTER
+    ) {
+        source_detail_wave_pressure_active = 1;
+    }
+    source_detail_wave_record_pressure_score();
+}
+
+static void source_detail_wave_complete_render(u32 actual_render_cycles)
+{
+    u16 target;
+    u16 strength;
+    u16 score;
+    u8 heavy;
+
+    if (!source_detail_wave_requested) {
+        source_detail_wave_runtime_reset();
+        return;
+    }
+    heavy = (u8)(
+        presentation_pending_logic_ticks > 1u ||
+        actual_render_cycles >= SOURCE_DETAIL_WAVE_RENDER_HEAVY_CYCLES
+    );
+    if (heavy) {
+        score = (u16)source_detail_wave_pressure_score + 2u;
+        if (score > SOURCE_DETAIL_WAVE_PRESSURE_MAX) {
+            score = SOURCE_DETAIL_WAVE_PRESSURE_MAX;
+        }
+        source_detail_wave_pressure_score = (u8)score;
+    } else if (source_detail_wave_pressure_score != 0) {
+        source_detail_wave_pressure_score--;
+    }
+    if (
+        source_detail_wave_pressure_score >=
+        SOURCE_DETAIL_WAVE_PRESSURE_ENTER
+    ) {
+        source_detail_wave_pressure_active = 1;
+    } else if (
+        source_detail_wave_pressure_score <=
+        SOURCE_DETAIL_WAVE_PRESSURE_EXIT
+    ) {
+        source_detail_wave_pressure_active = 0;
+    }
+    source_detail_wave_record_pressure_score();
+
+    if (!source_detail_wave_pressure_active) {
+        target = SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8;
+    } else if (
+        source_detail_wave_pressure_score >=
+        SOURCE_DETAIL_WAVE_PRESSURE_SEVERE
+    ) {
+        target = SOURCE_DETAIL_WAVE_STRENGTH_SEVERE_Q8;
+    } else {
+        target = SOURCE_DETAIL_WAVE_STRENGTH_BUSY_Q8;
+    }
+    strength = source_detail_wave_strength_q8;
+    if (strength > target) {
+        strength = strength > target + 32u ?
+            (u16)(strength - 32u) : target;
+    } else if (strength < target) {
+        strength = strength + 8u < target ?
+            (u16)(strength + 8u) : target;
+    }
+    source_detail_wave_strength_q8 = strength;
+    if (strength < SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8) {
+        telemetry_detail_wave_attenuated_frames++;
+        if (strength < telemetry_detail_wave_strength_min_q8) {
+            telemetry_detail_wave_strength_min_q8 = strength;
+        }
+    }
+}
+
 static void source_detail_wave_prepare(u8 water)
 {
     u8 table_index = (u8)(source_detail_wave_table_active ^ 1u);
+    u8 profile_index = water != 0;
     u16 bg0_hofs = source_background_hofs(0);
     u16 bg1_hofs = source_background_hofs(1);
     u16 bg0_vofs = source_background_vofs(0);
     u16 bg1_vofs = source_background_vofs(1);
     u16 line;
 
+    source_detail_wave_profile_prepare(water);
     for (line = 0; line <= SCREEN_HEIGHT; line++) {
-        s8 wave = source_detail_wave_amount(water, line);
+        s8 profile_wave =
+            source_detail_wave_profile[profile_index][line];
+        s8 wave;
+
+        if (
+            source_detail_wave_strength_q8 ==
+            SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8
+        ) {
+            wave = profile_wave;
+        } else if (source_detail_wave_strength_q8 == 0) {
+            wave = 0;
+        } else {
+            s32 scaled =
+                (s32)profile_wave * source_detail_wave_strength_q8;
+
+            if (scaled >= 0) {
+                wave = (s8)((scaled + 128) >> 8);
+            } else {
+                wave = (s8)-(((-scaled) + 128) >> 8);
+            }
+        }
 
         source_detail_wave_table[table_index][line][0] =
             (u16)(bg0_hofs + wave);
@@ -953,6 +1173,9 @@ static u8 gameplay_presentation_should_render(
         elapsed >= deadline ||
         presentation_render_estimate > deadline - elapsed
     ) {
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+        source_detail_wave_note_render_deferred();
+#endif
         telemetry_presentation_render_deferred++;
         return 0;
     }
@@ -1002,6 +1225,9 @@ static void gameplay_presentation_complete(u32 actual_render_cycles)
         telemetry_presentation_estimate_max =
             presentation_render_estimate;
     }
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    source_detail_wave_complete_render(actual_render_cycles);
+#endif
     presentation_render_pending = 0;
     presentation_pending_logic_ticks = 0;
     presentation_release_held_window = 0;

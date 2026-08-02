@@ -151,7 +151,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 436) {
+if ($bytes.Length -lt 448) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -296,6 +296,9 @@ $telemetry = [ordered]@{
     water_active_at_finish = Read-U32 424
     lava_data_at_finish = Read-U32 428
     water_data_at_finish = Read-U32 432
+    detail_wave_attenuated_frames = Read-U32 436
+    detail_wave_pressure_score_max = Read-U32 440
+    detail_wave_strength_min_q8 = Read-U32 444
     screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),

@@ -1829,6 +1829,20 @@ static u8 source_detail_spotlight_table_pending;
 static u16 source_detail_wave_table[2]
     [SOURCE_DETAIL_WAVE_SCANLINES][4]
     EWRAM_BSS __attribute__((aligned(4)));
+/*
+ * Mode 0 can only apply one horizontal offset to an entire scanline, while
+ * OpenTyrian's lava/water filter varies its sample offset every eight pixels.
+ * Keep a spatially low-pass, zero-DC profile for each source filter so that
+ * the hardware approximation does not turn those local samples into harsh
+ * full-width bands.
+ */
+static s8 source_detail_wave_profile[2]
+    [SOURCE_DETAIL_WAVE_SCANLINES] EWRAM_BSS;
+static u8 source_detail_wave_profile_valid EWRAM_BSS;
+/* Sustained presentation pressure attenuates only the visual wave adapter. */
+static u16 source_detail_wave_strength_q8 EWRAM_BSS;
+static u8 source_detail_wave_pressure_score EWRAM_BSS;
+static u8 source_detail_wave_pressure_active EWRAM_BSS;
 #endif
 static u8 source_detail_wave_table_active;
 static u8 source_detail_wave_table_pending;
@@ -2025,6 +2039,9 @@ volatile u32 telemetry_detail_filter_hue_frames;
 volatile u32 telemetry_detail_palette_rebuilds;
 volatile u32 telemetry_detail_wave_frames;
 volatile u32 telemetry_detail_wild_dither_frames;
+volatile u32 telemetry_detail_wave_attenuated_frames EWRAM_BSS;
+volatile u32 telemetry_detail_wave_pressure_score_max EWRAM_BSS;
+volatile u32 telemetry_detail_wave_strength_min_q8 EWRAM_BSS;
 volatile u32 telemetry_effect_cache_hits;
 volatile u32 telemetry_effect_cache_misses;
 volatile u32 telemetry_effect_cache_evictions;

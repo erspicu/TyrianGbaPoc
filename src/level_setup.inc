@@ -406,6 +406,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_detail_spotlight_table_pending = 0;
     source_detail_wave_table_active = 0;
     source_detail_wave_table_pending = 0;
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    source_detail_wave_runtime_reset();
+#endif
     REG_DMA0CNT = 0;
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
@@ -805,6 +808,14 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_detail_palette_rebuilds = 0;
     telemetry_detail_wave_frames = 0;
     telemetry_detail_wild_dither_frames = 0;
+    telemetry_detail_wave_attenuated_frames = 0;
+    telemetry_detail_wave_pressure_score_max = 0;
+    telemetry_detail_wave_strength_min_q8 =
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+        SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8;
+#else
+        0;
+#endif
     telemetry_stress_loadout_failures =
 #if TYRIAN_GBA_STRESS_LOADOUT
         stress_loadout_valid ? 0 : 1;
