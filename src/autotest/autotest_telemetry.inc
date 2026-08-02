@@ -225,8 +225,8 @@ static void autotest_finish(void)
         telemetry_source_unknown_visuals ==
             SOURCE_STAGE4_EXPECTED_UNKNOWN_VISUALS &&
         telemetry_sprite2_decode_failures == 0 &&
-        telemetry_sprite2_cache_drops ==
-            SOURCE_STAGE4_EXPECTED_SPRITE2_CACHE_DROPS &&
+        telemetry_sprite2_cache_drops <=
+            SOURCE_STAGE4_MAX_SPRITE2_CACHE_DROPS &&
         telemetry_sprite2_uploads +
             telemetry_sprite2_upload_coalesces +
             source_enemy_upload_count +

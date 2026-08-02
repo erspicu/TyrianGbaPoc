@@ -34,7 +34,13 @@ enum {
     SOURCE_STAGE4_EXPECTED_DEATH_SPAWNS = 22,
     SOURCE_STAGE4_EXPECTED_DEATH_CONTROLS = 32,
     SOURCE_STAGE4_EXPECTED_DEATH_ASSIGNMENTS = 55,
-    SOURCE_STAGE4_EXPECTED_SPRITE2_CACHE_DROPS = 41,
+    /*
+     * Presentation-only cache drops can decrease when a Detail profile
+     * skips a render pass or meets VBlank earlier.  Treat the historical
+     * deterministic value as a ceiling; gameplay/source counters above
+     * remain exact goldens.
+     */
+    SOURCE_STAGE4_MAX_SPRITE2_CACHE_DROPS = 41,
     SOURCE_STAGE4_EXPECTED_FEEDBACK_SPAWNS = 554,
     SOURCE_STAGE4_EXPECTED_FEEDBACK_DROPS = 140,
     SOURCE_STAGE4_EXPECTED_FEEDBACK_MAX_ACTIVE = 16,

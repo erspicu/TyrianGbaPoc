@@ -32,9 +32,18 @@ Build-GBA-ROM.bat
 可選參數範例：
 
 ```powershell
+.\Build-GBA-ROM.bat
+.\Build-GBA-ROM.bat -DetailLevel low
 .\Build-GBA-ROM.bat -DetailLevel normal -GameSpeed normal
+.\Build-GBA-ROM.bat -DetailLevel high
 .\Build-GBA-ROM.bat -RebuildAssets
 ```
+
+未指定 `-DetailLevel` 時，建置會讀取 `Configure.h` 的
+`TYRIAN_GBA_CONFIG_DETAIL_LEVEL`；預設是建議給 GBA 使用的 `NORMAL`。
+`-DetailLevel low|normal|high` 可只覆寫該次建置而不修改設定檔。這是
+編譯期選擇，每個 ROM 固定一種等級，未選取的分支不會增加 runtime
+判斷成本。`pentium` 仍保留給研究／極限壓力測試，不建議作為一般版本。
 
 `-RebuildAssets` 會先移除可重建的資源輸出，再從 `vendor/` 完整重建。
 
@@ -45,6 +54,8 @@ Build-GBA-ROM.bat
 
 - `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE`：開關主角無敵測試模式。
 - `TYRIAN_GBA_STRESS_LOADOUT`：開關全武器、最大火力的極限負荷配置。
+- `TYRIAN_GBA_CONFIG_DETAIL_LEVEL`：選擇預設 `LOW`、`NORMAL`、`HIGH`
+  （或研究用 `PENTIUM`）細節等級。
 - `TYRIAN_GBA_LAYOUT_*`：調整關卡 HUD、PAUSED／Secret Level 提示、
   Boss 血條、破關摘要，以及首頁、Play Mode、Episode、Difficulty、
   Game Menu、Upgrade Ship、Next Level、Quit Game 對話框的位置。

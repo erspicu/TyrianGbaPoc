@@ -205,6 +205,7 @@ static u8 background_palette_nearest
 static const u8 *background_palette_mask_active;
 static const u8 *background_palette_level_mask_active;
 static const u8 *background_palette_mask_id_active;
+static const u16 *background_gba_palette_active;
 /*
  * palette.dat uses the low nibble as brightness, but an RGB-energy lookup is
  * a better generic tie-breaker for special banks.  Keep this tiny hot table
@@ -525,10 +526,12 @@ static u8 background_setup_palette(
             (u32)level_variant *
                 BACKGROUND_PALETTE_ACTIVE_MASK_COUNT;
     }
-    dmaCopy(
+    background_gba_palette_active = (const u16 *)(const void *)(
         background_gba_palette +
-            (u32)palette_variant *
-                BACKGROUND_GBA_PALETTE_VARIANT_BYTES,
+        (u32)palette_variant * BACKGROUND_GBA_PALETTE_VARIANT_BYTES
+    );
+    dmaCopy(
+        background_gba_palette_active,
         BG_PALETTE,
         BACKGROUND_GBA_PALETTE_VARIANT_BYTES
     );
@@ -1305,6 +1308,7 @@ static IWRAM_CODE ARM_CODE void background_build_ring_row(
         );
         u16 slot = background_word_local_slot(cache, word);
 
+        if (source_detail_vertical_flip) word |= 1u << 11;
         cache->ring_word[ring_row][column] = word;
         if (slot < cache->capacity) {
             cache->reference_count[slot]++;
@@ -1312,6 +1316,53 @@ static IWRAM_CODE ARM_CODE void background_build_ring_row(
     }
     cache->ring_source_row[ring_row] = source_row;
     cache->ring_reference_rows++;
+}
+
+static inline u8 background_physical_ring_row(u16 source_row)
+{
+    if (source_detail_vertical_flip) {
+        return (u8)((0u - source_row - 1u) & (MAP_RING_ROWS - 1u));
+    }
+    return (u8)(source_row & (MAP_RING_ROWS - 1u));
+}
+
+/*
+ * OpenTyrian starShowVGASpecialCode==1 reverses the complete 184-line
+ * gameplay framebuffer.  A text BG cannot use a negative Y scale, so map
+ * source row q at physical row -q-1 and toggle each tile's VFLIP bit.  The
+ * corresponding VOFS transform is applied by source_background_vofs().
+ */
+static void background_set_vertical_flip(u8 enabled)
+{
+    u8 layer;
+
+    enabled = enabled != 0;
+    if (source_detail_vertical_flip == enabled) return;
+    source_detail_vertical_flip = enabled;
+    for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
+        BackgroundLayerCache *cache = &background_layer_cache[layer];
+        u8 ring_row;
+
+        if (!cache->prepared) continue;
+        for (ring_row = 0; ring_row < MAP_RING_ROWS; ring_row++) {
+            u8 column;
+
+            if (cache->ring_source_row[ring_row] != UINT16_MAX) {
+                for (column = 0; column < BACKGROUND_ROW_TILES; column++) {
+                    cache->ring_word[ring_row][column] ^= 1u << 11;
+                }
+            }
+            cache->ring_vram_source_row[ring_row] = UINT16_MAX;
+        }
+        if (cache->prefetch_active) {
+            u8 column;
+
+            for (column = 0; column < cache->prefetch_column; column++) {
+                cache->prefetch_word[column] ^= 1u << 11;
+            }
+        }
+        background_pending_rows[layer].count = 0;
+    }
 }
 
 static void background_copy_ring_row(
@@ -1323,7 +1374,7 @@ static void background_copy_ring_row(
     const u16 *source = background_layer_cache[layer].ring_word[
         source_row & (MAP_RING_ROWS - 1u)
     ];
-    u16 row_slot = (u16)((source_row & 31u) * 32u);
+    u16 row_slot = (u16)(background_physical_ring_row(source_row) * 32u);
     u16 *left = (u16 *)SCREEN_BASE_BLOCK(screen_block);
     u16 *right = (u16 *)SCREEN_BASE_BLOCK(screen_block + 1u);
 
@@ -1569,7 +1620,7 @@ static IWRAM_CODE ARM_CODE u8 background_schedule_row(
     *source = (const u8 *)cache->ring_word[row & 31u];
     *target =
         (u16 *)SCREEN_BASE_BLOCK(screen_block) +
-        ((row & 31u) * 32u);
+        ((u16)background_physical_ring_row(row) * 32u);
     if (
         cache->ring_reference_rows >
         telemetry_background_held_rows_max
@@ -1762,6 +1813,7 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
         );
         u16 slot = background_word_local_slot(cache, word);
 
+        if (source_detail_vertical_flip) word |= 1u << 11;
         cache->prefetch_word[cache->prefetch_column++] = word;
         if (slot < cache->capacity) {
             cache->reference_count[slot]++;

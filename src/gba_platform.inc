@@ -134,14 +134,259 @@ static u16 gameplay_filter_bldcnt(void)
     );
 }
 
+static u16 source_detail_spotlight_window_value(
+    u16 line,
+    s16 center_x,
+    s16 apex_y
+)
+{
+    s16 radius = (s16)(apex_y - (s16)line);
+    s16 left;
+    s16 right;
+
+    if (radius <= 0) return 0;
+    left = (s16)(center_x - radius);
+    right = (s16)(center_x + radius + 1);
+    if (left < 0) left = 0;
+    if (right > SCREEN_WIDTH) right = SCREEN_WIDTH;
+    if (left >= right) return 0;
+    return (u16)((left << 8) | right);
+}
+
+static void source_detail_spotlight_prepare(
+    s16 center_x,
+    s16 apex_y
+)
+{
+    u8 table_index = (u8)(source_detail_spotlight_table_active ^ 1u);
+    u16 line;
+
+    for (line = 0; line < SCREEN_HEIGHT; line++) {
+        source_detail_spotlight_table[table_index][line] =
+            source_detail_spotlight_window_value(
+                line,
+                center_x,
+                apex_y
+            );
+    }
+    /* Consumed by the HBlank following the final visible line. */
+    source_detail_spotlight_table[table_index][SCREEN_HEIGHT] = 0;
+    source_detail_spotlight_table_pending = table_index;
+}
+
+static void source_detail_spotlight_commit(
+    u8 active,
+    u8 table_index
+)
+{
+    REG_DMA0CNT = 0;
+    if (!active) {
+        return;
+    }
+    table_index &= 1u;
+    REG_WIN0H = source_detail_spotlight_table[table_index][0];
+    REG_DMA0SAD = (u32)&source_detail_spotlight_table[table_index][1];
+    REG_DMA0DAD = (u32)&REG_WIN0H;
+    REG_DMA0CNT = (u32)(
+        DMA_ENABLE | DMA_HBLANK | DMA_REPEAT |
+        DMA_SRC_INC | DMA_DST_FIXED | DMA16 | 1u
+    );
+    source_detail_spotlight_table_active = table_index;
+}
+
+static void source_detail_build_iced_palette(void)
+{
+    OtDataView palette;
+    u16 ice_ramp[16];
+    u16 index;
+
+    if (
+        background_gba_palette_active == 0 ||
+        !ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)
+    ) {
+        return;
+    }
+    for (index = 0; index < 16; index++) {
+        const u8 *rgb = palette.data + (u32)(0x80u + index) * 3u;
+
+        ice_ramp[index] = (u16)(
+            (rgb[0] >> 1) |
+            ((rgb[1] >> 1) << 5) |
+            ((rgb[2] >> 1) << 10)
+        );
+    }
+    for (index = 0; index < 256; index++) {
+        u16 colour = background_gba_palette_active[index];
+        u16 red = colour & 31u;
+        u16 green = (colour >> 5) & 31u;
+        u16 blue = (colour >> 10) & 31u;
+        u16 luminance = (u16)(
+            (red * 3u + green * 6u + blue + 5u) / 10u
+        );
+        u16 brightness = (u16)((luminance + 1u) >> 1);
+
+        if (brightness > 15u) brightness = 15u;
+        source_detail_iced_bg_palette[index] = ice_ramp[brightness];
+    }
+}
+
+static void source_detail_prepare_scene(void)
+{
+    u8 special_code = (u8)(
+        (source_parity_level.smoothies[8] ? 1u : 0u) +
+        (source_parity_level.smoothies[5] ? 2u : 0u)
+    );
+    u8 vertical_flip = special_code == 1u;
+
+    background_set_vertical_flip(vertical_flip);
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_NORMAL
+    source_detail_spotlight_requested = special_code == 2u;
+    source_detail_iced_requested =
+        source_parity_level.smoothies[2] ||
+        source_parity_level.smoothies[4];
+    source_detail_blur_requested = source_parity_level.smoothies[3];
+#else
+    /* PC processorType 1 bypasses code 2 and every smoothie 3/4/5 pass. */
+    source_detail_spotlight_requested = 0;
+    source_detail_iced_requested = 0;
+    source_detail_blur_requested = 0;
+#endif
+    source_detail_shadow_windows_active = 0;
+    if (source_detail_spotlight_requested) {
+        source_detail_spotlight_prepare(
+            (s16)(source_player_screen_x() + 16),
+            source_world_to_screen_y((s16)(player_source_y + 12))
+        );
+    }
+    if (
+        source_detail_palette_mode_pending !=
+            source_detail_iced_requested
+    ) {
+        source_detail_palette_mode_pending =
+            source_detail_iced_requested;
+        if (source_detail_iced_requested) {
+            source_detail_build_iced_palette();
+        }
+        source_detail_palette_dirty = 1;
+    }
+}
+
+static void source_detail_palette_commit(u8 iced)
+{
+    if (
+        source_detail_palette_mode_active == iced &&
+        !source_detail_palette_dirty
+    ) {
+        return;
+    }
+    if (iced) {
+        dmaCopy(
+            source_detail_iced_bg_palette,
+            BG_PALETTE,
+            sizeof(source_detail_iced_bg_palette)
+        );
+    } else if (background_gba_palette_active != 0) {
+        dmaCopy(
+            background_gba_palette_active,
+            BG_PALETTE,
+            BACKGROUND_GBA_PALETTE_VARIANT_BYTES
+        );
+    }
+    source_detail_palette_mode_active = iced;
+    source_detail_palette_dirty = 0;
+}
+
+static void source_detail_compose_effect_registers(
+    u8 background2_present,
+    u16 *window_enable,
+    u16 *bldcnt,
+    u16 *bldalpha,
+    u16 *bldy,
+    u16 *win0h,
+    u16 *win0v,
+    u16 *winin,
+    u16 *winout
+)
+{
+    u16 blend_first = 0;
+    u16 blend_second = 0;
+
+    *window_enable = 0;
+    *win0h = 0;
+    *win0v = 0;
+    *winin = 0;
+    *winout = 0;
+#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
+    /* Semi-transparent explosions blend with any already-rendered layer. */
+    blend_second = 0x003fu;
+#endif
+#if TYRIAN_GBA_STRESS_LOADOUT
+    blend_first |= 1u << 4;
+    blend_second |= 1u | 2u | 4u | 8u | 16u | 32u;
+#endif
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    if (
+        background2_present &&
+        !source_parity_level.background2_not_transparent
+    ) {
+        blend_first |= 1u << 1;
+        blend_second |= 1u | 4u | 32u;
+    }
+#else
+    (void)background2_present;
+#endif
+    if (source_detail_spotlight_requested) {
+        *window_enable = WIN0_ON;
+        *win0h = source_detail_spotlight_window_value(
+            0,
+            (s16)(source_player_screen_x() + 16),
+            source_world_to_screen_y((s16)(player_source_y + 12))
+        );
+        *win0v = SCREEN_HEIGHT;
+        /* WIN0 is the lit cone; the outside region enables darkening. */
+        *winin = 0x001fu;
+        *winout = (u16)(0x003fu | (0x001fu << 8));
+        *bldcnt = (u16)(
+            0x003fu | (3u << 6) | (blend_second << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 12u;
+    } else if (gameplay_filter_brightness_level() != 0) {
+        *bldcnt = (u16)(
+            gameplay_filter_bldcnt() | (blend_second << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = gameplay_filter_brightness_level();
+    } else if (source_detail_shadow_windows_active) {
+        *window_enable = OBJ_WIN_ON;
+        /* Normal screen has no colour effect; OBJ-window masks darken. */
+        *winout = (u16)(0x001fu | (0x003fu << 8));
+        *bldcnt = (u16)(
+            0x003fu | (3u << 6) | (blend_second << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 8u;
+    } else if (blend_first != 0) {
+        *bldcnt = (u16)(
+            blend_first | (1u << 6) | (blend_second << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 0;
+    } else {
+        /* Target-2 bits are still required by semi-transparent OBJ mode. */
+        *bldcnt = (u16)(blend_second << 8);
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 0;
+    }
+}
+
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 static void gameplay_presentation_capture_registers(void)
 {
     u8 background2_priority = source_background2_priority();
     u8 background3_priority = source_background3_priority();
     u8 background2_present = source_background2_present();
-    u16 blend_first = 0;
-    u16 blend_second = 0;
+    u16 window_enable;
 
     gameplay_presentation.hofs[0] = source_background_hofs(0);
     gameplay_presentation.hofs[1] = source_background_hofs(1);
@@ -167,16 +412,35 @@ static void gameplay_presentation_capture_registers(void)
             2,
             source_camera_offset_y
         );
+    gameplay_presentation.bg0cnt =
+        BG_PRIORITY(3) |
+        CHAR_BASE(background_cache_char_base[0]) |
+        SCREEN_BASE(BG0_SCREEN_BLOCK) |
+        BG_16_COLOR | BG_SIZE_1 |
+        (source_detail_blur_requested ? BG_MOSAIC : 0);
     gameplay_presentation.bg1cnt =
         BG_PRIORITY(background2_priority) |
         CHAR_BASE(background_cache_char_base[1]) |
         SCREEN_BASE(BG1_SCREEN_BLOCK) |
-        BG_16_COLOR | BG_SIZE_1;
+        BG_16_COLOR | BG_SIZE_1 |
+        (source_detail_blur_requested ? BG_MOSAIC : 0);
     gameplay_presentation.bg2cnt =
         BG_PRIORITY(background3_priority) |
         CHAR_BASE(background_cache_char_base[2]) |
         SCREEN_BASE(BG2_SCREEN_BLOCK) |
-        BG_16_COLOR | BG_SIZE_1;
+        BG_16_COLOR | BG_SIZE_1 |
+        (source_detail_blur_requested ? BG_MOSAIC : 0);
+    source_detail_compose_effect_registers(
+        background2_present,
+        &window_enable,
+        &gameplay_presentation.bldcnt,
+        &gameplay_presentation.bldalpha,
+        &gameplay_presentation.bldy,
+        &gameplay_presentation.win0h,
+        &gameplay_presentation.win0v,
+        &gameplay_presentation.winin,
+        &gameplay_presentation.winout
+    );
     gameplay_presentation.dispcnt =
         MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -188,34 +452,16 @@ static void gameplay_presentation_capture_registers(void)
         (
             game_state == STATE_PLAY && gameplay_overlay_active ?
                 BG3_ON : 0
-        );
-#if TYRIAN_GBA_STRESS_LOADOUT
-    blend_first |= 1u << 4;
-    blend_second |= 1u | 2u | 4u | 32u;
-#endif
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
-    if (
-        background2_present &&
-        !source_parity_level.background2_not_transparent
-    ) {
-        blend_first |= 1u << 1;
-        blend_second |= 1u | 4u | 32u;
-    }
-#endif
-    if (gameplay_filter_brightness_level() != 0) {
-        gameplay_presentation.bldcnt = gameplay_filter_bldcnt();
-        gameplay_presentation.bldalpha = 0;
-        gameplay_presentation.bldy = gameplay_filter_brightness_level();
-    } else if (blend_first != 0) {
-        gameplay_presentation.bldcnt =
-            blend_first | (1u << 6) | (blend_second << 8);
-        gameplay_presentation.bldalpha = 8u | (8u << 8);
-        gameplay_presentation.bldy = 0;
-    } else {
-        gameplay_presentation.bldcnt = 0;
-        gameplay_presentation.bldalpha = 0;
-        gameplay_presentation.bldy = 0;
-    }
+        ) |
+        window_enable;
+    gameplay_presentation.mosaic =
+        source_detail_blur_requested ? 0x1111u : 0;
+    gameplay_presentation.spotlight_active =
+        source_detail_spotlight_requested;
+    gameplay_presentation.spotlight_table_index =
+        source_detail_spotlight_table_pending;
+    gameplay_presentation.iced_palette_active =
+        source_detail_iced_requested;
     presentation_registers_valid = 1;
 }
 
@@ -418,6 +664,7 @@ static void commit_vblank_work(void)
         (volatile u16 *)SPRITE_PALETTE + OBJ_PAL_BOSS_BAR * 16;
 
     if (frontend_mode4_active) {
+        source_detail_spotlight_commit(0, 0);
         frontend_commit_vblank();
         if (oam_dirty) {
             dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
@@ -426,12 +673,33 @@ static void commit_vblank_work(void)
         return;
     }
     if (game_state == STATE_JUKEBOX) {
+        source_detail_spotlight_commit(0, 0);
         jukebox_commit_vblank();
         if (oam_dirty) {
             dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
             oam_dirty = 0;
         }
         return;
+    }
+    if (
+        game_state != STATE_PLAY &&
+        game_state != STATE_GAME_OVER
+    ) {
+        /*
+         * A level can exit while the Normal spotlight or iced palette is
+         * active.  Those are presentation-only states and must not leak into
+         * the Mode-0 result/statistics screen that follows gameplay.
+         */
+        source_detail_spotlight_commit(0, 0);
+        source_detail_palette_commit(0);
+        REG_MOSAIC = 0;
+        REG_WIN0H = 0;
+        REG_WIN0V = 0;
+        REG_WININ = 0;
+        REG_WINOUT = 0;
+        REG_BLDCNT = 0;
+        REG_BLDALPHA = 0;
+        REG_BLDY = 0;
     }
     commit_background_rows(0);
     if (source_background2_upload_pending) {
@@ -507,6 +775,7 @@ static void commit_vblank_work(void)
         REG_BG0VOFS = gameplay_presentation.vofs[0];
         REG_BG1VOFS = gameplay_presentation.vofs[1];
         REG_BG2VOFS = gameplay_presentation.vofs[2];
+        REG_BG0CNT = gameplay_presentation.bg0cnt;
         REG_BG1CNT = gameplay_presentation.bg1cnt;
         REG_BG2CNT = gameplay_presentation.bg2cnt;
         REG_BG3CNT = BG_PRIORITY(0) |
@@ -519,10 +788,30 @@ static void commit_vblank_work(void)
         REG_BLDCNT = gameplay_presentation.bldcnt;
         REG_BLDALPHA = gameplay_presentation.bldalpha;
         REG_BLDY = gameplay_presentation.bldy;
+        REG_MOSAIC = gameplay_presentation.mosaic;
+        REG_WIN0H = gameplay_presentation.win0h;
+        REG_WIN0V = gameplay_presentation.win0v;
+        REG_WININ = gameplay_presentation.winin;
+        REG_WINOUT = gameplay_presentation.winout;
+        source_detail_palette_commit(
+            gameplay_presentation.iced_palette_active
+        );
+        source_detail_spotlight_commit(
+            gameplay_presentation.spotlight_active,
+            gameplay_presentation.spotlight_table_index
+        );
 #else
         u8 background2_priority = 2;
         u8 background3_priority = 1;
         u8 background2_present;
+        u16 window_enable;
+        u16 bldcnt;
+        u16 bldalpha;
+        u16 bldy;
+        u16 win0h;
+        u16 win0v;
+        u16 winin;
+        u16 winout;
 
         background2_priority = source_background2_priority();
         background3_priority = source_background3_priority();
@@ -533,20 +822,38 @@ static void commit_vblank_work(void)
         REG_BG0VOFS = source_background_vofs(0);
         REG_BG1VOFS = source_background_vofs(1);
         REG_BG2VOFS = source_background_vofs(2);
+        REG_BG0CNT = BG_PRIORITY(3) |
+                     CHAR_BASE(background_cache_char_base[0]) |
+                     SCREEN_BASE(BG0_SCREEN_BLOCK) |
+                     BG_16_COLOR | BG_SIZE_1 |
+                     (source_detail_blur_requested ? BG_MOSAIC : 0);
         REG_BG1CNT = BG_PRIORITY(background2_priority) |
                      CHAR_BASE(background_cache_char_base[1]) |
                      SCREEN_BASE(BG1_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_1;
+                     BG_16_COLOR | BG_SIZE_1 |
+                     (source_detail_blur_requested ? BG_MOSAIC : 0);
         REG_BG2CNT = BG_PRIORITY(background3_priority) |
                      CHAR_BASE(background_cache_char_base[2]) |
                      SCREEN_BASE(BG2_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_1;
+                     BG_16_COLOR | BG_SIZE_1 |
+                     (source_detail_blur_requested ? BG_MOSAIC : 0);
         REG_BG3CNT = BG_PRIORITY(0) |
                      CHAR_BASE(GAMEPLAY_OVERLAY_CHAR_BASE) |
                      SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
                      BG_16_COLOR | BG_SIZE_0;
         REG_BG3HOFS = 0;
         REG_BG3VOFS = GAMEPLAY_OVERLAY_MAP_VOFS;
+        source_detail_compose_effect_registers(
+            background2_present,
+            &window_enable,
+            &bldcnt,
+            &bldalpha,
+            &bldy,
+            &win0h,
+            &win0v,
+            &winin,
+            &winout
+        );
         REG_DISPCNT =
             MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
 #if !TYRIAN_GBA_STRESS_LOADOUT
@@ -558,7 +865,21 @@ static void commit_vblank_work(void)
             (
                 game_state == STATE_PLAY && gameplay_overlay_active ?
                     BG3_ON : 0
-            );
+            ) |
+            window_enable;
+        REG_BLDCNT = bldcnt;
+        REG_BLDALPHA = bldalpha;
+        REG_BLDY = bldy;
+        REG_MOSAIC = source_detail_blur_requested ? 0x1111u : 0;
+        REG_WIN0H = win0h;
+        REG_WIN0V = win0v;
+        REG_WININ = winin;
+        REG_WINOUT = winout;
+        source_detail_palette_commit(source_detail_iced_requested);
+        source_detail_spotlight_commit(
+            source_detail_spotlight_requested,
+            source_detail_spotlight_table_pending
+        );
 #endif
         /*
          * Count the source software-filter requests independently from the
@@ -591,52 +912,6 @@ static void commit_vblank_work(void)
             !source_parity_level.background2_not_transparent
         ) {
             telemetry_detail_wild_frames++;
-        }
-#endif
-#if !TYRIAN_GBA_DYNAMIC_FRAME_DROP
-        {
-            u16 blend_first = 0;
-            u16 blend_second = 0;
-
-#if TYRIAN_GBA_STRESS_LOADOUT
-            /*
-             * OpenTyrian's large Super Bomb OPTION_SHAPES image is a
-             * framebuffer blend.  Only that OBJ uses semi-transparent mode;
-             * ordinary objects remain opaque.
-             */
-            blend_first |= 1u << 4;
-            blend_second |= 1u | 2u | 4u | 32u;
-#endif
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
-            if (
-                background2_present &&
-                !source_parity_level.background2_not_transparent
-            ) {
-                /*
-                 * OpenTyrian Pentium/wild averages the overlay brightness
-                 * with the existing framebuffer.  GBA alpha blending is the
-                 * closest hardware-native equivalent: BG1 is source
-                 * background 2 and BG0/BG2/backdrop are the destination.
-                 */
-                blend_first |= 1u << 1;
-                blend_second |= 1u | 4u | 32u;
-            }
-#endif
-            if (gameplay_filter_brightness_level() != 0) {
-                REG_BLDCNT = gameplay_filter_bldcnt();
-                REG_BLDALPHA = 0;
-                REG_BLDY = gameplay_filter_brightness_level();
-            } else if (blend_first != 0) {
-                REG_BLDCNT =
-                    blend_first | (1u << 6) |
-                    (blend_second << 8);
-                REG_BLDALPHA = 8u | (8u << 8);
-                REG_BLDY = 0;
-            } else {
-                REG_BLDCNT = 0;
-                REG_BLDALPHA = 0;
-                REG_BLDY = 0;
-            }
         }
 #endif
         if (boss_obj_palette_restore_pending) {

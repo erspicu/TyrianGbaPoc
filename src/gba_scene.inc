@@ -62,6 +62,61 @@ static void render_player_at_source_y(
     );
 }
 
+static bool source_detail_shadows_allowed(void)
+{
+    return
+        source_background2_enabled &&
+        !source_detail_spotlight_requested &&
+        gameplay_filter_brightness_level() == 0;
+}
+
+static void render_player_shadow_at_source_y(
+    s16 source_y,
+    u8 priority
+)
+{
+    s16 screen_x = (s16)(
+        source_player_screen_x() + 30 -
+        (s16)source_parity_level.presentation_map_x2_offset
+    );
+    s16 screen_y = (s16)(
+        source_world_to_screen_y(
+            (s16)(source_y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y)
+        ) - 16 + 10
+    );
+
+    if (!source_detail_shadows_allowed()) return;
+    if (player_ship_graphic > 1) {
+        u16 tile = source_player_cache_acquire(
+            (u16)(
+                player_ship_graphic +
+                (s16)player_bank * 2
+            )
+        );
+
+        if (tile != 0xffff) {
+            put_sprite_8bpp_32_windowed(
+                screen_x,
+                screen_y,
+                tile,
+                priority
+            );
+            return;
+        }
+    }
+    put_sprite_windowed_with_attr1(
+        screen_x,
+        screen_y,
+        player_bank == 0 ?
+            OBJ_TILE_PLAYER_0 :
+            OBJ_TILE_PLAYER_1,
+        OBJ_PAL_PLAYER_0,
+        ATTR1_SIZE_32,
+        priority,
+        player_bank < 0 ? OBJ_HFLIP : 0
+    );
+}
+
 static void render_player_sprite(u8 priority)
 {
     s16 trail_positions[19];
@@ -78,6 +133,7 @@ static void render_player_sprite(u8 priority)
         !source_parity_level.end_level ||
         source_parity_level.level_end == 0
     ) {
+        render_player_shadow_at_source_y(player_source_y, priority);
         render_player_at_source_y(player_source_y, priority, 0);
         return;
     }
@@ -378,6 +434,19 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                 tile,
                 priority
             );
+            if (
+                source_detail_shadows_allowed() &&
+                player_shots[index].y + 10 < 190 &&
+                player_shots[index].xm < 100 &&
+                oam_count < oam_limit
+            ) {
+                put_sprite_8bpp_16_windowed(
+                    screen_x,
+                    (s16)(screen_y + 10),
+                    tile,
+                    priority
+                );
+            }
             submitted++;
         }
     }
@@ -420,12 +489,21 @@ static void render_effect_sprites(u8 priority, u8 oam_limit)
         );
         if (tile == 0xffff) continue;
         submitted++;
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
         put_sprite(
             effects[index].x, effects[index].y,
             tile,
             OBJ_PAL_EXPLOSION,
             ATTR1_SIZE_16, priority
         );
+#else
+        put_sprite_blended(
+            effects[index].x, effects[index].y,
+            tile,
+            OBJ_PAL_EXPLOSION,
+            ATTR1_SIZE_16, priority
+        );
+#endif
     }
 }
 
@@ -492,6 +570,48 @@ static void render_source_enemy_cached_sprite(
     }
 }
 
+#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
+static void render_source_enemy_cached_sprite_blended(
+    s16 screen_x,
+    s16 screen_y,
+    u16 tile,
+    u8 priority
+)
+{
+    if (source_enemy_cache_tile_is_split(tile)) {
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        if (oam_count + 2u > SPRITE_LIMIT) return;
+        put_sprite_8bpp_32x16_blended(
+            screen_x,
+            screen_y,
+            SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE,
+            priority
+        );
+        put_sprite_8bpp_32x16_blended(
+            screen_x,
+            (s16)(screen_y + 16),
+            SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE,
+            priority
+        );
+#endif
+    } else if (source_enemy_cache_tile_is_compact(tile)) {
+        put_sprite_8bpp_16_blended(
+            screen_x + 8,
+            screen_y + 8,
+            tile,
+            priority
+        );
+    } else {
+        put_sprite_8bpp_32_blended(
+            screen_x,
+            screen_y,
+            tile,
+            priority
+        );
+    }
+}
+#endif
+
 static void render_source_pickup_explosions(u8 priority, u8 oam_limit)
 {
     s16 index;
@@ -535,12 +655,21 @@ static void render_source_pickup_explosions(u8 priority, u8 oam_limit)
             telemetry_effect_oam_culls++;
             continue;
         }
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
         render_source_enemy_cached_sprite(
             screen_x,
             screen_y,
             tile,
             priority
         );
+#else
+        render_source_enemy_cached_sprite_blended(
+            screen_x,
+            screen_y,
+            tile,
+            priority
+        );
+#endif
     }
 }
 
@@ -703,6 +832,7 @@ static u8 source_structural_oam_required(void)
             required += 19u;
         } else {
             required++;
+            if (source_detail_shadows_allowed()) required++;
 #if TYRIAN_GBA_STRESS_LOADOUT
             if (stress_loadout_valid) required += 2u;
 #else
@@ -729,6 +859,49 @@ static u8 source_structural_oam_required(void)
         telemetry_structural_oam_required_max = required;
     }
     return (u8)required;
+}
+
+static u8 source_detail_oam_height(u16 attr0, u16 attr1)
+{
+    static const u8 heights[3][4] = {
+        { 8, 16, 32, 64 },
+        { 8,  8, 16, 32 },
+        {16, 32, 32, 64 },
+    };
+    u8 shape = (u8)((attr0 >> 14) & 3u);
+    u8 size = (u8)((attr1 >> 14) & 3u);
+
+    return shape < 3 ? heights[shape][size] : 8;
+}
+
+static void source_detail_transform_world_oam(u8 first, u8 last)
+{
+    u8 index;
+
+    if (!source_detail_vertical_flip && !source_detail_blur_requested) {
+        return;
+    }
+    for (index = first; index < last; index++) {
+        OBJATTR *object = &oam_shadow[index];
+
+        if (source_detail_blur_requested) {
+            object->attr0 |= ATTR0_MOSAIC;
+        }
+        if (source_detail_vertical_flip) {
+            s16 y = (s16)(object->attr0 & 0xffu);
+            u8 height = source_detail_oam_height(
+                object->attr0,
+                object->attr1
+            );
+
+            if (y >= SCREEN_HEIGHT) y = (s16)(y - 256);
+            y = (s16)(SCREEN_HEIGHT - y - height);
+            object->attr0 = (u16)(
+                (object->attr0 & ~0xffu) | (y & 0xffu)
+            );
+            object->attr1 ^= OBJ_VFLIP;
+        }
+    }
 }
 
 static void render_source_play_scene(void)
@@ -855,6 +1028,9 @@ static void render_game(void)
 {
     u8 old_count = previous_oam_count;
     u8 visible_count;
+    u8 world_oam_start;
+
+    source_detail_prepare_scene();
 
     if (
         game_state == STATE_PLAY ||
@@ -910,6 +1086,7 @@ static void render_game(void)
     }
     render_cash_counter();
     render_player_energy_status();
+    world_oam_start = oam_count;
 
     if (
         game_state == STATE_PLAY ||
@@ -917,6 +1094,7 @@ static void render_game(void)
     ) {
         render_source_play_scene();
     }
+    source_detail_transform_world_oam(world_oam_start, oam_count);
     source_effect_cache_end_frame();
 
     visible_count = oam_count;

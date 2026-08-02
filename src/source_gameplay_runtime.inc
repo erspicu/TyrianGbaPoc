@@ -210,13 +210,19 @@ static u16 source_background_hofs(u8 layer)
 
 static u16 source_background_vofs(u8 layer)
 {
-    return (u16)(
-        background_presentation_scroll_pixel(
-            layer,
-            source_camera_offset_y
-        ) &
-        255u
+    u16 scroll = background_presentation_scroll_pixel(
+        layer,
+        source_camera_offset_y
     );
+
+    if (source_detail_vertical_flip) {
+        /*
+         * physical_y = -source_y-1 and the 160-line GBA crop is reversed:
+         * VOFS = -(scroll + SCREEN_HEIGHT), modulo the 256-line text BG.
+         */
+        return (u16)((0u - scroll - SCREEN_HEIGHT) & 255u);
+    }
+    return (u16)(scroll & 255u);
 }
 
 static s16 source_player_screen_x(void)

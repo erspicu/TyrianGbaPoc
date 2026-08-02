@@ -61,6 +61,58 @@
 /* ------------------------------------------------------------------------- */
 
 /*
+ * OpenTyrian detail profile selected for a normal Build-GBA-ROM.bat build.
+ * This is a compile-time choice: unused detail branches are removed by the
+ * compiler and therefore add no per-frame runtime switch cost.
+ *
+ *   LOW     : PC 386 profile.  Disables the normal second background layer
+ *             and brightness/translucency-class presentation work.  Authored
+ *             background2over==3 events may still restore layer 2, exactly as
+ *             in the PC source.
+ *   NORMAL  : PC 486 profile.  Keeps BG2, translucent explosions, shadows,
+ *             brightness, iced/blur and special-light presentation through
+ *             GBA hardware adapters; this is the recommended balance.
+ *   HIGH    : Experimental PC High Detail profile.  Normal behavior remains,
+ *             while higher software-filter gates are retained for research.
+ *   PENTIUM : Experimental maximum profile retained for research/stress use;
+ *             not every PC full-frame software filter is pixel-identical.
+ *
+ * A command-line build such as
+ *   Build-GBA-ROM.bat -DetailLevel low
+ * overrides this value for that build only.
+ *
+ * 一般執行 Build-GBA-ROM.bat 時所採用的 OpenTyrian 細節等級。這是
+ * 「編譯期」選項，未使用的細節分支會被編譯器移除，不會在每幀增加
+ * 動態切換判斷成本。
+ *
+ *   LOW     ：PC 386 等級；通常關閉第二背景層與亮度／半透明類效果。
+ *             原始關卡的 background2over==3 事件仍可照 PC 規則恢復 BG2。
+ *   NORMAL  ：PC 486 等級；以 GBA 硬體方式保留 BG2、透明爆炸、陰影、
+ *             亮暗、iced／blur 與特殊光照，建議作為正式版平衡值。
+ *   HIGH    ：實驗性 PC High Detail；完整承接 Normal，並保留更高階的
+ *             software-filter 事件門檻供研究。
+ *   PENTIUM ：研究與壓力測試用最高等級；部分 PC 全畫面軟體濾鏡仍非
+ *             逐像素相同實作。
+ *
+ * 命令列例如 Build-GBA-ROM.bat -DetailLevel low，只會暫時覆寫該次建置。
+ */
+#define TYRIAN_GBA_CONFIG_DETAIL_LOW 0
+#define TYRIAN_GBA_CONFIG_DETAIL_NORMAL 1
+#define TYRIAN_GBA_CONFIG_DETAIL_HIGH 2
+#define TYRIAN_GBA_CONFIG_DETAIL_PENTIUM 3
+
+#ifndef TYRIAN_GBA_CONFIG_DETAIL_LEVEL
+#define TYRIAN_GBA_CONFIG_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_NORMAL
+#endif
+
+#if TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_LOW && \
+    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_NORMAL && \
+    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_HIGH && \
+    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_PENTIUM
+#error TYRIAN_GBA_CONFIG_DETAIL_LEVEL must be LOW, NORMAL, HIGH or PENTIUM
+#endif
+
+/*
  * 1: release gameplay uses the measured whole-scene presentation scheduler.
  *    Source logic follows wall-clock time and Maxmod is serviced once per LCD
  *    VBlank, while a scene that cannot safely meet the next deadline keeps the

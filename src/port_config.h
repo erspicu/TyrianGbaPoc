@@ -6,6 +6,7 @@
  * Low/386, Normal/486, High Detail and Pentium.
  *
  * Override examples:
+ *   make DETAIL_LEVEL=config GAME_SPEED=normal
  *   make DETAIL_LEVEL=normal GAME_SPEED=normal
  *   make DETAIL_LEVEL=high   GAME_SPEED=normal
  *   make DETAIL_LEVEL=pentium GAME_SPEED=normal
@@ -14,13 +15,15 @@
 #ifndef TYRIAN_GBA_PORT_CONFIG_H
 #define TYRIAN_GBA_PORT_CONFIG_H
 
+#include "Configure.h"
+
 #define TYRIAN_GBA_DETAIL_LOW 0
 #define TYRIAN_GBA_DETAIL_NORMAL 1
 #define TYRIAN_GBA_DETAIL_HIGH 2
 #define TYRIAN_GBA_DETAIL_PENTIUM 3
 
 #ifndef TYRIAN_GBA_DETAIL_LEVEL
-#define TYRIAN_GBA_DETAIL_LEVEL TYRIAN_GBA_DETAIL_LOW
+#define TYRIAN_GBA_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_LEVEL
 #endif
 
 #if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW && \

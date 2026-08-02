@@ -346,6 +346,18 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     scripted_arcade = (u8)(
         selected_level->engage_mode || selected_level->galaga_mode
     );
+    /* A source vertical-flip event never leaks into the next level. */
+    source_detail_vertical_flip = 0;
+    source_detail_spotlight_requested = 0;
+    source_detail_iced_requested = 0;
+    source_detail_blur_requested = 0;
+    source_detail_shadow_windows_active = 0;
+    source_detail_palette_mode_active = 0;
+    source_detail_palette_mode_pending = 0;
+    source_detail_palette_dirty = 0;
+    source_detail_spotlight_table_active = 0;
+    source_detail_spotlight_table_pending = 0;
+    REG_DMA0CNT = 0;
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
         return 0;

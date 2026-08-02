@@ -1752,6 +1752,33 @@ static u8 bg2_step;
 static u8 bg3_step;
 static u8 source_background2_enabled;
 static u8 source_background2_upload_pending;
+/*
+ * Source detail presentation state.  The PC writes its final 264x184
+ * framebuffer after all gameplay blits; Mode 0 needs explicit hardware
+ * adapters for the same profile gates.
+ */
+static u8 source_detail_vertical_flip;
+static u8 source_detail_spotlight_requested;
+static u8 source_detail_iced_requested;
+static u8 source_detail_blur_requested;
+static u8 source_detail_shadow_windows_active;
+static u8 source_detail_palette_mode_active;
+static u8 source_detail_palette_mode_pending;
+static u8 source_detail_palette_dirty;
+static u16 source_detail_iced_bg_palette[256]
+    EWRAM_BSS __attribute__((aligned(4)));
+/*
+ * Double-buffered WIN0H scanline tables.  DMA0 streams one halfword at each
+ * HBlank, avoiding 160 CPU IRQ entries per display frame.  Rendering always
+ * writes the inactive table, so a dropped/pending scene cannot tear the
+ * spotlight that the LCD is currently consuming.
+ */
+#define SOURCE_DETAIL_SPOTLIGHT_SCANLINES (SCREEN_HEIGHT + 1u)
+static u16 source_detail_spotlight_table[2]
+    [SOURCE_DETAIL_SPOTLIGHT_SCANLINES]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u8 source_detail_spotlight_table_active;
+static u8 source_detail_spotlight_table_pending;
 /* Transparent hardware BG3: source starfield and in-level text/warnings. */
 static u8 gameplay_overlay_tiles[
     GAMEPLAY_OVERLAY_TILE_BYTES
@@ -1792,13 +1819,22 @@ static BackgroundPendingRows
 typedef struct {
     u16 hofs[3];
     u16 vofs[3];
+    u16 bg0cnt;
     u16 bg1cnt;
     u16 bg2cnt;
     u16 dispcnt;
     u16 bldcnt;
     u16 bldalpha;
     u16 bldy;
+    u16 mosaic;
+    u16 win0h;
+    u16 win0v;
+    u16 winin;
+    u16 winout;
     u16 full_scroll_pixel[3];
+    u8 spotlight_active;
+    u8 spotlight_table_index;
+    u8 iced_palette_active;
 } GameplayPresentationRegisters;
 
 static GameplayPresentationRegisters gameplay_presentation;
