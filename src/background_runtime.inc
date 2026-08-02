@@ -986,14 +986,12 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_key(
 
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
     /*
-     * backgrnd.c::draw_background_2_blend() averages the BG2 brightness
-     * nibble with the pixel already in the PC framebuffer.  GBA has only one
-     * global colour-effects unit, which is also required by source shadows
-     * and translucent explosions.  Give the semantic tile a distinct key
-     * and spatially mix its non-transparent pixels instead; this retains the
-     * source draw stage and lets all three effects coexist.
+     * The normal Pentium path uses GBA hardware Alpha for a smooth PC-like
+     * wild BG2 pass.  Only a conflicting full-screen colour effect uses this
+     * separately keyed checkerboard fallback, so switching modes never
+     * aliases opaque or hardware-blended cache entries.
      */
-    if (layer == 1u && source_detail_wild_active) {
+    if (layer == 1u && source_detail_wild_dither_active) {
         key |= 0x80000000u;
     }
 #endif

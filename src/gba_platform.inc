@@ -118,8 +118,8 @@ static u8 gameplay_filter_brightness_level(void)
 #else
     /*
      * Low/386 disables brightness filtering.  Pentium applies the source
-     * palette-nibble transform below so OBJ-window shadows retain the single
-     * GBA colour-effects unit instead of silently overriding filtration.
+     * palette-nibble transform below, leaving the GBA colour-effects unit
+     * available for its smooth wild BG2 Alpha pass.
      */
     return 0;
 #endif
@@ -465,11 +465,16 @@ static void source_detail_scanline_commit(
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
 static void source_detail_set_wild_active(u8 active)
 {
+    source_detail_wild_active = active != 0;
+}
+
+static void source_detail_set_wild_dither_active(u8 active)
+{
     u16 top_row;
 
     active = active != 0;
-    if (source_detail_wild_active == active) return;
-    source_detail_wild_active = active;
+    if (source_detail_wild_dither_active == active) return;
+    source_detail_wild_dither_active = active;
     if (
         !source_background2_enabled ||
         !background_layer_cache[1].prepared
@@ -545,6 +550,15 @@ static void source_detail_prepare_scene(void)
         source_background2_present() &&
         source_parity_level.background2_over != 3u &&
         !source_parity_level.background2_not_transparent
+    );
+    /*
+     * PC starShowVGASpecialCode 2 needs a region-selective brighten/darken
+     * mode, which cannot share the single GBA colour-effects unit with BG1
+     * Alpha in the same scanline.  Keep dither solely for that rare conflict;
+     * ordinary wild clouds stay smoothly hardware blended.
+     */
+    source_detail_set_wild_dither_active(
+        source_detail_wild_active && source_detail_spotlight_requested
     );
 #endif
 
@@ -694,7 +708,7 @@ static void source_detail_compose_effect_registers(
     blend_first |= 1u << 4;
     blend_second |= 1u | 2u | 4u | 8u | 16u | 32u;
 #endif
-    /* Pentium wild BG2 is spatially blended in the tile cache. */
+    /* Pentium wild BG2 normally owns the smooth hardware Alpha pass. */
     if (source_detail_spotlight_requested) {
         *window_enable = WIN0_ON;
         *win0h = source_detail_spotlight_window_value(
@@ -717,7 +731,26 @@ static void source_detail_compose_effect_registers(
         );
         *bldalpha = 8u | (8u << 8);
         *bldy = gameplay_filter_brightness_level();
-    } else if (source_detail_shadow_windows_active) {
+    }
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+    else if (
+        background2_present &&
+        source_detail_wild_active &&
+        !source_detail_wild_dither_active
+    ) {
+        /*
+         * PC draw_background_2_blend() averages BG2 with the framebuffer.
+         * PC BG2 is GBA BG1; all layers underneath it are valid second
+         * targets.  8:8 is an exact 50/50 hardware mix with no grid pattern.
+         */
+        *bldcnt = (u16)(
+            (1u << 1) | (1u << 6) | (0x003fu << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 0;
+    }
+#endif
+    else if (source_detail_shadow_windows_active) {
         *window_enable = OBJ_WIN_ON;
         /* Normal screen has no colour effect; OBJ-window masks darken. */
         *winout = (u16)(0x001fu | (0x003fu << 8));
@@ -1279,7 +1312,9 @@ static void commit_vblank_work(void)
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
         if (source_detail_wild_active) {
             telemetry_detail_wild_frames++;
-            telemetry_detail_wild_dither_frames++;
+            if (source_detail_wild_dither_active) {
+                telemetry_detail_wild_dither_frames++;
+            }
         }
         if (
             source_parity_level.filter_active &&

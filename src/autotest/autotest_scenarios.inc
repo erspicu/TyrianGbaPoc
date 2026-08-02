@@ -69,6 +69,7 @@ static u8 autotest_detail_adapter_self_test(void)
     pass = (u8)(
         source_detail_wave_requested &&
         source_detail_wild_active &&
+        !source_detail_wild_dither_active &&
         source_detail_palette_mode_pending &&
         source_detail_effect_kind_pending ==
             SOURCE_DETAIL_EFFECT_GLOBAL_HUE &&
@@ -91,7 +92,11 @@ static u8 autotest_detail_adapter_self_test(void)
     /* Event 48 must switch already-visible BG2 tiles back to opaque. */
     source_parity_level.background2_not_transparent = true;
     source_detail_prepare_scene();
-    pass = (u8)(pass && !source_detail_wild_active);
+    pass = (u8)(
+        pass &&
+        !source_detail_wild_active &&
+        !source_detail_wild_dither_active
+    );
 #endif
     return pass;
 }

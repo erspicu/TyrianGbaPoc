@@ -1782,6 +1782,13 @@ static u8 source_detail_blur_requested;
 static u8 source_detail_wave_requested;
 static u8 source_detail_shadow_windows_active;
 static u8 source_detail_wild_active;
+/*
+ * Pentium normally maps the PC wild BG2 pass to the GBA colour-effects
+ * unit.  This second flag is deliberately separate: it records the rare
+ * frames where another full-screen effect owns that unit and the BG1 tile
+ * cache must temporarily use the checkerboard compatibility fallback.
+ */
+static u8 source_detail_wild_dither_active;
 static u8 source_detail_palette_mode_active;
 static u8 source_detail_palette_mode_pending;
 static u8 source_detail_palette_dirty;

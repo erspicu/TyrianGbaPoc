@@ -356,8 +356,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
     /* JE_initProcessorType(4): wild=true at every level entrance. */
     source_detail_wild_active = 1;
+    source_detail_wild_dither_active = 0;
 #else
     source_detail_wild_active = 0;
+    source_detail_wild_dither_active = 0;
 #endif
     source_detail_palette_mode_active = 0;
     source_detail_palette_mode_pending = 0;
