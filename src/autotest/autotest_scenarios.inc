@@ -35,12 +35,17 @@ static u8 autotest_detail_adapter_self_test(void)
     source_parity_level.smoothies[2] = 1;
     source_parity_level.smoothies[3] = 1;
     source_detail_prepare_scene();
+    gameplay_presentation_capture_registers();
     pass = (u8)(
         source_detail_iced_requested &&
         source_detail_blur_requested &&
         !source_detail_wave_requested &&
         !source_detail_wild_active &&
         source_detail_palette_mode_pending &&
+        gameplay_presentation.mosaic == 0 &&
+        (gameplay_presentation.bg0cnt & BG_MOSAIC) == 0 &&
+        (gameplay_presentation.bg1cnt & BG_MOSAIC) == 0 &&
+        (gameplay_presentation.bg2cnt & BG_MOSAIC) == 0 &&
         source_detail_effect_kind_pending ==
             SOURCE_DETAIL_EFFECT_GLOBAL_HUE &&
         source_detail_effect_hue_pending == 8u

@@ -809,20 +809,17 @@ static void gameplay_presentation_capture_registers(void)
         BG_PRIORITY(3) |
         CHAR_BASE(background_cache_char_base[0]) |
         SCREEN_BASE(BG0_SCREEN_BLOCK) |
-        BG_16_COLOR | BG_SIZE_1 |
-        (source_detail_blur_requested ? BG_MOSAIC : 0);
+        BG_16_COLOR | BG_SIZE_1;
     gameplay_presentation.bg1cnt =
         BG_PRIORITY(background2_priority) |
         CHAR_BASE(background_cache_char_base[1]) |
         SCREEN_BASE(BG1_SCREEN_BLOCK) |
-        BG_16_COLOR | BG_SIZE_1 |
-        (source_detail_blur_requested ? BG_MOSAIC : 0);
+        BG_16_COLOR | BG_SIZE_1;
     gameplay_presentation.bg2cnt =
         BG_PRIORITY(background3_priority) |
         CHAR_BASE(background_cache_char_base[2]) |
         SCREEN_BASE(BG2_SCREEN_BLOCK) |
-        BG_16_COLOR | BG_SIZE_1 |
-        (source_detail_blur_requested ? BG_MOSAIC : 0);
+        BG_16_COLOR | BG_SIZE_1;
     source_detail_compose_effect_registers(
         background2_present,
         &window_enable,
@@ -847,8 +844,15 @@ static void gameplay_presentation_capture_registers(void)
                 BG3_ON : 0
         ) |
         window_enable;
-    gameplay_presentation.mosaic =
-        source_detail_blur_requested ? 0x1111u : 0;
+    /*
+     * OpenTyrian's smoothie 4 averages the current intermediate framebuffer
+     * with the previous frame one pixel at a time.  GBA Mode 0 has no retained
+     * world framebuffer; hardware Mosaic enlarges pixels instead of averaging
+     * them and also corrupts actors drawn after the source blur pass.  Keep the
+     * authored request/telemetry, but prefer the undistorted Mode-0 image over
+     * that semantically incorrect approximation.
+     */
+    gameplay_presentation.mosaic = 0;
     gameplay_presentation.spotlight_active =
         source_detail_spotlight_requested;
     gameplay_presentation.spotlight_table_index =
@@ -1224,18 +1228,15 @@ static void commit_vblank_work(void)
         REG_BG0CNT = BG_PRIORITY(3) |
                      CHAR_BASE(background_cache_char_base[0]) |
                      SCREEN_BASE(BG0_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_1 |
-                     (source_detail_blur_requested ? BG_MOSAIC : 0);
+                     BG_16_COLOR | BG_SIZE_1;
         REG_BG1CNT = BG_PRIORITY(background2_priority) |
                      CHAR_BASE(background_cache_char_base[1]) |
                      SCREEN_BASE(BG1_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_1 |
-                     (source_detail_blur_requested ? BG_MOSAIC : 0);
+                     BG_16_COLOR | BG_SIZE_1;
         REG_BG2CNT = BG_PRIORITY(background3_priority) |
                      CHAR_BASE(background_cache_char_base[2]) |
                      SCREEN_BASE(BG2_SCREEN_BLOCK) |
-                     BG_16_COLOR | BG_SIZE_1 |
-                     (source_detail_blur_requested ? BG_MOSAIC : 0);
+                     BG_16_COLOR | BG_SIZE_1;
         REG_BG3CNT = BG_PRIORITY(0) |
                      CHAR_BASE(GAMEPLAY_OVERLAY_CHAR_BASE) |
                      SCREEN_BASE(GAMEPLAY_OVERLAY_SCREEN_BLOCK) |
@@ -1269,7 +1270,7 @@ static void commit_vblank_work(void)
         REG_BLDCNT = bldcnt;
         REG_BLDALPHA = bldalpha;
         REG_BLDY = bldy;
-        REG_MOSAIC = source_detail_blur_requested ? 0x1111u : 0;
+        REG_MOSAIC = 0;
         REG_WIN0H = win0h;
         REG_WIN0V = win0v;
         REG_WININ = winin;

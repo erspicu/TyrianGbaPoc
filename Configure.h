@@ -70,8 +70,10 @@
  *             background2over==3 events may still restore layer 2, exactly as
  *             in the PC source.
  *   NORMAL  : PC 486 profile.  Keeps BG2, translucent explosions, shadows,
- *             brightness, iced/blur and special-light presentation through
- *             GBA hardware adapters; this is the recommended balance.
+ *             brightness, iced and special-light presentation through GBA
+ *             hardware adapters; this is the recommended balance.  Source
+ *             blur events remain timed and measured, but the PC temporal
+ *             framebuffer average has no distortion-free Mode-0 equivalent.
  *   HIGH    : PC High Detail gates.  Adds the authored lava/water palette and
  *             scanline-wave passes through GBA hardware adapters.
  *   PENTIUM : PC Pentium gates.  Adds wild BG2 colour blending and final
@@ -89,7 +91,9 @@
  *   LOW     ：PC 386 等級；通常關閉第二背景層與亮度／半透明類效果。
  *             原始關卡的 background2over==3 事件仍可照 PC 規則恢復 BG2。
  *   NORMAL  ：PC 486 等級；以 GBA 硬體方式保留 BG2、透明爆炸、陰影、
- *             亮暗、iced／blur 與特殊光照，建議作為正式版平衡值。
+ *             亮暗、iced 與特殊光照，建議作為正式版平衡值。原始 blur
+ *             事件仍照時序執行與記錄，但 PC 的跨影格 framebuffer 平均
+ *             在 Mode 0 沒有不破壞畫質的直接硬體等價物。
  *   HIGH    ：PC High Detail 門檻；用 GBA 調色盤與掃描線硬體適配加入
  *             關卡定義的 lava／water 效果。
  *   PENTIUM ：PC Pentium 門檻；再加入 wild BG2 混色與最終 filtration。

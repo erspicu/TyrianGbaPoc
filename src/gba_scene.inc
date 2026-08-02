@@ -882,29 +882,21 @@ static void source_detail_transform_world_oam(u8 first, u8 last)
 {
     u8 index;
 
-    if (!source_detail_vertical_flip && !source_detail_blur_requested) {
-        return;
-    }
+    if (!source_detail_vertical_flip) return;
     for (index = first; index < last; index++) {
         OBJATTR *object = &oam_shadow[index];
+        s16 y = (s16)(object->attr0 & 0xffu);
+        u8 height = source_detail_oam_height(
+            object->attr0,
+            object->attr1
+        );
 
-        if (source_detail_blur_requested) {
-            object->attr0 |= ATTR0_MOSAIC;
-        }
-        if (source_detail_vertical_flip) {
-            s16 y = (s16)(object->attr0 & 0xffu);
-            u8 height = source_detail_oam_height(
-                object->attr0,
-                object->attr1
-            );
-
-            if (y >= SCREEN_HEIGHT) y = (s16)(y - 256);
-            y = (s16)(SCREEN_HEIGHT - y - height);
-            object->attr0 = (u16)(
-                (object->attr0 & ~0xffu) | (y & 0xffu)
-            );
-            object->attr1 ^= OBJ_VFLIP;
-        }
+        if (y >= SCREEN_HEIGHT) y = (s16)(y - 256);
+        y = (s16)(SCREEN_HEIGHT - y - height);
+        object->attr0 = (u16)(
+            (object->attr0 & ~0xffu) | (y & 0xffu)
+        );
+        object->attr1 ^= OBJ_VFLIP;
     }
 }
 

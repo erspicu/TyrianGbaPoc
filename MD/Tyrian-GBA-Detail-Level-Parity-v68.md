@@ -16,7 +16,7 @@
 
 PC 版部分效果是對 264×184 之 8-bit framebuffer 做逐像素運算。GBA
 沒有相同 framebuffer／palette-index 合成方式，因此本版保留相同事件、
-啟用門檻與畫面層次語意，改由 BG、OBJ alpha、OBJ window、mosaic、
+啟用門檻與畫面層次語意，改由 BG、OBJ alpha、OBJ window、
 palette lookup 與 HBlank DMA 實作。這代表 Low／Normal 的功能規則已完整
 對應，但不能把硬體適配誤稱為每個輸出像素都與 PC 演算法相同。
 
@@ -64,14 +64,14 @@ palette lookup 與 HBlank DMA 實作。這代表 Low／Normal 的功能規則已
 | 飛機／玩家子彈陰影 | 以 OBJ-window mask 暗化其下方畫面；飛機陰影套用來源 `30-mapX2Ofs` 視差 |
 | 關卡亮暗 filter | 以 GBA BLDY brighten／darken 承接 `levelBrightness` fade |
 | iced pass | 由目前關卡訓練後 BG palette 的亮度，查回來源 palette 0x80～0x8f 藍色 ramp |
-| blur pass | 對 world BG／OBJ 啟用 2×2 hardware mosaic；HUD 不被模糊 |
+| blur pass | 保留來源事件、啟用門檻與 telemetry；不再用 2×2 Mosaic 假冒 PC 跨影格亮度平均，以免背景及 blur 後才繪製的 OBJ 全部粗粒化 |
 | code 1 | 與 Low 相同，完整場景上下反轉 |
 | code 2 | WIN0 三角光照；雙緩衝 161-line WIN0H 表由 DMA0 在 HBlank 串流，避免每幀 160 次 CPU IRQ |
 
 OBJ window 與全畫面 brightness／spotlight 會競爭同一組 GBA blend/window
 資源。仲裁順序為 spotlight、關卡 brightness、普通陰影、alpha；遇到互斥
 狀態時保留來源中較晚的全畫面效果，避免半套 register 組合。離開 gameplay
-時會停止 DMA0、恢復基礎 BG palette 並清除 mosaic/window/blend，防止狀態
+時會停止 DMA0、恢復基礎 BG palette 並清除 window/blend，防止狀態
 污染統計或選單畫面。
 
 ## High／Pentium 邊界
