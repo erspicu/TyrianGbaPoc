@@ -448,6 +448,9 @@ enum {
  * decoded from ROMFS and presented through eight time-shared OBJ banks.
  */
 #define SOURCE_LEVEL_PALETTE_INDEX 5
+#define SOURCE_HUD_SPECIAL_SHAPE_TABLE 26
+#define SOURCE_HUD_SUPERBOMB_GRAPHIC 304
+#define SOURCE_HUD_SUPERBOMB_LIMIT 10
 #define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT 8
 #define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
 #define SOURCE_ENEMY_FRAME_BYTES 1024
@@ -743,6 +746,12 @@ _Static_assert(
         SPRITE2_RAW_COMPONENT_HEIGHT ==
             OT_SPRITE2_COMPONENT_HEIGHT,
     "build-time Sprite2 raw catalog geometry changed"
+);
+_Static_assert(
+    SOURCE_HUD_SPECIAL_SHAPE_TABLE <= SPRITE2_RAW_TABLE_COUNT &&
+        SOURCE_HUD_SUPERBOMB_GRAPHIC <=
+            SPRITE2_RAW_COMPONENTS_PER_TABLE,
+    "stock Special Weapon or Super Bomb Sprite2 source is unavailable"
 );
 _Static_assert(
     SOURCE_ENEMY_FRAME_BYTES ==

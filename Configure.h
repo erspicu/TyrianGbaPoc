@@ -247,6 +247,42 @@
 #endif
 
 /*
+ * Persistent special weapon and per-level Super Bomb stock.
+ *
+ * PC JE_inGameDisplays() draws the equipped special with
+ *   blit_sprite2x2(25, 1, spriteSheet10, special[id].itemgraphic)
+ * and draws one spriteSheet9 graphic 304 at (30 + 12*n, 160) for every
+ * carried Super Bomb. Those absolute 320x200 coordinates fall into the GBA
+ * crop or collide with the relocated cash counter, so only presentation
+ * coordinates are adapted here; source graphics, composition, count limit
+ * and persistence rules remain unchanged.
+ *
+ * Special Weapon 與單關 Super Bomb 庫存的位置。
+ *
+ * PC 的 JE_inGameDisplays() 會用 special[id].itemgraphic，在 (25,1)
+ * 依原始四塊 Sprite2 組合畫出特殊武器；每顆 Super Bomb 則以
+ * spriteSheet9 第 304 號圖，在 (30 + 12*n,160) 逐顆排列。這些
+ * 320x200 絕對座標在 GBA 1:1 裁切後會落到畫面外或撞到已搬移的
+ * 金額，因此此處只調整最終顯示位置；原圖、四塊拼法、十顆上限與
+ * 跨關保存規則完全不變。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_X
+#define TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_X 4
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_Y
+#define TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_Y 2
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SUPERBOMB_X
+#define TYRIAN_GBA_LAYOUT_SUPERBOMB_X 4
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SUPERBOMB_Y
+#define TYRIAN_GBA_LAYOUT_SUPERBOMB_Y 132
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SUPERBOMB_X_STEP
+#define TYRIAN_GBA_LAYOUT_SUPERBOMB_X_STEP 12
+#endif
+
+/*
  * The three compact PC-sidebar values are right-aligned at RIGHT_X.
  * User-selected top-to-bottom order and source colour families:
  *   SHIELD    - PC JE_drawShield hue 0x90 (blue)

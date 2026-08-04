@@ -574,6 +574,85 @@ static void render_source_enemy_cached_sprite(
     }
 }
 
+/*
+ * Direct translation of the inventory portions of JE_inGameDisplays().
+ *
+ * Both authoritative source states already existed in the GBA port, but
+ * their persistent presentation was omitted. Acquire the unchanged Sprite2
+ * records before world objects so the HUD owns the front-most OAM indices
+ * and its cache frames cannot be evicted by the same scene. Decorative
+ * effects and projectiles continue to yield through the existing structural
+ * OAM budget.
+ */
+static void render_source_inventory_hud(void)
+{
+    OtEnemyDrawCommand draw = {0};
+    u16 tile;
+
+    if (source_parity_level.player_special > 0) {
+        OtSpecialDefinition special;
+
+        if (
+            ot_data_hdt_special_read(
+                source_parity_level.player_special,
+                &special
+            ) &&
+            special.itemgraphic > 0
+        ) {
+            /*
+             * PC spriteSheet10 is the authored shape-table 26 path. A
+             * size-one frame composes graphic,+1,+19,+20 at (4,2),
+             * (16,2),(4,16),(16,16); offset the 32x32 GBA canvas so the
+             * first component remains anchored at the configured HUD point.
+             */
+            draw.shape_table = SOURCE_HUD_SPECIAL_SHAPE_TABLE;
+            draw.graphic = special.itemgraphic;
+            draw.size = 1;
+            tile = source_enemy_cache_acquire(&draw);
+            if (tile != 0xffff) {
+                render_source_enemy_cached_sprite(
+                    (s16)(TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_X - 4),
+                    (s16)(TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_Y - 2),
+                    tile,
+                    0
+                );
+            }
+        }
+    }
+
+    if (source_parity_level.player_superbombs > 0) {
+        u8 count = source_parity_level.player_superbombs;
+        u8 index;
+
+        if (count > SOURCE_HUD_SUPERBOMB_LIMIT) {
+            count = SOURCE_HUD_SUPERBOMB_LIMIT;
+        }
+        memset(&draw, 0, sizeof(draw));
+        draw.shape_table = OT_COMP_SHAPE_TABLE_OPTIONS_SMALL;
+        draw.graphic = SOURCE_HUD_SUPERBOMB_GRAPHIC;
+        tile = source_enemy_cache_acquire(&draw);
+        if (tile == 0xffff) return;
+
+        /*
+         * A single Sprite2 component begins at (10,9) in the canonical
+         * 32x32 frame. render_source_enemy_cached_sprite() also compensates
+         * the compact 16x16 cache path, so each repeated icon keeps the
+         * exact PC anchor and twelve-pixel spacing.
+         */
+        for (index = 0; index < count; index++) {
+            render_source_enemy_cached_sprite(
+                (s16)(
+                    TYRIAN_GBA_LAYOUT_SUPERBOMB_X - 10 +
+                    index * TYRIAN_GBA_LAYOUT_SUPERBOMB_X_STEP
+                ),
+                (s16)(TYRIAN_GBA_LAYOUT_SUPERBOMB_Y - 9),
+                tile,
+                0
+            );
+        }
+    }
+}
+
 #if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
 static void render_source_enemy_cached_sprite_blended(
     s16 screen_x,
@@ -909,6 +988,7 @@ static void render_source_play_scene(void)
     source_sprite2_l2_begin_frame();
     source_enemy_cache_begin_frame();
     source_projectile_cache_begin_frame();
+    render_source_inventory_hud();
     render_source_boss_bars();
 #if !TYRIAN_GBA_STRESS_LOADOUT
     {
