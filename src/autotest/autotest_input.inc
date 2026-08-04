@@ -1,7 +1,13 @@
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+#ifdef AUTOTEST_NO_FIRE
+#define AUTOTEST_HELD_FIRE 0
+#else
+#define AUTOTEST_HELD_FIRE KEY_A
+#endif
+
 static u16 autotest_aim_keys(s16 target_x, s16 target_y)
 {
-    u16 keys = KEY_A;
+    u16 keys = AUTOTEST_HELD_FIRE;
 
     if (target_x < SOURCE_PLAYER_MIN_X) target_x = SOURCE_PLAYER_MIN_X;
     if (target_x > SOURCE_PLAYER_MAX_X) target_x = SOURCE_PLAYER_MAX_X;
@@ -40,7 +46,12 @@ static u16 autotest_input(void)
 #endif
     u8 source_index;
     u16 phase = (level_tick >> 5) & 3;
-    u16 keys = KEY_A;
+    u16 keys =
+#ifdef AUTOTEST_NO_FIRE
+        0;
+#else
+        KEY_A;
+#endif
     s16 player_screen_x = source_player_screen_x();
     s16 player_screen_y = source_player_screen_y();
 #ifdef AUTOTEST_FORCE_PLAYER_TOP
@@ -207,6 +218,10 @@ static u16 autotest_input(void)
     if (phase == 3) keys |= KEY_DOWN;
     return keys;
 }
+
+#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
+#undef AUTOTEST_HELD_FIRE
+#endif
 
 #if defined(AUTOTEST_SCREENSHOT_EXPLOSION) || \
     defined(AUTOTEST_SCREENSHOT_EXPLOSION_FRAME)

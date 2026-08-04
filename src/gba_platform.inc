@@ -385,107 +385,6 @@ static u8 source_detail_build_effect_palette(
 #define SOURCE_DETAIL_WAVE_PRESSURE_EXIT 2u
 #define SOURCE_DETAIL_WAVE_RENDER_HEAVY_CYCLES 220000u
 
-static s8 source_detail_wave_source_amount(
-    u8 water,
-    u16 screen_line,
-    u16 source_x
-)
-{
-    u32 source_y = (u32)(SOURCE_PRESENTATION_Y_ORIGIN + screen_line);
-    u32 linear = source_y * 320u + source_x;
-    s16 centre = water ? 4 : 8;
-    s16 value = water ?
-        (s16)((linear >> 10) & 7u) :
-        (s16)((linear >> 9) & 15u);
-    s16 delta = (s16)(value - centre);
-
-    if (delta < 0) delta = (s16)-delta;
-    return (s8)(delta - 1);
-}
-
-static s16 source_detail_wave_horizontal_sum(u8 water, u16 screen_line)
-{
-    const u16 visible_left = SOURCE_PRESENTATION_X_ORIGIN;
-    const u16 visible_right = (u16)(
-        SOURCE_PRESENTATION_X_ORIGIN + SCREEN_WIDTH - 1u
-    );
-    u16 block_end = (u16)(visible_left | 7u);
-    s16 sum = 0;
-
-    /*
-     * OpenTyrian computes one waver value for each eight-pixel block.  Weight
-     * the two cropped edge blocks by their visible pixels and every complete
-     * block by eight, yielding the exact mean over the 240-pixel GBA crop.
-     */
-    while (block_end <= visible_right + 7u) {
-        u16 block_start = (u16)(block_end - 7u);
-        u16 sample_start = block_start < visible_left ?
-            visible_left : block_start;
-        u16 sample_end = block_end > visible_right ?
-            visible_right : block_end;
-
-        if (sample_start <= sample_end) {
-            u16 weight = (u16)(sample_end - sample_start + 1u);
-
-            sum = (s16)(
-                sum +
-                source_detail_wave_source_amount(
-                    water,
-                    screen_line,
-                    block_end
-                ) * (s16)weight
-            );
-        }
-        block_end = (u16)(block_end + 8u);
-    }
-    return sum;
-}
-
-static void source_detail_wave_profile_prepare(u8 water)
-{
-    u8 profile_index = water != 0;
-    u8 profile_bit = (u8)(1u << profile_index);
-    u16 line;
-
-    if (source_detail_wave_profile_valid & profile_bit) return;
-    for (line = 0; line <= SCREEN_HEIGHT; line++) {
-        s32 sum = 0;
-        s8 offset;
-        s16 average;
-        s16 dc_bias = water ? 1 : 3;
-
-        /*
-         * The PC filter also mixes neighbouring destination rows.  A five-row
-         * box filter is deliberately used here because one GBA scroll value
-         * moves a whole row instead of just an eight-pixel sample block.
-         */
-        for (offset = -2; offset <= 2; offset++) {
-            s16 sample_line = (s16)line + offset;
-
-            if (sample_line < 0) sample_line = 0;
-            if (sample_line > SCREEN_HEIGHT) sample_line = SCREEN_HEIGHT;
-            sum += source_detail_wave_horizontal_sum(
-                water,
-                (u16)sample_line
-            );
-        }
-        /* 240 visible pixels times five rows, rounded symmetrically. */
-        if (sum >= 0) {
-            average = (s16)((sum + 600) / 1200);
-        } else {
-            average = (s16)-(((-sum) + 600) / 1200);
-        }
-        /*
-         * The source offset's positive DC component changes colour samples;
-         * it is not a camera translation.  Palette adaptation already models
-         * that colour result, so retain only the oscillating displacement.
-         */
-        source_detail_wave_profile[profile_index][line] =
-            (s8)(average - dc_bias);
-    }
-    source_detail_wave_profile_valid |= profile_bit;
-}
-
 static void source_detail_wave_runtime_reset(void)
 {
     source_detail_wave_strength_q8 =
@@ -494,6 +393,7 @@ static void source_detail_wave_runtime_reset(void)
     source_detail_wave_pressure_active = 0;
 }
 
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 static void source_detail_wave_record_pressure_score(void)
 {
     if (
@@ -587,6 +487,31 @@ static void source_detail_wave_complete_render(u32 actual_render_cycles)
         }
     }
 }
+#endif
+
+static u8 source_detail_wave_hardware_active(void)
+{
+    if (
+        !source_detail_wave_requested ||
+        source_detail_wave_strength_q8 == 0
+    ) {
+        return 0;
+    }
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    /*
+     * OpenTyrian's filters vary their sample offset every eight horizontal
+     * pixels. A regular GBA text BG can only apply one HOFS value to the
+     * whole scanline, so the HBlank approximation can expose full-width
+     * bands under sustained load even though its LUT is atomically double
+     * buffered. Once the measured wave dispatcher enters pressure mode,
+     * retain the authored hue/palette treatment but suspend this geometric
+     * approximation and its DMA0 traffic. Gameplay cadence and the current
+     * pressure-mode presentation floor are unchanged.
+     */
+    if (presentation_wave_dispatch_active) return 0;
+#endif
+    return 1;
+}
 
 static void source_detail_wave_prepare(u8 water)
 {
@@ -598,7 +523,6 @@ static void source_detail_wave_prepare(u8 water)
     u16 bg1_vofs = source_background_vofs(1);
     u16 line;
 
-    source_detail_wave_profile_prepare(water);
     for (line = 0; line <= SCREEN_HEIGHT; line++) {
         s8 profile_wave =
             source_detail_wave_profile[profile_index][line];
@@ -758,7 +682,9 @@ static void source_detail_prepare_scene(void)
         source_detail_wave_requested = 0;
     }
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
-    else if (source_detail_wave_requested) {
+    else if (
+        source_detail_wave_hardware_active()
+    ) {
         source_detail_wave_prepare(
             source_parity_level.smoothies[1] != 0
         );
@@ -899,6 +825,41 @@ static void source_detail_palette_commit(u8 effect_active)
     source_detail_palette_dirty = 0;
 }
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static u8 source_special_zinglon_window(
+    u16 *horizontal,
+    u16 *vertical
+)
+{
+    s16 centre;
+    s16 left;
+    s16 right;
+    s16 outer_half_width;
+
+    if (
+        !source_special_zinglon_visual_active ||
+        horizontal == 0 ||
+        vertical == 0
+    ) {
+        return 0;
+    }
+    centre = source_world_to_screen_x((s16)(player_source_x + 7));
+    /* The second PC JE_barBright() extends two pixels past the inner pass. */
+    outer_half_width = (s16)(
+        source_special_zinglon_visual_half_width + 2u
+    );
+    left = (s16)(centre - outer_half_width);
+    right = (s16)(centre + outer_half_width + 1);
+    if (left < 0) left = 0;
+    if (right > SCREEN_WIDTH) right = SCREEN_WIDTH;
+    if (left >= right) return 0;
+
+    *horizontal = (u16)(((u16)left << 8) | (u16)right);
+    *vertical = SCREEN_HEIGHT;
+    return 1;
+}
+#endif
+
 static void source_detail_compose_effect_registers(
     u8 background2_present,
     u16 *window_enable,
@@ -920,13 +881,35 @@ static void source_detail_compose_effect_registers(
     *winin = 0;
     *winout = 0;
     (void)background2_present;
-#if TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW
-    /* Semi-transparent explosions blend with any already-rendered layer. */
+    /*
+     * Semi-transparent source objects (explosions, OPTION_SHAPES and the
+     * invulnerable ship) require valid second targets at every detail level.
+     */
     blend_second = 0x003fu;
-#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
     blend_first |= 1u << 4;
     blend_second |= 1u | 2u | 4u | 8u | 16u | 32u;
+#endif
+    /*
+     * PC applies JE_barBright twice across the complete vertical Zinglon
+     * rectangle.  The former GBA adapter drew only six outline pixels.  Use
+     * WIN0 to confine the hardware brightness-increase unit to the authored
+     * filled beam instead; all BG and OBJ pixels retain their hue underneath.
+     * A single BLDY=5 pass is the closest smooth GBA approximation to the
+     * PC inner +4 / two-pixel outer +2 palette-brightness profile.
+     */
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (source_special_zinglon_window(win0h, win0v)) {
+        *window_enable = WIN0_ON;
+        /* All layers visible; colour effects enabled only inside WIN0. */
+        *winin = 0x003fu;
+        *winout = (u16)(0x001fu | (0x001fu << 8));
+        *bldcnt = (u16)(
+            0x003fu | (2u << 6) | (blend_second << 8)
+        );
+        *bldalpha = 8u | (8u << 8);
+        *bldy = 5u;
+    } else
 #endif
     /* Pentium wild BG2 normally owns the smooth hardware Alpha pass. */
     if (source_detail_spotlight_requested) {
@@ -994,6 +977,32 @@ static void source_detail_compose_effect_registers(
 }
 
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+static u8 gameplay_presentation_wave_scope_requested(void)
+{
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH && \
+    TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+    u8 special_code = (u8)(
+        (source_parity_level.smoothies[8] ? 1u : 0u) +
+        (source_parity_level.smoothies[5] ? 2u : 0u)
+    );
+
+    /*
+     * This mirrors source_detail_prepare_scene() without building a scene.
+     * Source special code 2 owns DMA0 for its spotlight window, so authored
+     * lava/water flags do not produce a scanline wave in that case.
+     */
+    return (u8)(
+        (
+            source_parity_level.smoothies[0] ||
+            source_parity_level.smoothies[1]
+        ) &&
+        special_code != 2u
+    );
+#else
+    return 0;
+#endif
+}
+
 static void gameplay_presentation_capture_registers(void)
 {
     u8 background2_priority = source_background2_priority();
@@ -1054,7 +1063,7 @@ static void gameplay_presentation_capture_registers(void)
     gameplay_presentation.dispcnt =
         MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
 #if !TYRIAN_GBA_STRESS_LOADOUT
-        (source_special_astral_duration == 0 ? BG0_ON : 0) |
+        (!source_special_astral_visual_active ? BG0_ON : 0) |
 #else
         BG0_ON |
 #endif
@@ -1074,11 +1083,20 @@ static void gameplay_presentation_capture_registers(void)
      */
     gameplay_presentation.mosaic = 0;
     gameplay_presentation.spotlight_active =
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        source_detail_spotlight_requested &&
+        !source_special_zinglon_visual_active;
+#else
         source_detail_spotlight_requested;
+#endif
     gameplay_presentation.spotlight_table_index =
         source_detail_spotlight_table_pending;
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
     gameplay_presentation.wave_active =
-        source_detail_wave_requested;
+        source_detail_wave_hardware_active();
+#else
+    gameplay_presentation.wave_active = 0;
+#endif
     gameplay_presentation.wave_table_index =
         source_detail_wave_table_pending;
     gameplay_presentation.effect_palette_active =
@@ -1107,7 +1125,8 @@ static void gameplay_presentation_mark_logic_update(void)
 
 static u8 gameplay_presentation_should_render(
     u32 frame_cycle_start,
-    u8 state_transition_forces_render
+    u8 state_transition_forces_render,
+    u8 logic_updates_this_loop
 )
 {
 #if TYRIAN_GBA_PRESENTATION_DEFER
@@ -1117,16 +1136,51 @@ static u8 gameplay_presentation_should_render(
     u8 layer;
     u8 current_held_rows = 0;
     u8 forced = state_transition_forces_render;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    u8 wave_scope =
+        gameplay_presentation_wave_scope_requested();
+    u8 wave_adaptive = (u8)(
+        wave_scope && presentation_wave_dispatch_active
+    );
+    u8 pending_limit = wave_adaptive ?
+        PRESENTATION_WAVE_MAX_PENDING_LOGIC_TICKS :
+        PRESENTATION_MAX_PENDING_LOGIC_TICKS;
+#else
+    const u8 pending_limit =
+        PRESENTATION_MAX_PENDING_LOGIC_TICKS;
+#endif
 #endif
 
     if (!presentation_render_pending) return 0;
     telemetry_presentation_render_attempts++;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    presentation_wave_dispatch_idle_render = 0;
+#endif
 #if !TYRIAN_GBA_PRESENTATION_DEFER
     (void)frame_cycle_start;
     (void)state_transition_forces_render;
+    (void)logic_updates_this_loop;
     telemetry_presentation_render_forced++;
     return 1;
 #else
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    if (wave_scope && !presentation_wave_dispatch_scope_seen) {
+        presentation_wave_dispatch_scope_seen = 1;
+        presentation_wave_dispatch_pressure = 0;
+        presentation_wave_dispatch_missed_baseline =
+            telemetry_missed_vblanks;
+    } else if (!wave_scope && presentation_wave_dispatch_scope_seen) {
+        presentation_wave_dispatch_scope_seen = 0;
+        if (!presentation_wave_dispatch_active) {
+            presentation_wave_dispatch_pressure = 0;
+        }
+        presentation_wave_dispatch_missed_baseline =
+            telemetry_missed_vblanks;
+    }
+    if (wave_scope) {
+        telemetry_wave_dispatch_scope_attempts++;
+    }
+#endif
     for (layer = 0; layer < BACKGROUND_LAYER_COUNT; layer++) {
         if (
             background_layer_cache[layer].ring_reference_rows >
@@ -1138,16 +1192,55 @@ static u8 gameplay_presentation_should_render(
     }
     if (
         presentation_pending_logic_ticks >=
-            PRESENTATION_MAX_PENDING_LOGIC_TICKS ||
-        current_held_rows >
-            BACKGROUND_RETAINED_TILE_ROWS
+            pending_limit ||
+        current_held_rows > BACKGROUND_RETAINED_TILE_ROWS
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+        ||
+        (
+            wave_adaptive &&
+            current_held_rows >= BACKGROUND_RETAINED_TILE_ROWS
+        )
+#endif
     ) {
         forced = 1;
     }
     if (forced) {
         telemetry_presentation_render_forced++;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+        if (wave_adaptive) {
+            telemetry_wave_dispatch_safety_forced++;
+            presentation_wave_dispatch_idle_render =
+                logic_updates_this_loop == 0;
+        }
+#endif
         return 1;
     }
+
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    if (
+        wave_adaptive &&
+        logic_updates_this_loop == 0 &&
+        presentation_pending_logic_ticks <
+            PRESENTATION_WAVE_MIN_RENDER_LOGIC_TICKS
+    ) {
+        /*
+         * v73 separated source logic from rendering, but still attempted a
+         * complete scene on every intervening idle LCD period.  Under the
+         * measured lava/water full-loadout workload that leaves no cheap
+         * period for background prefetch and cold Sprite2 work, so an
+         * otherwise legal render can still cross the next VBlank.  Keep the
+         * newest complete scene for two additional source ticks: gameplay,
+         * collision, RNG and audio remain at full cadence while stressed
+         * wave presentation settles near 10 fps and the skipped idle periods
+         * are available to prefetch. Safety/retained-row forcing above still
+         * wins, so this cannot overwrite a visible background window. A
+         * separate four-tick freshness limit prevents unbounded staleness
+         * without forcing a render on the normal three-tick cadence.
+         */
+        telemetry_presentation_render_deferred++;
+        return 0;
+    }
+#endif
 
     now = stress_cycle_counter_read();
     elapsed = now - frame_cycle_start;
@@ -1176,9 +1269,49 @@ static u8 gameplay_presentation_should_render(
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
         source_detail_wave_note_render_deferred();
 #endif
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+        if (wave_scope) {
+            if (
+                presentation_wave_dispatch_pressure <
+                PRESENTATION_WAVE_PRESSURE_MAX
+            ) {
+                presentation_wave_dispatch_pressure++;
+            }
+            if (
+                !presentation_wave_dispatch_active &&
+                presentation_wave_dispatch_pressure >=
+                    PRESENTATION_WAVE_PRESSURE_ENTER &&
+                telemetry_missed_vblanks -
+                    presentation_wave_dispatch_missed_baseline >= 1u
+            ) {
+                presentation_wave_dispatch_active = 1;
+                presentation_wave_dispatch_recovery_ticks = 0;
+                telemetry_wave_dispatch_entries++;
+            }
+        }
+#endif
         telemetry_presentation_render_deferred++;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+        if (wave_adaptive && logic_updates_this_loop != 0) {
+            telemetry_wave_dispatch_logic_busy_deferred++;
+        }
+#endif
         return 0;
     }
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    if (wave_adaptive && logic_updates_this_loop != 0) {
+        /*
+         * Keep authoritative logic and complete scene construction in
+         * separate LCD periods until measured light renders prove recovery.
+         * Intentional phase separation is not new wave-pressure input.
+         */
+        telemetry_presentation_render_deferred++;
+        telemetry_wave_dispatch_logic_busy_deferred++;
+        return 0;
+    } else if (wave_adaptive) {
+        presentation_wave_dispatch_idle_render = 1;
+    }
+#endif
     return 1;
 #endif
 }
@@ -1227,6 +1360,62 @@ static void gameplay_presentation_complete(u32 actual_render_cycles)
     }
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
     source_detail_wave_complete_render(actual_render_cycles);
+#endif
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    if (presentation_wave_dispatch_idle_render) {
+        telemetry_wave_dispatch_idle_renders++;
+    }
+    if (
+        presentation_wave_dispatch_active &&
+        !source_detail_wave_requested
+    ) {
+        presentation_wave_dispatch_active = 0;
+        presentation_wave_dispatch_pressure = 0;
+        presentation_wave_dispatch_recovery_ticks = 0;
+        presentation_wave_dispatch_missed_baseline =
+            telemetry_missed_vblanks;
+        telemetry_wave_dispatch_exits++;
+    } else if (presentation_wave_dispatch_active) {
+        if (
+            actual_render_cycles <=
+            PRESENTATION_WAVE_RECOVERY_RENDER_CYCLES
+        ) {
+            if (
+                presentation_wave_dispatch_recovery_ticks <
+                PRESENTATION_WAVE_RECOVERY_LIGHT_RENDERS
+            ) {
+                presentation_wave_dispatch_recovery_ticks++;
+            }
+            if (
+                presentation_wave_dispatch_recovery_ticks >=
+                PRESENTATION_WAVE_RECOVERY_LIGHT_RENDERS
+            ) {
+                presentation_wave_dispatch_active = 0;
+                presentation_wave_dispatch_pressure = 0;
+                presentation_wave_dispatch_recovery_ticks = 0;
+                presentation_wave_dispatch_missed_baseline =
+                    telemetry_missed_vblanks;
+                telemetry_wave_dispatch_exits++;
+            }
+        } else {
+            presentation_wave_dispatch_recovery_ticks = 0;
+        }
+    } else if (
+        source_detail_wave_requested &&
+        actual_render_cycles <=
+            PRESENTATION_WAVE_RECOVERY_RENDER_CYCLES
+    ) {
+        /*
+         * A genuinely light complete render disproves accumulated deadline
+         * pressure.  Heavy renders retain the evidence across intervening
+         * idle LCD periods, so sustained overload can still enter adaptive
+         * dispatch while isolated cold-cache spikes cannot.
+         */
+        presentation_wave_dispatch_pressure = 0;
+        presentation_wave_dispatch_missed_baseline =
+            telemetry_missed_vblanks;
+    }
+    presentation_wave_dispatch_idle_render = 0;
 #endif
     presentation_render_pending = 0;
     presentation_pending_logic_ticks = 0;
@@ -1483,7 +1672,7 @@ static void commit_vblank_work(void)
         REG_DISPCNT =
             MODE_0 | BG2_ON | OBJ_ON | OBJ_1D_MAP |
 #if !TYRIAN_GBA_STRESS_LOADOUT
-            (source_special_astral_duration == 0 ? BG0_ON : 0) |
+            (!source_special_astral_visual_active ? BG0_ON : 0) |
 #else
             BG0_ON |
 #endif
@@ -1505,9 +1694,18 @@ static void commit_vblank_work(void)
             source_detail_palette_mode_pending
         );
         source_detail_scanline_commit(
+#if !TYRIAN_GBA_STRESS_LOADOUT
+            source_detail_spotlight_requested &&
+                !source_special_zinglon_visual_active,
+#else
             source_detail_spotlight_requested,
+#endif
             source_detail_spotlight_table_pending,
-            source_detail_wave_requested,
+#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+            source_detail_wave_hardware_active(),
+#else
+            0,
+#endif
             source_detail_wave_table_pending
         );
 #endif

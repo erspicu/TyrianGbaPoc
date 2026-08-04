@@ -184,6 +184,18 @@ _Static_assert(
 #define AUTOTEST_SCREENSHOT_ENABLED
 #endif
 
+#ifdef AUTOTEST_SPECIAL_WEAPON_ID
+#ifndef AUTOTEST_SPECIAL_SHIELD
+#define AUTOTEST_SPECIAL_SHIELD 100
+#endif
+#if AUTOTEST_SPECIAL_WEAPON_ID < 1 || AUTOTEST_SPECIAL_WEAPON_ID > 46
+#error AUTOTEST_SPECIAL_WEAPON_ID must select an HDT Special in 1..46
+#endif
+#if AUTOTEST_SPECIAL_SHIELD < 0 || AUTOTEST_SPECIAL_SHIELD > 255
+#error AUTOTEST_SPECIAL_SHIELD must fit the source u8 shield value
+#endif
+#endif
+
 #define BG0_SCREEN_BLOCK 24
 #define BG1_SCREEN_BLOCK 26
 #define BG2_SCREEN_BLOCK 28
@@ -308,6 +320,12 @@ enum {
 #else
 #define PRESENTATION_MAX_PENDING_LOGIC_TICKS 3
 #endif
+#define PRESENTATION_WAVE_MAX_PENDING_LOGIC_TICKS 4
+#define PRESENTATION_WAVE_MIN_RENDER_LOGIC_TICKS 3
+#define PRESENTATION_WAVE_PRESSURE_ENTER 2
+#define PRESENTATION_WAVE_PRESSURE_MAX 8
+#define PRESENTATION_WAVE_RECOVERY_LIGHT_RENDERS 16
+#define PRESENTATION_WAVE_RECOVERY_RENDER_CYCLES 150000u
 #endif
 
 /*
@@ -320,6 +338,8 @@ enum {
 #define MAX_ENEMY_SHOTS 60
 /* varz.h MAX_EXPLOSIONS: preserve the source allocator before OAM clipping. */
 #define MAX_EFFECTS 200
+/* varz.h MAX_SUPERPIXELS: Ice Beam and other >1000 shot graphics. */
+#define MAX_SUPERPIXELS 101
 /*
  * Presentation-only budgets.  Gameplay allocators, collisions and authored
  * timing remain at their PC sizes; these limits decide which already-live
@@ -449,6 +469,8 @@ enum {
  */
 #define SOURCE_LEVEL_PALETTE_INDEX 5
 #define SOURCE_HUD_SPECIAL_SHAPE_TABLE 26
+#define SOURCE_HUD_SPECIAL_COOLDOWN_GRAPHIC 93
+#define SOURCE_HUD_SPECIAL_READY_GRAPHIC 94
 #define SOURCE_HUD_SUPERBOMB_GRAPHIC 304
 #define SOURCE_HUD_SUPERBOMB_LIMIT 10
 #define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT 8
@@ -572,6 +594,41 @@ enum {
     (SOURCE_ENEMY_CACHE_UPPER_TILE_BASE + \
         (SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT - \
             SOURCE_OPTION_PROJECTILE_FRAME_COUNT) * \
+            SOURCE_ENEMY_TILES_PER_SLOT)
+/*
+ * Special Weapon OPTION_SHAPES that do not belong to Plasma Storm:
+ *   21 = Xega Ball, native 55x54, presented in one 64x64 8bpp OBJ;
+ *   33 = Banana Bomb child, native 80x79, presented losslessly as six
+ *        hardware-native pieces (64x64, 2x 16x32, 2x 32x16, 16x16).
+ *
+ * Both banks end immediately before Plasma Storm's three-frame reserve and
+ * time-share the upper full-size Sprite2 cache only while the corresponding
+ * equipped Special requires them.  The 8bpp path preserves every source
+ * palette index; no build-time replacement graphic is introduced.
+ */
+#define SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC 21u
+#define SOURCE_SPECIAL_OPTION_XEGA_WIDTH 55u
+#define SOURCE_SPECIAL_OPTION_XEGA_HEIGHT 54u
+#define SOURCE_SPECIAL_OPTION_XEGA_TILES 128u
+#define SOURCE_SPECIAL_OPTION_XEGA_SLOT_COUNT 4u
+#define SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC 33u
+#define SOURCE_SPECIAL_OPTION_BANANA_WIDTH 80u
+#define SOURCE_SPECIAL_OPTION_BANANA_HEIGHT 79u
+#define SOURCE_SPECIAL_OPTION_BANANA_TILES 200u
+#define SOURCE_SPECIAL_OPTION_BANANA_SLOT_COUNT 7u
+#define SOURCE_SPECIAL_OPTION_BANANA_MAIN_TILE_OFFSET 0u
+#define SOURCE_SPECIAL_OPTION_BANANA_RIGHT_TOP_TILE_OFFSET 128u
+#define SOURCE_SPECIAL_OPTION_BANANA_RIGHT_BOTTOM_TILE_OFFSET 144u
+#define SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_LEFT_TILE_OFFSET 160u
+#define SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_MIDDLE_TILE_OFFSET 176u
+#define SOURCE_SPECIAL_OPTION_BANANA_CORNER_TILE_OFFSET 192u
+#define SOURCE_SPECIAL_OPTION_XEGA_TILE_BASE \
+    (SOURCE_OPTION_PROJECTILE_TILE_BASE - \
+        SOURCE_SPECIAL_OPTION_XEGA_SLOT_COUNT * \
+            SOURCE_ENEMY_TILES_PER_SLOT)
+#define SOURCE_SPECIAL_OPTION_BANANA_TILE_BASE \
+    (SOURCE_OPTION_PROJECTILE_TILE_BASE - \
+        SOURCE_SPECIAL_OPTION_BANANA_SLOT_COUNT * \
             SOURCE_ENEMY_TILES_PER_SLOT)
 #endif
 
@@ -813,6 +870,19 @@ _Static_assert(
         OBJ_TILE_COUNT,
     "source OPTION_SHAPES projectile exceeds OBJ VRAM"
 );
+#if !TYRIAN_GBA_STRESS_LOADOUT
+_Static_assert(
+    SOURCE_SPECIAL_OPTION_BANANA_TILE_BASE >=
+        SOURCE_ENEMY_CACHE_UPPER_TILE_BASE &&
+        SOURCE_SPECIAL_OPTION_BANANA_TILE_BASE +
+            SOURCE_SPECIAL_OPTION_BANANA_TILES <=
+            SOURCE_OPTION_PROJECTILE_TILE_BASE &&
+        SOURCE_SPECIAL_OPTION_XEGA_TILE_BASE +
+            SOURCE_SPECIAL_OPTION_XEGA_TILES <=
+            SOURCE_OPTION_PROJECTILE_TILE_BASE,
+    "Special OPTION_SHAPES atlas overlaps non-shared OBJ VRAM"
+);
+#endif
 _Static_assert(
     SOURCE_ENEMY_CACHE_UPPER_TILE_BASE +
         SOURCE_ENEMY_CACHE_UPPER_SLOT_COUNT *
@@ -1117,6 +1187,7 @@ extern const u8 frontend_native_font[];
 extern const u8 frontend_pregame_font[];
 extern const u8 frontend_static_menu_panels[];
 extern const u8 frontend_static_pre_game_frames[];
+extern const u8 frontend_static_save_name_overlay[];
 extern const u8 frontend_static_quit_overlay[];
 extern const u8 frontend_static_quit_choices[];
 extern const u8 frontend_static_quit_shade[];
@@ -1137,7 +1208,25 @@ extern const u8 jukebox_obj_palette[];
 extern const u8 jukebox_titles[];
 extern const u8 jukebox_reciprocal[];
 extern const u8 jukebox_sine[];
+extern const u8 tyrend_gba_frames[];
+extern const u8 tyrend_gba_frames_end[];
+extern const u8 tyrend_gba_palette[];
+extern const u8 tyrend_gba_palette_end[];
 extern const u8 soundbank[];
+
+_Static_assert(
+    TYREND_GBA_FRAME_WIDTH == SCREEN_WIDTH &&
+        TYREND_GBA_FRAME_HEIGHT == SCREEN_HEIGHT &&
+        TYREND_GBA_FRAME_BYTES == FRONTEND_FRAME_BYTES,
+    "predecoded ending frames must match the GBA Mode-4 surface"
+);
+_Static_assert(
+    TYREND_GBA_DATA_BYTES ==
+        TYREND_GBA_FRAME_COUNT * TYREND_GBA_FRAME_BYTES &&
+        TYREND_GBA_PALETTE_BYTES ==
+            OT_PALETTE_COLOUR_COUNT * sizeof(u16),
+    "predecoded ending animation metadata is inconsistent"
+);
 
 typedef struct {
     u8 active;
@@ -1169,6 +1258,20 @@ typedef struct {
     s8 dev_y;
     s8 dir_y;
 } PlayerShot;
+
+/*
+ * Literal JE_doSP()/JE_drawSP() state, narrowed to the ranges authored by
+ * Tyrian.  These particles are rendered through BG3 rather than consuming
+ * the 128-entry OBJ pool, but retain the PC 101-slot overwrite ring.
+ */
+typedef struct {
+    s16 x;
+    s16 y;
+    s8 delta_x;
+    s8 delta_y;
+    u8 color;
+    u8 z;
+} SourceSuperpixel;
 
 typedef struct {
     u8 active;
@@ -1206,6 +1309,9 @@ typedef struct {
 } PickupExplosion;
 
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
+static SourceSuperpixel source_superpixels[MAX_SUPERPIXELS] EWRAM_DATA;
+static u8 source_last_superpixel;
+static u8 source_active_superpixels;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
@@ -1345,8 +1451,8 @@ static OtEpisodeLevel frontend_level EWRAM_BSS;
 static OtEpisodeRouteState frontend_route_state EWRAM_BSS;
 static OtEpisodeSceneReader frontend_scene_reader EWRAM_BSS;
 static OtEpisodeSceneAction frontend_scene_action EWRAM_BSS;
-static OtAnmReader frontend_scene_anm EWRAM_BSS;
 static u16 frontend_scene_palette[OT_PALETTE_COLOUR_COUNT] EWRAM_BSS;
+static u16 frontend_scene_animation_frame EWRAM_BSS;
 static u16 frontend_scene_target_section EWRAM_BSS;
 static u8 frontend_scene_return_mode EWRAM_BSS;
 static u8 frontend_scene_waiting_input EWRAM_BSS;
@@ -1639,6 +1745,8 @@ static u16 player_weapon_energy;
 static u16 player_shield_recharge_cost;
 static u8 player_shield_wait;
 static u32 player_cash;
+/* Shared by the production and full-loadout HUD renderers. */
+static u8 source_special_ready_indicator;
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
 enum {
@@ -1715,7 +1823,9 @@ static u8 source_special_spray;
 static u8 source_special_link_to_player;
 static u8 source_special_weapon_frequency;
 static u8 source_special_zinglon_duration;
-static u8 source_special_astral_duration;
+static u8 source_special_zinglon_visual_half_width;
+static u8 source_special_zinglon_visual_active;
+static u8 source_special_zinglon_damage_pending;
 static u16 source_special_flare_duration;
 static u16 source_special_weapon_id;
 static s8 source_special_weapon_filter;
@@ -1749,7 +1859,14 @@ static s16 stress_sidekick_y[2];
 static s16 stress_player_delta_x;
 static s16 stress_player_delta_y;
 #endif
+/* Stress builds do not activate Astral, but share the BG3/star adapter. */
+static u8 source_player_invulnerable_visual_active;
+static u8 source_special_astral_duration;
+static u8 source_special_astral_visual_active;
 static u8 source_option_projectile_valid;
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static u16 source_special_option_projectile_graphic;
+#endif
 
 static u8 boss_bar_flash;
 static u8 boss_bar_palette_dirty;
@@ -1843,11 +1960,39 @@ static u16 source_detail_wave_table[2]
  * OpenTyrian's lava/water filter varies its sample offset every eight pixels.
  * Keep a spatially low-pass, zero-DC profile for each source filter so that
  * the hardware approximation does not turn those local samples into harsh
- * full-width bands.
+ * full-width bands.  These values depend only on the fixed 240x160 crop and
+ * OpenTyrian's filter formula, so store the verified result in Game Pak ROM
+ * instead of spending EWRAM and boot-time software division on regeneration.
  */
-static s8 source_detail_wave_profile[2]
-    [SOURCE_DETAIL_WAVE_SCANLINES] EWRAM_BSS;
-static u8 source_detail_wave_profile_valid EWRAM_BSS;
+static const s8 source_detail_wave_profile[2]
+    [SOURCE_DETAIL_WAVE_SCANLINES] = {
+    {
+        -3, -3, -3, -3, -2, -2, -1,  0,  0,  1,  2,  2,  3,  3,  3,  3,
+         3,  2,  1,  1,  0,  0, -1, -2, -2, -3, -3, -3, -3, -3, -2, -1,
+        -1,  0,  1,  1,  2,  2,  3,  3,  3,  3,  2,  2,  1,  1,  0, -1,
+        -1, -2, -3, -3, -3, -3, -3, -2, -2, -1,  0,  0,  1,  1,  2,  3,
+         3,  3,  3,  3,  2,  2,  1,  0,  0, -1, -2, -2, -3, -3, -3, -3,
+        -3, -2, -1, -1,  0,  0,  1,  2,  2,  3,  3,  3,  3,  3,  2,  1,
+         1,  0, -1, -1, -2, -2, -3, -3, -3, -3, -2, -2, -1, -1,  0,  1,
+         1,  2,  3,  3,  3,  3,  3,  2,  2,  1,  0,  0, -1, -1, -2, -3,
+        -3, -3, -3, -3, -2, -2, -1,  0,  0,  1,  2,  2,  3,  3,  3,  3,
+         3,  2,  1,  1,  0,  0, -1, -2, -2, -3, -3, -3, -3, -3, -2, -2,
+        -1,
+    },
+    {
+        -1, -2, -2, -2, -1, -1, -1,  0,  0,  0,  1,  1,  1,  1,  2,  2,
+         2,  1,  1,  1,  0,  0,  0, -1, -1, -1, -2, -2, -2, -2, -1, -1,
+        -1,  0,  0,  0,  1,  1,  1,  2,  2,  2,  1,  1,  1,  1,  0,  0,
+         0, -1, -1, -1, -2, -2, -2, -1, -1, -1,  0,  0,  0,  0,  1,  1,
+         1,  2,  2,  2,  1,  1,  1,  0,  0,  0, -1, -1, -1, -1, -2, -2,
+        -2, -1, -1, -1,  0,  0,  0,  1,  1,  1,  2,  2,  2,  2,  1,  1,
+         1,  0,  0,  0, -1, -1, -1, -2, -2, -2, -1, -1, -1, -1,  0,  0,
+         0,  1,  1,  1,  2,  2,  2,  1,  1,  1,  0,  0,  0,  0, -1, -1,
+        -1, -2, -2, -2, -1, -1, -1,  0,  0,  0,  1,  1,  1,  1,  2,  2,
+         2,  1,  1,  1,  0,  0,  0, -1, -1, -1, -2, -2, -2, -2, -1, -1,
+        -1,
+    },
+};
 /* Sustained presentation pressure attenuates only the visual wave adapter. */
 static u16 source_detail_wave_strength_q8 EWRAM_BSS;
 static u8 source_detail_wave_pressure_score EWRAM_BSS;
@@ -1864,6 +2009,8 @@ static u16 gameplay_overlay_map[
 ] EWRAM_BSS;
 static u8 gameplay_overlay_star_nibble[16];
 static u8 gameplay_overlay_warning_colour[16];
+static u8 gameplay_overlay_superpixel_bank[16];
+static u8 gameplay_overlay_superpixel_nibble[16][16];
 static u8 gameplay_overlay_star_bank;
 static u8 gameplay_overlay_event_bank;
 static u8 gameplay_overlay_event_nibble[2];
@@ -1923,6 +2070,14 @@ static u8 presentation_render_pending;
 static u8 presentation_pending_logic_ticks;
 static u8 presentation_registers_valid;
 static u8 presentation_release_held_window;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+static u8 presentation_wave_dispatch_active;
+static u8 presentation_wave_dispatch_pressure;
+static u8 presentation_wave_dispatch_recovery_ticks;
+static u8 presentation_wave_dispatch_idle_render;
+static u8 presentation_wave_dispatch_scope_seen;
+static u32 presentation_wave_dispatch_missed_baseline;
+#endif
 #endif
 
 static u8 oam_count;
@@ -2083,6 +2238,9 @@ volatile u32 telemetry_missed_vblanks_scene_picture_scale;
 volatile u32 telemetry_missed_vblanks_scene_picture_present;
 volatile u32 telemetry_missed_vblanks_scene_text;
 volatile u32 telemetry_missed_vblanks_scene_animation;
+volatile u32 telemetry_scene_animation_decode_frames;
+volatile u32 telemetry_scene_animation_decode_cycles_total;
+volatile u32 telemetry_scene_animation_decode_cycles_max;
 volatile u32 telemetry_missed_vblank_transition_job_last;
 volatile u32 telemetry_missed_vblank_transition_phase_next;
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
@@ -2248,6 +2406,12 @@ volatile u32 telemetry_presentation_superseded;
 volatile u32 telemetry_presentation_pending_logic_max;
 volatile u32 telemetry_presentation_estimate_max;
 volatile u32 telemetry_presentation_deadline_elapsed_max;
+volatile u32 telemetry_wave_dispatch_scope_attempts;
+volatile u32 telemetry_wave_dispatch_entries;
+volatile u32 telemetry_wave_dispatch_exits;
+volatile u32 telemetry_wave_dispatch_logic_busy_deferred;
+volatile u32 telemetry_wave_dispatch_idle_renders;
+volatile u32 telemetry_wave_dispatch_safety_forced;
 volatile u32 telemetry_logic_catchup_updates;
 volatile u32 telemetry_logic_updates_per_loop_max;
 volatile u32 telemetry_logic_backlog_frames_max;
@@ -2275,6 +2439,10 @@ volatile u32 telemetry_perf_audio_input_cycles_total;
 volatile u32 telemetry_perf_audio_input_cycles_max;
 volatile u32 telemetry_perf_prelogic_cycles_total;
 volatile u32 telemetry_perf_prelogic_cycles_max;
+volatile u32 telemetry_perf_prefetch_cycles_total;
+volatile u32 telemetry_perf_prefetch_cycles_max;
+volatile u32 telemetry_perf_loop_work_cycles_total;
+volatile u32 telemetry_perf_loop_work_cycles_max;
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
 volatile u32 telemetry_frontend_quit_capture_cycles_max;
 volatile u32 telemetry_frontend_quit_shade_cycles_max;

@@ -295,6 +295,8 @@ static void source_front_weapon_init(void)
     source_special_power = 0;
     source_special_type = 0;
     source_special_definition_weapon = 0;
+    source_player_invulnerable_visual_active = 0;
+    source_special_ready_indicator = 0;
     source_special_wait = 0;
     source_special_next_wait = 0;
     source_special_fire_held = 0;
@@ -303,7 +305,11 @@ static void source_front_weapon_init(void)
     source_special_link_to_player = 0;
     source_special_weapon_frequency = 0;
     source_special_zinglon_duration = 0;
+    source_special_zinglon_visual_half_width = 0;
+    source_special_zinglon_visual_active = 0;
+    source_special_zinglon_damage_pending = 0;
     source_special_astral_duration = 0;
+    source_special_astral_visual_active = 0;
     source_special_flare_duration = 0;
     source_special_weapon_id = 0;
     source_special_weapon_filter = -99;
@@ -391,6 +397,8 @@ static void stress_loadout_init(void)
     source_parity_level.player_weapon_mode = 1;
     source_parity_level.player_special = 41;
     source_parity_level.player_superbombs = 10;
+    source_player_invulnerable_visual_active = 0;
+    source_special_ready_indicator = 1;
     stress_sidekick_x[0] = player_source_x;
     stress_sidekick_y[0] = (s16)(player_source_y - 20);
     stress_sidekick_x[1] = (s16)(player_source_x + 16);
@@ -419,6 +427,7 @@ static void stress_spawn_weapon(
     s16 origin_y
 )
 {
+    u8 allocated = 0;
     u8 multi;
     u8 spawned = 0;
 
@@ -449,6 +458,7 @@ static void stress_spawn_weapon(
             telemetry_player_shot_drops++;
             break;
         }
+        allocated = 1;
 
         if (
             stress_shot_multi_pos[bay] == weapon->max ||
@@ -523,7 +533,8 @@ static void stress_spawn_weapon(
         telemetry_player_shot_spawns++;
         spawned++;
     }
-    stress_shot_repeat[bay] = weapon->shotrepeat;
+    /* shots.c changes shotRepeat only after finding a free logical slot. */
+    if (allocated) stress_shot_repeat[bay] = weapon->shotrepeat;
     if (spawned) audio_effect(SFX_WEAPON_1);
     stress_update_shot_peak();
 }
@@ -548,6 +559,7 @@ static u8 source_spawn_weapon(
     s16 origin_y
 )
 {
+    u8 allocated = 0;
     u8 multi;
     u8 spawned = 0;
 
@@ -583,8 +595,11 @@ static u8 source_spawn_weapon(
         }
         if (shot == 0) {
             telemetry_player_shot_drops++;
+            /* player_shot_create() returns MAX_PWEAPON immediately. */
+            source_last_spawned_shot_index = MAX_PLAYER_SHOTS;
             break;
         }
+        allocated = 1;
         if (
             source_shot_multi_pos[bay] == weapon->max ||
             source_shot_multi_pos[bay] > 8
@@ -733,7 +748,12 @@ static u8 source_spawn_weapon(
             spawned++;
         }
     }
-    source_shot_repeat[bay] = weapon->shotrepeat;
+    /*
+     * player_shot_create() returns immediately when all 81 slots are busy;
+     * in that case it does not consume the bay cooldown.  A slot whose HDT
+     * graphic/delay resolves to zero still counts as an authored allocation.
+     */
+    if (allocated) source_shot_repeat[bay] = weapon->shotrepeat;
     return spawned;
 }
 #endif
@@ -1184,20 +1204,88 @@ static u8 source_special_sync(void)
         special_id == 0 ||
         !ot_data_hdt_special_read(special_id, &definition)
     ) {
+        (void)source_option_projectile_sync();
         return 0;
     }
     source_special_power = definition.power;
     source_special_type = definition.type;
     source_special_definition_weapon = definition.weapon;
     source_special_valid = definition.type != 0;
+    (void)source_option_projectile_sync();
     return source_special_valid;
 }
 
-static void source_special_complete(void)
+/*
+ * Direct translation of JE_doSpecialShot()'s pwr payment block.
+ *
+ * This helper belongs to OpenTyrian's SFExecuted twiddle/command path, not
+ * to the equipped Special item drawn in the upper-left HUD.  Keep it for the
+ * translated command semantics and their tests, but never call it from the
+ * ordinary gamepad fire path below.  The affordability test, mutation order
+ * and adjusted temp2/effect value remain source-authored.  In particular,
+ * pwr==98 consumes the remaining shield even when fewer than four points
+ * make the activation fail; that surprising ordering is intentional parity.
+ */
+static __attribute__((unused)) u8 source_special_try_pay_cost(
+    u8 encoded_power,
+    u8 *effect_power
+)
+{
+    if (effect_power == NULL) return 0;
+    *effect_power = encoded_power;
+    if (encoded_power == 0) return 1;
+
+    if (encoded_power < 98) {
+        if (player_shield < encoded_power) return 0;
+        player_shield = (u8)(player_shield - encoded_power);
+        return 1;
+    }
+    if (encoded_power == 98) {
+        u8 can_afford = player_shield >= 4;
+
+        *effect_power = player_shield;
+        player_shield = 0;
+        return can_afford;
+    }
+    if (encoded_power == 99) {
+        *effect_power = (u8)(player_shield / 2u);
+        player_shield = *effect_power;
+        return 1;
+    }
+
+    *effect_power = (u8)(encoded_power - 100u);
+    if (player_armor <= *effect_power) return 0;
+    player_armor = (u8)(player_armor - *effect_power);
+    source_parity_level.player_armor = player_armor;
+    return 1;
+}
+
+/*
+ * JE_doSpecialShot() has two independent activation paths.  SFExecuted
+ * decodes pwr while paying for a keyboard combo; the ordinary equipped-item
+ * button does neither, but JE_specialComplete() still reads the shared
+ * scratch byte temp2 for types 12, 13 and 16.  Its value at that point is an
+ * unrelated caller residue, so reproducing it would make Invulnerability
+ * duration depend on whichever PC loop happened to touch temp2 last.
+ *
+ * Keep the source-visible equipped behaviour (no Shield/Armor mutation and
+ * no shot phase reset), while deterministically supplying the same effect
+ * value that the authored pwr encoding denotes.  This is especially
+ * important for Special 37: pwr 98 means the current Shield quantity, not
+ * the literal value 98 (which would incorrectly grant 980 ticks).
+ */
+static u8 source_special_effect_power_without_payment(u8 encoded_power)
+{
+    if (encoded_power < 98u) return encoded_power;
+    if (encoded_power == 98u) return player_shield;
+    if (encoded_power == 99u) return (u8)(player_shield / 2u);
+    return (u8)(encoded_power - 100u);
+}
+
+static void source_special_complete(u8 effect_power)
 {
     OtWeaponDefinition weapon;
     u8 index;
-    u8 effect_power = source_special_power;
 
     if (!source_special_valid) return;
     source_special_next_wait = 0;
@@ -1242,6 +1330,7 @@ static void source_special_complete(void)
 
     case 3: /* Zinglon Blast */
         source_special_zinglon_duration = 50;
+        source_special_zinglon_damage_pending = 0;
         source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 100;
         source_parity_level.frame_sound_queue[7] = 21;
         break;
@@ -1307,6 +1396,7 @@ static void source_special_complete(void)
                 10u * source_parity_level.player_front_weapon_power
             );
             source_special_zinglon_duration = 50;
+            source_special_zinglon_damage_pending = 0;
             source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 100;
             source_parity_level.frame_sound_queue[7] = 21;
             break;
@@ -1362,7 +1452,10 @@ static void source_special_complete(void)
 
     case 12: /* Invulnerability */
         player_invulnerable = (u16)effect_power * 10u;
-        if (source_parity_level.player_super_arcade_mode != 0) {
+        if (
+            source_parity_level.player_super_arcade_mode >= 1 &&
+            source_parity_level.player_super_arcade_mode <= 7
+        ) {
             source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 250;
             if (
                 ot_data_hdt_weapon_read(707, &weapon) &&
@@ -1428,10 +1521,32 @@ static void source_special_complete(void)
     }
 }
 
+static u8 source_special_zinglon_half_width_for_duration(u8 duration)
+{
+    u8 distance;
+
+    if (duration > 50u) duration = 50u;
+    distance = duration > 25u ?
+        (u8)(duration - 25u) :
+        (u8)(25u - duration);
+    return (u8)(25u - distance);
+}
+
+static u8 source_special_zinglon_damage_due_after_tick(u8 duration)
+{
+    return (u8)(
+        duration > 1u &&
+        ((u8)(duration - 1u) % 5u) == 0u
+    );
+}
+
 static void source_special_flare_update(void)
 {
     OtWeaponDefinition weapon;
 
+    /* Backgrounds are drawn before JE_doSpecialShot() decrements Astral. */
+    source_special_astral_visual_active =
+        source_special_astral_duration != 0;
     if (source_special_astral_duration > 0) {
         source_special_astral_duration--;
     }
@@ -1544,7 +1659,27 @@ static void source_special_flare_update(void)
             source_parity_level.filter_active = false;
         }
     }
+    source_special_zinglon_visual_active = 0;
+    source_special_zinglon_visual_half_width = 0;
     if (source_special_zinglon_duration > 1) {
+        /*
+         * varz.c draws the beam with the pre-decrement duration.  Latch
+         * that exact source width for the later GBA presentation pass, then
+         * advance the lifetime and arm only the authored five-tick damage
+         * pulse (shotAvail[MAX_PWEAPON-1]).
+         */
+        source_special_zinglon_visual_half_width =
+            source_special_zinglon_half_width_for_duration(
+                source_special_zinglon_duration
+            );
+        source_special_zinglon_visual_active = 1;
+        if (
+            source_special_zinglon_damage_due_after_tick(
+                source_special_zinglon_duration
+            )
+        ) {
+            source_special_zinglon_damage_pending = 1;
+        }
         source_special_zinglon_duration--;
     }
 }
@@ -1554,6 +1689,14 @@ static void source_special_update(void)
     u8 special_fire;
 
     (void)source_special_sync();
+    /* PC draws graphic 93/94 before decrementing these counters. */
+    source_special_ready_indicator = (
+        source_parity_level.player_special > 0 &&
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] == 0 &&
+        source_special_wait == 0 &&
+        source_special_flare_duration < 2 &&
+        source_special_zinglon_duration < 2
+    );
     if (source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] > 0) {
         source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL]--;
     }
@@ -1576,7 +1719,17 @@ static void source_special_update(void)
         source_special_wait == 0
     ) {
         source_special_fire_held = 1;
-        source_special_complete();
+        /*
+         * varz.c:747..762 equipped-item path: no Shield/Armor payment and
+         * no shotMultiPos reset.  Reset/payment are exclusive to SFExecuted
+         * at varz.c:694..738; preserving the phase lets Pearl Wind, Xega and
+         * the other authored multi-position patterns advance across presses.
+         */
+        source_special_complete(
+            source_special_effect_power_without_payment(
+                source_special_power
+            )
+        );
     }
     source_special_flare_update();
 }
@@ -1940,6 +2093,16 @@ static void update_player(void)
     }
 
     /*
+     * mainint.c decrements an existing invulnerability timer immediately
+     * before drawing the blended ship, then may activate a new Special later
+     * in the same player update.  Latch the visual state first so the final
+     * tick remains visible and a newly activated field begins next frame.
+     */
+    source_player_invulnerable_visual_active =
+        player_invulnerable != 0;
+    if (player_invulnerable) player_invulnerable--;
+
+    /*
      * Direct fixed single-player/keyboard slice of JE_playerMovement().
      * GBA D-pad bits replace keysactive[] only; source acceleration,
      * friction, velocity and clamps remain in PC coordinates.
@@ -2012,6 +2175,10 @@ static void update_player(void)
     if (stress_sidekick_y[0] < 10) stress_sidekick_y[0] = 10;
     stress_sidekick_x[1] = (s16)(player_source_x + 16);
     stress_sidekick_y[1] = player_source_y;
+    source_special_ready_indicator = (
+        source_parity_level.player_special > 0 &&
+        stress_shot_repeat[STRESS_BAY_SPECIAL] == 0
+    );
     for (u8 bay = 0; bay < STRESS_BAY_COUNT; bay++) {
         if (stress_shot_repeat[bay] > 0) {
             stress_shot_repeat[bay]--;
@@ -2099,7 +2266,6 @@ static void update_player(void)
     source_player_history_update(old_x, old_y);
     source_player_weapons_update();
 #endif
-    if (player_invulnerable) player_invulnerable--;
     ot_level_port_update_parallax(&source_parity_level, player_source_x);
 }
 
@@ -2110,6 +2276,92 @@ static void update_player(void)
 #define SOURCE_PLAYER_SHOT_DELTA_X source_player_delta_x
 #define SOURCE_PLAYER_SHOT_DELTA_Y source_player_delta_y
 #endif
+
+static s16 source_superpixel_vector_component(
+    u8 phase,
+    u32 random_value,
+    u8 width
+)
+{
+    s32 product =
+        (s32)((const s16 *)jukebox_sine)[phase] *
+        (s32)(random_value >> 24) *
+        width;
+
+    /* Q15 sine * Q8 uniform radius, with roundf()-equivalent rounding. */
+    if (product >= 0) {
+        return (s16)((product + (1L << 22)) >> 23);
+    }
+    return (s16)-(((-product) + (1L << 22)) >> 23);
+}
+
+static void source_superpixel_spawn(
+    s16 x,
+    s16 y,
+    u8 count,
+    u8 width,
+    u8 color
+)
+{
+    u8 index;
+
+    /* Direct fixed-point translation of varz.c::JE_doSP(). */
+    for (index = 0; index < count; index++) {
+        u8 phase = (u8)(
+            ot_level_port_random(&source_parity_level) >> 24
+        );
+        s16 delta_y = source_superpixel_vector_component(
+            (u8)(phase + 64u),
+            ot_level_port_random(&source_parity_level),
+            width
+        );
+        s16 delta_x = source_superpixel_vector_component(
+            phase,
+            ot_level_port_random(&source_parity_level),
+            width
+        );
+        SourceSuperpixel *pixel;
+
+        source_last_superpixel++;
+        if (source_last_superpixel >= MAX_SUPERPIXELS) {
+            source_last_superpixel = 0;
+        }
+        pixel = &source_superpixels[source_last_superpixel];
+        if (pixel->z == 0 && source_active_superpixels < MAX_SUPERPIXELS) {
+            source_active_superpixels++;
+        }
+        pixel->x = (s16)(x + delta_x);
+        pixel->y = (s16)(y + delta_y);
+        pixel->delta_x = (s8)delta_x;
+        pixel->delta_y = (s8)(delta_y + 1);
+        pixel->color = color;
+        /*
+         * Logic precedes the GBA presentation pass.  One private bias step
+         * preserves JE_drawSP's visible 15..1 sequence while still aging on
+         * every logic tick (PC draws at z, then decrements in one function).
+         */
+        pixel->z = 16;
+    }
+}
+
+static void source_superpixel_update(void)
+{
+    s16 index;
+
+    if (source_active_superpixels == 0) return;
+    /* JE_drawSP() iterates 100..0, moves first, draws, then ages. */
+    for (index = MAX_SUPERPIXELS - 1; index >= 0; index--) {
+        SourceSuperpixel *pixel = &source_superpixels[index];
+
+        if (pixel->z == 0) continue;
+        pixel->x = (s16)(pixel->x + pixel->delta_x);
+        pixel->y = (s16)(pixel->y + pixel->delta_y);
+        pixel->z--;
+        if (pixel->z == 0 && source_active_superpixels != 0) {
+            source_active_superpixels--;
+        }
+    }
+}
 
 static void update_shots(void)
 {
@@ -2244,6 +2496,20 @@ static void update_shots(void)
         player_shot->render_graphic = (u16)(
             player_shot->graphic + player_shot->animation
         );
+        if (
+            player_shot->render_graphic > 1000u &&
+            player_shot->render_graphic <= 60000u
+        ) {
+            source_superpixel_spawn(
+                (s16)(player_shot->x + 7),
+                (s16)(player_shot->y + 6),
+                5,
+                3,
+                (u8)(
+                    (player_shot->render_graphic / 1000u) << 4
+                )
+            );
+        }
         player_shot->animation++;
         if (
             player_shot->animation >=

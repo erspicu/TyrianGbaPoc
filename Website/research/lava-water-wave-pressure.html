@@ -172,6 +172,26 @@
             <div class="metric"><strong>128 → 128</strong><span>最大 OAM</span></div>
           </div>
 
+          <h2 id="adaptive">v73：只在 Wave 壓力中分離 Logic 與 Render</h2>
+          <p>
+            v73 再把動態調節限制在來源真正啟用 lava／water 的期間。偵測到持續
+            deadline miss 後，有跑 source logic 的 LCD frame 優先保留上一張完整
+            scene，沒有跑 logic 的 frame 才建構最新 OAM、tile cache 與 VRAM
+            transaction。Gameplay、RNG、碰撞與音訊 tick 都沒有省略。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>1,231 → 685</strong><span>極限連射 missed VBlank</span></div>
+            <div class="metric"><strong>1,002 → 60</strong><span>安全強制 render</span></div>
+            <div class="metric"><strong>4 → 2</strong><span>audio frame loss</span></div>
+          </div>
+          <p>
+            同一路線不開火仍只有 1 次 missed VBlank，adaptive entry 為 0；沒有
+            wave 的 Episode 1 短測 scope attempt 也是 0。這不是全域降幀，而是
+            在 GBA 已有明確超載證據時，省略永遠不會被顯示的中間 scene 建構。
+            剩餘 685 次來自單一完整 render 或碰撞 phase 本身仍可能超過一個 LCD
+            frame，因此不能誠稱硬體上限已完全消失。
+          </p>
+
           <h2 id="rejected">沒有採用的捷徑</h2>
           <ul>
             <li>沒有把 wave phase 與 held scene 分離；否則凍結的世界會自行游動。</li>
@@ -207,6 +227,7 @@
             <li><a href="#profile">空間 profile</a></li>
             <li><a href="#pressure">負載遲滯</a></li>
             <li><a href="#result">實測結果</a></li>
+            <li><a href="#adaptive">v73 自適應派送</a></li>
             <li><a href="#rejected">捨棄的捷徑</a></li>
             <li><a href="#ai">AI 協作</a></li>
           </ul>

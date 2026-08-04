@@ -179,18 +179,26 @@ static u8 autotest_source_upgrade_loadout(void)
     u16 saved_pad_pressed = pad_pressed;
     u16 saved_weapon_energy = player_weapon_energy;
     u16 saved_shield_recharge_cost = player_shield_recharge_cost;
+    u8 saved_armor = player_armor;
     u8 saved_shield = player_shield;
     u8 saved_shield_max = player_shield_max;
     u8 saved_shield_wait = player_shield_wait;
+    u8 saved_source_armor = source_parity_level.player_armor;
+    u8 saved_special = source_parity_level.player_special;
     u8 saved_generator_power = player_generator_power;
     u8 saved_player_alive = player_alive;
+    u16 saved_player_invulnerable = player_invulnerable;
     u8 saved_unlimited_weapon_energy =
         autotest_unlimited_weapon_energy;
     u8 pass = 1;
     u8 index;
     u8 active;
     u8 special_frames;
+    u8 special_effect_power;
+    u8 special_payment_pass = 1;
     u8 expected_shots;
+    u8 xega_first_phase = 0;
+    u8 xega_second_phase = 0;
 
     /*
      * This focused probe validates the real energy economy.  Other authored
@@ -312,6 +320,154 @@ static u8 autotest_source_upgrade_loadout(void)
         !source_weapon_energy_consume(66) &&
         player_weapon_energy == 65;
 
+    /* Exact JE_doSpecialShot() pwr payment boundary cases. */
+    player_shield = 40;
+    player_armor = 10;
+    source_parity_level.player_armor = 10;
+    if (
+        !source_special_try_pay_cost(20, &special_effect_power) ||
+        special_effect_power != 20 ||
+        player_shield != 20 ||
+        player_armor != 10
+    ) {
+        special_payment_pass = 0;
+    }
+
+    if (
+        source_special_try_pay_cost(21, &special_effect_power) ||
+        special_effect_power != 21 ||
+        player_shield != 20
+    ) {
+        special_payment_pass = 0;
+    }
+
+    player_shield = 12;
+    if (
+        !source_special_try_pay_cost(98, &special_effect_power) ||
+        special_effect_power != 12 ||
+        player_shield != 0
+    ) {
+        special_payment_pass = 0;
+    }
+
+    player_shield = 3;
+    if (
+        source_special_try_pay_cost(98, &special_effect_power) ||
+        special_effect_power != 3 ||
+        player_shield != 0
+    ) {
+        special_payment_pass = 0;
+    }
+
+    player_shield = 11;
+    if (
+        !source_special_try_pay_cost(99, &special_effect_power) ||
+        special_effect_power != 5 ||
+        player_shield != 5
+    ) {
+        special_payment_pass = 0;
+    }
+
+    player_armor = 10;
+    source_parity_level.player_armor = 10;
+    if (
+        !source_special_try_pay_cost(104, &special_effect_power) ||
+        special_effect_power != 4 ||
+        player_armor != 6 ||
+        source_parity_level.player_armor != 6
+    ) {
+        special_payment_pass = 0;
+    }
+
+    player_armor = 10;
+    source_parity_level.player_armor = 10;
+    if (
+        source_special_try_pay_cost(110, &special_effect_power) ||
+        special_effect_power != 10 ||
+        player_armor != 10 ||
+        source_parity_level.player_armor != 10
+    ) {
+        special_payment_pass = 0;
+    }
+    pass = pass && special_payment_pass;
+    pass =
+        pass &&
+        source_special_effect_power_without_payment(20) == 20 &&
+        source_special_effect_power_without_payment(98) == player_shield &&
+        source_special_effect_power_without_payment(99) ==
+            (u8)(player_shield / 2u) &&
+        source_special_effect_power_without_payment(104) == 4;
+
+    /*
+     * Equipped Special parity: JE_doSpecialShot() does not enter its
+     * SFExecuted payment/reset block.  Xega Ball also proves that the exact
+     * OPTION_SHAPES dependency is selected and that weapon position carries
+     * across separate button presses.
+     */
+    clear_entities();
+    source_parity_level.player_special = 14;
+    player_shield = 37;
+    player_armor = 23;
+    source_parity_level.player_armor = player_armor;
+    source_front_weapon_init();
+    pad_now = KEY_A;
+    pad_pressed = 0;
+    source_special_update();
+    xega_first_phase =
+        source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2];
+    pass =
+        pass &&
+        source_special_valid &&
+        source_special_type == 1 &&
+        source_special_definition_weapon == 720 &&
+        source_special_option_projectile_graphic ==
+            SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC &&
+        player_shield == 37 &&
+        player_armor == 23 &&
+        xega_first_phase == 2;
+
+    pad_now = 0;
+    source_special_update();
+    clear_entities();
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+    pad_now = KEY_A;
+    source_special_update();
+    xega_second_phase =
+        source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2];
+    pass =
+        pass &&
+        player_shield == 37 &&
+        player_armor == 23 &&
+        xega_second_phase == 4;
+
+    /* pwr 98 is decoded for the effect but never paid by the equipped path. */
+    pad_now = 0;
+    source_parity_level.player_special = 37;
+    source_special_update();
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_special_flare_duration = 0;
+    source_special_wait = 0;
+    player_invulnerable = 0;
+    pad_now = KEY_A;
+    source_special_update();
+    pass =
+        pass &&
+        player_shield == 37 &&
+        player_armor == 23 &&
+        player_invulnerable == 370;
+    pass =
+        pass &&
+        source_special_zinglon_half_width_for_duration(50) == 0 &&
+        source_special_zinglon_half_width_for_duration(49) == 1 &&
+        source_special_zinglon_half_width_for_duration(25) == 25 &&
+        source_special_zinglon_half_width_for_duration(2) == 2 &&
+        !source_special_zinglon_damage_due_after_tick(50) &&
+        source_special_zinglon_damage_due_after_tick(46) &&
+        !source_special_zinglon_damage_due_after_tick(45) &&
+        source_special_zinglon_damage_due_after_tick(6) &&
+        !source_special_zinglon_damage_due_after_tick(2);
+
 restore:
     clear_entities();
     source_parity_level.player_front_weapon_id = saved_front_id;
@@ -321,6 +477,7 @@ restore:
     source_parity_level.player_weapon_mode = saved_weapon_mode;
     source_parity_level.player_sidekick[0] = saved_sidekick[0];
     source_parity_level.player_sidekick[1] = saved_sidekick[1];
+    source_parity_level.player_special = saved_special;
     memset(
         source_parity_level.frame_sound_queue,
         0,
@@ -330,11 +487,14 @@ restore:
     pad_pressed = saved_pad_pressed;
     player_weapon_energy = saved_weapon_energy;
     player_shield_recharge_cost = saved_shield_recharge_cost;
+    player_armor = saved_armor;
     player_shield = saved_shield;
     player_shield_max = saved_shield_max;
     player_shield_wait = saved_shield_wait;
+    source_parity_level.player_armor = saved_source_armor;
     player_generator_power = saved_generator_power;
     player_alive = saved_player_alive;
+    player_invulnerable = saved_player_invulnerable;
     autotest_unlimited_weapon_energy =
         saved_unlimited_weapon_energy;
     source_front_weapon_init();

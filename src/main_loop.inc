@@ -142,6 +142,8 @@ int main(void)
 #if TYRIAN_GBA_PERF_TIMER
     u32 stress_cycle_start;
     u32 perf_frame_cycle_start;
+    u32 perf_loop_work_start;
+    u32 perf_prefetch_start;
 #endif
 #ifdef AUTOTEST_ROUTE_PERF
     u32 route_perf_loop_start;
@@ -170,13 +172,7 @@ int main(void)
     GBA_WAITCNT = GBA_WAITCNT_ROM_PREFETCH_3_1;
     telemetry_waitcnt = GBA_WAITCNT;
 #if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
-    /*
-     * These two fixed source-derived profiles are moderately expensive to
-     * build.  Prepare them before IRQ/audio startup so the first lava/water
-     * event cannot steal mixer frames or create a one-off gameplay hitch.
-     */
-    source_detail_wave_profile_prepare(0);
-    source_detail_wave_profile_prepare(1);
+    /* The verified fixed wave profiles live in ROM; reset only runtime load. */
     source_detail_wave_runtime_reset();
 #endif
     irqInit();
@@ -397,7 +393,8 @@ int main(void)
 #else
         perf_frame_cycle_start = stress_cycle_counter_read();
 #endif
-        stress_cycle_start = stress_cycle_counter_read();
+        perf_loop_work_start = stress_cycle_counter_read();
+        stress_cycle_start = perf_loop_work_start;
 #endif
 #ifdef AUTOTEST_ROUTE_PERF
         route_perf_loop_start = stress_cycle_counter_read();
@@ -555,14 +552,41 @@ int main(void)
                     AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
                 )
             ) {
+#ifdef AUTOTEST_FRONTEND_CAPTURE_SAVE_CONTEXT_OPTIONS
+                /* Options Load/Save begins through the normal new-game path. */
+                frontend_selection = 0;
+#else
                 /* Homepage Load Game is the production entry path. */
                 frontend_selection = 1;
+#endif
+            } else if (
+                game_state == STATE_GAME_MENU &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_SLOTS ||
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
+                )
+            ) {
+#ifdef AUTOTEST_FRONTEND_CAPTURE_SAVE_CONTEXT_OPTIONS
+                frontend_selection = 3;
+#endif
+            } else if (
+                game_state == STATE_OPTIONS_MENU &&
+                (
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_SLOTS ||
+                    AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
+                )
+            ) {
+#ifdef AUTOTEST_FRONTEND_CAPTURE_SAVE_CONTEXT_OPTIONS
+                frontend_selection = AUTOTEST_FRONTEND_CAPTURE_SAVE_MODE;
+#endif
             } else if (
                 game_state == STATE_SAVE_SLOTS &&
                 AUTOTEST_FRONTEND_CAPTURE_STATE == STATE_SAVE_NAME
             ) {
+#ifndef AUTOTEST_FRONTEND_CAPTURE_SAVE_CONTEXT_OPTIONS
                 /* Exercise the GBA name editor without requiring SRAM. */
                 frontend_save_slot_mode = FRONTEND_SAVE_MODE_SAVE;
+#endif
             } else if (
                 game_state == STATE_GAME_MENU &&
                 (
@@ -621,6 +645,39 @@ int main(void)
                 game_state == AUTOTEST_FRONTEND_CAPTURE_STATE ?
                     0 :
                     KEY_A;
+#elif defined(AUTOTEST_SCENE_ANIMATION_PERF)
+            /*
+             * Route/campaign tests normally dismiss every inter-level action
+             * immediately.  This focused diagnostic keeps the stock ]A ANM
+             * running to natural completion, while still advancing authored
+             * text and the normal post-level menus without manual input.
+             */
+            if (game_state == STATE_EPISODE_SCENE) {
+                pad_pressed =
+                    frontend_scene_animation_active ?
+                        0 :
+                        (
+                            frontend_scene_waiting_input ||
+                            frontend_scene_episode_announcement ?
+                                KEY_A :
+                                0
+                        );
+            } else {
+                pad_pressed =
+                    game_state == STATE_LEVEL_STATS ?
+                        (
+                            frontend_stats_stage >=
+                                FRONTEND_STATS_STAGE_FINAL &&
+                            telemetry_end_level_music_natural_stops != 0 ?
+                                    KEY_A :
+                                    0
+                        ) :
+                        (
+                            autotest_frontend_finish_pending ?
+                                0 :
+                                KEY_A
+                        );
+            }
 #else
             pad_pressed =
                 game_state == STATE_LEVEL_STATS ?
@@ -1405,20 +1462,6 @@ int main(void)
                     pad_now = autotest_input();
                     stress_cycle_start = stress_cycle_counter_read();
 #endif
-#if TYRIAN_GBA_DYNAMIC_FRAME_DROP && \
-    TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
-                    if (presentation_render_pending) {
-                        /*
-                         * This update supersedes a scene already waiting for
-                         * presentation, so the scheduler will force a render
-                         * afterward.  Let background streaming release the
-                         * old display-only row before it allocates the new
-                         * one; both VRAM and register changes commit together
-                         * at the next VBlank.
-                         */
-                        presentation_release_held_window = 1;
-                    }
-#endif
 #ifdef AUTOTEST_ROUTE_PERF
                     route_perf_phase_start =
                         stress_cycle_counter_read();
@@ -1584,7 +1627,8 @@ int main(void)
                     &&
                     gameplay_presentation_should_render(
                         perf_frame_cycle_start,
-                        game_state != game_state_before_logic
+                        game_state != game_state_before_logic,
+                        logic_updates_this_loop
                     )
                 ) {
                     u32 render_start =
@@ -1611,6 +1655,9 @@ int main(void)
 #endif
             }
             if (game_state == STATE_PLAY) {
+#if TYRIAN_GBA_PERF_TIMER
+                perf_prefetch_start = stress_cycle_counter_read();
+#endif
 #ifdef AUTOTEST_ROUTE_PERF
                 route_perf_phase_start = stress_cycle_counter_read();
 #endif
@@ -1626,7 +1673,21 @@ int main(void)
                     stress_cycle_counter_read() -
                         route_perf_phase_start;
 #endif
+#if TYRIAN_GBA_PERF_TIMER
+                stress_cycle_accumulate(
+                    perf_prefetch_start,
+                    &telemetry_perf_prefetch_cycles_total,
+                    &telemetry_perf_prefetch_cycles_max
+                );
+#endif
             }
+#if TYRIAN_GBA_PERF_TIMER
+            stress_cycle_accumulate(
+                perf_loop_work_start,
+                &telemetry_perf_loop_work_cycles_total,
+                &telemetry_perf_loop_work_cycles_max
+            );
+#endif
             telemetry_display_frames++;
 #ifdef AUTOTEST
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS

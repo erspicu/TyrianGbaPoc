@@ -248,6 +248,7 @@ typedef struct {
     uint8_t hit_count;
     uint8_t kill_count;
     uint8_t effect_count;
+    uint8_t superpixel_hit_count;
     uint8_t data_cubes_awarded;
     uint32_t cash_awarded;
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
@@ -562,7 +563,10 @@ void ot_level_port_update_parallax(
     int16_t player_x
 );
 void ot_level_port_initialize_starfield(OtLevelPortState *state);
-void ot_level_port_update_starfield(OtLevelPortState *state);
+void ot_level_port_update_starfield(
+    OtLevelPortState *state,
+    bool force_active
+);
 void ot_level_port_update_low_armor_warning(
     OtLevelPortState *state,
     bool player_alive

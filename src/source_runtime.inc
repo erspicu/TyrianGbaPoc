@@ -317,6 +317,19 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
  */
 static u8 source_option_projectile_build(void)
 {
+    u8 scratch_index;
+
+    /* This decoder borrows the head of the Sprite2 L2 pixel arena. */
+    for (
+        scratch_index = 0;
+        scratch_index <
+            (SOURCE_OPTION_PROJECTILE_BYTES +
+                SOURCE_SPRITE2_L2_FRAME_BYTES - 1u) /
+                SOURCE_SPRITE2_L2_FRAME_BYTES;
+        scratch_index++
+    ) {
+        source_sprite2_l2[scratch_index].valid = 0;
+    }
 #if TYRIAN_GBA_STRESS_LOADOUT
     OtShpSprite sprite;
     const u8 *encoded;
@@ -549,6 +562,285 @@ static u8 source_option_projectile_build(void)
 #endif
 }
 
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static u16 source_special_option_tile_base(u16 graphic)
+{
+    if (graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC) {
+        return SOURCE_SPECIAL_OPTION_XEGA_TILE_BASE;
+    }
+    if (graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+        return SOURCE_SPECIAL_OPTION_BANANA_TILE_BASE;
+    }
+    return 0;
+}
+
+static u8 source_special_option_slot_count(u16 graphic)
+{
+    if (graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC) {
+        return SOURCE_SPECIAL_OPTION_XEGA_SLOT_COUNT;
+    }
+    if (graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+        return SOURCE_SPECIAL_OPTION_BANANA_SLOT_COUNT;
+    }
+    return 0;
+}
+
+static u16 source_special_option_graphic_from_weapon(
+    u16 weapon_id,
+    u8 depth
+)
+{
+    OtWeaponDefinition weapon;
+    u8 position;
+
+    if (
+        weapon_id == 0 ||
+        depth >= 4 ||
+        !ot_data_hdt_weapon_read(weapon_id, &weapon) ||
+        !source_weapon_is_valid(&weapon)
+    ) {
+        return 0;
+    }
+    /* Only 0..max-1 are live; Episode 4 leaves executable-era filler in
+     * unused record positions, which must never be interpreted as chains. */
+    for (position = 0; position < weapon.max; position++) {
+        if (weapon.sg[position] > 60000u) {
+            u16 graphic = (u16)(weapon.sg[position] - 60001u);
+
+            if (
+                graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC ||
+                graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC
+            ) {
+                return graphic;
+            }
+        }
+    }
+    for (position = 0; position < weapon.max; position++) {
+        u8 attack = weapon.attack[position];
+
+        if (attack > 99u && attack < 250u) {
+            u16 graphic = source_special_option_graphic_from_weapon(
+                (u16)(attack - 100u),
+                (u8)(depth + 1u)
+            );
+
+            if (graphic != 0) return graphic;
+        }
+    }
+    return 0;
+}
+
+static u16 source_special_option_required_graphic(void)
+{
+    OtSpecialDefinition special;
+
+    if (
+        source_parity_level.player_special == 0 ||
+        !ot_data_hdt_special_read(
+            source_parity_level.player_special,
+            &special
+        ) ||
+        !(
+            special.type == 1u ||
+            (special.type >= 5u && special.type <= 11u) ||
+            special.type == 16u
+        ) ||
+        special.weapon == 0
+    ) {
+        return 0;
+    }
+    return source_special_option_graphic_from_weapon(special.weapon, 0);
+}
+
+static u8 source_special_option_pixel_offset(
+    u16 graphic,
+    u16 x,
+    u16 y,
+    u32 *offset
+)
+{
+    if (offset == 0) return 0;
+    if (graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC) {
+        if (
+            x >= SOURCE_SPECIAL_OPTION_XEGA_WIDTH ||
+            y >= SOURCE_SPECIAL_OPTION_XEGA_HEIGHT
+        ) {
+            return 0;
+        }
+        *offset = source_sprite2_tile_offset(x, y, 8);
+        return 1;
+    }
+    if (graphic != SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) return 0;
+    if (
+        x >= SOURCE_SPECIAL_OPTION_BANANA_WIDTH ||
+        y >= SOURCE_SPECIAL_OPTION_BANANA_HEIGHT
+    ) {
+        return 0;
+    }
+
+    if (y < 64u) {
+        if (x < 64u) {
+            *offset =
+                SOURCE_SPECIAL_OPTION_BANANA_MAIN_TILE_OFFSET * 32u +
+                source_sprite2_tile_offset(x, y, 8);
+        } else if (y < 32u) {
+            *offset =
+                SOURCE_SPECIAL_OPTION_BANANA_RIGHT_TOP_TILE_OFFSET * 32u +
+                source_sprite2_tile_offset((u16)(x - 64u), y, 2);
+        } else {
+            *offset =
+                SOURCE_SPECIAL_OPTION_BANANA_RIGHT_BOTTOM_TILE_OFFSET * 32u +
+                source_sprite2_tile_offset(
+                    (u16)(x - 64u),
+                    (u16)(y - 32u),
+                    2
+                );
+        }
+    } else if (x < 32u) {
+        *offset =
+            SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_LEFT_TILE_OFFSET * 32u +
+            source_sprite2_tile_offset(x, (u16)(y - 64u), 4);
+    } else if (x < 64u) {
+        *offset =
+            SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_MIDDLE_TILE_OFFSET * 32u +
+            source_sprite2_tile_offset(
+                (u16)(x - 32u),
+                (u16)(y - 64u),
+                4
+            );
+    } else {
+        *offset =
+            SOURCE_SPECIAL_OPTION_BANANA_CORNER_TILE_OFFSET * 32u +
+            source_sprite2_tile_offset(
+                (u16)(x - 64u),
+                (u16)(y - 64u),
+                2
+            );
+    }
+    return 1;
+}
+
+static u8 source_special_option_projectile_build(u16 graphic)
+{
+    OtShpSprite sprite;
+    const u8 *encoded;
+    u8 *target = (u8 *)source_sprite2_l2_tiles;
+    u32 bytes;
+    u32 source = 0;
+    u16 expected_width;
+    u16 expected_height;
+    u16 tile_base = source_special_option_tile_base(graphic);
+    u8 scratch_slots = source_special_option_slot_count(graphic);
+    u8 scratch_index;
+    u16 x = 0;
+    u16 y = 0;
+
+    if (graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC) {
+        expected_width = SOURCE_SPECIAL_OPTION_XEGA_WIDTH;
+        expected_height = SOURCE_SPECIAL_OPTION_XEGA_HEIGHT;
+        bytes = SOURCE_SPECIAL_OPTION_XEGA_TILES * 32u;
+    } else if (graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+        expected_width = SOURCE_SPECIAL_OPTION_BANANA_WIDTH;
+        expected_height = SOURCE_SPECIAL_OPTION_BANANA_HEIGHT;
+        bytes = SOURCE_SPECIAL_OPTION_BANANA_TILES * 32u;
+    } else {
+        return 0;
+    }
+    /*
+     * The shared frontend/gameplay arena doubles as the Sprite2 L2 store.
+     * This cold adapter borrows its first 4/7 frames as a linear decode
+     * canvas; invalidate those keys before writing so a mid-level Special
+     * pickup can never turn a later L2 "hit" into corrupted enemy art.
+     */
+    for (scratch_index = 0; scratch_index < scratch_slots; scratch_index++) {
+        source_sprite2_l2[scratch_index].valid = 0;
+    }
+    source_special_option_projectile_graphic = 0;
+    memset(target, 0, bytes);
+    if (
+        tile_base == 0 ||
+        !source_enemy_palette_valid ||
+        !ot_data_shp_sprite_read(
+            SOURCE_OPTION_PROJECTILE_SOURCE_TABLE,
+            graphic,
+            &sprite
+        ) ||
+        !sprite.populated ||
+        sprite.width != expected_width ||
+        sprite.height != expected_height
+    ) {
+        return 0;
+    }
+    encoded = sprite.encoded.data;
+    while (source < sprite.encoded.size && y < sprite.height) {
+        u8 code = encoded[source++];
+
+        if (code == 255u) {
+            if (source >= sprite.encoded.size) return 0;
+            x = (u16)(x + encoded[source++]);
+        } else if (code == 254u) {
+            x = sprite.width;
+        } else if (code == 253u) {
+            x++;
+        } else {
+            u32 target_offset;
+
+            if (
+                source_special_option_pixel_offset(
+                    graphic,
+                    x,
+                    y,
+                    &target_offset
+                )
+            ) {
+                target[target_offset] = source_enemy_palette_map[code];
+            }
+            x++;
+        }
+        if (x >= sprite.width) {
+            x = 0;
+            y++;
+        }
+    }
+    if (y < sprite.height) return 0;
+    dmaCopy(
+        target,
+        (u8 *)OBJ_BASE_ADR + (u32)tile_base * 32u,
+        bytes
+    );
+    source_special_option_projectile_graphic = graphic;
+    return 1;
+}
+
+static u8 source_special_option_projectile_sync(void)
+{
+    u16 required = source_special_option_required_graphic();
+    u8 slot_count;
+    u8 index;
+
+    if (required == source_special_option_projectile_graphic) return 1;
+    source_special_option_projectile_graphic = 0;
+    if (required == 0) return 1;
+    slot_count = source_special_option_slot_count(required);
+    if (slot_count == 0) return 0;
+
+    for (
+        index = (u8)(
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT -
+            slot_count
+        );
+        index <
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+                SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
+        index++
+    ) {
+        source_enemy_cache[index].valid = 0;
+    }
+    return source_special_option_projectile_build(required);
+}
+#endif
+
 static u8 source_enemy_cache_slot_reserved(u8 slot)
 {
     if (
@@ -584,8 +876,26 @@ static u8 source_enemy_cache_slot_reserved(u8 slot)
     (void)slot;
     return 0;
 #else
-    return
-        source_option_projectile_valid != 0 &&
+    if (source_special_option_projectile_graphic != 0) {
+        u8 slot_count = source_special_option_slot_count(
+            source_special_option_projectile_graphic
+        );
+        u8 first = (u8)(
+            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT -
+            slot_count
+        );
+
+        if (
+            slot >= first &&
+            slot <
+                SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+                    SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        ) {
+            return 1;
+        }
+    }
+    return source_option_projectile_valid != 0 &&
         slot >=
             SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
                 SOURCE_OPTION_PROJECTILE_FRAME_COUNT &&
@@ -602,38 +912,37 @@ static u8 source_option_projectile_sync(void)
     u8 required =
         source_parity_level.player_sidekick[0] == 9 ||
         source_parity_level.player_sidekick[1] == 9;
+    u8 success = 1;
     u8 index;
 
     if (!required) {
         source_option_projectile_valid = 0;
-        return 1;
-    }
-    if (
+    } else if (
         source_option_projectile_valid ==
             (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u
     ) {
-        return 1;
+        /* Already resident. */
+    } else {
+        /*
+         * The three 4bpp 64x32 Plasma Storm frames time-share the final
+         * three full-size enemy cache slots only while option 9 is equipped.
+         */
+        for (
+            index =
+                SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
+                    SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
+            index < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
+            index++
+        ) {
+            source_enemy_cache[index].valid = 0;
+        }
+        if (!source_option_projectile_build()) {
+            source_option_projectile_valid = 0;
+            success = 0;
+        }
     }
-    /*
-     * The three 4bpp 64x32 Plasma Storm frames time-share the final three
-     * full-size enemy cache slots only while that option is equipped.
-     * Standard loadouts retain the complete ordinary full-size bank plus
-     * the fragmented overflow slot used by dense SAVARA scenes.
-     */
-    for (
-        index =
-            SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT -
-                SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
-        index < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
-        index++
-    ) {
-        source_enemy_cache[index].valid = 0;
-    }
-    if (!source_option_projectile_build()) {
-        source_option_projectile_valid = 0;
-        return 0;
-    }
-    return 1;
+    if (!source_special_option_projectile_sync()) success = 0;
+    return success;
 #endif
 }
 

@@ -26,13 +26,18 @@ Tyrian 的 `Special Weapon` 是一個獨立裝備槽，同一時間只會裝備�
 |---|---:|---|
 | `name` | 31 bytes | Pascal 長度加最多 30 bytes CP437 名稱 |
 | `itemgraphic` | `u16` | `spriteSheet10` 的一基底 Sprite2 編號；0 表示沒有圖示 |
-| `pwr` | `u8` | 啟動成本編碼；某些 `stype` 也會把付款後數值用於持續時間或冷卻 |
+| `pwr` | `u8` | `SFExecuted` 指令路徑的成本編碼；部分 `stype` 也把解碼值用於持續時間或冷卻 |
 | `stype` | `u8` | Special 行為分派編號 |
 | `wpn` | `u16` | HDT Weapon 或 Option 定義編號；實際意義由 `stype` 決定 |
 
-### `pwr` 不是單純威力值
+### `pwr` 不是單純威力值，且 PC 有兩條啟動路徑
 
-PC `JE_doSpecialShot()` 的真實支付規則如下：
+PC `JE_doSpecialShot()` 先處理鍵盤 twiddle 產生的 `SFExecuted`，再處理
+左上角目前裝備 Special 的一般按鍵。只有 `SFExecuted` 進入支付與
+`shotMultiPos` 歸零區塊；一般裝備按鍵不扣 Shield／Armor，也不重設射擊
+phase。這兩條路徑不可合併。
+
+`SFExecuted` 的真實支付規則如下：
 
 | `pwr` | 啟動成本／效果輸入 |
 |---:|---|
@@ -43,6 +48,13 @@ PC `JE_doSpecialShot()` 的真實支付規則如下：
 | 100–255 | 扣除 `pwr-100` Armor，而且必須至少保留 1 Armor |
 
 因此 `pwr=104` 代表消耗 4 Armor，不是「104 點威力」。`pwr=100` 的實際扣除量是 0，但仍要求玩家 Armor 大於 0。
+
+原始 C 版的一般裝備路徑還有一個共用暫存變數問題：`stype` 12、13、16
+會讀取未在該路徑設定的全域 `temp2`，結果取決於同一幀稍早碰巧執行的程式。
+GBA 保留「不付款、不重設 phase」的外部行為，但以相同 `pwr` 編碼規則
+穩定產生效果輸入而不異動資源：98 取目前 Shield、99 取目前 Shield 的一半、
+100 以上取 `pwr-100`。因此 Invulnerability 不會因暫存值污染而忽長忽短，
+也不會把 98 誤當成 980 tick。
 
 ## `stype` 行為分派
 
@@ -59,18 +71,35 @@ PC `JE_doSpecialShot()` 的真實支付規則如下：
 | 9 | 與玩家位置連結的武器場；持續 `8 + 2×前武器等級` tick，`pwr` 同時成為追加等待時間 |
 | 10 | 與玩家位置連結的武器場；持續 `14 + 4×前武器等級` tick |
 | 11 | Astral Zone 隨機武器場；頻率為 `pwr`，並維護獨立 Astral 計時 |
-| 12 | 無敵；一般模式持續 `付款後效果值×10` tick，Super Arcade 另有固定 100 tick 與 Weapon 707 行為 |
-| 13 | 修復 Player 1 Armor，修復量為 `付款後效果值/4 + 1` |
+| 12 | 無敵；一般模式持續 `pwr 解碼效果值×10` tick，Super Arcade 另有固定 100 tick 與 Weapon 707 行為 |
+| 13 | 修復 Player 1 Armor，修復量為 `pwr 解碼效果值/4 + 1` |
 | 14 | 修復 Player 2 Armor；GBA 單人版刻意不實作 Player 2 |
-| 16 | 連結玩家的散射場；持續 `付款後效果值×16 + 8` tick，生成彈丸另加隨機 X/Y 速度 |
+| 16 | 連結玩家的散射場；持續 `pwr 解碼效果值×16 + 8` tick，生成彈丸另加隨機 X/Y 速度 |
 | 17 | 若左 Option 已是 `wpn`，再裝到右側；否則裝到左側 |
 | 18 | 直接把 `wpn` 裝到右側 Option |
 
+### Soul of Zinglon 的光柱與傷害規則
+
+PC `JE_doSpecialShot()` 並不是畫數條獨立直線。它以玩家機身
+`x+7` 為中心，在完整戰鬥高度連續執行兩次 `JE_barBright()`：
+
+- `halfWidth = 25 - abs(zinglonDuration - 25)`，50 tick 內由窄變寬、再由寬變窄；
+- 外層比內層左右各多 2 pixel；
+- `JE_barBright()` 保留底下像素的色相，只提高亮度，因此畫面應是實心、可透視背景與敵人的白亮縱向光柱；
+- 遞減後只有 `zinglonDuration % 5 == 0` 才啟用一次合成武器槽的碰撞，因此不是每 tick 都造成傷害；
+- 每次脈衝使用 filter 9、damage 10。Armor 10 以下會摧毀；更強的目標可觸發 damaged transition，但 PC 原碼刻意不逐次扣除其 Armor。
+
+GBA 版以 `WIN0 + hardware brightness increase` 裁出同一個實心縱向區域，
+直接增亮 BG／OBJ 的既有像素，不再使用原先錯誤的六條線段近似。GBA 只有一組
+全域 `BLDY`，所以用 `BLDY=5` 平滑近似 PC 內層 +4、外緣 +2 的雙階亮度；
+形狀、生命週期、五 tick 傷害節奏與 Armor 規則則依 PC 原始流程保留。
+
 ## 會顯示左上角圖示的 24 項
 
-「成本」欄依 PC 原始 `pwr` 規則解碼。「前武器等級」指目前 Front Weapon Power。
+「SFExecuted 成本」欄依 PC 原始 `pwr` 規則解碼，只適用鍵盤 twiddle／
+指令路徑；左上角裝備按鍵不付款。「前武器等級」指目前 Front Weapon Power。
 
-| 圖示 | ID／名稱 | 原始屬性 | 成本 | 行為摘要 |
+| 圖示 | ID／名稱 | 原始屬性 | SFExecuted 成本 | 行為摘要 |
 |---|---|---|---|---|
 | <img src="assets/special-weapons/special-01-repulsor.png" width="48" alt="Repulsor"> | 1 Repulsor | graphic 271; pwr 1; type 2; wpn 0 | Shield 1 | 對所有有效敵彈施加一次遠離玩家的速度修正。 |
 | <img src="assets/special-weapons/special-02-pearl-wind.png" width="48" alt="Pearl Wind"> | 2 Pearl Wind | graphic 273; pwr 10; type 1; wpn 620 | Shield 10 | 直接發射 Weapon 620。 |
@@ -99,7 +128,7 @@ PC `JE_doSpecialShot()` 的真實支付規則如下：
 
 ## 沒有左上角素材的 22 項
 
-這些定義仍可能由事件或 Super Arcade 流程使用，但 `itemgraphic=0`，所以不能當作一般 2×2 HUD 圖示解碼。
+這些定義仍可能由事件或 Super Arcade 流程使用，但 `itemgraphic=0`，所以不能當作一般 2×2 HUD 圖示解碼。下表的「消耗」同樣只描述 `SFExecuted` 指令路徑；事件或裝備路徑不會自動支付。
 
 | ID／名稱 | pwr | stype | wpn | 來源行為摘要 |
 |---|---:|---:|---:|---|
@@ -138,7 +167,12 @@ PC 每幀有兩個獨立的顯示：
 | Ready，graphic 94 | <img src="assets/special-weapons/special-ready-graphic-094.png" width="24" alt="Special ready"> |
 | Cooling down／active，graphic 93 | <img src="assets/special-weapons/special-cooldown-graphic-093.png" width="24" alt="Special cooldown"> |
 
-目前 GBA 已經使用 HDT `itemgraphic` 與原始 2×2 Sprite2 拼法顯示裝備圖示；PC 的 93／94 獨立 Ready 燈尚未接到 GBA HUD，這是後續 source-parity 項目，不應誤認為武器圖示的一部分。
+目前 GBA 已使用 HDT `itemgraphic` 與原始 2×2 Sprite2 拼法顯示裝備圖示，也已把 PC 的 93／94 獨立 Ready 燈接到同一組左上角 HUD。判斷順序保留 PC 行為：先依 `shotRepeat[SPECIAL]`、`specialWait`、`flareDuration`、`zinglonDuration` 判斷本幀圖形，再遞減計時器。
+
+GBA 現有的 gamepad Special 鍵對應 PC 的「目前裝備 Special」路徑，因此不會
+扣 Shield／Armor，也不會把多段武器的 `shotMultiPos` 歸零。`SFExecuted`
+支付 helper 仍依 PC 原碼完整保留並由 autotest 驗證，供日後真正加入 twiddle／
+指令輸入時直接使用；不能把這個 helper 誤接到一般裝備按鍵。
 
 ## `Super Bomb` 的兩套不同機制
 
@@ -161,11 +195,46 @@ PC 每幀有兩個獨立的顯示：
 | 關卡特殊掉落 `evalue > 32100` | 已把 `evalue-32100` 寫入 `player_special` |
 | 跨關與 SRAM 保存 | 已保存目前 Special ID |
 | 24 筆有效圖示 | 已使用原始 Sprite2 資料顯示於左上角 |
-| `stype` 1–18 效果 | GBA 已有相應分派；Player 2 專屬 type 14 刻意省略 |
-| PC Shield／Armor 支付區塊 | **尚未完整移植**：目前 GBA 會讀取 `pwr` 作為效果／冷卻參數，但沒有完整執行 PC 的可負擔檢查與 Shield／Armor 扣除 |
-| PC graphic 93／94 Ready 狀態燈 | **尚未顯示** |
+| 24 項 HUD Special 的 `stype` 1–12 | 已逐項覆蓋；不以籠統的「1–18 都完成」取代依賴稽核。非 HUD 定義中的 Player 2 type 14 依 GBA 單人規格省略，type 13、16–18 仍保留其資料分派 |
+| 兩條啟動路徑 | 一般裝備按鍵不付款、不重設射擊 phase；`SFExecuted` 才使用支付 helper。兩者已分開測試 |
+| PC Shield／Armor 支付區塊 | `SFExecuted` helper 已完整移植 `pwr` 0、1–97、98、99、100–255 的可負擔判斷、扣除順序與付款後效果值；未錯接到 gamepad 裝備路徑 |
+| PC graphic 93／94 Ready 狀態燈 | 已使用原始 `spriteSheet9` graphic 94／93 顯示 Ready／冷卻或作用中狀態 |
+| Soul of Zinglon | 已改為硬體視窗實心增亮光柱；寬度、50 tick 生命週期、每 5 tick 傷害脈衝與特殊 Armor 行為同步 PC 原碼 |
+| Xega Ball／Banana Bomb | 從 ROMFS 原始 `tyrian.shp` 精確載入 OptionShapes graphic 21／33；分別保留 55×54 與 80×79 像素、碰撞範圍及多片 OAM 組合 |
+| Astral Zone | 依 PC 順序遮蔽 background 1、強制 100-star overlay，後續背景層與物件仍正常繪製 |
+| Invulnerability | 依 PC 更新／繪製順序維持透明閃爍；`pwr=98` 使用目前 Shield 推導時間，但一般裝備路徑不扣 Shield |
+| Episode 4 Ice／superpixel | 已移植 101 格循環覆寫池、固定點移動、生命週期、五粒爆散及 16 色 hue；命中 Armor 255 的粒子回饋亦已接回 |
+| Weapon filter／命中回饋 | `shipblastfilter` 使用原始高 nibble，低 nibble 保留素材索引；filter、爆散與 Armor 255 規則不再混用 |
+| 多段射擊與 pool-full | `shotMultiPos` 跨一般裝備觸發持續推進；彈池滿時不錯誤啟動 cooldown，部分配置失敗也不修改錯誤彈槽 |
+| Sprite2／OptionShapes 快取 | 只掃描各 Weapon 的 live `max` slots，遞迴展開 attack chain；借用 L2 slot 前失效舊 metadata，並依關卡資源需求保留 graphic 21／33 |
 
-上述兩個缺口只記錄現況，避免文件把目前 GBA 行為誤寫成已與 PC 完全一致；本文件本身不改變 gameplay 規格。
+Normal 細節 autotest 已覆蓋 `SFExecuted` 的 Shield 直接扣除與不足、
+`pwr=98` 足夠／不足、`pwr=99`、Armor 足夠／不足，以及 Zinglon 寬度／
+五 tick 傷害相位等邊界案例；也直接驗證一般裝備 Xega 不付款且 phase
+由 2 推進到 4，以及 Invulnerability 以目前 Shield 37 取得 370 tick、資源不變。
+SRAM `telemetry_upgrade_loadout_pass=1`。另以無射擊的完整裝備壓力場景
+確認 graphic 94 可見，180 display frames 期間素材、Sprite2 L2、敵機與彈丸
+快取皆無 drop。
+
+GBA 的 superpixel 畫在 sparse 4bpp BG3，避免再消耗已吃緊的 OAM。位置、
+色相、十字形狀與生命週期依 PC 資料；但 GBA 不能在這條 tile 路徑逐像素讀取
+下層畫面的即時亮度，所以亮度混合採固定中間值近似。這是明確的平台適配，
+不是遺漏某一項 Special 的效果。
+
+## 可重現 24 項 runtime 依賴稽核
+
+執行：
+
+```powershell
+.\.venv\Scripts\python.exe tools\audit_special_weapon_runtime.py
+```
+
+稽核器直接解析四個 Episode 的原始 item／weapon 資料，從 24 個 HUD Special
+逐層走訪 live weapon slots 與 attack chain；不使用人工維護的每關 catalog。
+目前結果必須同時滿足：24 個 ID 完整、88 筆 Episode/Weapon 可達記錄、
+OptionShapes 只需 graphic 21／33、Episode 4 superpixel hue 9 合法，以及所有
+HUD `stype` 都有 runtime 分派。任一資料索引、依賴或支援表退化時，腳本會以
+非零 exit code 讓建置／人工稽核立即失敗。
 
 ## 可重現素材導出
 
@@ -192,3 +261,4 @@ PC 每幀有兩個獨立的顯示：
 - GBA Special runtime：[`combat_runtime.inc`](../../src/combat_runtime.inc)
 - GBA HUD：[`gba_scene.inc`](../../src/gba_scene.inc)
 - 素材導出器：[`export_special_weapon_reference.py`](../../tools/export_special_weapon_reference.py)
+- 24 項 runtime 依賴稽核器：[`audit_special_weapon_runtime.py`](../../tools/audit_special_weapon_runtime.py)

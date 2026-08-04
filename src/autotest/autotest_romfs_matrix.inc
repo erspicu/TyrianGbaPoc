@@ -1301,34 +1301,27 @@ static void romfs_matrix_validate_episode_scenes(
         }
     }
     if (failure == 0) {
-        OtAnmReader animation;
-        OtDataView palette;
-        int8_t status;
-        u32 frames = 0;
-        u32 expected_frames;
-
-        memset(frontend_frame_scratch, 0, FRONTEND_FRAME_BYTES);
-        if (!ot_data_anm_begin(&animation, &palette)) {
+        /*
+         * tyrend.anm is deliberately absent from ROMFS.  Its immutable
+         * delta decode and exact 320x200 -> 240x160 projection are verified
+         * by gba_anm_builder.py, then linked as one direct-copy stream.
+         * Validate the linked spans here so an incremental or hand-edited
+         * asset build cannot silently ship truncated ending frames.
+         */
+        if (
+            (u32)(tyrend_gba_frames_end - tyrend_gba_frames) !=
+                TYREND_GBA_DATA_BYTES ||
+            (u32)(tyrend_gba_palette_end - tyrend_gba_palette) !=
+                TYREND_GBA_PALETTE_BYTES
+        ) {
             failure = 12;
-        } else {
-            expected_frames = animation.record_count - 1u;
-            do {
-                status = ot_data_anm_decode_next(
-                    &animation,
-                    frontend_frame_scratch,
-                    FRONTEND_FRAME_BYTES,
-                    SCREEN_WIDTH,
-                    SCREEN_HEIGHT
-                );
-                if (status > 0) frames++;
-            } while (status > 0 && frames <= expected_frames);
-            if (
-                status != 0 ||
-                frames != expected_frames ||
-                palette.size != 4u * OT_PALETTE_COLOUR_COUNT
-            ) {
-                failure = 13;
-            }
+        } else if (
+            TYREND_GBA_FRAME_COUNT == 0 ||
+            TYREND_GBA_FRAME_BYTES != FRONTEND_FRAME_BYTES ||
+            TYREND_GBA_DATA_CRC32 == 0 ||
+            TYREND_GBA_PALETTE_CRC32 == 0
+        ) {
+            failure = 13;
         }
     }
 

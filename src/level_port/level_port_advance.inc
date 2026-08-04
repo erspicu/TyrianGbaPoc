@@ -231,11 +231,19 @@ void ot_level_port_initialize_starfield(OtLevelPortState *state)
     }
 }
 
-void ot_level_port_update_starfield(OtLevelPortState *state)
+void ot_level_port_update_starfield(
+    OtLevelPortState *state,
+    bool force_active
+)
 {
     int16_t index;
 
-    if (state == 0 || !state->star_active) return;
+    /*
+     * backgrnd.c advances the same 100-star array while either the level's
+     * star flag or Astral Zone is active.  Astral deliberately does not
+     * mutate the authored level flag: it temporarily forces presentation.
+     */
+    if (state == 0 || (!state->star_active && !force_active)) return;
     for (index = OT_STARFIELD_STAR_COUNT - 1; index >= 0; index--) {
         /* OpenTyrian deliberately relies on JE_word/u16 wrap-around. */
         state->star_position[index] = (uint16_t)(

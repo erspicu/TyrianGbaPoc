@@ -68,29 +68,6 @@ static void frontend_scene_palette_rgb(
     }
 }
 
-static void frontend_scene_palette_anm(const OtDataView *palette)
-{
-    u16 index;
-
-    memset(frontend_scene_palette, 0, sizeof(frontend_scene_palette));
-    if (
-        palette == 0 ||
-        palette->data == 0 ||
-        palette->size < 4u * OT_PALETTE_COLOUR_COUNT
-    ) {
-        return;
-    }
-    for (index = 1; index < OT_PALETTE_COLOUR_COUNT; index++) {
-        const u8 *bgra = palette->data + (u32)index * 4u;
-
-        frontend_scene_palette[index] = (u16)(
-            (bgra[2] >> 3) |
-            ((bgra[1] >> 3) << 5) |
-            ((bgra[0] >> 3) << 10)
-        );
-    }
-}
-
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
 frontend_scene_scale_pc_frame_rows(
     u8 first_row,
@@ -662,11 +639,21 @@ static void frontend_scene_clear(u8 palette_index)
 
 static u8 frontend_scene_start_animation(void)
 {
-    OtDataView palette;
-
-    if (!ot_data_anm_begin(&frontend_scene_anm, &palette)) return 0;
-    frontend_scene_palette_anm(&palette);
+    if (
+        (u32)(tyrend_gba_frames_end - tyrend_gba_frames) !=
+            TYREND_GBA_DATA_BYTES ||
+        (u32)(tyrend_gba_palette_end - tyrend_gba_palette) !=
+            TYREND_GBA_PALETTE_BYTES
+    ) {
+        return 0;
+    }
+    memcpy(
+        frontend_scene_palette,
+        tyrend_gba_palette,
+        TYREND_GBA_PALETTE_BYTES
+    );
     memset(frontend_frame_scratch, 0, FRONTEND_FRAME_BYTES);
+    frontend_scene_animation_frame = 0;
     frontend_scene_animation_active = 1;
     frontend_scene_animation_wait = 0;
     return 1;
@@ -681,6 +668,7 @@ static void frontend_scene_finish(void)
     frontend_scene_finish_pending = 0;
     frontend_scene_waiting_input = 0;
     frontend_scene_animation_active = 0;
+    frontend_scene_animation_frame = 0;
     frontend_scene_picture_job = FRONTEND_SCENE_PICTURE_JOB_NONE;
     frontend_scene_text_job.active = 0;
     if (frontend_scene_end_episode) {
@@ -716,6 +704,7 @@ static void frontend_episode_announcement_begin(void)
     frontend_scene_finish_pending = 0;
     frontend_scene_end_episode = 0;
     frontend_scene_animation_active = 0;
+    frontend_scene_animation_frame = 0;
     frontend_scene_episode_announcement = 1;
     frontend_scene_animation_wait = 0;
     frontend_scene_warning_delay = 0;
@@ -886,6 +875,7 @@ static u8 frontend_episode_scene_begin(
     frontend_scene_finish_pending = 0;
     frontend_scene_end_episode = 0;
     frontend_scene_animation_active = 0;
+    frontend_scene_animation_frame = 0;
     frontend_scene_episode_announcement = 0;
     frontend_scene_animation_wait = 0;
     frontend_scene_warning_delay = 0;
@@ -940,9 +930,14 @@ static void frontend_episode_scene_update(void)
     }
     if (frontend_scene_animation_active) {
         int8_t status;
+#if TYRIAN_GBA_PERF_TIMER
+        u32 decode_start;
+        u32 decode_elapsed;
+#endif
 
         if (pad_pressed != 0) {
             frontend_scene_animation_active = 0;
+            frontend_scene_animation_frame = 0;
             frontend_scene_animation_wait = 0;
             if (!frontend_frame_pending) frontend_scene_dispatch(0);
             return;
@@ -952,14 +947,34 @@ static void frontend_episode_scene_update(void)
             frontend_scene_animation_wait--;
             return;
         }
-        status = ot_data_anm_decode_next(
-            &frontend_scene_anm,
-            frontend_frame_scratch,
-            FRONTEND_FRAME_BYTES,
-            SCREEN_WIDTH,
-            SCREEN_HEIGHT
-        );
+#if TYRIAN_GBA_PERF_TIMER
+        decode_start = stress_cycle_counter_read();
+#endif
+        if (frontend_scene_animation_frame < TYREND_GBA_FRAME_COUNT) {
+            memcpy(
+                frontend_frame_scratch,
+                tyrend_gba_frames +
+                    (u32)frontend_scene_animation_frame *
+                        TYREND_GBA_FRAME_BYTES,
+                TYREND_GBA_FRAME_BYTES
+            );
+            frontend_scene_animation_frame++;
+            status = 1;
+        } else {
+            status = 0;
+        }
+#if TYRIAN_GBA_PERF_TIMER
+        decode_elapsed = stress_cycle_counter_read() - decode_start;
+        telemetry_scene_animation_decode_cycles_total += decode_elapsed;
+        if (
+            decode_elapsed >
+                telemetry_scene_animation_decode_cycles_max
+        ) {
+            telemetry_scene_animation_decode_cycles_max = decode_elapsed;
+        }
+#endif
         if (status > 0) {
+            telemetry_scene_animation_decode_frames++;
             frontend_present(
                 frontend_frame_scratch,
                 (const u8 *)(const void *)frontend_scene_palette
@@ -969,6 +984,7 @@ static void frontend_episode_scene_update(void)
             return;
         }
         frontend_scene_animation_active = 0;
+        frontend_scene_animation_frame = 0;
         frontend_scene_dispatch(0);
         return;
     }

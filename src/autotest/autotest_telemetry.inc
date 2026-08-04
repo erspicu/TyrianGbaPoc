@@ -987,6 +987,17 @@ static void autotest_finish(void)
         source_parity_level.all_players_gone ? 1u : 0u
     );
 #endif
+    /* Additive inter-level ANM diagnostics; existing schema readers ignore. */
+    sram_write_u32(8752, telemetry_missed_vblanks_episode_scene);
+    sram_write_u32(8756, telemetry_missed_vblanks_scene_picture);
+    sram_write_u32(8760, telemetry_missed_vblanks_scene_text);
+    sram_write_u32(8764, telemetry_missed_vblanks_scene_animation);
+    sram_write_u32(8768, telemetry_scene_animation_decode_frames);
+    sram_write_u32(
+        8772,
+        telemetry_scene_animation_decode_cycles_total
+    );
+    sram_write_u32(8776, telemetry_scene_animation_decode_cycles_max);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;

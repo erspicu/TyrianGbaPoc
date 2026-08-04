@@ -107,12 +107,19 @@ static void gameplay_overlay_prepare_palette(void)
     OtDataView palette;
     u16 star_source[16];
     u16 event_source[2];
+    u16 superpixel_source[16];
     u8 index;
 
     gameplay_overlay_star_bank = 0;
     gameplay_overlay_event_bank = 0;
     memset(gameplay_overlay_star_nibble, 1, 16);
     memset(gameplay_overlay_warning_colour, 1, 16);
+    memset(gameplay_overlay_superpixel_bank, 0, 16);
+    memset(
+        gameplay_overlay_superpixel_nibble,
+        1,
+        sizeof(gameplay_overlay_superpixel_nibble)
+    );
     gameplay_overlay_event_nibble[0] = 1;
     gameplay_overlay_event_nibble[1] = 1;
     if (!ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)) {
@@ -164,6 +171,36 @@ static void gameplay_overlay_prepare_palette(void)
             gameplay_overlay_event_bank,
             0
         );
+
+    /*
+     * JE_drawSP replaces the destination hue with color's high nibble and
+     * derives brightness from the particle plus the covered pixel.  BG3 is
+     * 4bpp, so choose one existing hardware bank per source hue and retain
+     * all sixteen source brightness steps inside that bank.
+     */
+    for (index = 0; index < 16; index++) {
+        u8 brightness;
+
+        for (brightness = 0; brightness < 16; brightness++) {
+            superpixel_source[brightness] = title_palette_colour(
+                &palette,
+                (u8)((index << 4) | brightness)
+            );
+        }
+        gameplay_overlay_superpixel_bank[index] =
+            gameplay_overlay_best_shared_bank(
+                superpixel_source,
+                16
+            );
+        for (brightness = 0; brightness < 16; brightness++) {
+            gameplay_overlay_superpixel_nibble[index][brightness] =
+                gameplay_overlay_best_nibble(
+                    superpixel_source[brightness],
+                    gameplay_overlay_superpixel_bank[index],
+                    0
+                );
+        }
+    }
 }
 
 static void gameplay_overlay_clear_map(void)
@@ -618,7 +655,12 @@ static void gameplay_overlay_draw_starfield(void)
     int16_t index;
 
 #if !defined(AUTOTEST_FORCE_OVERLAY_STARFIELD)
-    if (!source_parity_level.star_active) return;
+    if (
+        !source_parity_level.star_active &&
+        !source_special_astral_visual_active
+    ) {
+        return;
+    }
 #endif
     for (index = OT_STARFIELD_STAR_COUNT - 1; index >= 0; index--) {
         u16 position = source_parity_level.star_position[index];
@@ -683,6 +725,65 @@ static void gameplay_overlay_draw_starfield(void)
                 );
             }
         }
+    }
+}
+
+static void gameplay_overlay_set_superpixel(
+    s16 x,
+    s16 y,
+    u8 hue,
+    u8 brightness
+)
+{
+    u16 cell;
+    u8 bank = gameplay_overlay_superpixel_bank[hue & 0x0fu];
+
+    if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) {
+        return;
+    }
+    cell = (u16)((y >> 3) * 32 + (x >> 3));
+    if (
+        gameplay_overlay_cell_occupied(cell) &&
+        (u8)(gameplay_overlay_map[cell] >> 12) != bank
+    ) {
+        /* Text keeps priority; a 4bpp cell cannot select two banks. */
+        return;
+    }
+    gameplay_overlay_set_pixel(
+        x,
+        y,
+        bank,
+        gameplay_overlay_superpixel_nibble[hue & 0x0fu][
+            brightness & 0x0fu
+        ]
+    );
+}
+
+static void gameplay_overlay_draw_superpixels(void)
+{
+    s16 index;
+
+    if (source_active_superpixels == 0) return;
+    for (index = MAX_SUPERPIXELS - 1; index >= 0; index--) {
+        const SourceSuperpixel *pixel = &source_superpixels[index];
+        s16 x;
+        s16 y;
+        u8 hue;
+        u8 centre;
+        u8 edge;
+
+        if (pixel->z == 0) continue;
+        x = source_world_to_screen_x(pixel->x);
+        y = source_world_to_screen_y(pixel->y);
+        hue = (u8)(pixel->color >> 4);
+        /* Destination brightness is unknown to sparse BG3; use its midpoint. */
+        centre = (u8)((8u + pixel->z) >> 1);
+        edge = (u8)((8u + (pixel->z >> 1)) >> 1);
+        gameplay_overlay_set_superpixel(x, y, hue, centre);
+        gameplay_overlay_set_superpixel((s16)(x - 1), y, hue, edge);
+        gameplay_overlay_set_superpixel((s16)(x + 1), y, hue, edge);
+        gameplay_overlay_set_superpixel(x, (s16)(y - 1), hue, edge);
+        gameplay_overlay_set_superpixel(x, (s16)(y + 1), hue, edge);
     }
 }
 
@@ -871,48 +972,6 @@ static void gameplay_overlay_draw_warning(void)
     );
 }
 
-static void gameplay_overlay_draw_zinglon(void)
-{
-#if !TYRIAN_GBA_STRESS_LOADOUT
-    s16 width;
-    s16 centre;
-    s16 line[6];
-    u8 line_index;
-
-    if (source_special_zinglon_duration <= 1) return;
-    width = (s16)(
-        25 -
-        (
-            source_special_zinglon_duration > 25 ?
-                source_special_zinglon_duration - 25 :
-                25 - source_special_zinglon_duration
-        )
-    );
-    if (width <= 0) return;
-    centre = source_world_to_screen_x((s16)(player_source_x + 7));
-    line[0] = (s16)(centre - width - 2);
-    line[1] = (s16)(centre - width);
-    line[2] = (s16)(centre - 1);
-    line[3] = (s16)(centre + 1);
-    line[4] = (s16)(centre + width);
-    line[5] = (s16)(centre + width + 2);
-    for (line_index = 0; line_index < 6; line_index++) {
-        s16 y;
-
-        for (y = 0; y < SCREEN_HEIGHT; y++) {
-            gameplay_overlay_set_pixel(
-                line[line_index],
-                y,
-                gameplay_overlay_event_bank,
-                gameplay_overlay_event_nibble[
-                    line_index == 0 || line_index == 5 ? 0 : 1
-                ]
-            );
-        }
-    }
-#endif
-}
-
 static void gameplay_overlay_prepare_frame(void)
 {
     gameplay_overlay_active = (u8)(
@@ -920,15 +979,14 @@ static void gameplay_overlay_prepare_frame(void)
         1 ||
 #endif
         source_parity_level.star_active ||
+        source_special_astral_visual_active ||
+        source_active_superpixels != 0 ||
         source_parity_level.warning_active ||
         gameplay_overlay_message_ticks != 0 ||
         (
             source_parity_level.level_timer &&
             source_parity_level.level_timer_countdown != 0
         )
-#if !TYRIAN_GBA_STRESS_LOADOUT
-        || source_special_zinglon_duration > 1
-#endif
     );
     if (!gameplay_overlay_active) {
         gameplay_overlay_upload_pending = 0;
@@ -941,7 +999,7 @@ static void gameplay_overlay_prepare_frame(void)
     gameplay_overlay_draw_event_message();
     gameplay_overlay_draw_warning();
     gameplay_overlay_draw_level_timer();
-    gameplay_overlay_draw_zinglon();
+    gameplay_overlay_draw_superpixels();
     gameplay_overlay_draw_starfield();
     gameplay_overlay_upload_pending = 1;
 }

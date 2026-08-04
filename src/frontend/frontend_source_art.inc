@@ -89,61 +89,59 @@ frontend_apply_static_sparse_overlay(
 }
 
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
-frontend_apply_static_quit_overlay(void)
+frontend_apply_static_dense_overlay(
+    const u8 *overlay,
+    u8 magic_2,
+    u8 magic_3,
+    u16 version,
+    u16 target_x,
+    u16 target_y,
+    u16 width,
+    u16 height
+)
 {
-    const u8 *source =
-        frontend_static_quit_overlay +
-        FRONTEND_STATIC_QUIT_OVERLAY_HEADER_BYTES;
-    u8 row;
+    const u8 *source = overlay + 16u;
+    u16 row;
 
     if (
-        frontend_static_quit_overlay[0] != 'O' ||
-        frontend_static_quit_overlay[1] != 'T' ||
-        frontend_static_quit_overlay[2] != 'Q' ||
-        frontend_static_quit_overlay[3] != 'F' ||
+        overlay[0] != 'O' ||
+        overlay[1] != 'T' ||
+        overlay[2] != magic_2 ||
+        overlay[3] != magic_3 ||
         (u16)(
-            frontend_static_quit_overlay[4] |
-            (frontend_static_quit_overlay[5] << 8)
-        ) != FRONTEND_STATIC_QUIT_OVERLAY_VERSION ||
+            overlay[4] |
+            (overlay[5] << 8)
+        ) != version ||
         (u16)(
-            frontend_static_quit_overlay[6] |
-            (frontend_static_quit_overlay[7] << 8)
-        ) != FRONTEND_STATIC_QUIT_OVERLAY_X ||
+            overlay[6] |
+            (overlay[7] << 8)
+        ) != target_x ||
         (u16)(
-            frontend_static_quit_overlay[8] |
-            (frontend_static_quit_overlay[9] << 8)
-        ) != FRONTEND_STATIC_QUIT_OVERLAY_Y ||
+            overlay[8] |
+            (overlay[9] << 8)
+        ) != target_y ||
         (u16)(
-            frontend_static_quit_overlay[10] |
-            (frontend_static_quit_overlay[11] << 8)
-        ) != FRONTEND_STATIC_QUIT_OVERLAY_WIDTH ||
+            overlay[10] |
+            (overlay[11] << 8)
+        ) != width ||
         (u16)(
-            frontend_static_quit_overlay[12] |
-            (frontend_static_quit_overlay[13] << 8)
-        ) != FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT
+            overlay[12] |
+            (overlay[13] << 8)
+        ) != height ||
+        (width & 3u) != 0
     ) {
         return 0;
     }
-    for (
-        row = 0;
-        row < FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT;
-        row++
-    ) {
+    for (row = 0; row < height; row++) {
         const u32 *source_words =
             (const u32 *)(const void *)source;
         u32 *destination_words = (u32 *)(void *)(
             frontend_frame_scratch +
-            (u32)(FRONTEND_STATIC_QUIT_OVERLAY_Y + row) *
-                SCREEN_WIDTH +
-            FRONTEND_STATIC_QUIT_OVERLAY_X
+            (u32)(target_y + row) * SCREEN_WIDTH + target_x
         );
-        u8 word;
+        u16 word;
 
-        for (
-            word = 0;
-            word < FRONTEND_STATIC_QUIT_OVERLAY_WIDTH / 4u;
-            word++
-        ) {
+        for (word = 0; word < width / 4u; word++) {
             u32 pixel = source_words[word];
             u32 inverse = ~pixel;
             u32 transparent = (
@@ -169,9 +167,37 @@ frontend_apply_static_quit_overlay(void)
                 }
             }
         }
-        source += FRONTEND_STATIC_QUIT_OVERLAY_WIDTH;
+        source += width;
     }
     return 1;
+}
+
+static u8 frontend_apply_static_quit_overlay(void)
+{
+    return frontend_apply_static_dense_overlay(
+        frontend_static_quit_overlay,
+        'Q',
+        'F',
+        FRONTEND_STATIC_QUIT_OVERLAY_VERSION,
+        FRONTEND_STATIC_QUIT_OVERLAY_X,
+        FRONTEND_STATIC_QUIT_OVERLAY_Y,
+        FRONTEND_STATIC_QUIT_OVERLAY_WIDTH,
+        FRONTEND_STATIC_QUIT_OVERLAY_HEIGHT
+    );
+}
+
+static u8 frontend_apply_static_save_name_overlay(void)
+{
+    return frontend_apply_static_dense_overlay(
+        frontend_static_save_name_overlay,
+        'S',
+        'N',
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_VERSION,
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_X,
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_Y,
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_WIDTH,
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEIGHT
+    );
 }
 
 static u8 frontend_apply_static_quit_choice(void)

@@ -20,6 +20,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import gba_asset_support as gba_assets
+import gba_anm_builder as gba_anm
 import gba_music_builder as gba_music
 
 
@@ -223,10 +224,10 @@ FRONTEND_STATIC_MENU_PANEL_BYTES = (
 FRONTEND_STATIC_GAME_MENU_COUNT = 6
 FRONTEND_STATIC_UPGRADE_MENU_COUNT = 8
 FRONTEND_STATIC_OPTIONS_MENU_COUNT = 1
-FRONTEND_STATIC_SAVE_MENU_COUNT = 0
+FRONTEND_STATIC_SAVE_MENU_COUNT = 2
 FRONTEND_STATIC_SAVE_NAME_MENU_COUNT = 0
 FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT = 34
-FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT = 3
+FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT = 0
 FRONTEND_STATIC_SAVE_HELP_STRIP_COUNT = 0
 FRONTEND_STATIC_SAVE_NAME_HELP_STRIP_COUNT = 0
 FRONTEND_STATIC_HELP_STRIP_COUNT = (
@@ -918,7 +919,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     skip_group(39)
     planet_name = read_group(21)
     misc_text = read_group(68)
-    skip_group(5)
+    misc_text_b = read_group(5)
     skip_group(11)
     title_menu = read_group(7)
     event_text = read_group(9)
@@ -926,7 +927,7 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     main_menu_help = read_group(34)
     full_game_menu = read_group(7)
     upgrade_menu = read_group(9)
-    skip_group(8)
+    options_menu = read_group(8)
     skip_group(6)
     skip_group(6)
     skip_group(5)
@@ -936,11 +937,13 @@ def decode_frontend_text(hdt_path: Path) -> dict[str, list[str]]:
     return {
         "planet_name": planet_name,
         "misc_text": misc_text,
+        "misc_text_b": misc_text_b,
         "title_menu": title_menu,
         "event_text": event_text,
         "main_menu_help": main_menu_help,
         "full_game_menu": full_game_menu,
         "upgrade_menu": upgrade_menu,
+        "options_menu": options_menu,
         "episode_name": episode_name,
         "difficulty_name": difficulty_name,
         "gameplay_name": gameplay_name,
@@ -1708,6 +1711,7 @@ def build_frontend_nav_obj_assets(
     bytes,
     bytes,
     bytes,
+    bytes,
     dict[str, int],
     list[str],
 ]:
@@ -2233,6 +2237,7 @@ def build_frontend_static_menu_panels(
     layout: dict[str, int],
     preview: Path,
 ) -> tuple[
+    bytes,
     bytes,
     bytes,
     bytes,
@@ -2825,113 +2830,35 @@ def build_frontend_static_menu_panels(
             )
         add_pre_game(f"difficulty_{selection}", frame, 7)
 
-    # OpenTyrian JE_loadScreen() uses PIC 2 and one full-width list with
-    # three data columns.  The GBA port intentionally keeps only the
-    # one-player page, so the PC left/right 1P/2P controls and their help
-    # line are omitted.  Empty rows are baked once; runtime replaces only
-    # occupied and selected rows from the same source background.
+    # mainint.c:JE_loadScreen() is the title-screen Load entry.  It owns a
+    # full-width PIC 2 page and is not game_menu.c:MENU_LOAD_SAVE.  Keep the
+    # one-player source header and GBA controls here; all twelve rows remain
+    # dynamic so a clean background is always restored before recolouring.
     save_background = source.picture_frame(2)
-    save_first_y = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_FIRST_Y"]
-    save_row_step = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_ROW_STEP"]
-    save_name_x = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_X"]
-    save_name_right = layout["TYRIAN_GBA_LAYOUT_SAVE_NAME_RIGHT"]
-    save_last_x = layout["TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_X"]
-    save_last_right = layout["TYRIAN_GBA_LAYOUT_SAVE_LAST_LEVEL_RIGHT"]
-    save_episode_x = layout["TYRIAN_GBA_LAYOUT_SAVE_EPISODE_X"]
-    save_right = layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT"]
-
-    for mode, title, footer in (
-        (0, "Load Game", "A: Load   B: Back"),
-        (1, "Save Game", "A: Name and save   B: Back"),
-    ):
-        frame = save_background.copy()
-        draw_pregame_centered(
-            frame,
-            title,
-            layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X"],
-            layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y"],
-            0xfb,
-        )
-        for index in range(11):
-            y = save_first_y + index * save_row_step
-            colour = 0xf4 if mode == 0 else 0xfa
-            draw_small_mixed_text(
-                frame,
-                "EMPTY SLOT",
-                save_name_x,
-                y,
-                save_name_right,
-                colour,
-                0xe2,
-            )
-            draw_small_mixed_text(
-                frame,
-                "Last level -----",
-                save_last_x,
-                y,
-                save_last_right,
-                colour,
-                0xe2,
-            )
-        draw_small_mixed_text(
-            frame,
-            "Exit to Main Menu",
-            save_name_x,
-            layout["TYRIAN_GBA_LAYOUT_SAVE_EXIT_Y"],
-            save_right,
-            0xfa,
-            0xe2,
-        )
-        draw_small_mixed_text(
-            frame,
-            footer,
-            layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X"],
-            layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y"],
-            save_right,
-            0xea,
-            0xe2,
-        )
-        add_pre_game(
-            "save_slots_load_base" if mode == 0 else
-                "save_slots_save_base",
-            frame,
-            7,
-        )
-
     frame = save_background.copy()
-    draw_pregame_centered(
+    # mainint.c uses FONT_LARGE at source (160, 5).  Render that exact SHP
+    # face before runtime rather than substituting the compact GBA menu font.
+    source.draw_text(
         frame,
-        "Save Game",
-        layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_CENTER_X"],
-        layout["TYRIAN_GBA_LAYOUT_SAVE_TITLE_Y"],
-        0xfb,
+        source.text["misc_text"][38] or "One Player Saved Games",
+        160,
+        5,
+        0,
+        "center",
+        15,
+        -3,
+        2,
     )
-    for text, y, colour in (
-        ("Choose a pilot name", 42, 0xfa),
-        ("Up/Down: letter", 88, 0xea),
-        ("R+Up/Down: CAPITAL", 98, 0xea),
-        ("A/Right: next   B: erase", 108, 0xea),
-        ("START: save", 120, 0xfe),
-    ):
-        draw_small_mixed_text(
-            frame,
-            text,
-            layout["TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X"],
-            y,
-            save_right,
-            colour,
-            0xe2,
-        )
     draw_small_mixed_text(
         frame,
-        "Hold SELECT to clear the name.",
+        "A: Load   B: Back",
         layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_X"],
         layout["TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y"],
-        save_right,
+        layout["TYRIAN_GBA_LAYOUT_SAVE_SLOT_RIGHT"],
         0xea,
         0xe2,
     )
-    add_pre_game("save_name_base", frame, 7)
+    add_pre_game("title_load_slots_base", frame, 7)
 
     full_game_menu = source.text["full_game_menu"]
     game_fallback = (
@@ -3015,17 +2942,23 @@ def build_frontend_static_menu_panels(
             )
         add(f"upgrade_menu_{selection}", frame)
 
-    # Options retains the Game Menu right panel.  Load/Save is a separate
-    # PC-source full-screen family in the pre-game atlas above.
+    # game_menu.c keeps Options and MENU_LOAD_SAVE on PIC 1.  The slot rows
+    # are patched from live SRAM at runtime, but the immutable right-panel
+    # title comes directly from HDT Menu 3 rather than a captured screenshot.
+    options_menu = source.text["options_menu"]
     frame = menu_chrome.copy()
     draw_menu_centered(
         frame,
-        "Options",
+        options_menu[0] or "Options",
         layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X"],
         layout["TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_Y"],
         0xfb,
     )
-    for index, label in enumerate(("Load", "Save", "Done")):
+    for index, label in enumerate((
+        options_menu[1] or "Load",
+        options_menu[2] or "Save",
+        options_menu[7] or "Done",
+    )):
         draw_menu_centered(
             frame,
             label,
@@ -3035,6 +2968,21 @@ def build_frontend_static_menu_panels(
             0xfa,
         )
     add("options_menu_base", frame)
+
+    for mode, fallback in enumerate(("Load", "Save")):
+        frame = menu_chrome.copy()
+        draw_menu_centered(
+            frame,
+            options_menu[mode + 1] or fallback,
+            layout["TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_CENTER_X"],
+            layout["TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_Y"],
+            0xfb,
+        )
+        add(
+            "game_save_slots_load_base" if mode == 0 else
+                "game_save_slots_save_base",
+            frame,
+        )
 
     # Every mainMenuHelp string is immutable stock HDT text.  Baking the
     # final 240-pixel strip avoids thousands of runtime glyph divisions on
@@ -3052,23 +3000,6 @@ def build_frontend_static_menu_panels(
             f"{len(main_menu_help)}"
         )
     for text in main_menu_help:
-        frame = menu_chrome.copy()
-        draw_small_mixed_text(
-            frame,
-            text,
-            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_X"],
-            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_Y"],
-            layout["TYRIAN_GBA_LAYOUT_GAME_MENU_HELP_RIGHT"],
-            0xEA,
-            0xE2,
-        )
-        help_strips.append(frame[help_strip_y:, :].copy())
-    custom_help = (
-        "Load a saved campaign.",
-        "Save the current campaign.",
-        "Return to Game Menu.",
-    )
-    for text in custom_help:
         frame = menu_chrome.copy()
         draw_small_mixed_text(
             frame,
@@ -3125,6 +3056,34 @@ def build_frontend_static_menu_panels(
             quit_overlay[target_y, target_x] = pixel
 
     misc_text = source.text["misc_text"]
+    # JE_operation(performSave) uses the same OPTION_SHAPES 35 message box
+    # as Quit, but with its own source text and live level/name fields.  Bake
+    # only immutable source pixels/text; runtime reapplies this overlay before
+    # drawing the current level and gamepad-edited pilot name.
+    save_name_overlay = quit_overlay.copy()
+    draw_small_mixed_text(
+        save_name_overlay,
+        misc_text[0] or "Last Level Completed",
+        48,
+        44,
+        192,
+        0xFA,
+    )
+    draw_centered(
+        save_name_overlay,
+        misc_text[9] or "OK",
+        layout["TYRIAN_GBA_LAYOUT_QUIT_OK_CENTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y"],
+        0xFE,
+    )
+    draw_centered(
+        save_name_overlay,
+        misc_text[10] or "CANCEL",
+        layout["TYRIAN_GBA_LAYOUT_QUIT_CANCEL_CENTER_X"],
+        layout["TYRIAN_GBA_LAYOUT_QUIT_CHOICES_Y"],
+        0xF6,
+    )
+
     draw_small_mixed_text(
         quit_overlay,
         misc_text[28] or "Are you sure you want to exit?",
@@ -3219,6 +3178,33 @@ def build_frontend_static_menu_panels(
     )
     quit_stream.extend(quit_dense.tobytes())
     quit_stream = bytes(quit_stream)
+
+    save_name_dense_mask = save_name_overlay != 0xFF
+    save_name_outside_dense = save_name_dense_mask.copy()
+    save_name_outside_dense[
+        quit_dense_y:quit_dense_y + quit_dense_height,
+        quit_dense_x:quit_dense_x + quit_dense_width,
+    ] = False
+    if save_name_outside_dense.any():
+        raise AssertionError("save-name overlay escaped its dense rectangle")
+    save_name_dense = save_name_overlay[
+        quit_dense_y:quit_dense_y + quit_dense_height,
+        quit_dense_x:quit_dense_x + quit_dense_width,
+    ].copy()
+    save_name_stream = bytearray(b"OTSN")
+    save_name_stream.extend(
+        struct.pack(
+            "<6H",
+            1,
+            quit_dense_x,
+            quit_dense_y,
+            quit_dense_width,
+            quit_dense_height,
+            0,
+        )
+    )
+    save_name_stream.extend(save_name_dense.tobytes())
+    save_name_stream = bytes(save_name_stream)
     choice_frames: list[np.ndarray] = []
     for yes_selected in (True, False):
         choice_frame = quit_overlay.copy()
@@ -3390,11 +3376,21 @@ def build_frontend_static_menu_panels(
         "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE": 10,
         "FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT": 3,
         "FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_BASE": 13,
-        "FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT": 2,
-        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE": 15,
-        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT": 1,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT": 1,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE": 14,
+        "FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT": 0,
         "FRONTEND_STATIC_PRE_GAME_FRAME_COUNT": len(pre_game_frames),
         "FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES": len(pre_game_bytes),
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_VERSION": 1,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_X": quit_dense_x,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_Y": quit_dense_y,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_WIDTH": quit_dense_width,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEIGHT": quit_dense_height,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEADER_BYTES": 16,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_PIXEL_BYTES":
+            save_name_dense.size,
+        "FRONTEND_STATIC_SAVE_NAME_OVERLAY_BYTES":
+            len(save_name_stream),
         "FRONTEND_STATIC_QUIT_OVERLAY_VERSION": 1,
         "FRONTEND_STATIC_QUIT_OVERLAY_X": quit_dense_x,
         "FRONTEND_STATIC_QUIT_OVERLAY_Y": quit_dense_y,
@@ -3462,6 +3458,15 @@ def build_frontend_static_menu_panels(
             f"{zlib.crc32(pre_game_bytes):08x}"
         ),
         (
+            "frontend_static_save_name_overlay_strategy="
+            "stock OPTION_SHAPES 35 + HDT labels; live level/name patch"
+        ),
+        f"frontend_static_save_name_overlay_bytes={len(save_name_stream)}",
+        (
+            "frontend_static_save_name_overlay_crc32="
+            f"{zlib.crc32(save_name_stream):08x}"
+        ),
+        (
             "frontend_static_quit_overlay_strategy="
             "build-time dense aligned rectangle + transparent word mask"
         ),
@@ -3520,6 +3525,7 @@ def build_frontend_static_menu_panels(
     return (
         panel_bytes,
         pre_game_bytes,
+        save_name_stream,
         quit_stream,
         choice_bytes,
         shade_stream,
@@ -3550,6 +3556,8 @@ def build_frontend_mode4_assets(
     bytes,
     bytes,
     bytes,
+    bytes,
+    bytes,
     dict[str, int],
     list[str],
 ]:
@@ -3564,6 +3572,7 @@ def build_frontend_mode4_assets(
     (
         static_menu_panels,
         static_pre_game_frames,
+        static_save_name_overlay,
         static_quit_overlay,
         static_quit_choices,
         static_quit_shade,
@@ -4104,6 +4113,7 @@ def build_frontend_mode4_assets(
         pregame_font.tobytes(),
         static_menu_panels,
         static_pre_game_frames,
+        static_save_name_overlay,
         static_quit_overlay,
         static_quit_choices,
         static_quit_shade,
@@ -6989,6 +6999,15 @@ def main() -> None:
         )
 
     (
+        tyrend_gba_frames,
+        tyrend_gba_palette,
+        tyrend_gba_metadata,
+        tyrend_gba_report,
+    ) = gba_anm.build_gba_anm_assets(data_root / "tyrend.anm")
+    (output / "tyrend_gba_frames.bin").write_bytes(tyrend_gba_frames)
+    (output / "tyrend_gba_palette.bin").write_bytes(tyrend_gba_palette)
+
+    (
         frontend_frames,
         frontend_palettes,
         frontend_glyphs,
@@ -6997,6 +7016,7 @@ def main() -> None:
         frontend_pregame_font,
         frontend_static_menu_panels,
         frontend_static_pre_game_frames,
+        frontend_static_save_name_overlay,
         frontend_static_quit_overlay,
         frontend_static_quit_choices,
         frontend_static_quit_shade,
@@ -7055,6 +7075,9 @@ def main() -> None:
     )
     (output / "frontend_static_pre_game_frames.bin").write_bytes(
         frontend_static_pre_game_frames
+    )
+    (output / "frontend_static_save_name_overlay.bin").write_bytes(
+        frontend_static_save_name_overlay
     )
     (output / "frontend_static_quit_overlay.bin").write_bytes(
         frontend_static_quit_overlay
@@ -7258,6 +7281,7 @@ def main() -> None:
     )
     obj_metadata.update(frontend_metadata)
     obj_metadata.update(jukebox_metadata)
+    obj_metadata.update(tyrend_gba_metadata)
     for flash, (bottom, middle, top) in enumerate(boss_bar_flash_colours):
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
@@ -7473,6 +7497,7 @@ def main() -> None:
         *frontend_report,
         *background_palette_report,
         *jukebox_report,
+        *tyrend_gba_report,
         "display_hz=59.7275",
         "logic_hz=34.7826",
         "background_layers=3 (runtime tyrianN.lvl + shapes?.dat + palette.dat)",

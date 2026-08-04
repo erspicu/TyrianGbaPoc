@@ -207,7 +207,8 @@ static void autotest_full_loadout_stress_finish(void)
             (TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER << 9) |
             (TYRIAN_GBA_COLLISION_LAZY_RESULT << 10) |
             (TYRIAN_GBA_COLLISION_PACKED_CALL << 11) |
-            (TYRIAN_GBA_RECOVER_MISSED_VBLANK << 12)
+            (TYRIAN_GBA_RECOVER_MISSED_VBLANK << 12) |
+            (TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH << 13)
     );
     sram_write_u32(204, telemetry_projectile_cache_hits);
     sram_write_u32(208, telemetry_projectile_cache_misses);
@@ -349,6 +350,31 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(436, telemetry_detail_wave_attenuated_frames);
     sram_write_u32(440, telemetry_detail_wave_pressure_score_max);
     sram_write_u32(444, telemetry_detail_wave_strength_min_q8);
+    /*
+     * Additive v73 wave-dispatch and exclusive cycle accounting.  The loop
+     * work envelope is measured once per gameplay loop; commit, audio/input,
+     * logic, render and prefetch are mutually exclusive subranges of it.
+     */
+    sram_write_u32(448, telemetry_wave_dispatch_scope_attempts);
+    sram_write_u32(452, telemetry_wave_dispatch_entries);
+    sram_write_u32(456, telemetry_wave_dispatch_exits);
+    sram_write_u32(
+        460,
+        telemetry_wave_dispatch_logic_busy_deferred
+    );
+    sram_write_u32(464, telemetry_wave_dispatch_idle_renders);
+    sram_write_u32(468, telemetry_wave_dispatch_safety_forced);
+    sram_write_u32(472, telemetry_perf_prefetch_cycles_total);
+    sram_write_u32(476, telemetry_perf_prefetch_cycles_max);
+    sram_write_u32(480, telemetry_perf_loop_work_cycles_total);
+    sram_write_u32(484, telemetry_perf_loop_work_cycles_max);
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    sram_write_u32(488, presentation_wave_dispatch_active);
+    sram_write_u32(492, presentation_wave_dispatch_pressure);
+#else
+    sram_write_u32(488, 0);
+    sram_write_u32(492, 0);
+#endif
     /* The self-test mutates smoothie state, so run it after the snapshot. */
     sram_write_u32(396, autotest_detail_adapter_self_test());
     sram[124] = *(volatile const u8 *)save_type_marker;

@@ -818,6 +818,19 @@ static __attribute__((unused)) void source_apply_player_shot_result(
         }
     }
     player_cash += result->cash_awarded;
+    if (shot != 0 && result->superpixel_hit_count != 0) {
+        u8 hit;
+
+        for (hit = 0; hit < result->superpixel_hit_count; hit++) {
+            source_superpixel_spawn(
+                (s16)(shot->x + 6),
+                (s16)(shot->y + 6),
+                (u8)(original_damage / 2u + 3u),
+                (u8)(original_damage / 4u + 2u),
+                shot->blast_filter
+            );
+        }
+    }
     for (
         effect_index = 0;
         effect_index < result->effect_count;
@@ -859,6 +872,17 @@ static u8 source_option_projectile_collision_radii(
         ] = {24, 28, 23};
         u16 graphic = (u16)(render_graphic - 60001u);
         u8 frame;
+
+        if (graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC) {
+            *radius_w = SOURCE_SPECIAL_OPTION_XEGA_WIDTH / 2u;
+            *radius_h = SOURCE_SPECIAL_OPTION_XEGA_HEIGHT / 2u;
+            return 1;
+        }
+        if (graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+            *radius_w = SOURCE_SPECIAL_OPTION_BANANA_WIDTH / 2u;
+            *radius_h = SOURCE_SPECIAL_OPTION_BANANA_HEIGHT / 2u;
+            return 1;
+        }
 
         if (
             graphic < SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
@@ -997,21 +1021,21 @@ source_process_player_collisions(bool collide_player)
 #endif
 
 #if !TYRIAN_GBA_STRESS_LOADOUT
-    if (
-        !source_parity_level.end_level &&
-        source_special_zinglon_duration > 1
-    ) {
-        s16 width = (s16)(
-            25 -
-            (
-                source_special_zinglon_duration > 25 ?
-                    source_special_zinglon_duration - 25 :
-                    25 - source_special_zinglon_duration
-            )
-        );
-        OtShotCollisionResult zinglon_result;
+    if (source_special_zinglon_damage_pending) {
+        s16 width;
 
-        if (width > 0) {
+        /* The PC synthetic player-shot slot is consumed once per pulse. */
+        source_special_zinglon_damage_pending = 0;
+        width = source_special_zinglon_half_width_for_duration(
+            source_special_zinglon_duration
+        );
+        if (
+            !source_parity_level.end_level &&
+            source_special_zinglon_duration > 1 &&
+            width > 0
+        ) {
+            OtShotCollisionResult zinglon_result;
+
             ot_level_port_collide_zinglon_beam(
                 &source_parity_level,
                 (s16)(player_source_x + 7),
@@ -1104,8 +1128,13 @@ source_process_player_collisions(bool collide_player)
                 damage_and_radii |=
                     (u32)radius_h << 16;
             }
+            /*
+             * shipblastfilter is a source palette-hue byte (0x20, 0x70,
+             * 0x80, 0xd0, ...).  Packed bits 24..27 carry that high nibble;
+             * bit 28 remains the independent iced flag.
+             */
             damage_and_radii |=
-                (u32)(shot->blast_filter & 0x0fu) << 24;
+                (u32)((shot->blast_filter >> 4) & 0x0fu) << 24;
             if (shot->iced != 0) {
                 damage_and_radii |= (u32)1u << 28;
             }
@@ -1122,7 +1151,7 @@ source_process_player_collisions(bool collide_player)
             u8 radius_w;
             u8 radius_h;
             u32 damage_and_radii = shot->damage |
-                ((u32)(shot->blast_filter & 0x0fu) << 24);
+                ((u32)((shot->blast_filter >> 4) & 0x0fu) << 24);
 
             if (shot->iced != 0) {
                 damage_and_radii |= (u32)1u << 28;

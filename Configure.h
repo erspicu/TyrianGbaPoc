@@ -135,6 +135,26 @@
 #endif
 
 /*
+ * Lava/water-only adaptive presentation dispatch.  When a scanline-wave
+ * scene is measurably over budget, authoritative gameplay/audio ticks remain
+ * unchanged while complete scene construction is preferentially moved onto
+ * LCD periods that did not also execute source logic.  A hysteresis gate and
+ * a three-tick freshness ceiling prevent rapid mode toggling and unbounded
+ * visual latency.  This switch has no effect outside authored lava/water
+ * smoothie scenes or below High detail.
+ *
+ * 僅供 lava／water 掃描線波動場景使用的自適應呈現派送。當量測顯示該
+ * 場景超出預算時，遊戲邏輯與音訊 tick 完全不省略，只優先把「完整場景
+ * 建構」移到沒有同時執行來源邏輯的 LCD frame。遲滯判斷與最多三個來源
+ * tick 的畫面新鮮度上限，可避免頻繁切換與無限延遲。High 以下細節或
+ * 非 lava／water 場景完全不受影響。
+ */
+#ifndef TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+#define TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH \
+    TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#endif
+
+/*
  * Keep source logic tied to elapsed LCD periods when presentation drops a
  * frame.  This must remain enabled with the release drop-frame scheduler.
  * 掉幀時仍依 LCD 經過時間追上來源邏輯；正式版動態掉幀必須搭配開啟。
@@ -271,6 +291,20 @@
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_Y
 #define TYRIAN_GBA_LAYOUT_SPECIAL_WEAPON_Y 2
+#endif
+/*
+ * PC graphic 93/94 status lamp is anchored three pixels below and
+ * twenty-two pixels right of the 2x2 Special icon.  Preserve that authored
+ * overlap after moving the complete group into the visible GBA crop.
+ *
+ * PC 的 graphic 93／94 狀態燈，相對 Special 2x2 圖示向右 22、向下 3
+ * pixel；GBA 搬移整組 HUD 後仍保留這個原始相對位置與輕微重疊。
+ */
+#ifndef TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_X
+#define TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_X 26
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_Y
+#define TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_Y 5
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SUPERBOMB_X
 #define TYRIAN_GBA_LAYOUT_SUPERBOMB_X 4
@@ -577,14 +611,16 @@
 #endif
 
 /*
- * Options remains on the Game Menu chrome.  Load/Save follows the PC
- * JE_loadScreen() full-width PIC 2 layout, scaled to 240x160 with its
- * one-player name, Last level and Episode columns.  These are final screen
- * coordinates; keep the slot step at least 8 pixels.
+ * PC has two deliberately different save browsers.  The title-screen Load
+ * entry is mainint.c:JE_loadScreen() on full-width PIC 2.  Game Menu ->
+ * Options -> Load/Save is game_menu.c:MENU_LOAD_SAVE on the PIC 1 merchant
+ * chrome and uses only its right panel.  Keep these final 240x160 layouts
+ * independent; sharing the SRAM records must never merge their presentation.
  *
- * Options 仍沿用 Game Menu 底圖；讀檔／存檔則依 PC JE_loadScreen() 改為
- * PIC 2 全寬單人介面，保留名稱、Last level 與 Episode 三欄並適配
- * 240x160。下列皆為最終螢幕座標；槽列距至少保留 8 像素。
+ * PC 原版有兩套刻意不同的存檔瀏覽畫面：首頁 Load 來自
+ * mainint.c:JE_loadScreen() 的全寬 PIC 2；Game Menu -> Options 的
+ * Load/Save 則來自 game_menu.c:MENU_LOAD_SAVE，沿用 PIC 1 商店／船體
+ * 底圖並只使用右側面板。兩者只共用 SRAM 資料，不可再合併畫面。
  */
 #ifndef TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X
 #define TYRIAN_GBA_LAYOUT_OPTIONS_TITLE_CENTER_X 180
@@ -641,6 +677,41 @@
 #define TYRIAN_GBA_LAYOUT_SAVE_FOOTER_Y 151
 #endif
 
+/* game_menu.c:MENU_LOAD_SAVE right-panel coordinates / 遊戲選單存讀檔右欄。 */
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_CENTER_X
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_CENTER_X 180
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_Y
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_TITLE_Y 8
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_X
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_X 124
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_NAME_RIGHT
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_NAME_RIGHT 184
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_LEVEL_X
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_LEVEL_X 185
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_LEVEL_RIGHT
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_LEVEL_RIGHT 217
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_EPISODE_X
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_EPISODE_X 218
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_RIGHT
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_RIGHT 239
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_FIRST_Y
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_FIRST_Y 30
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_ROW_STEP
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_ROW_STEP 9
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_GAME_SAVE_EXIT_Y
+#define TYRIAN_GBA_LAYOUT_GAME_SAVE_EXIT_Y 129
+#endif
+
 /*
  * Build identity in the lower-left corner of the title screen.
  * 首頁左下角的專案名稱、Git short hash 顯示位置。
@@ -659,6 +730,18 @@
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X
 #define TYRIAN_GBA_LAYOUT_SAVE_NAME_HELP_X 46
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_DIALOG_LEVEL_X
+#define TYRIAN_GBA_LAYOUT_SAVE_DIALOG_LEVEL_X 56
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_DIALOG_LEVEL_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_DIALOG_LEVEL_Y 56
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_DIALOG_NAME_X
+#define TYRIAN_GBA_LAYOUT_SAVE_DIALOG_NAME_X 52
+#endif
+#ifndef TYRIAN_GBA_LAYOUT_SAVE_DIALOG_NAME_Y
+#define TYRIAN_GBA_LAYOUT_SAVE_DIALOG_NAME_Y 72
 #endif
 
 /* Upgrade Ship category panel / Upgrade Ship 分類面板。 */

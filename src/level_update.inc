@@ -538,7 +538,10 @@ static void update_logic(void)
         source_begin_end_level_audio();
     }
     /* backgrnd.c updates this immediately after background 1. */
-    ot_level_port_update_starfield(&source_parity_level);
+    ot_level_port_update_starfield(
+        &source_parity_level,
+        source_special_astral_duration != 0
+    );
     source_sync_runtime_telemetry();
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
@@ -584,6 +587,8 @@ static void update_logic(void)
     source_process_player_collisions(
         player_alive && !source_parity_level.end_level
     );
+    /* tyrian2.c calls JE_drawSP() after shot movement and hit handling. */
+    source_superpixel_update();
     if (
         source_parity_level.event_jump_count !=
             event_jump_count_after_advance

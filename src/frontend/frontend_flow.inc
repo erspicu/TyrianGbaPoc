@@ -867,7 +867,7 @@ static void frontend_begin(void)
     frontend_route_state = (OtEpisodeRouteState){true, false, 1};
     frontend_scene_reader = (OtEpisodeSceneReader){0};
     frontend_scene_action = (OtEpisodeSceneAction){0};
-    frontend_scene_anm = (OtAnmReader){0};
+    frontend_scene_animation_frame = 0;
     frontend_scene_target_section = 0;
     frontend_scene_return_mode = FRONTEND_SCENE_RETURN_GAME_MENU;
     frontend_scene_waiting_input = 0;

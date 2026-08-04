@@ -572,8 +572,9 @@ ot_level_port_collide_player_shot_packed(
     uint8_t damage = (uint8_t)damage_and_radii;
     uint8_t radius_w = (uint8_t)(damage_and_radii >> 8);
     uint8_t radius_h = (uint8_t)(damage_and_radii >> 16);
-    uint8_t blast_filter =
-        (uint8_t)((damage_and_radii >> 24) & 0x0fu);
+    uint8_t blast_filter = (uint8_t)(
+        ((damage_and_radii >> 24) & 0x0fu) << 4
+    );
     bool iced = (damage_and_radii & ((uint32_t)1u << 28)) != 0;
     uint8_t index;
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
@@ -594,6 +595,7 @@ ot_level_port_collide_player_shot_packed(
     result->hit_count = 0;
     result->kill_count = 0;
     result->effect_count = 0;
+    result->superpixel_hit_count = 0;
     result->data_cubes_awarded = 0;
     result->cash_awarded = 0;
 #endif
@@ -669,6 +671,7 @@ ot_level_port_collide_player_shot_packed(
             result->hit_count = 0;
             result->kill_count = 0;
             result->effect_count = 0;
+            result->superpixel_hit_count = 0;
             result->data_cubes_awarded = 0;
             result->cash_awarded = 0;
             result->collided = true;
@@ -704,16 +707,19 @@ ot_level_port_collide_player_shot_packed(
             if (enemy->armorleft != 255) {
                 enemy->armorleft =
                     (uint8_t)(enemy->armorleft - damage_before);
+                ot_add_hit_effect(
+                    result->effects,
+                    &result->effect_count,
+                    shot_x,
+                    shot_y,
+                    false,
+                    enemy->enemyground,
+                    0
+                );
+            } else if (result->superpixel_hit_count != 255u) {
+                /* tyrian2.c uses JE_doSP(), not a hit explosion, here. */
+                result->superpixel_hit_count++;
             }
-            ot_add_hit_effect(
-                result->effects,
-                &result->effect_count,
-                shot_x,
-                shot_y,
-                false,
-                enemy->enemyground,
-                0
-            );
             if (
                 (int16_t)armor - damage_before <= enemy->edlevel &&
                 (
@@ -764,6 +770,7 @@ void ot_level_port_collide_zinglon_beam(
     result->hit_count = 0;
     result->kill_count = 0;
     result->effect_count = 0;
+    result->superpixel_hit_count = 0;
     result->data_cubes_awarded = 0;
     result->cash_awarded = 0;
     if (state == 0 || half_width == 0) return;
@@ -805,9 +812,12 @@ void ot_level_port_collide_zinglon_beam(
         }
         if (armor > 10) {
             state->frame_sound_queue[5] = 3;
-            if (enemy->armorleft != 255) {
-                enemy->armorleft = (uint8_t)(enemy->armorleft - 10u);
-            }
+            /*
+             * tyrian2.c deliberately skips armor subtraction for the
+             * synthetic MAX_PWEAPON-1 Zinglon slot.  It destroys targets at
+             * ten armor or below and may trigger an authored damaged-state
+             * threshold, but it does not chip stronger armor each pulse.
+             */
             if (
                 (int16_t)armor - 10 <= enemy->edlevel &&
                 ((!enemy->edamaged) ^ (enemy->edani < 0))

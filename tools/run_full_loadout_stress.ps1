@@ -30,6 +30,7 @@ param(
     [ValidateRange(1, 20000)]
     [int]$DurationVBlanks = 3600,
     [string]$ScreenshotPath = "",
+    [switch]$NoFire,
     [switch]$NoBuild
 )
 
@@ -55,9 +56,11 @@ $stopTag = if ($EndPosition -gt 0) {
 } else {
     "vb$DurationVBlanks"
 }
+$inputTag = if ($NoFire) { "_nofire" } else { "" }
+$stressFire = if ($NoFire) { 0 } else { 1 }
 $name = (
     "tyrian_gba_full_loadout_sprite_stress_" +
-    "ep${Episode}_section${Section}_${stopTag}_v70_" +
+    "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
     "${Variant}_detail_${DetailLevel}_speed_normal"
 )
 $rom = Join-Path $buildDir "$name.gba"
@@ -103,6 +106,7 @@ if (-not $NoBuild) {
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
+        "STRESS_FIRE=$stressFire " +
         "STRESS_DIAGNOSTIC=$Variant full-loadout-stress"
     )
     & $bash -lc $command
@@ -151,7 +155,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 448) {
+if ($bytes.Length -lt 496) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -174,6 +178,8 @@ $vblankIrqCyclesTotal = Read-U32 236
 $commitCyclesTotal = Read-U32 244
 $audioInputCyclesTotal = Read-U32 252
 $prelogicCyclesTotal = Read-U32 260
+$prefetchCyclesTotal = Read-U32 472
+$loopWorkCyclesTotal = Read-U32 480
 $renderCompleted = Read-U32 276
 $diagnosticFlags = Read-U32 200
 $vblankRecoveryLoops = Read-U32 328
@@ -183,6 +189,7 @@ $audioFrameLoss = [math]::Max(0, $displayFrames - $audioFrames)
 $telemetry = [ordered]@{
     schema = $magic
     variant = $Variant
+    no_fire = [bool]$NoFire
     detail_level = Read-U32 8
     game_speed = Read-U32 12
     display_frames = $displayFrames
@@ -299,6 +306,18 @@ $telemetry = [ordered]@{
     detail_wave_attenuated_frames = Read-U32 436
     detail_wave_pressure_score_max = Read-U32 440
     detail_wave_strength_min_q8 = Read-U32 444
+    wave_dispatch_scope_attempts = Read-U32 448
+    wave_dispatch_entries = Read-U32 452
+    wave_dispatch_exits = Read-U32 456
+    wave_dispatch_logic_busy_deferred = Read-U32 460
+    wave_dispatch_idle_renders = Read-U32 464
+    wave_dispatch_safety_forced = Read-U32 468
+    prefetch_cycles_total = $prefetchCyclesTotal
+    prefetch_cycles_max = Read-U32 476
+    loop_work_cycles_total = $loopWorkCyclesTotal
+    loop_work_cycles_max = Read-U32 484
+    wave_dispatch_active_at_finish = Read-U32 488
+    wave_dispatch_pressure_at_finish = Read-U32 492
     screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
@@ -356,6 +375,32 @@ $telemetry = [ordered]@{
     } else {
         0
     }
+    prefetch_cycles_average = if ($displayFrames) {
+        [math]::Round($prefetchCyclesTotal / $displayFrames, 2)
+    } else {
+        0
+    }
+    loop_work_cycles_average = if ($displayFrames) {
+        [math]::Round($loopWorkCyclesTotal / $displayFrames, 2)
+    } else {
+        0
+    }
+    exclusive_stage_cycles_total = (
+        $commitCyclesTotal +
+        $audioInputCyclesTotal +
+        $logicCyclesTotal +
+        $renderCyclesTotal +
+        $prefetchCyclesTotal
+    )
+    dispatch_and_other_cycles_total = [math]::Max(
+        0,
+        $loopWorkCyclesTotal -
+            $commitCyclesTotal -
+            $audioInputCyclesTotal -
+            $logicCyclesTotal -
+            $renderCyclesTotal -
+            $prefetchCyclesTotal
+    )
 }
 if (
     $bytes[4] -ne 1 -or

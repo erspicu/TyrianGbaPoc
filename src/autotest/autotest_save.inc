@@ -187,9 +187,10 @@ static void autotest_save_flow(void)
     }
 
     /*
-     * The title-screen Load Game entry must use the same production slot
-     * browser as Options, return to the highlighted title item on cancel,
-     * and restore a real campaign before scheduling Game Menu preparation.
+     * Title Load and Options Load/Save deliberately share the SRAM model and
+     * controller, but preserve the two distinct PC presentation contexts.
+     * Title cancel returns to its highlighted item; Options cancel returns to
+     * the matching Load/Save row on the PIC 1 Game Menu chrome.
      */
     frontend_save_open_slots(
         FRONTEND_SAVE_MODE_LOAD,
@@ -216,6 +217,144 @@ static void autotest_save_flow(void)
         frontend_selection != 1
     ) {
         failures |= 1u << 9;
+    }
+    frontend_save_open_slots(
+        FRONTEND_SAVE_MODE_LOAD,
+        STATE_OPTIONS_MENU,
+        0
+    );
+    if (
+        game_state != STATE_SAVE_SLOTS ||
+        frontend_save_title_context() ||
+        frontend_save_game_slots_panel() !=
+            FRONTEND_STATIC_SAVE_MENU_BASE
+    ) {
+        failures |= 1u << 11;
+    }
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_save_slots_patch_pending = 0;
+    pad_pressed = KEY_B;
+    if (
+        !frontend_save_frontend_update() ||
+        game_state != STATE_OPTIONS_MENU ||
+        frontend_selection != 0
+    ) {
+        failures |= 1u << 12;
+    }
+    frontend_save_open_slots(
+        FRONTEND_SAVE_MODE_SAVE,
+        STATE_OPTIONS_MENU,
+        1
+    );
+    if (
+        game_state != STATE_SAVE_SLOTS ||
+        frontend_save_title_context() ||
+        frontend_save_slot_mode != FRONTEND_SAVE_MODE_SAVE ||
+        frontend_save_game_slots_panel() !=
+            FRONTEND_STATIC_SAVE_MENU_BASE + 1u
+    ) {
+        failures |= 1u << 13;
+    }
+    frontend_frame_pending = 0;
+    frontend_pending_kind = FRONTEND_PENDING_NONE;
+    frontend_save_slots_patch_pending = 0;
+    pad_pressed = KEY_B;
+    if (
+        !frontend_save_frontend_update() ||
+        game_state != STATE_OPTIONS_MENU ||
+        frontend_selection != 1
+    ) {
+        failures |= 1u << 14;
+    }
+    {
+        u16 x;
+        u16 row = TYRIAN_GBA_LAYOUT_GAME_SAVE_SLOT_FIRST_Y;
+
+        /* MENU_LOAD_SAVE row patches must never touch the live ship/status
+         * half of PIC 1.  This catches the former 240-pixel row restore that
+         * sliced the left illustration into horizontal background bands. */
+        frontend_save_return_state = STATE_OPTIONS_MENU;
+        frontend_save_slot_mode = FRONTEND_SAVE_MODE_LOAD;
+        for (x = 0; x < FRONTEND_STATIC_MENU_PANEL_X; x++) {
+            frontend_frame_scratch[(u32)row * SCREEN_WIDTH + x] =
+                (u8)(0x40u ^ x);
+        }
+        frontend_save_clear_slot_row(0);
+        for (x = 0; x < FRONTEND_STATIC_MENU_PANEL_X; x++) {
+            if (
+                frontend_frame_scratch[(u32)row * SCREEN_WIDTH + x] !=
+                    (u8)(0x40u ^ x)
+            ) {
+                failures |= 1u << 15;
+                break;
+            }
+        }
+    }
+    {
+        u32 recolour_checksum = 2166136261u;
+        u32 redraw_checksum = 2166136261u;
+        u8 old_selection = slot;
+        u8 new_selection = (u8)(slot + 1u);
+        u8 row_index;
+        u16 x;
+
+        /*
+         * Title slot navigation keeps the source FULL_SHADE background and
+         * only repaints main glyph pixels.  Its result must remain bit-exact
+         * to an expensive clear + complete redraw; otherwise repeated cursor
+         * movement could trade the audio fix for text/shade artefacts.
+         */
+        frontend_save_return_state = STATE_TITLE;
+        memcpy(
+            frontend_frame_scratch,
+            frontend_save_title_slots_frame(),
+            FRONTEND_FRAME_BYTES
+        );
+        frontend_save_draw_title_slot(old_selection, 1);
+        frontend_save_draw_title_slot(new_selection, 0);
+        frontend_selection = new_selection;
+        frontend_render_save_slot_selection(old_selection);
+        for (row_index = 0; row_index < 2; row_index++) {
+            u8 selection = row_index == 0 ? old_selection : new_selection;
+            u16 y = (u16)frontend_save_slot_y(selection);
+            u16 row;
+
+            for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
+                for (x = 0; x < SCREEN_WIDTH; x++) {
+                    recolour_checksum ^=
+                        frontend_frame_scratch[
+                            (u32)(y + row) * SCREEN_WIDTH + x
+                        ];
+                    recolour_checksum *= 16777619u;
+                }
+            }
+        }
+        frontend_frame_pending = 0;
+        frontend_pending_kind = FRONTEND_PENDING_NONE;
+        frontend_dirty_count = 0;
+        frontend_save_clear_slot_row(old_selection);
+        frontend_save_draw_title_slot(old_selection, 0);
+        frontend_save_clear_slot_row(new_selection);
+        frontend_save_draw_title_slot(new_selection, 1);
+        for (row_index = 0; row_index < 2; row_index++) {
+            u8 selection = row_index == 0 ? old_selection : new_selection;
+            u16 y = (u16)frontend_save_slot_y(selection);
+            u16 row;
+
+            for (row = 0; row < FRONTEND_SAVE_SLOT_ROW_HEIGHT; row++) {
+                for (x = 0; x < SCREEN_WIDTH; x++) {
+                    redraw_checksum ^=
+                        frontend_frame_scratch[
+                            (u32)(y + row) * SCREEN_WIDTH + x
+                        ];
+                    redraw_checksum *= 16777619u;
+                }
+            }
+        }
+        if (recolour_checksum != redraw_checksum) {
+            failures |= 1u << 15;
+        }
     }
     frontend_save_open_slots(
         FRONTEND_SAVE_MODE_LOAD,

@@ -169,7 +169,7 @@ _Static_assert(
         FRONTEND_STATIC_OPTIONS_MENU_BASE ==
             FRONTEND_STATIC_UPGRADE_MENU_BASE +
                 FRONTEND_STATIC_UPGRADE_MENU_COUNT &&
-        FRONTEND_STATIC_SAVE_MENU_COUNT == 0 &&
+        FRONTEND_STATIC_SAVE_MENU_COUNT == 2 &&
         FRONTEND_STATIC_SAVE_MENU_BASE ==
             FRONTEND_STATIC_OPTIONS_MENU_BASE +
                 FRONTEND_STATIC_OPTIONS_MENU_COUNT &&
@@ -198,14 +198,27 @@ _Static_assert(
         FRONTEND_STATIC_PRE_GAME_DIFFICULTY_BASE == 10 &&
         FRONTEND_STATIC_PRE_GAME_DIFFICULTY_COUNT == 3 &&
         FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_BASE == 13 &&
-        FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT == 2 &&
-        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE == 15 &&
-        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT == 1 &&
-        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 16 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_SLOTS_COUNT == 1 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_BASE == 14 &&
+        FRONTEND_STATIC_PRE_GAME_SAVE_NAME_COUNT == 0 &&
+        FRONTEND_STATIC_PRE_GAME_FRAME_COUNT == 14 &&
         FRONTEND_STATIC_PRE_GAME_FRAMES_BYTES ==
             FRONTEND_STATIC_PRE_GAME_FRAME_COUNT *
                 FRONTEND_FRAME_BYTES,
     "generated static pre-game frame atlas changed"
+);
+_Static_assert(
+    FRONTEND_STATIC_SAVE_NAME_OVERLAY_VERSION == 1 &&
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_X % 4 == 0 &&
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_WIDTH % 4 == 0 &&
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEADER_BYTES == 16 &&
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_PIXEL_BYTES ==
+            FRONTEND_STATIC_SAVE_NAME_OVERLAY_WIDTH *
+                FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEIGHT &&
+        FRONTEND_STATIC_SAVE_NAME_OVERLAY_BYTES ==
+            FRONTEND_STATIC_SAVE_NAME_OVERLAY_HEADER_BYTES +
+                FRONTEND_STATIC_SAVE_NAME_OVERLAY_PIXEL_BYTES,
+    "generated static save-name overlay changed"
 );
 _Static_assert(
     FRONTEND_STATIC_QUIT_OVERLAY_VERSION == 1 &&
@@ -931,7 +944,7 @@ _Static_assert(
         FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT == 34 &&
         FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE ==
             FRONTEND_STATIC_SOURCE_HELP_STRIP_COUNT &&
-        FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT == 3 &&
+        FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT == 0 &&
         FRONTEND_STATIC_SAVE_HELP_STRIP_BASE ==
             FRONTEND_STATIC_OPTIONS_HELP_STRIP_BASE +
                 FRONTEND_STATIC_OPTIONS_HELP_STRIP_COUNT &&
@@ -2447,6 +2460,43 @@ static void frontend_blit_pregame_font(
     }
 }
 
+static void frontend_blit_pregame_font_darken(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y
+)
+{
+    u8 width = frontend_pregame_font_width(tile_index);
+    u8 row;
+
+    if (width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 value = frontend_pregame_font_row(tile_index, row);
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < width; column++) {
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (value & (1u << (width - column - 1u))) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                u8 *pixel = frame +
+                    (u16)target_y * SCREEN_WIDTH + (u16)target_x;
+
+                *pixel = (u8)(
+                    (*pixel & 0xf0u) |
+                    ((*pixel & 0x0fu) >> 1)
+                );
+            }
+        }
+    }
+}
+
 static s16 frontend_pregame_text_width(const char *text)
 {
     s16 width = 0;
@@ -2482,6 +2532,87 @@ static void frontend_draw_pregame_text_clipped(
             (s16)(x + 1),
             (s16)(y + 1),
             FRONTEND_NEXT_SHADOW_COLOUR
+        );
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+/*
+ * Recolour an already composed FULL_SHADE label without rebuilding its four
+ * darkening passes.  This is used by the title Load selector: selection only
+ * changes the glyph brightness, while the text and shaded background remain
+ * identical.  Keeping the cheap pass separate also prevents a cursor move
+ * from delaying the following Maxmod mix period.
+ */
+static void frontend_draw_pregame_text_clipped_no_shadow(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_pregame_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_pregame_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+static void frontend_draw_pregame_text_full_shade(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_pregame_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_pregame_font_darken(
+            frame,
+            tile_index,
+            (s16)(x - 1),
+            y
+        );
+        frontend_blit_pregame_font_darken(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            y
+        );
+        frontend_blit_pregame_font_darken(
+            frame,
+            tile_index,
+            x,
+            (s16)(y - 1)
+        );
+        frontend_blit_pregame_font_darken(
+            frame,
+            tile_index,
+            x,
+            (s16)(y + 1)
         );
         frontend_blit_pregame_font(
             frame,
@@ -2679,6 +2810,52 @@ static void frontend_blit_small_mixed_font(
     }
 }
 
+static void frontend_blit_small_mixed_font_darken(
+    u8 *frame,
+    u8 tile_index,
+    s16 x,
+    s16 y
+)
+{
+    u8 source_width = frontend_pregame_font_width(tile_index);
+    u8 target_width = frontend_small_mixed_font_width(tile_index);
+    u8 row;
+
+    if (source_width == 0 || target_width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 value = frontend_pregame_font_row(tile_index, row);
+        u8 column;
+        s16 target_y = (s16)(y + row);
+
+        if (target_y < 0 || target_y >= SCREEN_HEIGHT) continue;
+        for (column = 0; column < target_width; column++) {
+            u8 source_column = frontend_small_mixed_source_column(
+                source_width,
+                target_width,
+                column
+            );
+            s16 target_x = (s16)(x + column);
+
+            if (
+                (
+                    value &
+                    (1u << (source_width - source_column - 1u))
+                ) != 0 &&
+                target_x >= 0 &&
+                target_x < SCREEN_WIDTH
+            ) {
+                u8 *pixel = frame +
+                    (u16)target_y * SCREEN_WIDTH + (u16)target_x;
+
+                *pixel = (u8)(
+                    (*pixel & 0xf0u) |
+                    ((*pixel & 0x0fu) >> 1)
+                );
+            }
+        }
+    }
+}
+
 static s16 frontend_small_mixed_text_width(const char *text)
 {
     s16 width = 0;
@@ -2741,6 +2918,61 @@ static void frontend_draw_small_mixed_text_clipped_no_shadow(
         u8 advance = frontend_small_mixed_font_advance(tile_index);
 
         if (x + advance > right) break;
+        frontend_blit_small_mixed_font(
+            frame,
+            tile_index,
+            x,
+            y,
+            colour
+        );
+        x = (s16)(x + advance);
+    }
+}
+
+/*
+ * mainint.c:JE_loadScreen() uses JE_textShade(..., FULL_SHADE).  Its four
+ * blit_sprite_dark() passes halve the existing background brightness around
+ * the glyph; drawing a second, fixed-colour glyph at (+1,+1) instead creates
+ * a visible duplicate/ghost.  Keep the source operation order here.
+ */
+static void frontend_draw_small_mixed_text_full_shade(
+    u8 *frame,
+    const char *text,
+    s16 x,
+    s16 y,
+    s16 right,
+    u8 colour
+)
+{
+    while (*text != '\0' && x < right) {
+        u8 tile_index = frontend_pregame_font_tile(*text++);
+        u8 advance = frontend_small_mixed_font_advance(tile_index);
+
+        if (x + advance > right) break;
+        frontend_blit_small_mixed_font_darken(
+            frame,
+            tile_index,
+            (s16)(x - 1),
+            y
+        );
+        frontend_blit_small_mixed_font_darken(
+            frame,
+            tile_index,
+            (s16)(x + 1),
+            y
+        );
+        frontend_blit_small_mixed_font_darken(
+            frame,
+            tile_index,
+            x,
+            (s16)(y - 1)
+        );
+        frontend_blit_small_mixed_font_darken(
+            frame,
+            tile_index,
+            x,
+            (s16)(y + 1)
+        );
         frontend_blit_small_mixed_font(
             frame,
             tile_index,

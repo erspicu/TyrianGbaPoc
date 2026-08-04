@@ -6,6 +6,9 @@ static void clear_entities(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         player_shots[index].active = 0;
     }
+    memset(source_superpixels, 0, sizeof(source_superpixels));
+    source_last_superpixel = 0;
+    source_active_superpixels = 0;
     for (index = 0; index < MAX_EFFECTS; index++) effects[index].active = 0;
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
     for (index = 0; index < MAX_REWARDS; index++) rewards[index].active = 0;
@@ -649,6 +652,16 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_front_weapon_init();
 #endif
     source_runtime_reset();
+#if defined(AUTOTEST) && defined(AUTOTEST_SPECIAL_WEAPON_ID) && \
+    !TYRIAN_GBA_STRESS_LOADOUT
+    /* Focused source-Special visual capture; never compiled into release. */
+    source_parity_level.player_special = AUTOTEST_SPECIAL_WEAPON_ID;
+    player_shield = AUTOTEST_SPECIAL_SHIELD;
+    if (player_shield > player_shield_max) {
+        player_shield_max = player_shield;
+    }
+    source_special_bound_id = 0xffu;
+#endif
     /*
      * play_song(levelSong - 1) has already been started by the non-blocking
      * frontend transition.  Record it so event 35 only reloads a genuinely
@@ -768,6 +781,12 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_presentation_pending_logic_max = 0;
     telemetry_presentation_estimate_max = 0;
     telemetry_presentation_deadline_elapsed_max = 0;
+    telemetry_wave_dispatch_scope_attempts = 0;
+    telemetry_wave_dispatch_entries = 0;
+    telemetry_wave_dispatch_exits = 0;
+    telemetry_wave_dispatch_logic_busy_deferred = 0;
+    telemetry_wave_dispatch_idle_renders = 0;
+    telemetry_wave_dispatch_safety_forced = 0;
     telemetry_logic_catchup_updates = 0;
     telemetry_logic_updates_per_loop_max = 0;
     telemetry_logic_backlog_frames_max = 0;
@@ -798,6 +817,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_perf_audio_input_cycles_max = 0;
     telemetry_perf_prelogic_cycles_total = 0;
     telemetry_perf_prelogic_cycles_max = 0;
+    telemetry_perf_prefetch_cycles_total = 0;
+    telemetry_perf_prefetch_cycles_max = 0;
+    telemetry_perf_loop_work_cycles_total = 0;
+    telemetry_perf_loop_work_cycles_max = 0;
 #endif
     telemetry_detail_lava_frames = 0;
     telemetry_detail_water_frames = 0;
@@ -866,6 +889,15 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     presentation_pending_logic_ticks = 0;
     presentation_registers_valid = 0;
     presentation_release_held_window = 0;
+#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
+    presentation_wave_dispatch_active = 0;
+    presentation_wave_dispatch_pressure = 0;
+    presentation_wave_dispatch_recovery_ticks = 0;
+    presentation_wave_dispatch_idle_render = 0;
+    presentation_wave_dispatch_scope_seen = 0;
+    presentation_wave_dispatch_missed_baseline =
+        telemetry_missed_vblanks;
+#endif
     gameplay_presentation_capture_registers();
 #endif
     REG_BG0HOFS = source_background_hofs(0);

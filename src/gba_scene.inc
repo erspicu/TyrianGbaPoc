@@ -21,19 +21,33 @@ static void render_player_at_source_y(
              * The raw Sprite2 frame retains its native (4,2) component
              * placement, matching the established 32x32 player container.
              */
-            put_sprite_8bpp_32(
-                source_player_screen_x(),
-                (s16)(
-                    source_world_to_screen_y(
-                        (s16)(
-                            source_y +
-                            SOURCE_PLAYER_PRESENTATION_CENTRE_Y
-                        )
-                    ) - 16
-                ),
-                tile,
-                priority
+            s16 screen_y = (s16)(
+                source_world_to_screen_y(
+                    (s16)(
+                        source_y +
+                        SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+                    )
+                ) - 16
             );
+
+            if (
+                !exit_flight &&
+                source_player_invulnerable_visual_active
+            ) {
+                put_sprite_8bpp_32_blended(
+                    source_player_screen_x(),
+                    screen_y,
+                    tile,
+                    priority
+                );
+            } else {
+                put_sprite_8bpp_32(
+                    source_player_screen_x(),
+                    screen_y,
+                    tile,
+                    priority
+                );
+            }
             return;
         }
     }
@@ -44,22 +58,42 @@ static void render_player_at_source_y(
      * Talon presentation as a fail-closed fallback for those rare cases or
      * a corrupt/missing Sprite2 frame.
      */
-    put_sprite_with_attr1(
-        source_player_screen_x(),
-        (s16)(
+    {
+        s16 screen_y = (s16)(
             source_world_to_screen_y(
                 (s16)(
-                    source_y +
-                    SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+                    source_y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y
                 )
             ) - 16
-        ),
-        exit_flight || player_bank == 0 ?
-            OBJ_TILE_PLAYER_0 :
-            OBJ_TILE_PLAYER_1,
-        OBJ_PAL_PLAYER_0, ATTR1_SIZE_32, priority,
-        !exit_flight && player_bank < 0 ? OBJ_HFLIP : 0
-    );
+        );
+        u16 tile = exit_flight || player_bank == 0 ?
+            OBJ_TILE_PLAYER_0 : OBJ_TILE_PLAYER_1;
+
+        if (
+            !exit_flight &&
+            source_player_invulnerable_visual_active
+        ) {
+            put_sprite_blended_with_attr1(
+                source_player_screen_x(),
+                screen_y,
+                tile,
+                OBJ_PAL_PLAYER_0,
+                ATTR1_SIZE_32,
+                priority,
+                player_bank < 0 ? OBJ_HFLIP : 0
+            );
+        } else {
+            put_sprite_with_attr1(
+                source_player_screen_x(),
+                screen_y,
+                tile,
+                OBJ_PAL_PLAYER_0,
+                ATTR1_SIZE_32,
+                priority,
+                !exit_flight && player_bank < 0 ? OBJ_HFLIP : 0
+            );
+        }
+    }
 }
 
 static bool source_detail_shadows_allowed(void)
@@ -345,6 +379,118 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                 u8 option_frame;
 
                 if (
+                    option_graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC ||
+                    option_graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC
+                ) {
+                    u8 required_oam =
+                        option_graphic ==
+                            SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC ?
+                            6u : 1u;
+                    u16 special_tile;
+
+                    if (
+                        source_special_option_projectile_graphic !=
+                            option_graphic ||
+                        oam_count + required_oam > oam_limit
+                    ) {
+                        telemetry_player_shot_oam_culls++;
+                        continue;
+                    }
+                    screen_x = source_player_shot_screen_x(
+                        &player_shots[index]
+                    );
+                    screen_y = source_player_shot_screen_y(
+                        &player_shots[index]
+                    );
+                    if (
+                        option_graphic ==
+                            SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC
+                    ) {
+                        if (
+                            screen_x <= -64 || screen_x >= SCREEN_WIDTH ||
+                            screen_y <= -64 || screen_y >= SCREEN_HEIGHT
+                        ) {
+                            continue;
+                        }
+                        put_sprite_8bpp_64_blended(
+                            screen_x,
+                            screen_y,
+                            SOURCE_SPECIAL_OPTION_XEGA_TILE_BASE,
+                            priority
+                        );
+                    } else {
+                        if (
+                            screen_x <=
+                                -(s16)SOURCE_SPECIAL_OPTION_BANANA_WIDTH ||
+                            screen_x >= SCREEN_WIDTH ||
+                            screen_y <=
+                                -(s16)SOURCE_SPECIAL_OPTION_BANANA_HEIGHT ||
+                            screen_y >= SCREEN_HEIGHT
+                        ) {
+                            continue;
+                        }
+                        special_tile =
+                            SOURCE_SPECIAL_OPTION_BANANA_TILE_BASE;
+                        put_sprite_8bpp_64_blended(
+                            screen_x,
+                            screen_y,
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_MAIN_TILE_OFFSET
+                            ),
+                            priority
+                        );
+                        put_sprite_8bpp_shaped_blended(
+                            (s16)(screen_x + 64), screen_y,
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_RIGHT_TOP_TILE_OFFSET
+                            ),
+                            ATTR0_TALL, ATTR1_SIZE_32,
+                            16, 32, priority
+                        );
+                        put_sprite_8bpp_shaped_blended(
+                            (s16)(screen_x + 64), (s16)(screen_y + 32),
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_RIGHT_BOTTOM_TILE_OFFSET
+                            ),
+                            ATTR0_TALL, ATTR1_SIZE_32,
+                            16, 32, priority
+                        );
+                        put_sprite_8bpp_shaped_blended(
+                            screen_x, (s16)(screen_y + 64),
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_LEFT_TILE_OFFSET
+                            ),
+                            ATTR0_WIDE, ATTR1_SIZE_32,
+                            32, 16, priority
+                        );
+                        put_sprite_8bpp_shaped_blended(
+                            (s16)(screen_x + 32), (s16)(screen_y + 64),
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_BOTTOM_MIDDLE_TILE_OFFSET
+                            ),
+                            ATTR0_WIDE, ATTR1_SIZE_32,
+                            32, 16, priority
+                        );
+                        put_sprite_8bpp_shaped_blended(
+                            (s16)(screen_x + 64), (s16)(screen_y + 64),
+                            (u16)(
+                                special_tile +
+                                SOURCE_SPECIAL_OPTION_BANANA_CORNER_TILE_OFFSET
+                            ),
+                            ATTR0_SQUARE, ATTR1_SIZE_16,
+                            16, 16, priority
+                        );
+                    }
+                    submitted++;
+                    continue;
+                }
+
+                if (
                     option_graphic <
                         SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
                     option_graphic >=
@@ -592,6 +738,26 @@ static void render_source_inventory_hud(void)
     if (source_parity_level.player_special > 0) {
         OtSpecialDefinition special;
 
+        /*
+         * JE_doSpecialShot() draws spriteSheet9 graphic 94 when all four
+         * readiness conditions are clear, otherwise graphic 93. Emit this
+         * one-component lamp before the 2x2 item so its lower OAM index
+         * preserves the PC framebuffer draw order in their slight overlap.
+         */
+        draw.shape_table = OT_COMP_SHAPE_TABLE_OPTIONS_SMALL;
+        draw.graphic = source_special_ready_indicator ?
+            SOURCE_HUD_SPECIAL_READY_GRAPHIC :
+            SOURCE_HUD_SPECIAL_COOLDOWN_GRAPHIC;
+        tile = source_enemy_cache_acquire(&draw);
+        if (tile != 0xffff) {
+            render_source_enemy_cached_sprite(
+                (s16)(TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_X - 10),
+                (s16)(TYRIAN_GBA_LAYOUT_SPECIAL_STATUS_Y - 9),
+                tile,
+                0
+            );
+        }
+
         if (
             ot_data_hdt_special_read(
                 source_parity_level.player_special,
@@ -605,6 +771,7 @@ static void render_source_inventory_hud(void)
              * (16,2),(4,16),(16,16); offset the 32x32 GBA canvas so the
              * first component remains anchored at the configured HUD point.
              */
+            memset(&draw, 0, sizeof(draw));
             draw.shape_table = SOURCE_HUD_SPECIAL_SHAPE_TABLE;
             draw.graphic = special.itemgraphic;
             draw.size = 1;

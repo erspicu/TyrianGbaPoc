@@ -436,11 +436,13 @@ typedef struct {
 typedef struct {
     char planet_name[21][16];
     char misc_text[68][42];
+    char misc_text_b[5][12];
     char title_menu[7][21];
     char event_text[9][31];
     char main_menu_help[34][66];
     char full_game_menu[7][18];
     char upgrade_menu[9][18];
+    char options_menu[8][18];
     char episode_name[6][31];
     char difficulty_name[7][21];
     char gameplay_name[5][26];

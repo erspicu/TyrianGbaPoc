@@ -81,6 +81,11 @@ frontend_static_pre_game_frames:
 	.incbin "res/frontend_static_pre_game_frames.bin"
 
 	.balign 4
+	.global frontend_static_save_name_overlay
+frontend_static_save_name_overlay:
+	.incbin "res/frontend_static_save_name_overlay.bin"
+
+	.balign 4
 	.global frontend_static_quit_overlay
 frontend_static_quit_overlay:
 	.incbin "res/frontend_static_quit_overlay.bin"
@@ -179,6 +184,20 @@ jukebox_reciprocal:
 	.global jukebox_sine
 jukebox_sine:
 	.incbin "res/jukebox_sine.bin"
+
+	.balign 4
+	.global tyrend_gba_frames
+tyrend_gba_frames:
+	.incbin "res/tyrend_gba_frames.bin"
+	.global tyrend_gba_frames_end
+tyrend_gba_frames_end:
+
+	.balign 4
+	.global tyrend_gba_palette
+tyrend_gba_palette:
+	.incbin "res/tyrend_gba_palette.bin"
+	.global tyrend_gba_palette_end
+tyrend_gba_palette_end:
 
 	.balign 4
 	.global sprite2_raw_components

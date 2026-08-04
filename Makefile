@@ -13,10 +13,13 @@ STRESS_EPISODE ?= 2
 STRESS_SECTION ?= 1
 STRESS_END_POSITION ?= 0
 STRESS_DURATION_VBLANKS ?= 3600
+STRESS_FIRE ?= 1
 CAPTURE_STATE ?= 7
 CAPTURE_EPISODE ?= 1
 CAPTURE_SELECTION ?=
 CAPTURE_SECTION ?=
+CAPTURE_SAVE_CONTEXT ?= title
+CAPTURE_SAVE_MODE ?= load
 AUTOTEST_DIAGNOSTIC_FLAGS ?=
 
 DETAIL_LEVEL_CPPFLAG :=
@@ -238,7 +241,16 @@ SCRIPTED_SURVIVAL_TEST_TARGET := tyrian_gba_time_war_exit_autotest_v64_$(CONFIG_
 EPISODE_WRAP_TEST_TARGET := tyrian_gba_episode4_skip_it_autotest_v65_$(CONFIG_SUFFIX)
 CAMPAIGN_TEST_TARGET := tyrian_gba_campaign_smoke_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_v40_$(CONFIG_SUFFIX)
 STRESS_STOP_TAG := $(if $(filter-out 0,$(STRESS_END_POSITION)),pos$(STRESS_END_POSITION),vb$(STRESS_DURATION_VBLANKS))
-STRESS_RUN_TAG := ep$(STRESS_EPISODE)_section$(STRESS_SECTION)_$(STRESS_STOP_TAG)
+ifeq ($(STRESS_FIRE),1)
+STRESS_INPUT_TAG :=
+STRESS_INPUT_FLAG :=
+else ifeq ($(STRESS_FIRE),0)
+STRESS_INPUT_TAG := _nofire
+STRESS_INPUT_FLAG := -DAUTOTEST_NO_FIRE=1
+else
+$(error STRESS_FIRE must be 0 or 1)
+endif
+STRESS_RUN_TAG := ep$(STRESS_EPISODE)_section$(STRESS_SECTION)_$(STRESS_STOP_TAG)$(STRESS_INPUT_TAG)
 STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_$(STRESS_RUN_TAG)_v70_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
@@ -258,7 +270,29 @@ else
 FRONTEND_CAPTURE_SECTION_TAG :=
 FRONTEND_CAPTURE_SECTION_FLAG :=
 endif
-FRONTEND_CAPTURE_VARIANT := $(FRONTEND_CAPTURE_SELECTION_TAG)$(FRONTEND_CAPTURE_SECTION_TAG)
+ifeq ($(CAPTURE_SAVE_CONTEXT),title)
+FRONTEND_CAPTURE_SAVE_CONTEXT_TAG := _save_title
+FRONTEND_CAPTURE_SAVE_CONTEXT_FLAG :=
+else ifeq ($(CAPTURE_SAVE_CONTEXT),options)
+FRONTEND_CAPTURE_SAVE_CONTEXT_TAG := _save_options
+FRONTEND_CAPTURE_SAVE_CONTEXT_FLAG := \
+	-DAUTOTEST_FRONTEND_CAPTURE_SAVE_CONTEXT_OPTIONS=1
+else
+$(error CAPTURE_SAVE_CONTEXT must be title or options)
+endif
+ifeq ($(CAPTURE_SAVE_MODE),load)
+FRONTEND_CAPTURE_SAVE_MODE_TAG := _load
+FRONTEND_CAPTURE_SAVE_MODE_FLAG := \
+	-DAUTOTEST_FRONTEND_CAPTURE_SAVE_MODE=0
+else ifeq ($(CAPTURE_SAVE_MODE),save)
+FRONTEND_CAPTURE_SAVE_MODE_TAG := _save
+FRONTEND_CAPTURE_SAVE_MODE_FLAG := \
+	-DAUTOTEST_FRONTEND_CAPTURE_SAVE_MODE=1
+else
+$(error CAPTURE_SAVE_MODE must be load or save)
+endif
+FRONTEND_CAPTURE_SAVE_VARIANT := $(if $(filter 19 20,$(CAPTURE_STATE)),$(FRONTEND_CAPTURE_SAVE_CONTEXT_TAG)$(FRONTEND_CAPTURE_SAVE_MODE_TAG),)
+FRONTEND_CAPTURE_VARIANT := $(FRONTEND_CAPTURE_SELECTION_TAG)$(FRONTEND_CAPTURE_SECTION_TAG)$(FRONTEND_CAPTURE_SAVE_VARIANT)
 FRONTEND_CAPTURE_TARGET := tyrian_gba_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_$(CONFIG_SUFFIX)
 FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFFIX)
 FRONTEND_NAV_STRESS_TARGET := tyrian_gba_frontend_nav_obj_stress_v43_$(CONFIG_SUFFIX)
@@ -317,6 +351,7 @@ TEXTRES_INPUTS := \
 ASSET_INPUTS := \
 	Configure.h \
 	tools/audit_project_independence.py \
+	tools/gba_anm_builder.py \
 	tools/build_assets.py \
 	tools/gba_asset_support.py \
 	tools/gba_music_builder.py \
@@ -334,6 +369,7 @@ ASSET_INPUTS := \
 	$(wildcard vendor/tyrian/data/shapes*.dat) \
 	$(wildcard vendor/tyrian/data/tyrian*.lvl) \
 	vendor/tyrian/data/tyrian.snd \
+	vendor/tyrian/data/tyrend.anm \
 	vendor/tyrian/data/voices.snd \
 	$(wildcard vendor/tyrian/image/pics/*.png) \
 	$(wildcard vendor/tyrian/image/sprites/00_font/*.png) \
@@ -374,6 +410,7 @@ ASSET_BINARIES := \
 	$(RES)/frontend_pregame_font.bin \
 	$(RES)/frontend_static_menu_panels.bin \
 	$(RES)/frontend_static_pre_game_frames.bin \
+	$(RES)/frontend_static_save_name_overlay.bin \
 	$(RES)/frontend_static_quit_overlay.bin \
 	$(RES)/frontend_static_quit_choices.bin \
 	$(RES)/frontend_static_quit_shade.bin \
@@ -394,6 +431,8 @@ ASSET_BINARIES := \
 	$(RES)/jukebox_titles.bin \
 	$(RES)/jukebox_reciprocal.bin \
 	$(RES)/jukebox_sine.bin \
+	$(RES)/tyrend_gba_frames.bin \
+	$(RES)/tyrend_gba_palette.bin \
 	$(RES)/sprite2_raw_components.bin
 
 TYRIAN_MUSIC_TRACKS := \
@@ -670,6 +709,7 @@ $(STRESS_MAIN_OBJECT): \
 		-DAUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS=$(STRESS_DURATION_VBLANKS) \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1 \
 		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
+		$(STRESS_INPUT_FLAG) \
 		$(STRESS_DIAGNOSTIC_FLAGS) \
 		-MMD -MP -c $< -o $@
 
@@ -695,6 +735,8 @@ $(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_
 		-DAUTOTEST_FRONTEND_CAPTURE_STATE=$(CAPTURE_STATE) \
 		$(FRONTEND_CAPTURE_SELECTION_FLAG) \
 		$(FRONTEND_CAPTURE_SECTION_FLAG) \
+		$(FRONTEND_CAPTURE_SAVE_CONTEXT_FLAG) \
+		$(FRONTEND_CAPTURE_SAVE_MODE_FLAG) \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 

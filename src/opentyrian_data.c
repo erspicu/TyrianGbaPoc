@@ -901,7 +901,17 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
     }
     if (!hdt_pascal_skip(&position)) return false;
 
-    if (!hdt_group_skip(&position, 5)) return false;  /* Misc B */
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 5; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->misc_text_b[index],
+                sizeof(text->misc_text_b[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
     if (!hdt_group_skip(&position, 11)) return false; /* Key names */
 
     if (!hdt_pascal_skip(&position)) return false;
@@ -963,7 +973,17 @@ bool ot_data_frontend_text_load(OtFrontendText *text)
         }
     }
     if (!hdt_pascal_skip(&position)) return false;
-    if (!hdt_group_skip(&position, 8)) return false; /* Menu 3 */
+    if (!hdt_pascal_skip(&position)) return false;
+    for (index = 0; index < 8; index++) {
+        if (!hdt_pascal_read(
+                &position,
+                text->options_menu[index],
+                sizeof(text->options_menu[index])
+            )) {
+            return false;
+        }
+    }
+    if (!hdt_pascal_skip(&position)) return false;
     if (!hdt_group_skip(&position, 6)) return false; /* In-game menu */
     if (!hdt_group_skip(&position, 6)) return false; /* Detail level */
     if (!hdt_group_skip(&position, 5)) return false; /* Game speed */
