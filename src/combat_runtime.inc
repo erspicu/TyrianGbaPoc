@@ -986,6 +986,193 @@ static void source_player_history_update(s16 old_x, s16 old_y)
     source_player_old_y[19] = player_source_y;
 }
 
+/*
+ * Translate the compact physical GBA layout into OpenTyrian's logical
+ * gameplay buttons.  Source demo streams remain logical recordings: their
+ * left/right Sidekick buttons must never be merged merely because the GBA
+ * player uses one physical B button for both.
+ */
+static u8 source_gameplay_main_fire_held(void)
+{
+    if (frontend_demo_active) {
+        return (
+            frontend_demo_keys & FRONTEND_DEMO_KEY_MAIN_FIRE
+        ) != 0;
+    }
+    return (pad_now & KEY_A) != 0;
+}
+
+static u8 source_gameplay_sidekick_command_held(u8 side)
+{
+    if (frontend_demo_active) {
+        u8 mask = side == 0 ?
+            FRONTEND_DEMO_KEY_LEFT_SIDEKICK :
+            FRONTEND_DEMO_KEY_RIGHT_SIDEKICK;
+
+        return (frontend_demo_keys & mask) != 0;
+    }
+    return (pad_now & KEY_B) != 0;
+}
+
+static u8 source_gameplay_sidekick_command_pressed(u8 side)
+{
+    if (frontend_demo_active) {
+        u8 mask = side == 0 ?
+            FRONTEND_DEMO_KEY_LEFT_SIDEKICK :
+            FRONTEND_DEMO_KEY_RIGHT_SIDEKICK;
+
+        return (frontend_demo_keys_pressed & mask) != 0;
+    }
+    return (pad_pressed & KEY_B) != 0;
+}
+
+static u8 source_gameplay_sidekick_fire_held(u8 side)
+{
+    if (source_gameplay_sidekick_command_held(side)) return 1;
+#if TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS
+    if (!frontend_demo_active && source_gameplay_main_fire_held()) {
+        return 1;
+    }
+#endif
+    return 0;
+}
+
+static u8 source_gameplay_rear_mode_pressed(void)
+{
+    if (frontend_demo_active) {
+        return (
+            frontend_demo_keys_pressed &
+            FRONTEND_DEMO_KEY_REAR_MODE
+        ) != 0;
+    }
+    return (pad_pressed & KEY_SELECT) != 0;
+}
+
+static u8 source_gameplay_special_fire_held(void)
+{
+    if (frontend_demo_active) {
+        if (
+            frontend_demo_keys & FRONTEND_DEMO_KEY_MAIN_FIRE
+        ) {
+            return 1;
+        }
+        return
+            source_parity_level.player_super_arcade_mode != 0 &&
+            (
+                frontend_demo_keys &
+                (
+                    FRONTEND_DEMO_KEY_LEFT_SIDEKICK |
+                    FRONTEND_DEMO_KEY_RIGHT_SIDEKICK
+                )
+            ) != 0;
+    }
+    return (pad_now & KEY_L) != 0;
+}
+
+static u8 source_gameplay_superbomb_fire_held(void)
+{
+    if (frontend_demo_active) {
+        return (
+            frontend_demo_keys &
+            (
+                FRONTEND_DEMO_KEY_LEFT_SIDEKICK |
+                FRONTEND_DEMO_KEY_RIGHT_SIDEKICK
+            )
+        ) != 0;
+    }
+    return (pad_now & KEY_R) != 0;
+}
+
+#ifdef AUTOTEST
+static u8 source_gameplay_mapping_selftest(void)
+{
+    u16 saved_pad_now = pad_now;
+    u16 saved_pad_pressed = pad_pressed;
+    u8 saved_demo_active = frontend_demo_active;
+    u8 saved_demo_keys = frontend_demo_keys;
+    u8 saved_demo_keys_pressed = frontend_demo_keys_pressed;
+    u8 saved_super_arcade =
+        source_parity_level.player_super_arcade_mode;
+    u8 pass = 1;
+
+    frontend_demo_active = 0;
+    source_parity_level.player_super_arcade_mode = 0;
+
+    pad_now = KEY_A;
+    pad_pressed = 0;
+    pass = pass && source_gameplay_main_fire_held();
+    pass = pass && !source_gameplay_sidekick_command_held(0);
+    pass = pass && !source_gameplay_sidekick_command_held(1);
+#if TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS
+    pass = pass && source_gameplay_sidekick_fire_held(0);
+    pass = pass && source_gameplay_sidekick_fire_held(1);
+#else
+    pass = pass && !source_gameplay_sidekick_fire_held(0);
+    pass = pass && !source_gameplay_sidekick_fire_held(1);
+#endif
+    pass = pass && !source_gameplay_special_fire_held();
+    pass = pass && !source_gameplay_superbomb_fire_held();
+
+    pad_now = KEY_B;
+    pad_pressed = KEY_B;
+    pass = pass && !source_gameplay_main_fire_held();
+    pass = pass && source_gameplay_sidekick_command_held(0);
+    pass = pass && source_gameplay_sidekick_command_held(1);
+    pass = pass && source_gameplay_sidekick_command_pressed(0);
+    pass = pass && source_gameplay_sidekick_command_pressed(1);
+    pass = pass && !source_gameplay_special_fire_held();
+    pass = pass && !source_gameplay_superbomb_fire_held();
+
+    pad_now = KEY_L;
+    pad_pressed = KEY_L;
+    pass = pass && source_gameplay_special_fire_held();
+    pass = pass && !source_gameplay_superbomb_fire_held();
+
+    pad_now = KEY_R;
+    pad_pressed = KEY_R;
+    pass = pass && !source_gameplay_special_fire_held();
+    pass = pass && source_gameplay_superbomb_fire_held();
+
+    pad_now = 0;
+    pad_pressed = KEY_SELECT;
+    pass = pass && source_gameplay_rear_mode_pressed();
+
+    /* PC demo bits retain their four independent logical buttons. */
+    frontend_demo_active = 1;
+    frontend_demo_keys = FRONTEND_DEMO_KEY_MAIN_FIRE;
+    frontend_demo_keys_pressed = FRONTEND_DEMO_KEY_MAIN_FIRE;
+    pass = pass && source_gameplay_main_fire_held();
+    pass = pass && source_gameplay_special_fire_held();
+    pass = pass && !source_gameplay_sidekick_fire_held(0);
+    pass = pass && !source_gameplay_sidekick_fire_held(1);
+    pass = pass && !source_gameplay_superbomb_fire_held();
+
+    frontend_demo_keys = FRONTEND_DEMO_KEY_LEFT_SIDEKICK;
+    frontend_demo_keys_pressed = FRONTEND_DEMO_KEY_LEFT_SIDEKICK;
+    pass = pass && source_gameplay_sidekick_fire_held(0);
+    pass = pass && !source_gameplay_sidekick_fire_held(1);
+    pass = pass && source_gameplay_superbomb_fire_held();
+
+    frontend_demo_keys = FRONTEND_DEMO_KEY_RIGHT_SIDEKICK;
+    frontend_demo_keys_pressed = FRONTEND_DEMO_KEY_RIGHT_SIDEKICK;
+    pass = pass && !source_gameplay_sidekick_fire_held(0);
+    pass = pass && source_gameplay_sidekick_fire_held(1);
+    pass = pass && source_gameplay_superbomb_fire_held();
+
+    frontend_demo_keys = FRONTEND_DEMO_KEY_REAR_MODE;
+    frontend_demo_keys_pressed = FRONTEND_DEMO_KEY_REAR_MODE;
+    pass = pass && source_gameplay_rear_mode_pressed();
+
+    pad_now = saved_pad_now;
+    pad_pressed = saved_pad_pressed;
+    frontend_demo_active = saved_demo_active;
+    frontend_demo_keys = saved_demo_keys;
+    frontend_demo_keys_pressed = saved_demo_keys_pressed;
+    source_parity_level.player_super_arcade_mode = saved_super_arcade;
+    return pass;
+}
+#endif
+
 static void source_sidekick_positions_update(void)
 {
     SourceSidekickRuntime *left = &source_sidekick[0];
@@ -1118,7 +1305,7 @@ static void source_sidekick_positions_update(void)
                         source_parity_level.frame_sound_queue[2] =
                             23;
                     }
-                    if (pad_now & KEY_L) {
+                    if (source_gameplay_sidekick_command_held(1)) {
                         source_sidekick_attachment_return = 1;
                     }
                 } else {
@@ -1138,7 +1325,7 @@ static void source_sidekick_positions_update(void)
             } else {
                 right->x = player_source_x;
                 right->y = (s16)(player_source_y - 20);
-                if (pad_pressed & KEY_L) {
+                if (source_gameplay_sidekick_command_pressed(1)) {
                     source_sidekick_attachment_linked = 0;
                     source_sidekick_attachment_return = 0;
                     source_sidekick_attachment_move = -20;
@@ -1164,7 +1351,7 @@ static void source_rear_mode_update(void)
     u8 port_id = source_parity_level.player_rear_weapon_id;
 
     if (
-        !(pad_pressed & KEY_L) ||
+        !source_gameplay_rear_mode_pressed() ||
         port_id == 0 ||
         !ot_data_hdt_weapon_port_read(port_id, &port) ||
         port.opnum == 0
@@ -1701,13 +1888,19 @@ static void source_special_update(void)
         source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL]--;
     }
     if (source_special_wait > 0) source_special_wait--;
-    special_fire = (pad_now & KEY_A) != 0;
+    special_fire = source_gameplay_special_fire_held();
     if (
+        frontend_demo_active &&
         source_parity_level.player_super_arcade_mode != 0 &&
-        (pad_now & (KEY_B | KEY_R)) != 0
+        (
+            frontend_demo_keys &
+            (
+                FRONTEND_DEMO_KEY_LEFT_SIDEKICK |
+                FRONTEND_DEMO_KEY_RIGHT_SIDEKICK
+            )
+        ) != 0
     ) {
         source_special_fire_held = 0;
-        special_fire = 1;
     }
     if (!special_fire) {
         source_special_fire_held = 0;
@@ -1746,7 +1939,7 @@ static void source_superbomb_update(void)
         source_shot_repeat[SOURCE_WEAPON_BAY_P1_SUPERBOMB]--;
     } else if (
         source_parity_level.player_superbombs > 0 &&
-        (pad_now & (KEY_B | KEY_R)) != 0
+        source_gameplay_superbomb_fire_held()
     ) {
         source_parity_level.player_superbombs--;
         source_shot_multi_pos[
@@ -1766,7 +1959,7 @@ static void source_superbomb_update(void)
     }
 }
 
-static void source_sidekick_fire_update(u8 side, u16 button)
+static void source_sidekick_fire_update(u8 side)
 {
     SourceSidekickRuntime *runtime = &source_sidekick[side];
     u8 bay = (u8)(
@@ -1789,9 +1982,13 @@ static void source_sidekick_fire_update(u8 side, u16 button)
                 runtime->ammo++;
             }
         }
-        fire = (pad_now & button) != 0 && runtime->ammo > 0;
+        fire =
+            source_gameplay_sidekick_fire_held(side) &&
+            runtime->ammo > 0;
     } else {
-        fire = (pad_now & (KEY_A | button)) != 0;
+        fire =
+            source_gameplay_main_fire_held() ||
+            source_gameplay_sidekick_fire_held(side);
     }
     if (!fire) return;
     if (!source_weapon_energy_consume(runtime->poweruse)) return;
@@ -1867,7 +2064,7 @@ static void source_player_weapons_update(void)
     ) {
         source_shot_repeat[SOURCE_WEAPON_BAY_RIGHT_SIDEKICK]--;
     }
-    if (pad_now & KEY_A) {
+    if (source_gameplay_main_fire_held()) {
         if (
             source_front_weapon_valid &&
             source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] == 0
@@ -1905,8 +2102,8 @@ static void source_player_weapons_update(void)
     }
     source_superbomb_update();
     source_sidekick_positions_update();
-    source_sidekick_fire_update(0, KEY_B);
-    source_sidekick_fire_update(1, KEY_R);
+    source_sidekick_fire_update(0);
+    source_sidekick_fire_update(1);
     source_sidekick_animation_update(0);
     source_sidekick_animation_update(1);
 }

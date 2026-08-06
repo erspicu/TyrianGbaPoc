@@ -120,13 +120,13 @@ static bool source_background2_present(void)
     if (!source_background2_enabled) return false;
     /*
      * Direct processorType gates around draw_background_2() in tyrian2.c:
-     * smoothie 2 suppresses the layer below Pentium, while smoothie 1 does
-     * so only for the High Detail profile.  Pentium runs the corresponding
-     * filters and keeps the layer.
+     * smoothie 2 suppresses the layer without the Pentium wild pass, while
+     * smoothie 1 does so only for the High Detail profile.  Pentium and the
+     * GBA Custom profile keep the layer for smooth 50/50 hardware Alpha.
      */
     if (
         source_parity_level.smoothies[1] &&
-        TYRIAN_GBA_DETAIL_LEVEL < TYRIAN_GBA_DETAIL_PENTIUM
+        !TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
     ) {
         return false;
     }

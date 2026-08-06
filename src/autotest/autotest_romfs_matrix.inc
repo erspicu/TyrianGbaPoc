@@ -65,7 +65,7 @@ typedef struct {
 static u8 romfs_matrix_enemy_queued[OT_HDT_ENEMY_COUNT] EWRAM_BSS;
 static u8 romfs_matrix_weapon_validated[OT_HDT_WEAPON_COUNT] EWRAM_BSS;
 static u8 romfs_matrix_shape_validated[
-    OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY + 1
+    SPRITE2_RAW_TABLE_COUNT + 1
 ]
     EWRAM_BSS;
 static u16 romfs_matrix_enemy_queue[OT_HDT_ENEMY_COUNT] EWRAM_BSS;
@@ -196,10 +196,8 @@ static u8 romfs_matrix_validate_shape_bank(
     u32 *level_failure
 )
 {
-    OtDataView bank;
-
     if (shape_table == 0) return 1;
-    if (shape_table > OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY) {
+    if (shape_table > SPRITE2_RAW_TABLE_COUNT) {
         romfs_matrix_fail(
             telemetry,
             ROMFS_MATRIX_FAIL_EVENT_SHAPE_BANK,
@@ -211,7 +209,13 @@ static u8 romfs_matrix_validate_shape_bank(
         return 0;
     }
     if (romfs_matrix_shape_validated[shape_table]) return 1;
-    if (!ot_data_comp_shape_bank_view(shape_table, &bank) || bank.size < 2) {
+    if (
+        ot_sprite2_raw_component(shape_table, 1) == 0 ||
+        ot_sprite2_raw_component(
+            shape_table,
+            SPRITE2_RAW_COMPONENTS_PER_TABLE
+        ) == 0
+    ) {
         romfs_matrix_fail(
             telemetry,
             ROMFS_MATRIX_FAIL_EVENT_SHAPE_BANK,
@@ -226,8 +230,10 @@ static u8 romfs_matrix_validate_shape_bank(
     telemetry->shape_banks_validated++;
     telemetry->matrix_checksum =
         romfs_matrix_hash(telemetry->matrix_checksum, shape_table);
-    telemetry->matrix_checksum =
-        romfs_matrix_hash(telemetry->matrix_checksum, bank.size);
+    telemetry->matrix_checksum = romfs_matrix_hash(
+        telemetry->matrix_checksum,
+        SPRITE2_RAW_COMPONENTS_PER_TABLE * SPRITE2_RAW_COMPONENT_BYTES
+    );
     return 1;
 }
 
@@ -313,8 +319,6 @@ static u8 romfs_matrix_validate_graphic(
     u32 *level_failure
 )
 {
-    OtDataView sprite;
-
     if (graphic == 0 || shape_table == 0) return 1;
     if (
         !romfs_matrix_validate_shape_bank(
@@ -324,36 +328,10 @@ static u8 romfs_matrix_validate_graphic(
             shape_table,
             level_failure
         ) ||
-        !ot_data_comp_shape_sprite_view(
-            shape_table,
-            graphic,
-            &sprite
-        ) ||
         ot_sprite2_raw_component(shape_table, graphic) == 0 ||
-        !ot_sprite2_raw_component_matches_rle(
-            shape_table,
-            graphic,
-            romfs_matrix_sprite2_pixels,
-            OT_SPRITE2_FRAME_PIXELS
-        ) ||
         (
             size == 1 &&
             (
-                !ot_data_comp_shape_sprite_view(
-                    shape_table,
-                    (u16)(graphic + 1u),
-                    &sprite
-                ) ||
-                !ot_data_comp_shape_sprite_view(
-                    shape_table,
-                    (u16)(graphic + 19u),
-                    &sprite
-                ) ||
-                !ot_data_comp_shape_sprite_view(
-                    shape_table,
-                    (u16)(graphic + 20u),
-                    &sprite
-                ) ||
                 ot_sprite2_raw_component(
                     shape_table,
                     (u16)(graphic + 1u)
@@ -365,25 +343,7 @@ static u8 romfs_matrix_validate_graphic(
                 ot_sprite2_raw_component(
                     shape_table,
                     (u16)(graphic + 20u)
-                ) == 0 ||
-                !ot_sprite2_raw_component_matches_rle(
-                    shape_table,
-                    (u16)(graphic + 1u),
-                    romfs_matrix_sprite2_pixels,
-                    OT_SPRITE2_FRAME_PIXELS
-                ) ||
-                !ot_sprite2_raw_component_matches_rle(
-                    shape_table,
-                    (u16)(graphic + 19u),
-                    romfs_matrix_sprite2_pixels,
-                    OT_SPRITE2_FRAME_PIXELS
-                ) ||
-                !ot_sprite2_raw_component_matches_rle(
-                    shape_table,
-                    (u16)(graphic + 20u),
-                    romfs_matrix_sprite2_pixels,
-                    OT_SPRITE2_FRAME_PIXELS
-                )
+                ) == 0
             )
         )
     ) {

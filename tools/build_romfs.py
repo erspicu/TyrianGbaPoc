@@ -235,6 +235,71 @@ def collect_omitted_duplicates(
     ]
 
 
+def collect_retained_sources(
+    manifest: dict,
+    source_root: Path,
+    active_records: list[FileRecord],
+) -> list[dict]:
+    """Audit unique sources deliberately kept for current or future modes.
+
+    This turns seasonal-resource retention into a build contract: a retained
+    pattern must still exist and every match must remain in the active ROMFS.
+    It therefore cannot disappear during a later deduplication pass merely
+    because the current executable has not connected that mode yet.
+    """
+    active = {
+        record.source_name.lower(): record
+        for record in active_records
+    }
+    retained: dict[str, dict] = {}
+
+    for entry in manifest.get("retained_sources", []):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                "manifest retained_sources entries must be objects"
+            )
+        pattern = entry.get("pattern")
+        reason = entry.get("reason")
+        if not isinstance(pattern, str) or not pattern:
+            raise ValueError("retained source pattern is missing")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(
+                f"retained source reason is missing: {pattern!r}"
+            )
+        matches = sorted(
+            (
+                path
+                for path in source_root.glob(pattern)
+                if path.is_file()
+            ),
+            key=lambda path: path.name.lower(),
+        )
+        if not matches:
+            raise FileNotFoundError(
+                "retained source pattern matched no files: "
+                f"{pattern!r}"
+            )
+        for source in matches:
+            source_name = source.relative_to(source_root).as_posix()
+            key = source_name.lower()
+            record = active.get(key)
+            if record is None:
+                raise ValueError(
+                    "retained source is not active in ROMFS: "
+                    f"{source_name}"
+                )
+            if key in retained:
+                raise ValueError(f"duplicate retained source: {source_name}")
+            retained[key] = {
+                "path": record.path,
+                "bytes": len(record.data),
+                "sha256": record.sha256,
+                "reason": reason.strip(),
+            }
+
+    return [retained[key] for key in sorted(retained)]
+
+
 def build_image(manifest: dict, records: list[FileRecord]) -> tuple[bytes, dict]:
     alignment = manifest["alignment"]
     mount = normalize_path(manifest["mount"])
@@ -447,12 +512,23 @@ def main() -> None:
         source_root,
         records,
     )
+    retained_sources = collect_retained_sources(
+        manifest,
+        source_root,
+        records,
+    )
     image, audit = build_image(manifest, records)
     audit["omitted_duplicate_files"] = omitted_duplicates
     audit["omitted_duplicate_count"] = len(omitted_duplicates)
     audit["omitted_duplicate_bytes"] = sum(
         record["bytes"]
         for record in omitted_duplicates
+    )
+    audit["retained_source_files"] = retained_sources
+    audit["retained_source_count"] = len(retained_sources)
+    audit["retained_source_bytes"] = sum(
+        record["bytes"]
+        for record in retained_sources
     )
     if len(image) >= MAX_GBA_ROM_BYTES:
         raise ValueError(
@@ -475,6 +551,8 @@ def main() -> None:
         f"payload={audit['payload_bytes']} "
         f"deduplicated={audit['omitted_duplicate_count']}/"
         f"{audit['omitted_duplicate_bytes']} "
+        f"retained={audit['retained_source_count']}/"
+        f"{audit['retained_source_bytes']} "
         f"image={audit['image_bytes']} "
         f"sha256={audit['image_sha256']}"
     )

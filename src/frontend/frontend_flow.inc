@@ -157,7 +157,12 @@ static s16 frontend_stats_draw_text(
 )
 {
     while (*text != '\0') {
-        u8 tile = frontend_runtime_font_tile(*text++);
+        char character = *text++;
+        u8 tile;
+
+        /* JE_outCharGlow/fontMap consume '~' without drawing or advance. */
+        if (character == '~') continue;
+        tile = frontend_runtime_font_tile(character);
 
         if (tile == 0) {
             x = (s16)(x + 6);
@@ -359,6 +364,43 @@ static void frontend_render_stats(void)
         oam_count = new_oam_count;
     }
     oam_dirty = 1;
+}
+
+static u8 frontend_stats_freeze_safe_scene_oam(u8 scene_oam_count)
+{
+    u8 read_index;
+    u8 write_index = 0;
+
+    for (read_index = 0; read_index < scene_oam_count; read_index++) {
+        OBJATTR object = oam_shadow[read_index];
+
+        if (
+            (object.attr0 & (ATTR0_ROTSCALE | ATTR0_DISABLED)) ==
+                ATTR0_DISABLED
+        ) {
+            continue;
+        }
+
+        /*
+         * The source renderer has already baked the last enemy frame into
+         * VGAScreenSeg when JE_endLevelAni() starts.  GBA gameplay instead
+         * leaves Sprite2 enemies as live 8bpp OBJ references.  The summary
+         * atlas deliberately reuses the lower enemy-cache VRAM window and
+         * OBJ palette banks 13..15, so retaining those references corrupts
+         * defeated multi-part bosses (Asteroid 1 exposes this reliably).
+         *
+         * Freeze the hardware BG frame and the independent 4bpp effects,
+         * but retire the completed gameplay's live 8bpp object layer before
+         * the summary upload.  This matches the source transition boundary
+         * and resolves both the tile and 256-colour palette aliases.
+         */
+        if ((object.attr0 & ATTR0_COLOR_256) != 0) continue;
+
+        object.attr2 =
+            (u16)((object.attr2 & ~0x0c00u) | 0x0c00u);
+        oam_shadow[write_index++] = object;
+    }
+    return write_index;
 }
 
 static u8 frontend_static_frame_for_state(
@@ -564,6 +606,8 @@ static void frontend_demo_close(void)
     frontend_demo_active = 0;
     frontend_demo_eof = 0;
     frontend_demo_keys = 0;
+    frontend_demo_keys_previous = 0;
+    frontend_demo_keys_pressed = 0;
     frontend_demo_keys_wait = 0;
     frontend_demo_input_guard = 0;
     insert_coin_tile_upload_pending = 0;
@@ -734,6 +778,8 @@ static u8 frontend_demo_read_header(void)
      */
     frontend_demo_header.source_song = (u8)(one_based_song - 1u);
     frontend_demo_keys = 0;
+    frontend_demo_keys_previous = 0;
+    frontend_demo_keys_pressed = 0;
     frontend_demo_keys_wait =
         (u16)(((u16)wait_bytes[0] << 8) | wait_bytes[1]);
     return 1;
@@ -816,15 +862,24 @@ static u8 frontend_demo_apply_input(void)
     if (frontend_demo_keys_wait > 0) {
         frontend_demo_keys_wait--;
     }
+    frontend_demo_keys_pressed = (u8)(
+        frontend_demo_keys &
+        (u8)~frontend_demo_keys_previous
+    );
+    frontend_demo_keys_previous = frontend_demo_keys;
     pad_now = 0;
-    if (frontend_demo_keys & (1u << 0)) pad_now |= KEY_UP;
-    if (frontend_demo_keys & (1u << 1)) pad_now |= KEY_DOWN;
-    if (frontend_demo_keys & (1u << 2)) pad_now |= KEY_LEFT;
-    if (frontend_demo_keys & (1u << 3)) pad_now |= KEY_RIGHT;
-    if (frontend_demo_keys & (1u << 4)) pad_now |= KEY_A;
-    if (frontend_demo_keys & (1u << 5)) pad_now |= KEY_L;
-    if (frontend_demo_keys & (1u << 6)) pad_now |= KEY_B;
-    if (frontend_demo_keys & (1u << 7)) pad_now |= KEY_R;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_UP) pad_now |= KEY_UP;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_DOWN) pad_now |= KEY_DOWN;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_LEFT) pad_now |= KEY_LEFT;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_RIGHT) pad_now |= KEY_RIGHT;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_MAIN_FIRE) pad_now |= KEY_A;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_REAR_MODE) pad_now |= KEY_L;
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_LEFT_SIDEKICK) {
+        pad_now |= KEY_B;
+    }
+    if (frontend_demo_keys & FRONTEND_DEMO_KEY_RIGHT_SIDEKICK) {
+        pad_now |= KEY_R;
+    }
     return 1;
 }
 
@@ -853,6 +908,7 @@ static void frontend_advance_episode(void)
 
 static void frontend_begin(void)
 {
+    (void)ot_season_set(OT_SEASON_NONE);
     frontend_play_mode = FRONTEND_PLAY_FULL_GAME;
     frontend_episode = 0;
     frontend_difficulty = FRONTEND_DIFFICULTY_NORMAL;
@@ -1430,6 +1486,8 @@ static __attribute__((
     switch (game_state) {
     case STATE_TITLE:
         if (frontend_selection == 0) {
+            /* A newly started campaign has no save-name seasonal trigger. */
+            (void)ot_season_set(OT_SEASON_NONE);
             audio_effect(SFX_SELECT);
             frontend_enter_state(STATE_PLAY_MODE_MENU, 0);
         } else if (frontend_selection == 1) {
@@ -1773,8 +1831,6 @@ static void frontend_autotest_record_campaign_level(u8 completed)
 
 static void frontend_enter_level_stats(u8 completed)
 {
-    u16 index;
-
     if (frontend_demo_active) {
         frontend_demo_finish(0);
         return;
@@ -1800,11 +1856,8 @@ static void frontend_enter_level_stats(u8 completed)
     frontend_pending_kind = FRONTEND_PENDING_NONE;
     frontend_stats_overlay_active = 1;
     frontend_stats_palette_dirty = 0;
-    frontend_stats_scene_oam_count = previous_oam_count;
-    for (index = 0; index < frontend_stats_scene_oam_count; index++) {
-        oam_shadow[index].attr2 =
-            (u16)((oam_shadow[index].attr2 & ~0x0c00u) | 0x0c00u);
-    }
+    frontend_stats_scene_oam_count =
+        frontend_stats_freeze_safe_scene_oam(previous_oam_count);
     oam_dirty = 1;
     if (frontend_stats_prepare_tiles()) {
         frontend_render_stats();

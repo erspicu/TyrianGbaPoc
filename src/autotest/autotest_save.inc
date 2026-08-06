@@ -3,10 +3,47 @@ static void autotest_save_flow(void)
 {
     volatile u8 *sram = (volatile u8 *)0x0e000000;
     u32 failures = 0;
+    u32 season_failures = 0;
     u32 sequence = 0;
     u16 corrupt_offset;
     u16 index;
     u8 slot = 3;
+
+    {
+        const u8 *ordinary;
+        const u8 *christmas;
+
+        if (
+            ot_season_from_save_name("XMAS") != OT_SEASON_XMAS ||
+            ot_season_from_save_name("xmas") != OT_SEASON_XMAS ||
+            ot_season_from_save_name("xMaS") != OT_SEASON_XMAS ||
+            ot_season_from_save_name("PUMP") != OT_SEASON_NONE ||
+            ot_season_from_save_name("pump") != OT_SEASON_NONE ||
+            ot_season_from_save_name("PuMp") != OT_SEASON_NONE ||
+            ot_season_from_save_name("XMAS1") != OT_SEASON_NONE ||
+            ot_season_from_save_name("PUMPKIN") != OT_SEASON_NONE ||
+            ot_season_from_save_name("ordinary") != OT_SEASON_NONE
+        ) {
+            season_failures |= 1u << 0;
+        }
+        (void)ot_season_set(OT_SEASON_NONE);
+        ordinary = ot_sprite2_raw_component(36, 1);
+        (void)ot_season_set(OT_SEASON_XMAS);
+        christmas = ot_sprite2_raw_component(36, 1);
+        if (
+            ordinary == 0 ||
+            christmas == 0 ||
+            ordinary == christmas ||
+            memcmp(
+                ordinary,
+                christmas,
+                SPRITE2_RAW_COMPONENT_BYTES
+            ) == 0
+        ) {
+            season_failures |= 1u << 1;
+        }
+        (void)ot_season_set(OT_SEASON_NONE);
+    }
 
     /* Each regression starts from deterministic blank campaign banks. */
     sram[FRONTEND_SAVE_BANK_0_OFFSET] = 0;
@@ -378,6 +415,41 @@ static void autotest_save_flow(void)
     }
     pad_pressed = 0;
 
+    frontend_save_string_copy(
+        frontend_save_slot[slot].name,
+        sizeof(frontend_save_slot[slot].name),
+        "xMaS"
+    );
+    if (
+        !frontend_save_apply_slot(slot) ||
+        ot_season_mode() != OT_SEASON_XMAS
+    ) {
+        season_failures |= 1u << 2;
+    }
+    frontend_save_string_copy(
+        frontend_save_slot[slot].name,
+        sizeof(frontend_save_slot[slot].name),
+        "PuMp"
+    );
+    if (
+        !frontend_save_apply_slot(slot) ||
+        ot_season_mode() != OT_SEASON_NONE
+    ) {
+        season_failures |= 1u << 3;
+    }
+    frontend_save_string_copy(
+        frontend_save_slot[slot].name,
+        sizeof(frontend_save_slot[slot].name),
+        "AprPilot"
+    );
+    if (
+        !frontend_save_apply_slot(slot) ||
+        ot_season_mode() != OT_SEASON_NONE
+    ) {
+        season_failures |= 1u << 4;
+    }
+    if (season_failures != 0) failures |= 1u << 15;
+
     sram[0] = 'T';
     sram[1] = 'G';
     sram[2] = 'S';
@@ -390,6 +462,7 @@ static void autotest_save_flow(void)
     sram[12] = frontend_save_active_bank;
     sram[13] = FRONTEND_SAVE_SLOT_COUNT;
     sram[14] = FRONTEND_SAVE_SCHEMA;
+    sram_write_u32(128, season_failures);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
 }

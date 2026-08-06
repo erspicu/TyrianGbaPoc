@@ -188,7 +188,7 @@ static u16 source_background_hofs(u8 layer)
         );
     }
     if (layer == 1) {
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
         /*
          * backgrnd.c::draw_background_2() synchronizes water's BG2 x source
          * to BG1.  The wild blend path deliberately keeps mapX2Pos, so only

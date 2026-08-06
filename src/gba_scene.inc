@@ -101,7 +101,7 @@ static bool source_detail_shadows_allowed(void)
     return
         source_background2_enabled &&
         !source_detail_spotlight_requested &&
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
         /* Smooth wild BG1 Alpha has priority over local OBJ-window shadows. */
         !source_detail_wild_active &&
 #endif

@@ -295,6 +295,10 @@ SPRITE2_RAW_COMPONENT_HEIGHT = 14
 SPRITE2_RAW_COMPONENT_BYTES = (
     SPRITE2_RAW_COMPONENT_WIDTH * SPRITE2_RAW_COMPONENT_HEIGHT
 )
+# OpenTyrian loads tyrianc.shp as a complete replacement, but binary audit
+# proves that only its player shots (8), ships/options (9) and power-ups (10)
+# differ.  Keep one lossless alternate raw copy for only those logical banks.
+SPRITE2_XMAS_RAW_TABLES = (26, 36, 38)
 JUKEBOX_MUSIC_COUNT = 41
 JUKEBOX_TITLE_BYTES = 48
 JUKEBOX_FONT_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%"
@@ -375,7 +379,52 @@ def load_frontend_pregame_font(path: Path) -> np.ndarray:
             "pre-game font character order changed: "
             f"{''.join(characters)!r}"
         )
-    return np.asarray(rows, dtype=np.uint8)
+    font = np.asarray(rows, dtype=np.uint8)
+
+    def compact_rows(character: str) -> tuple[int, ...]:
+        glyph = font[FRONTEND_PREGAME_FONT_CHARACTERS.index(character)]
+        occupied = 0
+        for value in glyph:
+            occupied |= int(value)
+        source_width = max(1, occupied.bit_length())
+        target_width = min(FRONTEND_SMALL_MIXED_FONT_WIDTH, source_width)
+        output: list[int] = []
+
+        for value in glyph:
+            packed = 0
+            for column in range(target_width):
+                source_column = (
+                    0 if target_width == 1 else
+                    column * (source_width - 1) // (target_width - 1)
+                )
+                if int(value) & (1 << (source_width - source_column - 1)):
+                    packed |= 1 << (target_width - column - 1)
+            output.append(packed)
+        return tuple(output)
+
+    compact_two = compact_rows("2")
+    compact_four = compact_rows("4")
+    if (
+        any(row == 0 for row in compact_two[:7]) or
+        compact_two[0] != 0x0F or
+        compact_two[6] != 0x0F or
+        compact_two[7] != 0
+    ):
+        raise ValueError(
+            f"small mixed digit 2 lost cap/baseline strokes: {compact_two!r}"
+        )
+    if (
+        any(row == 0 for row in compact_four[:7]) or
+        compact_four[3] != 0x0F or
+        any((row & 1) == 0 for row in compact_four[4:7]) or
+        compact_four[7] != 0
+    ):
+        raise ValueError(
+            f"small mixed digit 4 lost its vertical stroke: {compact_four!r}"
+        )
+    if compact_rows("m") == compact_rows("n"):
+        raise ValueError("small mixed m/n glyphs collapsed to the same shape")
+    return font
 
 
 FRONTEND_LAYOUT_KEYS = (
@@ -547,7 +596,7 @@ def sprite2_logical_bank(
     tyrian_shp: bytes,
     shape_table: int,
 ) -> bytes:
-    """Mirror ot_data_comp_shape_bank_view() for all logical Sprite2 banks."""
+    """Resolve every gameplay Sprite2 bank using OpenTyrian's table rules."""
     if shape_table == 21:
         return sprite2_tyrian_shp_section(tyrian_shp, 11)
     if shape_table == 26:
@@ -739,9 +788,68 @@ def build_sprite2_raw_components(
     return bytes(output), report
 
 
+def build_sprite2_xmas_raw_components(
+    data_root: Path,
+) -> tuple[bytes, dict[str, int | str]]:
+    """Losslessly expand the three tyrianc.shp banks that differ."""
+    tyrian_shp = (data_root / "tyrianc.shp").read_bytes()
+    output = bytearray()
+    encoded_crc32 = 0
+    encoded_bytes = 0
+    component_count = 0
+
+    for shape_table in SPRITE2_XMAS_RAW_TABLES:
+        bank = sprite2_logical_bank(data_root, tyrian_shp, shape_table)
+        first_offset = struct.unpack_from("<H", bank, 0)[0]
+        sprite_count = first_offset // 2
+        if sprite_count != SPRITE2_RAW_COMPONENTS_PER_TABLE:
+            raise ValueError(
+                f"Christmas Sprite2 table {shape_table} count changed: "
+                f"{sprite_count} != {SPRITE2_RAW_COMPONENTS_PER_TABLE}"
+            )
+        for sprite_number in range(1, sprite_count + 1):
+            encoded = sprite2_component_stream(bank, sprite_number)
+            raw = decode_sprite2_raw_component(encoded)
+            if len(raw) != SPRITE2_RAW_COMPONENT_BYTES:
+                raise AssertionError(
+                    "Christmas Sprite2 raw component stride changed"
+                )
+            output.extend(raw)
+            encoded_crc32 = zlib.crc32(encoded, encoded_crc32)
+            encoded_bytes += len(encoded)
+            component_count += 1
+
+    expected_components = (
+        len(SPRITE2_XMAS_RAW_TABLES) *
+        SPRITE2_RAW_COMPONENTS_PER_TABLE
+    )
+    expected_bytes = expected_components * SPRITE2_RAW_COMPONENT_BYTES
+    if component_count != expected_components or len(output) != expected_bytes:
+        raise AssertionError(
+            "Christmas Sprite2 raw catalog changed: "
+            f"{component_count=}, bytes={len(output)}, "
+            f"expected={expected_bytes}"
+        )
+    report: dict[str, int | str] = {
+        "version": SPRITE2_RAW_VERSION,
+        "table_count": len(SPRITE2_XMAS_RAW_TABLES),
+        "table_ids": ",".join(str(v) for v in SPRITE2_XMAS_RAW_TABLES),
+        "components_per_table": SPRITE2_RAW_COMPONENTS_PER_TABLE,
+        "component_count": component_count,
+        "raw_bytes": len(output),
+        "raw_crc32": f"{zlib.crc32(output) & 0xffffffff:08x}",
+        "raw_sha256": hashlib.sha256(output).hexdigest(),
+        "source_stream_bytes": encoded_bytes,
+        "source_stream_crc32": f"{encoded_crc32 & 0xffffffff:08x}",
+        "roundtrip_components": component_count,
+    }
+    return bytes(output), report
+
+
 def write_sprite2_raw_header(
     output: Path,
     report: dict[str, int | str],
+    xmas_report: dict[str, int | str],
 ) -> None:
     lines = [
         "#ifndef TYRIAN_GBA_SPRITE2_RAW_META_H",
@@ -766,6 +874,34 @@ def write_sprite2_raw_header(
         (
             "#define SPRITE2_RAW_ROUNDTRIP_COMPONENTS "
             f"{report['roundtrip_components']}u"
+        ),
+        "",
+        (
+            "#define SPRITE2_XMAS_RAW_TABLE_COUNT "
+            f"{xmas_report['table_count']}u"
+        ),
+        "#define SPRITE2_XMAS_RAW_TABLE_0 26u",
+        "#define SPRITE2_XMAS_RAW_TABLE_1 36u",
+        "#define SPRITE2_XMAS_RAW_TABLE_2 38u",
+        (
+            "#define SPRITE2_XMAS_RAW_COMPONENT_COUNT "
+            f"{xmas_report['component_count']}u"
+        ),
+        (
+            "#define SPRITE2_XMAS_RAW_DATA_BYTES "
+            f"{xmas_report['raw_bytes']}u"
+        ),
+        (
+            "#define SPRITE2_XMAS_RAW_DATA_CRC32 "
+            f"0x{xmas_report['raw_crc32']}u"
+        ),
+        (
+            "#define SPRITE2_XMAS_RAW_SOURCE_STREAM_CRC32 "
+            f"0x{xmas_report['source_stream_crc32']}u"
+        ),
+        (
+            "#define SPRITE2_XMAS_RAW_ROUNDTRIP_COMPONENTS "
+            f"{xmas_report['roundtrip_components']}u"
         ),
         "",
         "#endif",
@@ -2266,6 +2402,10 @@ def build_frontend_static_menu_panels(
     preview_dir = preview / "frontend_static_menu_panels"
     preview_dir.mkdir(parents=True, exist_ok=True)
 
+    def highlight_colour(colour: int) -> int:
+        """Mirror OpenTyrian's '~' +4 brightness with saturation."""
+        return (colour & 0xF0) | min(15, (colour & 0x0F) + 4)
+
     def glyph_index(character: str) -> int | None:
         if character == " ":
             return None
@@ -2301,6 +2441,7 @@ def build_frontend_static_menu_panels(
                 space_width,
             )
             for character in text
+            if character != "~"
         )
 
     def draw_glyph(
@@ -2335,7 +2476,11 @@ def build_frontend_static_menu_panels(
         maximum_width: int = FRONTEND_NATIVE_FONT_WIDTH,
         space_width: int = FRONTEND_NATIVE_FONT_SPACE,
     ) -> None:
+        highlight = False
         for character in text:
+            if character == "~":
+                highlight = not highlight
+                continue
             index = glyph_index(character)
             advance = glyph_advance(index, maximum_width, space_width)
             if x >= right or x + advance > right:
@@ -2347,7 +2492,13 @@ def build_frontend_static_menu_panels(
                 y + 1,
                 FRONTEND_NATIVE_FONT_SHADOW,
             )
-            draw_glyph(frame, index, x, y, colour)
+            draw_glyph(
+                frame,
+                index,
+                x,
+                y,
+                highlight_colour(colour) if highlight else colour,
+            )
             x += advance
 
     def draw_centered(
@@ -2398,6 +2549,7 @@ def build_frontend_static_menu_panels(
         return sum(
             pregame_glyph_advance(pregame_glyph_index(character))
             for character in text
+            if character != "~"
         )
 
     def draw_pregame_glyph(
@@ -2431,7 +2583,11 @@ def build_frontend_static_menu_panels(
         right: int,
         colour: int,
     ) -> None:
+        highlight = False
         for character in text:
+            if character == "~":
+                highlight = not highlight
+                continue
             index = pregame_glyph_index(character)
             advance = pregame_glyph_advance(index)
             if x >= right or x + advance > right:
@@ -2443,7 +2599,13 @@ def build_frontend_static_menu_panels(
                 y + 1,
                 FRONTEND_PREGAME_FONT_SHADOW,
             )
-            draw_pregame_glyph(frame, index, x, y, colour)
+            draw_pregame_glyph(
+                frame,
+                index,
+                x,
+                y,
+                highlight_colour(colour) if highlight else colour,
+            )
             x += advance
 
     def draw_pregame_centered(
@@ -2474,6 +2636,7 @@ def build_frontend_static_menu_panels(
         return sum(
             menu_glyph_advance(pregame_glyph_index(character))
             for character in text
+            if character != "~"
         )
 
     def draw_menu_text(
@@ -2484,7 +2647,11 @@ def build_frontend_static_menu_panels(
         right: int,
         colour: int,
     ) -> None:
+        highlight = False
         for character in text:
+            if character == "~":
+                highlight = not highlight
+                continue
             index = pregame_glyph_index(character)
             advance = menu_glyph_advance(index)
             if x >= right or x + advance > right:
@@ -2496,7 +2663,13 @@ def build_frontend_static_menu_panels(
                 y + 1,
                 FRONTEND_PREGAME_FONT_SHADOW,
             )
-            draw_pregame_glyph(frame, index, x, y, colour)
+            draw_pregame_glyph(
+                frame,
+                index,
+                x,
+                y,
+                highlight_colour(colour) if highlight else colour,
+            )
             x += advance
 
     def draw_menu_centered(
@@ -2532,6 +2705,7 @@ def build_frontend_static_menu_panels(
                 pregame_glyph_index(character)
             )
             for character in text
+            if character != "~"
         )
 
     def draw_small_mixed_glyph(
@@ -2573,7 +2747,11 @@ def build_frontend_static_menu_panels(
         colour: int,
         shadow_colour: int = FRONTEND_PREGAME_FONT_SHADOW,
     ) -> None:
+        highlight = False
         for character in text:
+            if character == "~":
+                highlight = not highlight
+                continue
             index = pregame_glyph_index(character)
             advance = small_mixed_glyph_advance(index)
             if x >= right or x + advance > right:
@@ -2585,7 +2763,13 @@ def build_frontend_static_menu_panels(
                 y + 1,
                 shadow_colour,
             )
-            draw_small_mixed_glyph(frame, index, x, y, colour)
+            draw_small_mixed_glyph(
+                frame,
+                index,
+                x,
+                y,
+                highlight_colour(colour) if highlight else colour,
+            )
             x += advance
 
     def draw_small_mixed_wrapped(
@@ -7138,12 +7322,25 @@ def main() -> None:
     sprite2_raw, sprite2_raw_report = build_sprite2_raw_components(
         data_root
     )
+    sprite2_xmas_raw, sprite2_xmas_raw_report = (
+        build_sprite2_xmas_raw_components(data_root)
+    )
     (output / "sprite2_raw_components.bin").write_bytes(sprite2_raw)
-    write_sprite2_raw_header(output, sprite2_raw_report)
+    (output / "sprite2_xmas_raw_components.bin").write_bytes(
+        sprite2_xmas_raw
+    )
+    write_sprite2_raw_header(
+        output,
+        sprite2_raw_report,
+        sprite2_xmas_raw_report,
+    )
     (output / "sprite2_raw_audit.txt").write_text(
         "\n".join(
             f"{key}={value}"
             for key, value in sprite2_raw_report.items()
+        ) + "\n" + "\n".join(
+            f"xmas_{key}={value}"
+            for key, value in sprite2_xmas_raw_report.items()
         ) + "\n",
         encoding="utf-8",
     )
@@ -7438,6 +7635,7 @@ def main() -> None:
     game_over_report = music_reports[10]
     sound_file = data_root / "tyrian.snd"
     voice_file = data_root / "voices.snd"
+    xmas_voice_file = data_root / "voicesc.snd"
     ordinary_sound_count = struct.unpack_from(
         "<H",
         sound_file.read_bytes(),
@@ -7448,11 +7646,21 @@ def main() -> None:
         voice_file.read_bytes(),
         0,
     )[0]
-    if ordinary_sound_count != 29 or voice_sound_count != 9:
+    xmas_voice_sound_count = struct.unpack_from(
+        "<H",
+        xmas_voice_file.read_bytes(),
+        0,
+    )[0]
+    if (
+        ordinary_sound_count != 29 or
+        voice_sound_count != 9 or
+        xmas_voice_sound_count != voice_sound_count
+    ):
         raise ValueError(
             "Tyrian source sound catalog changed: "
             f"{ordinary_sound_count} ordinary + "
-            f"{voice_sound_count} voices"
+            f"{voice_sound_count} voices + "
+            f"{xmas_voice_sound_count} Christmas voices"
         )
     for sound_id in range(1, ordinary_sound_count + 1):
         write_signed_pcm_wav(
@@ -7473,6 +7681,19 @@ def main() -> None:
                 f"source_sound_"
                 f"{ordinary_sound_count + voice_index + 1:02d}.wav"
             ),
+            pcm[:-100],
+            11_025,
+        )
+    for voice_index in range(xmas_voice_sound_count):
+        pcm = extract_tyrian_sfx_entry(xmas_voice_file, voice_index)
+        # Same nortsong.c 100-byte corrupt-tail rule as ordinary voices.snd.
+        if len(pcm) < 100:
+            raise ValueError(
+                "Tyrian Christmas voice "
+                f"{voice_index + 1} is shorter than its trim"
+            )
+        write_signed_pcm_wav(
+            output / f"source_xmas_voice_{voice_index + 1:02d}.wav",
             pcm[:-100],
             11_025,
         )
@@ -7512,8 +7733,12 @@ def main() -> None:
         f"obj_tiles={len(obj_tiles) // 32}",
         "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
         "obj_enemy_preconverted_frames=0",
-        "obj_enemy_runtime_source=ROMFS newsh*.shp/tyrian.shp",
-        "obj_enemy_runtime_decoder=build-time lossless raw + RLE fallback",
+        (
+            "obj_enemy_runtime_source=complete build-time lossless raw "
+            "catalog from vendor newsh*.shp/tyrian.shp"
+        ),
+        "obj_enemy_runtime_decoder=lossless raw component compositor",
+        "obj_enemy_newsh_romfs_duplicate_retained=0",
         "obj_enemy_raw_scope=all logical banks and all components",
         (
             "obj_enemy_raw_components="

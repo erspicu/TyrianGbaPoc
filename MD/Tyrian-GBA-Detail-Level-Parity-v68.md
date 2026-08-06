@@ -37,7 +37,8 @@ palette lookup 與 HBlank DMA 實作。這代表 Low／Normal 的功能規則已
   恢復為 true。
 - BG2 開啟時，玩家飛機與一般玩家子彈會依 BG2 視差產生暗色陰影。
 - `starShowVGASpecialCode==1` 的全畫面上下反轉不受 Detail Level 限制。
-- `starShowVGASpecialCode==2` 只有 Normal 以上顯示三角光照區。
+- `starShowVGASpecialCode==2` 在 PC 對應的 Normal／High／Pentium 顯示
+  三角光照區；後續新增的 GBA CUSTOM profile 依專案規格明確關閉。
 - smoothie 3／4／5 類 iced／blur pass 只有 Normal 以上執行。
 - lava／water 需要 High 以上；Pentium 另有 hue filter 與 wild BG2 blend。
 - `displayScore` 在這份 OpenTyrian snapshot 中只有宣告與初始化，沒有後續

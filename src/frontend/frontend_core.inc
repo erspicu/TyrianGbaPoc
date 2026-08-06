@@ -1163,7 +1163,7 @@ _Static_assert(
         SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
             SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
                 SOURCE_ENEMY_TILES_PER_SLOT,
-    "stats font and cube must fit the end-level enemy-cache window"
+    "stats font and cube must fit the retired end-level 8bpp cache window"
 );
 
 static u8 frontend_prepare_map_begin(void)
@@ -1929,6 +1929,21 @@ static u8 frontend_runtime_font_tile(char character)
     return 0;
 }
 
+/*
+ * OpenTyrian font.c/fonthand.c uses '~' as a zero-width highlight toggle.
+ * Colour-bearing text paths add four brightness steps between a marker pair;
+ * the GBA palette adapter keeps the hue and saturates the four-bit value just
+ * like blit_sprite_hv().  Shadow/darken passes consume the marker but do not
+ * change colour.
+ */
+static u8 frontend_text_highlight_colour(u8 colour)
+{
+    u8 brightness = (u8)(colour & 0x0fu);
+
+    brightness = brightness > 11u ? 15u : (u8)(brightness + 4u);
+    return (u8)((colour & 0xf0u) | brightness);
+}
+
 static u8 frontend_runtime_font_advance_scaled(
     u8 tile_index,
     u8 glyph_width,
@@ -2016,9 +2031,19 @@ static void frontend_draw_runtime_text_clipped_scaled(
     u8 space_width
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_runtime_font_tile(*text++);
-        u8 advance = frontend_runtime_font_advance_scaled(
+        char character = *text++;
+        u8 tile_index;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_runtime_font_tile(character);
+        advance = frontend_runtime_font_advance_scaled(
             tile_index,
             glyph_width,
             space_width
@@ -2038,7 +2063,7 @@ static void frontend_draw_runtime_text_clipped_scaled(
             tile_index,
             x,
             y,
-            colour,
+            highlight ? frontend_text_highlight_colour(colour) : colour,
             glyph_width
         );
         x = (s16)(x + advance);
@@ -2194,15 +2219,26 @@ static void frontend_draw_upgrade_list_text(
     const char *measure = text;
     s16 compact_width = 0;
     u8 use_tiny;
+    u8 highlight = 0;
 
     while (*measure != '\0') {
+        char character = *measure++;
+
+        if (character == '~') continue;
         compact_width = (s16)(
-            compact_width + (*measure++ == ' ' ? 3 : 5)
+            compact_width + (character == ' ' ? 3 : 5)
         );
     }
     use_tiny = compact_width > right - x;
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_runtime_font_tile(*text++);
+        char character = *text++;
+        u8 tile_index;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_runtime_font_tile(character);
 
         if (tile_index == 0) {
             x = (s16)(x + (use_tiny ? 2 : 3));
@@ -2222,7 +2258,7 @@ static void frontend_draw_upgrade_list_text(
                 tile_index,
                 x,
                 y,
-                colour
+                highlight ? frontend_text_highlight_colour(colour) : colour
             );
             x = (s16)(x + 4);
         } else {
@@ -2239,14 +2275,23 @@ static void frontend_draw_upgrade_list_text(
                 tile_index,
                 x,
                 y,
-                colour
+                highlight ? frontend_text_highlight_colour(colour) : colour
             );
             x = (s16)(x + 5);
         }
     }
 #elif TYRIAN_GBA_UPGRADE_LIST_FONT_MODE == 2
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_runtime_font_tile(*text++);
+        char character = *text++;
+        u8 tile_index;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_runtime_font_tile(character);
 
         if (tile_index == 0) {
             x = (s16)(x + 4);
@@ -2265,7 +2310,7 @@ static void frontend_draw_upgrade_list_text(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + 8);
     }
@@ -2313,6 +2358,10 @@ static s16 frontend_runtime_text_width_scaled(
     s16 width = 0;
 
     while (text != 0 && *text != '\0') {
+        if (*text == '~') {
+            text++;
+            continue;
+        }
         width = (s16)(
             width +
             frontend_runtime_font_advance_scaled(
@@ -2502,6 +2551,10 @@ static s16 frontend_pregame_text_width(const char *text)
     s16 width = 0;
 
     while (text != 0 && *text != '\0') {
+        if (*text == '~') {
+            text++;
+            continue;
+        }
         width = (s16)(
             width +
             frontend_pregame_font_advance(
@@ -2521,9 +2574,19 @@ static void frontend_draw_pregame_text_clipped(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_pregame_font_tile(*text++);
-        u8 advance = frontend_pregame_font_advance(tile_index);
+        char character = *text++;
+        u8 tile_index;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_pregame_font_tile(character);
+        advance = frontend_pregame_font_advance(tile_index);
 
         if (x + advance > right) break;
         frontend_blit_pregame_font(
@@ -2538,7 +2601,7 @@ static void frontend_draw_pregame_text_clipped(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2560,9 +2623,19 @@ static void frontend_draw_pregame_text_clipped_no_shadow(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_pregame_font_tile(*text++);
-        u8 advance = frontend_pregame_font_advance(tile_index);
+        char character = *text++;
+        u8 tile_index;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_pregame_font_tile(character);
+        advance = frontend_pregame_font_advance(tile_index);
 
         if (x + advance > right) break;
         frontend_blit_pregame_font(
@@ -2570,7 +2643,7 @@ static void frontend_draw_pregame_text_clipped_no_shadow(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2585,9 +2658,19 @@ static void frontend_draw_pregame_text_full_shade(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_pregame_font_tile(*text++);
-        u8 advance = frontend_pregame_font_advance(tile_index);
+        char character = *text++;
+        u8 tile_index;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_pregame_font_tile(character);
+        advance = frontend_pregame_font_advance(tile_index);
 
         if (x + advance > right) break;
         frontend_blit_pregame_font_darken(
@@ -2619,7 +2702,7 @@ static void frontend_draw_pregame_text_full_shade(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2664,6 +2747,10 @@ static s16 frontend_menu_text_width(const char *text)
     s16 width = 0;
 
     while (text != 0 && *text != '\0') {
+        if (*text == '~') {
+            text++;
+            continue;
+        }
         width = (s16)(
             width +
             frontend_menu_font_advance(
@@ -2683,9 +2770,19 @@ static void frontend_draw_menu_text_clipped(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
-        u8 tile_index = frontend_pregame_font_tile(*text++);
-        u8 advance = frontend_menu_font_advance(tile_index);
+        char character = *text++;
+        u8 tile_index;
+        u8 advance;
+
+        if (character == '~') {
+            highlight ^= 1u;
+            continue;
+        }
+        tile_index = frontend_pregame_font_tile(character);
+        advance = frontend_menu_font_advance(tile_index);
 
         if (x + advance > right) break;
         frontend_blit_pregame_font(
@@ -2700,7 +2797,7 @@ static void frontend_draw_menu_text_clipped(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2861,6 +2958,11 @@ static s16 frontend_small_mixed_text_width(const char *text)
     s16 width = 0;
 
     while (text != 0 && *text != '\0') {
+        /* OpenTyrian treats '~' as a zero-width highlight toggle. */
+        if (*text == '~') {
+            text++;
+            continue;
+        }
         width = (s16)(
             width +
             frontend_small_mixed_font_advance(
@@ -2881,7 +2983,14 @@ static void frontend_draw_small_mixed_text_clipped_colours(
     u8 shadow_colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
+        if (*text == '~') {
+            highlight ^= 1u;
+            text++;
+            continue;
+        }
         u8 tile_index = frontend_pregame_font_tile(*text++);
         u8 advance = frontend_small_mixed_font_advance(tile_index);
 
@@ -2898,7 +3007,7 @@ static void frontend_draw_small_mixed_text_clipped_colours(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2913,7 +3022,14 @@ static void frontend_draw_small_mixed_text_clipped_no_shadow(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
+        if (*text == '~') {
+            highlight ^= 1u;
+            text++;
+            continue;
+        }
         u8 tile_index = frontend_pregame_font_tile(*text++);
         u8 advance = frontend_small_mixed_font_advance(tile_index);
 
@@ -2923,7 +3039,7 @@ static void frontend_draw_small_mixed_text_clipped_no_shadow(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }
@@ -2944,7 +3060,14 @@ static void frontend_draw_small_mixed_text_full_shade(
     u8 colour
 )
 {
+    u8 highlight = 0;
+
     while (*text != '\0' && x < right) {
+        if (*text == '~') {
+            highlight ^= 1u;
+            text++;
+            continue;
+        }
         u8 tile_index = frontend_pregame_font_tile(*text++);
         u8 advance = frontend_small_mixed_font_advance(tile_index);
 
@@ -2978,7 +3101,7 @@ static void frontend_draw_small_mixed_text_full_shade(
             tile_index,
             x,
             y,
-            colour
+            highlight ? frontend_text_highlight_colour(colour) : colour
         );
         x = (s16)(x + advance);
     }

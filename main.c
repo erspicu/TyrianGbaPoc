@@ -12,6 +12,7 @@
 #include "src/opentyrian_data.h"
 #include "src/opentyrian_level_port.h"
 #include "src/opentyrian_rom_io.h"
+#include "src/opentyrian_season.h"
 #include "src/opentyrian_sprite2.h"
 
 /*
@@ -31,8 +32,11 @@
 
 _Static_assert(
     SFX_SOURCE_SOUND_38 == SFX_SOURCE_SOUND_01 + 37 &&
-        MSL_NSAMPS == SFX_SOURCE_SOUND_38 + 1,
-    "Maxmod bank must contain all 29 Tyrian SFX and nine voices"
+        SFX_SOURCE_XMAS_VOICE_01 == SFX_SOURCE_SOUND_38 + 1 &&
+        SFX_SOURCE_XMAS_VOICE_09 ==
+            SFX_SOURCE_XMAS_VOICE_01 + 8 &&
+        MSL_NSAMPS == SFX_SOURCE_XMAS_VOICE_09 + 1,
+    "Maxmod bank must contain 29 SFX, nine voices and nine Xmas voices"
 );
 _Static_assert(
     TYRIAN_GBA_LAYOUT_CASH_X >= 0 &&
@@ -320,12 +324,23 @@ enum {
 #else
 #define PRESENTATION_MAX_PENDING_LOGIC_TICKS 3
 #endif
-#define PRESENTATION_WAVE_MAX_PENDING_LOGIC_TICKS 4
-#define PRESENTATION_WAVE_MIN_RENDER_LOGIC_TICKS 3
-#define PRESENTATION_WAVE_PRESSURE_ENTER 2
-#define PRESENTATION_WAVE_PRESSURE_MAX 8
-#define PRESENTATION_WAVE_RECOVERY_LIGHT_RENDERS 16
-#define PRESENTATION_WAVE_RECOVERY_RENDER_CYCLES 150000u
+#define PRESENTATION_ADAPTIVE_MEDIUM_MAX_PENDING_LOGIC_TICKS \
+    TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME
+#define PRESENTATION_ADAPTIVE_SEVERE_MAX_PENDING_LOGIC_TICKS \
+    TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME
+#define PRESENTATION_ADAPTIVE_MEDIUM_MIN_RENDER_LOGIC_TICKS \
+    TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME
+#define PRESENTATION_ADAPTIVE_SEVERE_MIN_RENDER_LOGIC_TICKS \
+    TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME
+#define PRESENTATION_ADAPTIVE_GENERAL_PRESSURE_ENTER 4
+#define PRESENTATION_ADAPTIVE_GENERAL_MISSED_ENTER 2
+#define PRESENTATION_ADAPTIVE_WAVE_PRESSURE_ENTER 2
+#define PRESENTATION_ADAPTIVE_WAVE_MISSED_ENTER 1
+#define PRESENTATION_ADAPTIVE_SEVERE_PRESSURE 8
+#define PRESENTATION_ADAPTIVE_SEVERE_MISSED 4
+#define PRESENTATION_ADAPTIVE_PRESSURE_MAX 12
+#define PRESENTATION_ADAPTIVE_RECOVERY_LIGHT_RENDERS 16
+#define PRESENTATION_ADAPTIVE_RECOVERY_RENDER_CYCLES 150000u
 #endif
 
 /*
@@ -1425,6 +1440,16 @@ static u8 game_state;
 static u8 game_paused;
 static u16 pad_now;
 static u16 pad_pressed;
+enum {
+    FRONTEND_DEMO_KEY_UP = 1u << 0,
+    FRONTEND_DEMO_KEY_DOWN = 1u << 1,
+    FRONTEND_DEMO_KEY_LEFT = 1u << 2,
+    FRONTEND_DEMO_KEY_RIGHT = 1u << 3,
+    FRONTEND_DEMO_KEY_MAIN_FIRE = 1u << 4,
+    FRONTEND_DEMO_KEY_REAR_MODE = 1u << 5,
+    FRONTEND_DEMO_KEY_LEFT_SIDEKICK = 1u << 6,
+    FRONTEND_DEMO_KEY_RIGHT_SIDEKICK = 1u << 7,
+};
 static u8 frontend_selection;
 static u8 frontend_play_mode;
 static u8 frontend_episode;
@@ -1435,6 +1460,8 @@ static OtFile *frontend_demo_file EWRAM_BSS;
 static u16 frontend_demo_keys_wait EWRAM_BSS;
 static u16 frontend_title_idle_frames EWRAM_BSS;
 static u8 frontend_demo_keys EWRAM_BSS;
+static u8 frontend_demo_keys_previous EWRAM_BSS;
+static u8 frontend_demo_keys_pressed EWRAM_BSS;
 static u8 frontend_demo_number EWRAM_BSS;
 static u8 frontend_demo_active EWRAM_BSS;
 static u8 frontend_demo_eof EWRAM_BSS;
@@ -1950,7 +1977,7 @@ static u8 source_detail_spotlight_table_pending;
  * text-BG equivalent: per-scanline BG0/BG1 scroll pairs.  The inactive table
  * is prepared while the LCD consumes the active one, exactly like WIN0H.
  */
-#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
 #define SOURCE_DETAIL_WAVE_SCANLINES (SCREEN_HEIGHT + 1u)
 static u16 source_detail_wave_table[2]
     [SOURCE_DETAIL_WAVE_SCANLINES][4]
@@ -2070,13 +2097,13 @@ static u8 presentation_render_pending;
 static u8 presentation_pending_logic_ticks;
 static u8 presentation_registers_valid;
 static u8 presentation_release_held_window;
-#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
-static u8 presentation_wave_dispatch_active;
-static u8 presentation_wave_dispatch_pressure;
-static u8 presentation_wave_dispatch_recovery_ticks;
-static u8 presentation_wave_dispatch_idle_render;
-static u8 presentation_wave_dispatch_scope_seen;
-static u32 presentation_wave_dispatch_missed_baseline;
+#if TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
+static u8 presentation_adaptive_dispatch_active;
+static u8 presentation_adaptive_dispatch_severe;
+static u8 presentation_adaptive_dispatch_pressure;
+static u8 presentation_adaptive_dispatch_recovery_ticks;
+static u8 presentation_adaptive_dispatch_idle_render;
+static u32 presentation_adaptive_dispatch_missed_baseline;
 #endif
 #endif
 
@@ -2406,6 +2433,13 @@ volatile u32 telemetry_presentation_superseded;
 volatile u32 telemetry_presentation_pending_logic_max;
 volatile u32 telemetry_presentation_estimate_max;
 volatile u32 telemetry_presentation_deadline_elapsed_max;
+volatile u32 telemetry_adaptive_dispatch_attempts;
+volatile u32 telemetry_adaptive_dispatch_entries;
+volatile u32 telemetry_adaptive_dispatch_severe_entries;
+volatile u32 telemetry_adaptive_dispatch_exits;
+volatile u32 telemetry_adaptive_dispatch_logic_busy_deferred;
+volatile u32 telemetry_adaptive_dispatch_idle_renders;
+volatile u32 telemetry_adaptive_dispatch_safety_forced;
 volatile u32 telemetry_wave_dispatch_scope_attempts;
 volatile u32 telemetry_wave_dispatch_entries;
 volatile u32 telemetry_wave_dispatch_exits;

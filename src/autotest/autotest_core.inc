@@ -206,6 +206,7 @@ static u8 autotest_source_upgrade_loadout(void)
      * load generator so level timing remains a stable independent contract.
      */
     autotest_unlimited_weapon_energy = 0;
+    pass = pass && source_gameplay_mapping_selftest();
     pass =
         pass &&
         ot_data_hdt_weapon_port_read(1, &front_port) &&
@@ -247,7 +248,7 @@ static u8 autotest_source_upgrade_loadout(void)
         source_sidekick[1].option.weapon == right_option.weapon;
 
     player_weapon_energy = 900;
-    pad_now = KEY_A | KEY_B | KEY_R;
+    pad_now = KEY_A | KEY_B;
     pad_pressed = 0;
     source_player_weapons_update();
     active = 0;
@@ -257,7 +258,7 @@ static u8 autotest_source_upgrade_loadout(void)
     pass = pass && active == expected_shots;
 
     pad_now = 0;
-    pad_pressed = KEY_L;
+    pad_pressed = KEY_SELECT;
     source_player_weapons_update();
     pass =
         pass &&
@@ -410,7 +411,7 @@ static u8 autotest_source_upgrade_loadout(void)
     player_armor = 23;
     source_parity_level.player_armor = player_armor;
     source_front_weapon_init();
-    pad_now = KEY_A;
+    pad_now = KEY_L;
     pad_pressed = 0;
     source_special_update();
     xega_first_phase =
@@ -431,7 +432,7 @@ static u8 autotest_source_upgrade_loadout(void)
     clear_entities();
     source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 0;
     source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
-    pad_now = KEY_A;
+    pad_now = KEY_L;
     source_special_update();
     xega_second_phase =
         source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2];
@@ -449,7 +450,7 @@ static u8 autotest_source_upgrade_loadout(void)
     source_special_flare_duration = 0;
     source_special_wait = 0;
     player_invulnerable = 0;
-    pad_now = KEY_A;
+    pad_now = KEY_L;
     source_special_update();
     pass =
         pass &&

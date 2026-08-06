@@ -1,10 +1,13 @@
 /*
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
- * Direct decoder for OpenTyrian's Sprite2/newsh*.shp command stream.
- * The decoder preserves PC palette indices.  A zero uint16_t output value
- * means transparent; an opaque PC index N is stored as N + 1 so index zero
- * remains representable without a separate mask.
+ * Direct decoder for the build-time lossless expansion of OpenTyrian's
+ * Sprite2/newsh*.shp command streams.  The builder round-trips all 11,552
+ * components against the original RLE before the ROM is linked.  Runtime
+ * therefore needs only this complete raw catalog, not a second compressed
+ * copy in ROMFS.  A zero uint16_t output value means transparent; an opaque
+ * PC index N is stored as N + 1 so index zero remains representable without
+ * a separate mask.
  */
 #ifndef TYRIAN_GBA_OPENTYRIAN_SPRITE2_H
 #define TYRIAN_GBA_OPENTYRIAN_SPRITE2_H
@@ -31,12 +34,6 @@ const uint8_t *ot_sprite2_raw_component(
     uint16_t sprite_number
 );
 bool ot_sprite2_raw_catalog_valid(void);
-bool ot_sprite2_raw_component_matches_rle(
-    uint8_t shape_table,
-    uint16_t sprite_number,
-    uint16_t *scratch,
-    uint32_t scratch_pixels
-);
 
 /*
  * graphic retains OpenTyrian's one-based Sprite2 index.  A size value of

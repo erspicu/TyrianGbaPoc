@@ -956,7 +956,7 @@ static IWRAM_CODE ARM_CODE u8 background_prefetch_layer(
     u8 column_budget
 );
 
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
 static IWRAM_CODE THUMB_CODE __attribute__((noinline, noclone)) void
 background_wild_dither_pattern(u8 *pattern)
 {
@@ -984,7 +984,7 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     u16 slot;
     u16 word;
 
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
     /*
      * The normal Pentium path uses GBA hardware Alpha for a smooth PC-like
      * wild BG2 pass.  Only a conflicting full-screen colour effect uses this
@@ -1003,7 +1003,7 @@ static IWRAM_CODE ARM_CODE u16 background_resolve_key(
     if (rendered != 0) *rendered = 1;
     background_tile_render_count++;
     background_render_tile(key, pattern, &palette_bank);
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
     if (layer == 1u && (key & 0x80000000u) != 0) {
         /*
          * 50% checkerboard clears only the selected nibble, including

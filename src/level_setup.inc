@@ -388,8 +388,8 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_detail_blur_requested = 0;
     source_detail_wave_requested = 0;
     source_detail_shadow_windows_active = 0;
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
-    /* JE_initProcessorType(4): wild=true at every level entrance. */
+#if TYRIAN_GBA_DETAIL_HAS_WILD_ALPHA
+    /* Pentium/Custom: wild=true at every level entrance. */
     source_detail_wild_active = 1;
     source_detail_wild_dither_active = 0;
 #else
@@ -409,7 +409,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_detail_spotlight_table_pending = 0;
     source_detail_wave_table_active = 0;
     source_detail_wave_table_pending = 0;
-#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
     source_detail_wave_runtime_reset();
 #endif
     REG_DMA0CNT = 0;
@@ -781,6 +781,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_presentation_pending_logic_max = 0;
     telemetry_presentation_estimate_max = 0;
     telemetry_presentation_deadline_elapsed_max = 0;
+    telemetry_adaptive_dispatch_attempts = 0;
+    telemetry_adaptive_dispatch_entries = 0;
+    telemetry_adaptive_dispatch_severe_entries = 0;
+    telemetry_adaptive_dispatch_exits = 0;
+    telemetry_adaptive_dispatch_logic_busy_deferred = 0;
+    telemetry_adaptive_dispatch_idle_renders = 0;
+    telemetry_adaptive_dispatch_safety_forced = 0;
     telemetry_wave_dispatch_scope_attempts = 0;
     telemetry_wave_dispatch_entries = 0;
     telemetry_wave_dispatch_exits = 0;
@@ -834,7 +841,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_detail_wave_attenuated_frames = 0;
     telemetry_detail_wave_pressure_score_max = 0;
     telemetry_detail_wave_strength_min_q8 =
-#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
         SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8;
 #else
         0;
@@ -889,13 +896,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     presentation_pending_logic_ticks = 0;
     presentation_registers_valid = 0;
     presentation_release_held_window = 0;
-#if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
-    presentation_wave_dispatch_active = 0;
-    presentation_wave_dispatch_pressure = 0;
-    presentation_wave_dispatch_recovery_ticks = 0;
-    presentation_wave_dispatch_idle_render = 0;
-    presentation_wave_dispatch_scope_seen = 0;
-    presentation_wave_dispatch_missed_baseline =
+#if TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
+    presentation_adaptive_dispatch_active = 0;
+    presentation_adaptive_dispatch_severe = 0;
+    presentation_adaptive_dispatch_pressure = 0;
+    presentation_adaptive_dispatch_recovery_ticks = 0;
+    presentation_adaptive_dispatch_idle_render = 0;
+    presentation_adaptive_dispatch_missed_baseline =
         telemetry_missed_vblanks;
 #endif
     gameplay_presentation_capture_registers();

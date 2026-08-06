@@ -354,7 +354,32 @@ static u8 autotest_frontend_upgrade_transaction(void)
                 )
             ) ||
         frontend_pregame_font_tile(';') ==
-            frontend_pregame_font_tile('?')
+            frontend_pregame_font_tile('?') ||
+        frontend_small_mixed_text_width("~2~4") !=
+            (s16)(
+                frontend_small_mixed_font_advance(
+                    frontend_pregame_font_tile('2')
+                ) +
+                frontend_small_mixed_font_advance(
+                    frontend_pregame_font_tile('4')
+                )
+            ) ||
+        frontend_pregame_text_width("~A~") !=
+            frontend_pregame_font_advance(
+                frontend_pregame_font_tile('A')
+            ) ||
+        frontend_menu_text_width("~A~") !=
+            frontend_menu_font_advance(
+                frontend_pregame_font_tile('A')
+            ) ||
+        frontend_runtime_text_width("~A~") !=
+            frontend_runtime_font_advance_scaled(
+                frontend_runtime_font_tile('A'),
+                FRONTEND_NEXT_FONT_WIDTH,
+                FRONTEND_NEXT_FONT_SPACE
+            ) ||
+        frontend_text_highlight_colour(0x58u) != 0x5cu ||
+        frontend_text_highlight_colour(0xfeu) != 0xffu
     ) {
         passed = 0;
         goto restore;

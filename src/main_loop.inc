@@ -171,7 +171,7 @@ int main(void)
      */
     GBA_WAITCNT = GBA_WAITCNT_ROM_PREFETCH_3_1;
     telemetry_waitcnt = GBA_WAITCNT;
-#if TYRIAN_GBA_DETAIL_LEVEL >= TYRIAN_GBA_DETAIL_HIGH
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
     /* The verified fixed wave profiles live in ROM; reset only runtime load. */
     source_detail_wave_runtime_reset();
 #endif

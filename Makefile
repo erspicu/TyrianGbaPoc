@@ -36,8 +36,11 @@ DETAIL_LEVEL_CPPFLAG := -DTYRIAN_GBA_DETAIL_LEVEL=$(DETAIL_LEVEL_VALUE)
 else ifeq ($(DETAIL_LEVEL),pentium)
 DETAIL_LEVEL_VALUE := 3
 DETAIL_LEVEL_CPPFLAG := -DTYRIAN_GBA_DETAIL_LEVEL=$(DETAIL_LEVEL_VALUE)
+else ifeq ($(DETAIL_LEVEL),custom)
+DETAIL_LEVEL_VALUE := 4
+DETAIL_LEVEL_CPPFLAG := -DTYRIAN_GBA_DETAIL_LEVEL=$(DETAIL_LEVEL_VALUE)
 else
-$(error DETAIL_LEVEL must be config, low, normal, high or pentium)
+$(error DETAIL_LEVEL must be config, low, normal, high, pentium or custom)
 endif
 
 ifeq ($(GAME_SPEED),low)
@@ -171,6 +174,20 @@ STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_WALL_CLOCK_LOGIC=1 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
+else ifeq ($(STRESS_DIAGNOSTIC),active_mask_fast_wall_lazy_packed_no_adaptive)
+STRESS_DIAGNOSTIC_FLAGS := \
+	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=1 \
+	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=1 \
+	-DTYRIAN_GBA_COLLISION_UNSIGNED_RANGE=0 \
+	-DTYRIAN_GBA_COLLISION_MASK_FAST_PATH=1 \
+	-DTYRIAN_GBA_COLLISION_LAZY_RESULT=1 \
+	-DTYRIAN_GBA_COLLISION_PACKED_CALL=1 \
+	-DTYRIAN_GBA_DYNAMIC_FRAME_DROP=1 \
+	-DTYRIAN_GBA_WALL_CLOCK_LOGIC=1 \
+	-DTYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH=0 \
+	-DTYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
+	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
 else ifeq ($(STRESS_DIAGNOSTIC),active_mask_fast_wall_full)
 STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=1 \
@@ -204,7 +221,7 @@ STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
 else
-$(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cull, active_mask, active_mask_range, active_mask_fast, active_mask_fast_lazy, active_mask_fast_lazy_no_recovery, active_mask_fast_lazy_packed, active_mask_fast_defer, active_mask_fast_wall, active_mask_fast_wall_lazy, active_mask_fast_wall_lazy_packed, active_mask_fast_wall_full, active_mask_fast_wall_bg_live or active_mask_range_fast)
+$(error STRESS_DIAGNOSTIC must be baseline, no_collision, no_render, precache_cull, active_mask, active_mask_range, active_mask_fast, active_mask_fast_lazy, active_mask_fast_lazy_no_recovery, active_mask_fast_lazy_packed, active_mask_fast_defer, active_mask_fast_wall, active_mask_fast_wall_lazy, active_mask_fast_wall_lazy_packed, active_mask_fast_wall_lazy_packed_no_adaptive, active_mask_fast_wall_full, active_mask_fast_wall_bg_live or active_mask_range_fast)
 endif
 
 # Release-positive defaults must not silently rewrite the controlled v35
@@ -219,6 +236,7 @@ STRESS_SCHEDULER_DIAGNOSTICS := \
 	active_mask_fast_wall_lazy \
 	active_mask_fast_wall_lazy_no_recovery \
 	active_mask_fast_wall_lazy_packed \
+	active_mask_fast_wall_lazy_packed_no_adaptive \
 	active_mask_fast_wall_full \
 	active_mask_fast_wall_bg_live
 ifeq ($(filter $(STRESS_DIAGNOSTIC),$(STRESS_SCHEDULER_DIAGNOSTICS)),)
@@ -364,6 +382,7 @@ ASSET_INPUTS := \
 	vendor/tyrian/data/tyrian.hdt \
 	vendor/tyrian/data/tyrian.pic \
 	vendor/tyrian/data/tyrian.shp \
+	vendor/tyrian/data/tyrianc.shp \
 	$(wildcard vendor/tyrian/data/newsh*.shp) \
 	vendor/tyrian/data/palette.dat \
 	$(wildcard vendor/tyrian/data/shapes*.dat) \
@@ -371,6 +390,7 @@ ASSET_INPUTS := \
 	vendor/tyrian/data/tyrian.snd \
 	vendor/tyrian/data/tyrend.anm \
 	vendor/tyrian/data/voices.snd \
+	vendor/tyrian/data/voicesc.snd \
 	$(wildcard vendor/tyrian/image/pics/*.png) \
 	$(wildcard vendor/tyrian/image/sprites/00_font/*.png) \
 	$(wildcard vendor/tyrian/image/sprites/01_smallfont/*.png) \
@@ -433,7 +453,8 @@ ASSET_BINARIES := \
 	$(RES)/jukebox_sine.bin \
 	$(RES)/tyrend_gba_frames.bin \
 	$(RES)/tyrend_gba_palette.bin \
-	$(RES)/sprite2_raw_components.bin
+	$(RES)/sprite2_raw_components.bin \
+	$(RES)/sprite2_xmas_raw_components.bin
 
 TYRIAN_MUSIC_TRACKS := \
 	00 01 02 03 04 05 06 07 08 09 \
@@ -454,16 +475,21 @@ TYRIAN_SOUND_IDS := \
 	31 32 33 34 35 36 37 38
 TYRIAN_SOUND_INPUTS := $(foreach sound,$(TYRIAN_SOUND_IDS),\
 	$(RES)/source_sound_$(sound).wav)
+TYRIAN_XMAS_VOICE_IDS := 01 02 03 04 05 06 07 08 09
+TYRIAN_XMAS_VOICE_INPUTS := $(foreach voice,$(TYRIAN_XMAS_VOICE_IDS),\
+	$(RES)/source_xmas_voice_$(voice).wav)
 
 AUDIO_INPUTS := \
 	$(TYRIAN_MUSIC_INPUTS) \
 	$(TYRIAN_MUSIC_ONCE_INPUTS) \
-	$(TYRIAN_SOUND_INPUTS)
+	$(TYRIAN_SOUND_INPUTS) \
+	$(TYRIAN_XMAS_VOICE_INPUTS)
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
 	$(BUILD)/gba_heap.o \
 	$(BUILD)/opentyrian_data.o \
+	$(BUILD)/opentyrian_season.o \
 	$(BUILD)/opentyrian_sprite2.o \
 	$(BUILD)/opentyrian_level_port.o \
 	$(BUILD)/romfs.o \
@@ -478,6 +504,7 @@ STRESS_COMMON_OBJECTS := \
 MAIN_INCLUDES := \
 	Configure.h \
 	$(BUILD_VERSION_HEADER) \
+	src/opentyrian_season.h \
 	$(wildcard src/*.inc src/*/*.inc)
 
 .PHONY: all autotest death-autotest jukebox-autotest demo-autotest \
@@ -804,7 +831,12 @@ $(STRESS_LEVEL_OBJECT): src/opentyrian_level_port.c \
 
 $(BUILD)/opentyrian_sprite2.o: src/opentyrian_sprite2.c \
 		src/opentyrian_sprite2.h src/opentyrian_data.h \
+		src/opentyrian_season.h \
 		$(RES)/sprite2_raw_meta.h | $(BUILD)
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
+$(BUILD)/opentyrian_season.o: src/opentyrian_season.c \
+		src/opentyrian_season.h | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/romfs.o: src/romfs.c src/romfs.h | $(BUILD)
@@ -1076,6 +1108,8 @@ clean:
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
+		$(BUILD)/opentyrian_season.o \
+		$(BUILD)/opentyrian_season.d \
 		$(BUILD)/opentyrian_sprite2.o \
 		$(BUILD)/opentyrian_sprite2.d \
 		$(BUILD)/opentyrian_level_port.o \
@@ -1097,6 +1131,9 @@ clean:
 		$(BUILD)/$(DEMO_TEST_TARGET).elf \
 		$(BUILD)/$(DEMO_TEST_TARGET).gba \
 		$(BUILD)/$(DEMO_TEST_TARGET).map \
+		$(BUILD)/$(SAVE_TEST_TARGET).elf \
+		$(BUILD)/$(SAVE_TEST_TARGET).gba \
+		$(BUILD)/$(SAVE_TEST_TARGET).map \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).elf \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).gba \
 		$(BUILD)/$(ROMFS_MATRIX_TEST_TARGET).map \

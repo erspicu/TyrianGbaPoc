@@ -1,7 +1,13 @@
 # Tyrian GBA v73：Lava／Water 自適應呈現派送實作報告
 
 日期：2026-08-03
-狀態：第一階段實作完成，具正面效益，尚未宣稱零 missed VBlank
+狀態：歷史第一階段實作；現行版本已擴充為全域 Adaptive
+
+> 2026-08-05 更新：本報告保留 lava／water 專用策略的原始量測與演進紀錄。
+> 現行正式版已把同一觀念推廣至所有 gameplay 高負載場景，wave 則保留較積極的
+> Severe 壓力分類；為避免約 11.6 FPS 的不流暢觀感，所有 Adaptive tier 現已
+> 封頂為每兩個 source tick 一張、約 17.4 FPS。最新規則與門檻請見
+> `MD/Rule/Tyrian-GBA-Adaptive-Drop-Frame-Rule.md`。
 
 ## 目標與不變條件
 
@@ -32,7 +38,7 @@ scene，直到下一張完整 scene 可一起 commit。
 
 - 有執行 source logic 的 LCD loop 優先 defer scene 建構；
 - 沒有執行 logic 的 loop 優先完成最新 scene；
-- 一般 scheduler 的兩個 pending source ticks 上限，在 wave 壓力期間放寬為三個；
+- 本歷史版本曾把 wave 的 pending 上限放寬為三個；現行 release 已統一封頂為兩個；
 - state transition、背景 ring 安全邊界或 freshness 上限仍強制 render；
 - 連續 16 張完整 render 都低於 150,000 cycles，才判定壓力解除；
 - 離開 lava／water scope 後回到原本 v72 scheduler。

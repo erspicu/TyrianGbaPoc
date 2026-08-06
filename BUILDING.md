@@ -36,12 +36,13 @@ Build-GBA-ROM.bat
 .\Build-GBA-ROM.bat -DetailLevel low
 .\Build-GBA-ROM.bat -DetailLevel normal -GameSpeed normal
 .\Build-GBA-ROM.bat -DetailLevel high
+.\Build-GBA-ROM.bat -DetailLevel custom
 .\Build-GBA-ROM.bat -RebuildAssets
 ```
 
 未指定 `-DetailLevel` 時，建置會讀取 `Configure.h` 的
-`TYRIAN_GBA_CONFIG_DETAIL_LEVEL`；預設是建議給 GBA 使用的 `NORMAL`。
-`-DetailLevel low|normal|high` 可只覆寫該次建置而不修改設定檔。這是
+`TYRIAN_GBA_CONFIG_DETAIL_LEVEL`；正式 release 預設使用專案的 `CUSTOM`。
+`-DetailLevel low|normal|high|pentium|custom` 可只覆寫該次建置而不修改設定檔。這是
 編譯期選擇，每個 ROM 固定一種等級，未選取的分支不會增加 runtime
 判斷成本。`pentium` 仍保留給研究／極限壓力測試，不建議作為一般版本。
 
@@ -54,8 +55,22 @@ Build-GBA-ROM.bat
 
 - `TYRIAN_GBA_DEV_PLAYER_INVINCIBLE`：開關主角無敵測試模式。
 - `TYRIAN_GBA_STRESS_LOADOUT`：開關全武器、最大火力的極限負荷配置。
+- `TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS`：設為 `1` 時，關卡內按住
+  A 也會讓有限彈藥的左右 Sidekick 一起發射；預設 `0` 使用 A 主砲、
+  B 雙 Sidekick 的分工配置。
 - `TYRIAN_GBA_CONFIG_DETAIL_LEVEL`：選擇預設 `LOW`、`NORMAL`、`HIGH`
-  （或研究用 `PENTIUM`）細節等級。
+  、`PENTIUM` 或 `CUSTOM`。`CUSTOM` 是 Normal 基礎加上 Pentium 的
+  wild 50/50 Alpha 與最終 hue／brightness filtration，但不含
+  lava／water 色相與掃描線波動。
+- `TYRIAN_GBA_DYNAMIC_FRAME_DROP`：正式 gameplay 的固定時間步進與完整
+  場景 deadline 保護；預設開啟。
+- `TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH`：把持續高負載場景自動調整為
+  每 2 個 source tick 建構一張完整畫面；只省略 presentation，不省略邏輯、
+  碰撞、RNG 或音訊，預設全域開啟。
+- `TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME`：正式版固定為 `2`，把
+  Adaptive 的最低目標封頂在約 17.4 FPS，不再進入三 tick／11.6 FPS。
+- `TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH`：lava／water 波紋確認超載時直接使用
+  Severe tier；其他重關卡與複雜武器仍由上一項全域量測處理。
 - `TYRIAN_GBA_LAYOUT_*`：調整關卡 HUD、PAUSED／Secret Level 提示、
   Boss 血條、破關摘要，以及首頁、Play Mode、Episode、Difficulty、
   Game Menu、Upgrade Ship、Next Level、Quit Game 對話框的位置。
@@ -91,6 +106,12 @@ Build-GBA-ROM.bat
 感受到。前端、摘要、死亡與轉場仍要求 0 missed VBlank；1% 容許也不
 適用於卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的負載。調整門檻
 前仍須先重跑、定位並記錄數據。
+
+正式版同時啟用全域 Adaptive presentation dispatch：持續超載最多降至每
+2 個 source tick 一張完整場景（約 17.4 FPS）；Severe／wave 只改變壓力
+分類與進入門檻，不再降到每 3 tick 一張。低負載仍維持 Light，不會因單一
+cold-cache miss 長期降頻。設計、門檻及 A/B 數據詳見
+`MD/Rule/Tyrian-GBA-Adaptive-Drop-Frame-Rule.md`。
 
 目前獨立化音訊與 presentation 改善、記憶體配置及最新實測數據詳見
 `MD/Tyrian-GBA-Standalone-Audio-Presentation-v64.md`。
@@ -190,8 +211,24 @@ runtime 功能已由另一份嵌入資源承接時，才可從 ROMFS image 排�
 payload，而且原始檔仍須保留在 `vendor/` 作為可重建輸入。每一筆排除
 都必須列在 `vfs/manifest.json` 的 `omitted_duplicates`，由建置 audit
 驗證檔案、大小、SHA-256 與替代資源，禁止靠未記錄的 glob 或人工刪除。
-目前只有已完整轉入 `res/soundbank.bin` 的 `tyrian.snd` 與
-`voices.snd` 符合這個條件。
+目前可排除的完整重複 payload 為：
+
+- `tyrian.snd`／`voices.snd`：完整轉入 `res/soundbank.bin`。
+- `tyrend.anm`：完整、逐 frame 無損投影至
+  `res/tyrend_gba_frames.bin`／`res/tyrend_gba_palette.bin`。
+- 34 份 `newsh*.shp`：38 個 logical bank、11,552 個 component 已由
+  `res/sprite2_raw_components.bin` 完整承接；Upgrade Ship 使用的
+  `newsh1.shp` 另由完整 front-end source-stamp catalog 承接。build 會
+  對原始 RLE 做逐 component round-trip，runtime 不再攜帶第二份壓縮流。
+
+`retained_sources` 是相反方向的建置契約：列入的來源必須仍存在且保持在
+active ROMFS，否則建置直接失敗。`music.mus` 保留全部 41 首 PC 曲目（含
+由原始腳本正常選用的 Halloween Ramble）。`tyrianc.shp` 與
+`voicesc.snd` 則由 source-to-generated 替代契約承接可驗證的 Christmas
+模式，不會和預轉資源重複塞進 active ROMFS。
+所有被排除的原始檔也仍保留在 `vendor/`，後續若格式需求擴充仍可重建。
+完整分類與數據見
+`MD/Rule/Tyrian-GBA-ROMFS-Resource-Retention-Rule.md`。
 
 `vendor/opentyrian/REVISION` 記錄用來核對翻寫規格的 upstream commit。
 更新 snapshot 時，必須同步檢查 parity 測試與更新該檔案。

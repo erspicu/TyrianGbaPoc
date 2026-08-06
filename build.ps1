@@ -1,7 +1,7 @@
 param(
     [switch]$KeepIntermediates,
-    [ValidateSet("low", "normal", "high", "pentium")]
-    [string]$DetailLevel = "normal",
+    [ValidateSet("low", "normal", "high", "pentium", "custom")]
+    [string]$DetailLevel = "custom",
     [ValidateSet("low", "normal")]
     [string]$GameSpeed = "normal"
 )
@@ -265,10 +265,14 @@ if (
     $romfsAudit.files.Count -ne $romfsAudit.entry_count -or
     $romfsAudit.probe_count -le 0 -or
     $romfsAudit.probes.Count -ne $romfsAudit.probe_count -or
-    $romfsAudit.omitted_duplicate_count -ne 2 -or
+    $romfsAudit.omitted_duplicate_count -ne 39 -or
     $romfsAudit.omitted_duplicate_files.Count -ne
         $romfsAudit.omitted_duplicate_count -or
-    $romfsAudit.omitted_duplicate_bytes -ne 397279 -or
+    $romfsAudit.omitted_duplicate_bytes -ne 5420450 -or
+    $romfsAudit.retained_source_count -ne 1 -or
+    $romfsAudit.retained_source_files.Count -ne
+        $romfsAudit.retained_source_count -or
+    $romfsAudit.retained_source_bytes -ne 153482 -or
     $romfsImageBytes -ne $romfsAudit.image_bytes -or
     $romfsAudit.payload_bytes -gt $romfsAudit.image_bytes -or
     $romfsImageSha256 -ne $romfsAudit.image_sha256
@@ -1568,6 +1572,7 @@ $expectedDetailLevel = switch ($DetailLevel) {
     "normal" { 1 }
     "high" { 2 }
     "pentium" { 3 }
+    "custom" { 4 }
     default { throw "Unsupported detail profile: $DetailLevel" }
 }
 $expectedGameSpeed = if ($GameSpeed -eq "low") { 0 } else { 1 }
@@ -3337,6 +3342,22 @@ $verification.Add("romfs_probes=$($romfsAudit.probe_count)")
 $verification.Add("romfs_payload_bytes=$($romfsAudit.payload_bytes)")
 $verification.Add("romfs_image_bytes=$($romfsAudit.image_bytes)")
 $verification.Add("romfs_overhead_bytes=$($romfsAudit.overhead_bytes)")
+$verification.Add(
+    "romfs_omitted_duplicate_count=" +
+        $romfsAudit.omitted_duplicate_count
+)
+$verification.Add(
+    "romfs_omitted_duplicate_bytes=" +
+        $romfsAudit.omitted_duplicate_bytes
+)
+$verification.Add(
+    "romfs_retained_source_count=" +
+        $romfsAudit.retained_source_count
+)
+$verification.Add(
+    "romfs_retained_source_bytes=" +
+        $romfsAudit.retained_source_bytes
+)
 $verification.Add("romfs_manifest_crc32=$($romfsAudit.manifest_crc32)")
 $verification.Add("romfs_metadata_crc32=$($romfsAudit.metadata_crc32)")
 $verification.Add("romfs_payload_crc32=$($romfsAudit.payload_crc32)")

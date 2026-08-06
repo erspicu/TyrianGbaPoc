@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("config", "low", "normal", "high", "pentium")]
+    [ValidateSet("config", "low", "normal", "high", "pentium", "custom")]
     [string]$DetailLevel = "config",
     [ValidateSet("low", "normal")]
     [string]$GameSpeed = "normal",

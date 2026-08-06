@@ -57,6 +57,54 @@
 #endif
 
 /* ------------------------------------------------------------------------- */
+/* In-level gamepad mapping / 關卡內手把配置                                */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * The fixed compact GBA mapping is:
+ *   D-pad  move                 A       Front + Rear main fire
+ *   B      both Sidekicks       L       equipped Special Weapon
+ *   R      carried Super Bomb  Select  Rear Weapon mode
+ *   Start  pause/resume
+ *
+ * This is an input adapter only.  Stock weapon IDs, repeat timing, ammo,
+ * charge, energy use and effects are unchanged.  Recorded PC demos bypass
+ * this physical mapping and retain their independent left/right Sidekick
+ * buttons and original Special/Super Bomb activation semantics.
+ *
+ * 固定的 GBA 精簡配置如下：
+ *   十字鍵  移動                 A       前／後主砲
+ *   B       左右 Sidekick        L       目前裝備的 Special Weapon
+ *   R       攜帶的 Super Bomb    Select  後主砲模式
+ *   Start   暫停／繼續
+ *
+ * 這只是一層輸入轉接；原版武器 ID、連射間隔、彈藥、蓄力、能源消耗與
+ * 特效均不改。PC 錄製 Demo 會繞過實體配置，保留左右 Sidekick 獨立按鍵
+ * 以及原始 Special／Super Bomb 觸發語意。
+ */
+
+/*
+ * 1: holding A also commands ammo-limited Sidekicks, producing a true
+ *    one-button full-auto mode.  B remains available for Sidekick-only fire.
+ * 0: A fires Front/Rear plus the source-authored infinite-ammo Sidekick
+ *    auto-fire; B explicitly commands both Sidekicks.  This is the default
+ *    because it preserves ammo and gives A/B distinct roles.
+ *
+ * 1：按住 A 時，連有限彈藥 Sidekick 也一起發射，成為真正一鍵全自動；
+ *    B 仍可只發射 Sidekick。
+ * 0：A 發射前後主砲，以及原版本來就會跟主砲連動的無限彈藥 Sidekick；
+ *    B 明確控制左右 Sidekick。預設採用 0，避免浪費彈藥並保留 A/B 分工。
+ */
+#ifndef TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS
+#define TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS 0
+#endif
+
+#if TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS != 0 && \
+    TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS != 1
+#error TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS must be 0 or 1
+#endif
+
+/* ------------------------------------------------------------------------- */
 /* Gameplay presentation / 關卡畫面呈現                                     */
 /* ------------------------------------------------------------------------- */
 
@@ -79,6 +127,10 @@
  *   PENTIUM : PC Pentium gates.  Adds wild BG2 colour blending and final
  *             filtration.  Their GBA tile/palette adapters preserve source
  *             timing and intent, but are not a pixel-identical framebuffer.
+ *   CUSTOM  : GBA profile based on Normal.  Adds only Pentium's smooth 50/50
+ *             wild BG2 Alpha and final hue/brightness filtration.  It omits
+ *             the triangular spotlight plus the High/Pentium lava-water hue
+ *             and scanline-wave effects.
  *
  * A command-line build such as
  *   Build-GBA-ROM.bat -DetailLevel low
@@ -98,6 +150,10 @@
  *             關卡定義的 lava／water 效果。
  *   PENTIUM ：PC Pentium 門檻；再加入 wild BG2 混色與最終 filtration。
  *             GBA 版保留原始觸發時序與視覺意圖，但不是逐像素 framebuffer。
+ *   CUSTOM  ：以 NORMAL 為基礎，只加入 PENTIUM 的 wild 第二背景層平滑
+ *             50/50 Alpha 與最終 hue／brightness filtration；明確不啟用
+ *             特殊三角聚光，以及 HIGH／PENTIUM 的 lava／water 色相與
+ *             掃描線波動。
  *
  * 命令列例如 Build-GBA-ROM.bat -DetailLevel low，只會暫時覆寫該次建置。
  */
@@ -105,16 +161,19 @@
 #define TYRIAN_GBA_CONFIG_DETAIL_NORMAL 1
 #define TYRIAN_GBA_CONFIG_DETAIL_HIGH 2
 #define TYRIAN_GBA_CONFIG_DETAIL_PENTIUM 3
+#define TYRIAN_GBA_CONFIG_DETAIL_CUSTOM 4
 
 #ifndef TYRIAN_GBA_CONFIG_DETAIL_LEVEL
-#define TYRIAN_GBA_CONFIG_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_NORMAL
+/* Public release default; command-line builds may still override it. */
+#define TYRIAN_GBA_CONFIG_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_CUSTOM
 #endif
 
 #if TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_LOW && \
     TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_NORMAL && \
     TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_HIGH && \
-    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_PENTIUM
-#error TYRIAN_GBA_CONFIG_DETAIL_LEVEL must be LOW, NORMAL, HIGH or PENTIUM
+    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_PENTIUM && \
+    TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_CUSTOM
+#error TYRIAN_GBA_CONFIG_DETAIL_LEVEL must be LOW, NORMAL, HIGH, PENTIUM or CUSTOM
 #endif
 
 /*
@@ -135,23 +194,57 @@
 #endif
 
 /*
- * Lava/water-only adaptive presentation dispatch.  When a scanline-wave
- * scene is measurably over budget, authoritative gameplay/audio ticks remain
- * unchanged while complete scene construction is preferentially moved onto
- * LCD periods that did not also execute source logic.  A hysteresis gate and
- * a three-tick freshness ceiling prevent rapid mode toggling and unbounded
- * visual latency.  This switch has no effect outside authored lava/water
- * smoothie scenes or below High detail.
+ * Global measured-pressure adaptive presentation dispatch.  Heavy scenes
+ * settle at no less than one complete scene per two source ticks (~17.4 Hz).
+ * Severe pressure remains a diagnostic/entry tier, but it may not lower the
+ * intentional presentation cadence any further.  Gameplay, collision, RNG
+ * and audio are never skipped; only superseded presentation work is omitted.
+ * Entry requires real deadline pressure plus a missed VBlank, and exit
+ * requires a run of light complete renders, preventing visible oscillation.
  *
- * 僅供 lava／water 掃描線波動場景使用的自適應呈現派送。當量測顯示該
- * 場景超出預算時，遊戲邏輯與音訊 tick 完全不省略，只優先把「完整場景
- * 建構」移到沒有同時執行來源邏輯的 LCD frame。遲滯判斷與最多三個來源
- * tick 的畫面新鮮度上限，可避免頻繁切換與無限延遲。High 以下細節或
- * 非 lava／water 場景完全不受影響。
+ * 全域「實測壓力」自適應呈現派送。重負荷關卡最低維持每兩個來源 tick
+ * 一張完整場景（約 17.4 Hz）；即使複雜武器等負荷持續惡化，Severe 也只
+ * 保留作診斷／進入狀態，不再把目標降到 11.6 Hz。遊戲邏輯、碰撞、RNG
+ * 與音訊一律不省略，只捨棄已被新版狀態取代的中間 presentation。必須
+ * 同時觀察到 deadline 壓力與真正 missed VBlank 才進入，並以連續低負荷
+ * 完整 render 才離開，避免畫面更新率來回跳動。
+ */
+#ifndef TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
+#define TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH \
+    TYRIAN_GBA_DYNAMIC_FRAME_DROP
+#endif
+
+/*
+ * Maximum source-logic ticks represented by one intentionally presented
+ * scene while Adaptive is active.  The stock Normal-speed clock is about
+ * 34.8 Hz, so 2 establishes a ~17.4 FPS floor, close to the requested 15 FPS
+ * limit without returning to the visibly rough 11.6 FPS three-tick cadence.
+ *
+ * Adaptive 啟用時，一張刻意輸出的畫面最多代表幾個來源 logic tick。
+ * Normal speed 約為 34.8 Hz，因此設為 2 會把最低目標封頂在約 17.4 FPS，
+ * 接近要求的 15 FPS 下限，且不再回到明顯不流暢的三 tick／11.6 FPS。
+ */
+#ifndef TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME
+#define TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME 2
+#endif
+
+#if TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME < 1 || \
+    TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME > 2
+#error TYRIAN_GBA_ADAPTIVE_MAX_LOGIC_TICKS_PER_FRAME must be 1 or 2
+#endif
+
+/*
+ * Lava/water wave scenes enter the severe pressure state immediately once
+ * the global dispatcher detects overload, but the cadence floor above still
+ * applies.  Disabling this keeps the global measured-pressure dispatcher but
+ * treats wave scenes like ordinary load.
+ *
+ * lava／water wave 場景一旦確認超載，立即進入 Severe 壓力狀態，但仍受
+ * 上述最低呈現率限制；關閉此項只會取消 wave 的較早進入策略。
  */
 #ifndef TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
 #define TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH \
-    TYRIAN_GBA_DYNAMIC_FRAME_DROP
+    TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
 #endif
 
 /*

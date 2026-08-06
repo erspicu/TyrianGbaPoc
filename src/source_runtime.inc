@@ -1123,7 +1123,9 @@ static u8 source_sprite2_l2_build(
 
     /*
      * The exhaustive build-time catalog should make this unreachable.
-     * Preserve the original ROMFS RLE decoder as a parity/debug fallback.
+     * Keep the independent frame compositor as a packing/debug fallback;
+     * it consumes the same lossless raw catalog, never a duplicate ROMFS
+     * command stream.
      */
     telemetry_sprite2_l2_rle_fallbacks++;
     if (

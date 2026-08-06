@@ -64,9 +64,22 @@ both a WinForms UI and CLI for creating, inspecting and editing emulator
 - D-pad Up/Down: select menu items
 - A or Start: confirm
 - B: go back
-- D-pad during play: move
-- A or B during play: fire
-- Start during play: pause/resume
+
+During play:
+
+- D-pad: move in eight directions
+- A: fire the Front and Rear main weapons
+- B: fire both Sidekicks
+- L: activate the equipped Special Weapon
+- R: use one carried Super Bomb
+- Select: switch the Rear Weapon mode when the equipped port supports it
+- Start: pause/resume
+
+Infinite-ammo Sidekicks retain OpenTyrian's source-authored main-fire link.
+Set `TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS` to `1` in `Configure.h` if A
+should also command ammo-limited Sidekicks. Recorded PC demos retain their
+original independent left/right Sidekick inputs rather than using this
+physical GBA mapping.
 
 Save-name editor:
 

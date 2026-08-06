@@ -1683,6 +1683,13 @@ static u8 frontend_save_apply_slot(u8 slot)
         return 0;
     }
     source = &frontend_save_slot[slot];
+    /*
+     * The GBA has no real-time clock.  An exact case-insensitive XMAS save
+     * name replaces OpenTyrian's host-date selector and chooses tyrianc.shp
+     * plus voicesc.snd.  Loading any other slot returns to the ordinary data
+     * set; stock Halloween Ramble selection remains script-driven.
+     */
+    (void)ot_season_set(ot_season_from_save_name(source->name));
     frontend_play_mode = source->play_mode;
     frontend_episode = source->episode;
     frontend_difficulty = source->difficulty;

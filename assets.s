@@ -207,6 +207,13 @@ sprite2_raw_components:
 sprite2_raw_components_end:
 
 	.balign 4
+	.global sprite2_xmas_raw_components
+sprite2_xmas_raw_components:
+	.incbin "res/sprite2_xmas_raw_components.bin"
+	.global sprite2_xmas_raw_components_end
+sprite2_xmas_raw_components_end:
+
+	.balign 4
 	.global textres_scene
 textres_scene:
 	.incbin "res/textres_scene.bin"

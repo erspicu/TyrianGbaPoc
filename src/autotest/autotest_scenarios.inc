@@ -34,9 +34,11 @@ static u8 autotest_detail_adapter_self_test(void)
 #elif TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_NORMAL
     source_parity_level.smoothies[2] = 1;
     source_parity_level.smoothies[3] = 1;
+    source_parity_level.smoothies[5] = 1;
     source_detail_prepare_scene();
     gameplay_presentation_capture_registers();
     pass = (u8)(
+        source_detail_spotlight_requested &&
         source_detail_iced_requested &&
         source_detail_blur_requested &&
         !source_detail_wave_requested &&
@@ -64,7 +66,7 @@ static u8 autotest_detail_adapter_self_test(void)
             SOURCE_DETAIL_EFFECT_WATER_HUE &&
         source_detail_effect_hue_pending == 13u
     );
-#else
+#elif TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_PENTIUM
     source_parity_level.smoothies[1] = 1;
     source_parity_level.smoothie_data[1] = 13;
     source_parity_level.filter_active = true;
@@ -99,6 +101,43 @@ static u8 autotest_detail_adapter_self_test(void)
     source_detail_prepare_scene();
     pass = (u8)(
         pass &&
+        !source_detail_wild_active &&
+        !source_detail_wild_dither_active
+    );
+#else
+    /*
+     * Custom is Normal + Pentium wild/final filtration only.  A level may
+     * still author water/lava smoothies, but neither their wave nor their
+     * hue pass is allowed into this profile.  Source special-code 2 is also
+     * intentionally ignored, so its triangular spotlight cannot pre-empt
+     * the selected CUSTOM colour-effects path.
+     */
+    source_parity_level.smoothies[0] = 1;
+    source_parity_level.smoothie_data[0] = 0;
+    source_parity_level.smoothies[1] = 1;
+    source_parity_level.smoothie_data[1] = 13;
+    source_parity_level.smoothies[5] = 1;
+    source_parity_level.filter_active = true;
+    source_parity_level.level_filter = 6;
+    source_parity_level.level_brightness = -3;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        !source_detail_spotlight_requested &&
+        !source_detail_wave_requested &&
+        source_detail_wild_active &&
+        !source_detail_wild_dither_active &&
+        source_detail_palette_mode_pending &&
+        source_detail_effect_kind_pending ==
+            SOURCE_DETAIL_EFFECT_GLOBAL_HUE &&
+        source_detail_effect_hue_pending == 6u &&
+        source_detail_effect_brightness_pending == -3 &&
+        source_detail_effect_objects_pending
+    );
+    source_parity_level.background2_not_transparent = true;
+    source_detail_prepare_scene();
+    pass = (u8)(
+        pass &&
+        !source_detail_wave_requested &&
         !source_detail_wild_active &&
         !source_detail_wild_dither_active
     );
@@ -208,7 +247,8 @@ static void autotest_full_loadout_stress_finish(void)
             (TYRIAN_GBA_COLLISION_LAZY_RESULT << 10) |
             (TYRIAN_GBA_COLLISION_PACKED_CALL << 11) |
             (TYRIAN_GBA_RECOVER_MISSED_VBLANK << 12) |
-            (TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH << 13)
+            (TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH << 13) |
+            (TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH << 14)
     );
     sram_write_u32(204, telemetry_projectile_cache_hits);
     sram_write_u32(208, telemetry_projectile_cache_misses);
@@ -351,9 +391,10 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(440, telemetry_detail_wave_pressure_score_max);
     sram_write_u32(444, telemetry_detail_wave_strength_min_q8);
     /*
-     * Additive v73 wave-dispatch and exclusive cycle accounting.  The loop
-     * work envelope is measured once per gameplay loop; commit, audio/input,
-     * logic, render and prefetch are mutually exclusive subranges of it.
+     * Additive v73 legacy wave counters and exclusive cycle accounting.  The
+     * loop work envelope is measured once per gameplay loop; commit,
+     * audio/input, logic, render and prefetch are mutually exclusive
+     * subranges.  Offsets 496..536 extend this with the global dispatcher.
      */
     sram_write_u32(448, telemetry_wave_dispatch_scope_attempts);
     sram_write_u32(452, telemetry_wave_dispatch_entries);
@@ -369,12 +410,42 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(480, telemetry_perf_loop_work_cycles_total);
     sram_write_u32(484, telemetry_perf_loop_work_cycles_max);
 #if TYRIAN_GBA_WAVE_ADAPTIVE_DISPATCH
-    sram_write_u32(488, presentation_wave_dispatch_active);
-    sram_write_u32(492, presentation_wave_dispatch_pressure);
+    sram_write_u32(
+        488,
+        presentation_adaptive_dispatch_active &&
+            gameplay_presentation_wave_scope_requested()
+    );
+    sram_write_u32(
+        492,
+        gameplay_presentation_wave_scope_requested() ?
+            presentation_adaptive_dispatch_pressure :
+            0
+    );
 #else
     sram_write_u32(488, 0);
     sram_write_u32(492, 0);
 #endif
+    /* Additive global adaptive-dispatch diagnostics. */
+    sram_write_u32(496, telemetry_adaptive_dispatch_attempts);
+    sram_write_u32(500, telemetry_adaptive_dispatch_entries);
+    sram_write_u32(504, telemetry_adaptive_dispatch_severe_entries);
+    sram_write_u32(508, telemetry_adaptive_dispatch_exits);
+    sram_write_u32(
+        512,
+        telemetry_adaptive_dispatch_logic_busy_deferred
+    );
+    sram_write_u32(516, telemetry_adaptive_dispatch_idle_renders);
+    sram_write_u32(520, telemetry_adaptive_dispatch_safety_forced);
+#if TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
+    sram_write_u32(524, presentation_adaptive_dispatch_active);
+    sram_write_u32(528, presentation_adaptive_dispatch_severe);
+    sram_write_u32(532, presentation_adaptive_dispatch_pressure);
+#else
+    sram_write_u32(524, 0);
+    sram_write_u32(528, 0);
+    sram_write_u32(532, 0);
+#endif
+    sram_write_u32(536, TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH);
     /* The self-test mutates smoothie state, so run it after the snapshot. */
     sram_write_u32(396, autotest_detail_adapter_self_test());
     sram[124] = *(volatile const u8 *)save_type_marker;

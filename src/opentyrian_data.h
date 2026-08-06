@@ -78,8 +78,8 @@ enum {
     OT_COMP_SHAPE_TABLE_OPTIONS_SMALL = 38,
     /*
      * Adapter-only ID for OpenTyrian's shopSpriteSheet (newsh1.shp).
-     * It remains in ROMFS in its original Sprite2 command-stream format
-     * and is decoded only while the cold front-end upgrade screen is open.
+     * The static Upgrade Ship source-stamp catalog fully presents this bank;
+     * it is intentionally outside the 38-table gameplay raw catalog.
      */
     OT_COMP_SHAPE_TABLE_SHOP = 39,
     OT_MUS_LDS_PATCH_BYTES = 46,
@@ -703,16 +703,6 @@ bool ot_data_shp_sprite_read(
     uint16_t sprite_index,
     OtShpSprite *sprite
 );
-bool ot_data_comp_shape_bank_view(
-    uint8_t shape_table,
-    OtDataView *view
-);
-bool ot_data_comp_shape_sprite_view(
-    uint8_t shape_table,
-    uint16_t sprite_number,
-    OtDataView *view
-);
-
 /* MUS song indices are zero-based, matching play_song(). */
 bool ot_data_mus_song_read(
     uint16_t song_index,

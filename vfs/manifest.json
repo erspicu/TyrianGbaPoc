@@ -8,7 +8,6 @@
     "estsc.shp",
     "levels?.dat",
     "music.mus",
-    "newsh*.shp",
     "palette.dat",
     "shapes*.dat",
     "tshp2.pcx",
@@ -16,9 +15,7 @@
     "tyrian.hdt",
     "tyrian.pic",
     "tyrian.shp",
-    "tyrian?.lvl",
-    "tyrianc.shp",
-    "voicesc.snd"
+    "tyrian?.lvl"
   ],
   "exclude": [],
   "omitted_duplicates": [
@@ -29,6 +26,28 @@
     {
       "pattern": "voices.snd",
       "replacement": "res/soundbank.bin"
+    },
+    {
+      "pattern": "voicesc.snd",
+      "replacement": "res/soundbank.bin (source_xmas_voice_01..09)"
+    },
+    {
+      "pattern": "tyrend.anm",
+      "replacement": "res/tyrend_gba_frames.bin + res/tyrend_gba_palette.bin"
+    },
+    {
+      "pattern": "newsh*.shp",
+      "replacement": "res/sprite2_raw_components.bin + res/frontend_source_stamp_offsets.bin + res/frontend_source_stamp_data.bin"
+    },
+    {
+      "pattern": "tyrianc.shp",
+      "replacement": "res/sprite2_xmas_raw_components.bin; unchanged sections remain authoritative through tyrian.shp"
+    }
+  ],
+  "retained_sources": [
+    {
+      "pattern": "music.mus",
+      "reason": "Runtime authority for all 41 stock songs, including script-selected Halloween Ramble"
     }
   ],
   "probes": [

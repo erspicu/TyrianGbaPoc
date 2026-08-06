@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("low", "normal", "high", "pentium")]
+    [ValidateSet("low", "normal", "high", "pentium", "custom")]
     [string]$DetailLevel = "pentium",
     [ValidateSet(
         "baseline",
@@ -16,6 +16,7 @@ param(
         "active_mask_fast_wall_lazy",
         "active_mask_fast_wall_lazy_no_recovery",
         "active_mask_fast_wall_lazy_packed",
+        "active_mask_fast_wall_lazy_packed_no_adaptive",
         "active_mask_fast_wall_full",
         "active_mask_fast_wall_bg_live",
         "active_mask_range_fast"
@@ -155,7 +156,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 496) {
+if ($bytes.Length -lt 540) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -182,6 +183,7 @@ $prefetchCyclesTotal = Read-U32 472
 $loopWorkCyclesTotal = Read-U32 480
 $renderCompleted = Read-U32 276
 $diagnosticFlags = Read-U32 200
+$expectedAdaptive = if ($Variant -like "*_no_adaptive") { 0 } else { 1 }
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
@@ -318,6 +320,17 @@ $telemetry = [ordered]@{
     loop_work_cycles_max = Read-U32 484
     wave_dispatch_active_at_finish = Read-U32 488
     wave_dispatch_pressure_at_finish = Read-U32 492
+    adaptive_dispatch_attempts = Read-U32 496
+    adaptive_dispatch_entries = Read-U32 500
+    adaptive_dispatch_severe_entries = Read-U32 504
+    adaptive_dispatch_exits = Read-U32 508
+    adaptive_dispatch_logic_busy_deferred = Read-U32 512
+    adaptive_dispatch_idle_renders = Read-U32 516
+    adaptive_dispatch_safety_forced = Read-U32 520
+    adaptive_dispatch_active_at_finish = Read-U32 524
+    adaptive_dispatch_severe_at_finish = Read-U32 528
+    adaptive_dispatch_pressure_at_finish = Read-U32 532
+    adaptive_dispatch_enabled = Read-U32 536
     screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
@@ -409,6 +422,7 @@ if (
     $telemetry.source_assets_valid -ne 1 -or
     $telemetry.invincible_enabled -ne 1 -or
     $telemetry.stress_loadout_enabled -ne 1 -or
+    $telemetry.adaptive_dispatch_enabled -ne $expectedAdaptive -or
     $telemetry.detail_adapter_self_test -ne 1 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or

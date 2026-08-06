@@ -1174,10 +1174,7 @@ static s16 frontend_data_tiny_text_width(const char *text)
 
 static u8 frontend_data_tiny_highlight_colour(u8 colour)
 {
-    u8 brightness = (u8)(colour & 0x0fu);
-
-    brightness = brightness > 13u ? 15u : (u8)(brightness + 2u);
-    return (u8)((colour & 0xf0u) | brightness);
+    return frontend_text_highlight_colour(colour);
 }
 
 /*
@@ -1275,10 +1272,7 @@ static s16 frontend_ship_specs_text_width(const char *text)
 
 static u8 frontend_ship_specs_highlight_colour(u8 colour)
 {
-    u8 brightness = (u8)(colour & 0x0fu);
-
-    brightness = brightness > 11u ? 15u : (u8)(brightness + 4u);
-    return (u8)((colour & 0xf0u) | brightness);
+    return frontend_text_highlight_colour(colour);
 }
 
 static void frontend_data_tiny_draw_glyph(
