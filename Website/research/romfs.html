@@ -42,8 +42,8 @@
             span，避免把整個檔案搬到 RAM。
           </p>
           <div class="metric-grid">
-            <div class="metric"><strong>68</strong><span>current ROMFS entries</span></div>
-            <div class="metric"><strong>9.85 MiB</strong><span>ROMFS image</span></div>
+            <div class="metric"><strong>32</strong><span>current ROMFS entries</span></div>
+            <div class="metric"><strong>4.89 MiB</strong><span>ROMFS image</span></div>
             <div class="metric"><strong>0 copies</strong><span>whole-file staging</span></div>
           </div>
 
@@ -78,6 +78,20 @@
             不會被預轉換工具接管 gameplay 規格。
           </div>
 
+          <h2 id="dedup">可驗證的 payload 去重</h2>
+          <p>
+            ROMFS 不以「目前沒有呼叫」為刪除條件。只有另一份 cartridge
+            payload 已完整承接，且 build 能做無損 round-trip 時，才排除重複
+            原始流。目前 SND、TYREND.ANM 與 34 份 <code>newsh*.shp</code>
+            共省下 4,787,313 bytes 的重複 payload；原始檔仍保留在
+            <code>vendor/</code> 作為可重建來源。
+          </p>
+          <p>
+            Halloween Ramble 隨完整 41 首 PC 曲目保留；
+            <code>tyrianc.shp</code> 與 <code>voicesc.snd</code> 則承接
+            可驗證的 Christmas 模式。這些資料都不能在 payload 精簡時誤刪。
+          </p>
+
           <h2 id="index">加密腳本的 O(1) section seek</h2>
           <p>
             <code>levelsN.dat</code> 是 encrypted Pascal-string stream。舊 seek
@@ -97,7 +111,7 @@
             Episode 共 62 個 playable LVL sections，確保資料架構不是只對示範關卡成立。
           </p>
         </article>
-        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#goal">I/O 目標</a></li><li><a href="#loaders">Loader</a></li><li><a href="#transform">Build 轉換</a></li><li><a href="#index">Script index</a></li><li><a href="#integrity">完整性</a></li></ul></aside>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#goal">I/O 目標</a></li><li><a href="#loaders">Loader</a></li><li><a href="#transform">Build 轉換</a></li><li><a href="#dedup">Payload 去重</a></li><li><a href="#index">Script index</a></li><li><a href="#integrity">完整性</a></li></ul></aside>
       </div>
     </section>
   </main>
