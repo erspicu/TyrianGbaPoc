@@ -44,3 +44,11 @@
 #define OT_ASM_CONFIG_UNSIGNED_RANGE               16
 #define OT_ASM_CONFIG_VISIT_MODE \
     (OT_ASM_CONFIG_ACTIVE_MASK | OT_ASM_CONFIG_RECORD_VISITS)
+
+/* SourceEnemyCacheSlot layout used by the read-only exact-hit scan leaf. */
+#define SOURCE_ENEMY_ASM_CACHE_SLOT_SIZE             16
+#define SOURCE_ENEMY_ASM_GRAPHIC_OFFSET               8
+#define SOURCE_ENEMY_ASM_SHAPE_TABLE_OFFSET           10
+#define SOURCE_ENEMY_ASM_SIZE_OFFSET                  11
+#define SOURCE_ENEMY_ASM_FILTER_OFFSET                12
+#define SOURCE_ENEMY_ASM_VALID_OFFSET                 13

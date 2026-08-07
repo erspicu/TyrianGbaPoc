@@ -31,6 +31,20 @@
 #endif
 
 /*
+ * Sprite2 exact hits dominate boss rendering after transient hit-flash
+ * variants stop polluting the cache.  An ARM leaf performs the read-only
+ * exact-key scan before the full C replacement-policy pass.  It owns no
+ * cache state, so a miss always falls through to the authoritative manager.
+ */
+#ifndef TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM
+#define TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM TYRIAN_GBA_HOTPATH_ASM
+#endif
+#if TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM != 0 && \
+    TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM != 1
+#error TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM must be 0 or 1
+#endif
+
+/*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.
  */

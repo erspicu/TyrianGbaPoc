@@ -6,6 +6,8 @@
  * No source coordinate or sprite is rescaled.
  */
 
+#include "gba_hotpath_layout.inc"
+
 typedef struct {
     u32 last_epoch;
     u32 generation;
@@ -16,6 +18,21 @@ typedef struct {
     u8 valid;
     u8 resident;
 } SourceEnemyCacheSlot;
+
+_Static_assert(
+    sizeof(SourceEnemyCacheSlot) == SOURCE_ENEMY_ASM_CACHE_SLOT_SIZE &&
+        __builtin_offsetof(SourceEnemyCacheSlot, graphic) ==
+            SOURCE_ENEMY_ASM_GRAPHIC_OFFSET &&
+        __builtin_offsetof(SourceEnemyCacheSlot, shape_table) ==
+            SOURCE_ENEMY_ASM_SHAPE_TABLE_OFFSET &&
+        __builtin_offsetof(SourceEnemyCacheSlot, size) ==
+            SOURCE_ENEMY_ASM_SIZE_OFFSET &&
+        __builtin_offsetof(SourceEnemyCacheSlot, filter) ==
+            SOURCE_ENEMY_ASM_FILTER_OFFSET &&
+        __builtin_offsetof(SourceEnemyCacheSlot, valid) ==
+            SOURCE_ENEMY_ASM_VALID_OFFSET,
+    "SourceEnemyCacheSlot ARM layout drift"
+);
 
 typedef struct {
     u32 slot_generation;
@@ -89,6 +106,9 @@ static s16 source_enemy_first_decode_failure_x;
 static s16 source_enemy_first_decode_failure_y;
 static u8 source_enemy_first_decode_failure_cycle;
 static u32 source_enemy_first_decode_failure_shape_banks;
+
+#include "source_enemy_cache_lookup.inc"
+
 
 #if TYRIAN_GBA_STRESS_LOADOUT
 #define SOURCE_STATIC_ATLAS_MAX_SLOTS 4u
@@ -1961,223 +1981,8 @@ static void source_enemy_cache_record_drop(
 }
 #endif
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u16
-source_enemy_cache_acquire(
-    const OtEnemyDrawCommand *draw
-)
-{
-    u8 index;
-    u8 selected = SOURCE_ENEMY_CACHE_SLOT_COUNT;
-    u8 free_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
-    u8 eviction_slot = SOURCE_ENEMY_CACHE_SLOT_COUNT;
-    u8 l2_slot;
-    u32 oldest_epoch = 0xffffffffu;
+#include "source_enemy_cache_acquire.inc"
 
-    if (draw->shape_table == 0) {
-        /*
-         * Exact counterpart of blit_enemy(sprite2s == NULL): a cold-start
-         * APPROACH pointer has no previous enemySpriteSheets[] slot to reuse.
-         * This is not malformed ROM data and must not poison decoder/cache
-         * telemetry.
-         */
-        telemetry_sprite2_null_pointer_skips++;
-        return 0xffff;
-    }
-    if (draw->graphic == 0) {
-        /*
-         * Some stock control animations select an authored zero egraphic.
-         * The DOS-era renderer's index-1 access is undefined for that value;
-         * on GBA it is an explicit transparent/no-draw command, never a ROM
-         * decode failure.
-         */
-        telemetry_sprite2_zero_graphic_skips++;
-        return 0xffff;
-    }
-    if (!source_enemy_palette_valid) {
-        telemetry_source_unknown_visuals++;
-        telemetry_sprite2_decode_failures++;
-        return 0xffff;
-    }
-
-    for (
-        index = 0;
-        index < SOURCE_ENEMY_CACHE_SLOT_COUNT;
-        index++
-    ) {
-        SourceEnemyCacheSlot *slot = &source_enemy_cache[index];
-
-        if (source_enemy_cache_slot_reserved(index)) continue;
-        if (
-            source_enemy_cache_slot_is_compact(index) &&
-            draw->size != 0
-        ) {
-            continue;
-        }
-        if (
-            slot->valid &&
-            slot->shape_table == draw->shape_table &&
-            slot->graphic == draw->graphic &&
-            slot->size == draw->size &&
-            slot->filter == draw->filter
-        ) {
-            if (
-                slot->resident ||
-                source_enemy_cache_upload_pending(
-                    index,
-                    slot->generation
-                )
-            ) {
-                slot->last_epoch = source_enemy_cache_epoch;
-                telemetry_sprite2_cache_hits++;
-                return source_enemy_cache_tile(index);
-            }
-            source_enemy_cache_invalidate_slot(index);
-        }
-        if (!slot->valid) {
-            if (free_slot == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
-                free_slot = index;
-            }
-        } else if (
-            slot->last_epoch != source_enemy_cache_epoch &&
-            slot->last_epoch < oldest_epoch
-        ) {
-            eviction_slot = index;
-            oldest_epoch = slot->last_epoch;
-        }
-    }
-    selected = free_slot != SOURCE_ENEMY_CACHE_SLOT_COUNT ?
-        free_slot :
-        eviction_slot;
-    if (selected == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
-#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
-        source_enemy_cache_record_drop(
-            draw,
-            SOURCE_ENEMY_CACHE_DROP_NO_SLOT
-        );
-#endif
-        telemetry_sprite2_cache_drops++;
-        return 0xffff;
-    }
-    if (source_enemy_cache[selected].valid) {
-        telemetry_sprite2_cache_evictions++;
-    }
-    source_enemy_cache_invalidate_slot(selected);
-    source_enemy_cache[selected].generation =
-        source_cache_next_generation();
-    source_enemy_cache[selected].valid = 1;
-    source_enemy_cache[selected].resident = 0;
-    source_enemy_cache[selected].shape_table = draw->shape_table;
-    source_enemy_cache[selected].graphic = draw->graphic;
-    source_enemy_cache[selected].size = draw->size;
-    source_enemy_cache[selected].filter = draw->filter;
-    source_enemy_cache[selected].last_epoch = source_enemy_cache_epoch;
-    telemetry_sprite2_cache_misses++;
-    l2_slot = source_sprite2_l2_acquire(
-        draw->shape_table,
-        draw->graphic,
-        draw->size,
-        draw->filter
-    );
-    if (l2_slot == 0xff) {
-        if (!source_enemy_first_decode_failure_valid) {
-            source_enemy_first_decode_failure_valid = 1;
-            source_enemy_first_decode_failure_shape_table =
-                draw->shape_table;
-            source_enemy_first_decode_failure_graphic = draw->graphic;
-            source_enemy_first_decode_failure_size = draw->size;
-            source_enemy_first_decode_failure_filter = draw->filter;
-            source_enemy_first_decode_failure_pool = draw->pool;
-            source_enemy_first_decode_failure_source_index =
-                draw->source_index;
-            source_enemy_first_decode_failure_definition =
-                draw->enemy_definition_id;
-            source_enemy_first_decode_failure_level_position =
-                level_position;
-            source_enemy_first_decode_failure_x = draw->x;
-            source_enemy_first_decode_failure_y = draw->y;
-            source_enemy_first_decode_failure_cycle =
-                draw->enemy_cycle;
-            source_enemy_first_decode_failure_shape_banks =
-                (u32)source_parity_level.shape_bank[0] |
-                ((u32)source_parity_level.shape_bank[1] << 8) |
-                ((u32)source_parity_level.shape_bank[2] << 16) |
-                ((u32)source_parity_level.shape_bank[3] << 24);
-        }
-        telemetry_source_unknown_visuals++;
-        telemetry_sprite2_decode_failures++;
-        source_enemy_cache_invalidate_slot(selected);
-        return 0xffff;
-    }
-
-    /*
-     * A drop-frame recovery loop may render again before the next safe
-     * VBlank commit. Keep one pending upload per physical VRAM slot and let
-     * the newest scene replace its source. Resetting this list per render
-     * made a cache entry look resident even though its tiles never reached
-     * VRAM.
-     */
-    for (index = 0; index < source_enemy_upload_count; index++) {
-        if (source_enemy_uploads[index].slot == selected) {
-            source_sprite2_l2_unpin(
-                source_enemy_uploads[index].l2_slot,
-                source_enemy_uploads[index].l2_generation
-            );
-            source_enemy_uploads[index].l2_slot = l2_slot;
-            source_enemy_uploads[index].slot_generation =
-                source_enemy_cache[selected].generation;
-            source_enemy_uploads[index].l2_generation =
-                source_sprite2_l2[l2_slot].generation;
-            if (
-                !source_sprite2_l2_pin(
-                    l2_slot,
-                    source_enemy_uploads[index].l2_generation
-                )
-            ) {
-                source_enemy_cache_invalidate_slot(selected);
-                return 0xffff;
-            }
-            telemetry_sprite2_upload_coalesces++;
-            return source_enemy_cache_tile(selected);
-        }
-    }
-    if (source_enemy_upload_count >= SOURCE_ENEMY_CACHE_SLOT_COUNT) {
-#ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
-        source_enemy_cache_record_drop(
-            draw,
-            SOURCE_ENEMY_CACHE_DROP_UPLOAD_LIMIT
-        );
-#endif
-        telemetry_sprite2_cache_drops++;
-        source_enemy_cache_invalidate_slot(selected);
-        return 0xffff;
-    }
-    source_enemy_uploads[source_enemy_upload_count].slot = selected;
-    source_enemy_uploads[source_enemy_upload_count].l2_slot = l2_slot;
-    source_enemy_uploads[source_enemy_upload_count].slot_generation =
-        source_enemy_cache[selected].generation;
-    source_enemy_uploads[source_enemy_upload_count].l2_generation =
-        source_sprite2_l2[l2_slot].generation;
-    if (
-        !source_sprite2_l2_pin(
-            l2_slot,
-            source_enemy_uploads[source_enemy_upload_count].l2_generation
-        )
-    ) {
-        source_enemy_cache_invalidate_slot(selected);
-        return 0xffff;
-    }
-    source_enemy_upload_count++;
-    if (
-        source_enemy_upload_count +
-            (source_player_upload_pending ? 1u : 0u) >
-        telemetry_sprite2_max_uploads
-    ) {
-        telemetry_sprite2_max_uploads =
-            source_enemy_upload_count +
-                (source_player_upload_pending ? 1u : 0u);
-    }
-    return source_enemy_cache_tile(selected);
-}
 
 static void source_enemy_cache_commit(void)
 {

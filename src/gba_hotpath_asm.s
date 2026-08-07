@@ -64,6 +64,47 @@ source_detail_palette_distance_asm:
 	.section .iwram, "ax", %progbits
 	.align 2
 
+	.global source_enemy_cache_find_exact_asm
+	.type source_enemy_cache_find_exact_asm, %function
+/*
+ * const SourceEnemyCacheSlot *source_enemy_cache_find_exact_asm(
+ *     const SourceEnemyCacheSlot *cache,
+ *     u32 slot_count,
+ *     u32 packed_key,
+ *     u8 filter
+ * )
+ *
+ * packed_key = graphic | shape_table<<16 | size<<24.  The fields at offsets
+ * 8..11 are deliberately laid out as that little-endian word, so one aligned
+ * load replaces three field comparisons.  The function is read-only,
+ * zero-stack and uses only AAPCS caller-saved registers.  A miss returns NULL
+ * and the C manager performs its full free/eviction/pending scan.
+ */
+source_enemy_cache_find_exact_asm:
+	cmp     r1, #0
+	moveq   r0, #0
+	bxeq    lr
+	mov     r12, r0
+1:
+	ldr     r0, [r12, #SOURCE_ENEMY_ASM_GRAPHIC_OFFSET]
+	cmp     r0, r2
+	bne     2f
+	ldrb    r0, [r12, #SOURCE_ENEMY_ASM_FILTER_OFFSET]
+	cmp     r0, r3
+	bne     2f
+	ldrb    r0, [r12, #SOURCE_ENEMY_ASM_VALID_OFFSET]
+	cmp     r0, #0
+	movne   r0, r12
+	bxne    lr
+2:
+	add     r12, r12, #SOURCE_ENEMY_ASM_CACHE_SLOT_SIZE
+	subs    r1, r1, #1
+	bne     1b
+	mov     r0, #0
+	bx      lr
+	.size source_enemy_cache_find_exact_asm, \
+		.-source_enemy_cache_find_exact_asm
+
 	.global ot_mt_rand_core_asm
 	.type ot_mt_rand_core_asm, %function
 /*

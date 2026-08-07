@@ -36,6 +36,8 @@ param(
     [int]$HotpathAsm = 1,
     [ValidateSet(0, 1)]
     [int]$DetailEffectAsm = 1,
+    [ValidateSet(0, 1)]
+    [int]$Sprite2ExactLookupAsm = 1,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -71,7 +73,7 @@ $name = (
     "tyrian_gba_full_loadout_sprite_stress_" +
     "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
     "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
-    "detailasm${DetailEffectAsm}"
+    "detailasm${DetailEffectAsm}_exactasm${Sprite2ExactLookupAsm}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -115,6 +117,7 @@ if (-not $NoBuild) {
         "DETAIL_LEVEL=$DetailLevel GAME_SPEED=normal " +
         "HOTPATH_ASM=$HotpathAsm " +
         "DETAIL_EFFECT_ASM=$DetailEffectAsm " +
+        "SPRITE2_EXACT_LOOKUP_ASM=$Sprite2ExactLookupAsm " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -285,6 +288,18 @@ $telemetry = [ordered]@{
     vblank_recovery_loops = $vblankRecoveryLoops
     vblank_commit_frames = $commitFrames
     audio_frames = $audioFrames
+    sprite2_exact_differential = Read-U32 640
+    sprite2_exact_c_cycles = Read-U32 644
+    sprite2_exact_asm_cycles = Read-U32 648
+    sprite2_exact_benchmark_calls = Read-U32 652
+    sprite2_filter_admission_denials = Read-U32 656
+    sprite2_filter_fallback_hits = Read-U32 660
+    sprite2_filter_fallback_builds = Read-U32 664
+    sprite2_filter_evictions = Read-U32 668
+    sprite2_exact_lookup_probes = Read-U32 672
+    sprite2_exact_lookup_hits = Read-U32 676
+    sprite2_exact_lookup_asm = Read-U32 680
+    hotpath_asm = Read-U32 684
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)

@@ -1486,6 +1486,12 @@ static void source_runtime_reset(void)
     telemetry_sprite2_cache_misses = 0;
     telemetry_sprite2_cache_evictions = 0;
     telemetry_sprite2_cache_drops = 0;
+    telemetry_sprite2_filter_admission_denials = 0;
+    telemetry_sprite2_filter_fallback_hits = 0;
+    telemetry_sprite2_filter_fallback_builds = 0;
+    telemetry_sprite2_filter_evictions = 0;
+    telemetry_sprite2_exact_lookup_probes = 0;
+    telemetry_sprite2_exact_lookup_hits = 0;
     source_enemy_first_decode_failure_valid = 0;
     source_enemy_first_decode_failure_shape_table = 0;
     source_enemy_first_decode_failure_graphic = 0;

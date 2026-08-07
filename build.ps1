@@ -1277,6 +1277,12 @@ $telemetry = [ordered]@{
     sprite2_pending_uploads = Read-TelemetryU32 8692
     projectile_pending_uploads = Read-TelemetryU32 8696
     effect_pending_uploads = Read-TelemetryU32 8700
+    sprite2_filter_admission_denials = Read-TelemetryU32 8780
+    sprite2_filter_fallback_hits = Read-TelemetryU32 8784
+    sprite2_filter_fallback_builds = Read-TelemetryU32 8788
+    sprite2_filter_evictions = Read-TelemetryU32 8792
+    sprite2_exact_lookup_probes = Read-TelemetryU32 8796
+    sprite2_exact_lookup_hits = Read-TelemetryU32 8800
 }
 
 $legacyStage4TelemetryChecks = [ordered]@{

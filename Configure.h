@@ -56,6 +56,31 @@
 #error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
 #endif
 
+/*
+ * 1: protect the stable Sprite2 working set from one-tick hit/iced palette
+ *    variants.  A filtered frame keeps full fidelity when its exact variant
+ *    is already cached or a genuinely unused compatible VRAM slot exists.
+ *    Under pressure it reuses/builds the unfiltered frame instead of evicting
+ *    another visible base frame.  This changes presentation admission only;
+ *    hit detection, damage, status duration and PC game logic are untouched.
+ * 0: allow filtered variants to compete with ordinary frames for every cache
+ *    slot; retained only for controlled performance A/B tests.
+ *
+ * 1：避免只有一個 tick 的受擊／冰凍調色版本污染穩定的 Sprite2 工作集。
+ *    若濾鏡版本已在快取內，或仍有真正未使用且相容的 VRAM 格，會保留完整
+ *    效果；高壓滿載時則重用／建立無濾鏡原圖，不逐出其他正在使用的基礎
+ *    圖格。這只改變畫面快取准入，不改碰撞、傷害、狀態時間或 PC 遊戲邏輯。
+ * 0：讓短命濾鏡版本與一般圖格競爭所有快取格，只供受控效能 A/B 使用。
+ */
+#ifndef TYRIAN_GBA_FILTER_AWARE_SPRITE2_CACHE
+#define TYRIAN_GBA_FILTER_AWARE_SPRITE2_CACHE 1
+#endif
+
+#if TYRIAN_GBA_FILTER_AWARE_SPRITE2_CACHE != 0 && \
+    TYRIAN_GBA_FILTER_AWARE_SPRITE2_CACHE != 1
+#error TYRIAN_GBA_FILTER_AWARE_SPRITE2_CACHE must be 0 or 1
+#endif
+
 /* ------------------------------------------------------------------------- */
 /* In-level gamepad mapping / 關卡內手把配置                                */
 /* ------------------------------------------------------------------------- */

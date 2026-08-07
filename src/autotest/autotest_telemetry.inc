@@ -998,6 +998,13 @@ static void autotest_finish(void)
         telemetry_scene_animation_decode_cycles_total
     );
     sram_write_u32(8776, telemetry_scene_animation_decode_cycles_max);
+    /* Additive Sprite2 filter-admission diagnostics; old readers ignore. */
+    sram_write_u32(8780, telemetry_sprite2_filter_admission_denials);
+    sram_write_u32(8784, telemetry_sprite2_filter_fallback_hits);
+    sram_write_u32(8788, telemetry_sprite2_filter_fallback_builds);
+    sram_write_u32(8792, telemetry_sprite2_filter_evictions);
+    sram_write_u32(8796, telemetry_sprite2_exact_lookup_probes);
+    sram_write_u32(8800, telemetry_sprite2_exact_lookup_hits);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;

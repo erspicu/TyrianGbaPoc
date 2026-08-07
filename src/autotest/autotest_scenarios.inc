@@ -28,6 +28,9 @@ static u32 autotest_palette_distance_c_cycles EWRAM_BSS;
 static u32 autotest_palette_distance_asm_cycles EWRAM_BSS;
 static u32 autotest_axis_overlap_c_cycles EWRAM_BSS;
 static u32 autotest_axis_overlap_asm_cycles EWRAM_BSS;
+static u32 autotest_sprite2_exact_differential_result EWRAM_BSS;
+static u32 autotest_sprite2_exact_c_cycles EWRAM_BSS;
+static u32 autotest_sprite2_exact_asm_cycles EWRAM_BSS;
 static u32 autotest_hotpath_benchmark_sink EWRAM_BSS;
 static u32 autotest_detail_effect_differential_result EWRAM_BSS;
 static u32 autotest_detail_palette_c_cycles EWRAM_BSS;
@@ -99,6 +102,10 @@ static u8 autotest_hotpath_asm_self_test(void)
     u16 rgb_component;
     u16 index;
     u16 filter;
+
+    autotest_sprite2_exact_differential_result =
+        source_enemy_cache_find_exact_differential_test();
+    if (autotest_sprite2_exact_differential_result != 1u) return 0;
 
     /* Exact in-place 320-byte row -> 240-byte row comparison. */
     for (index = 0; index < OT_PIC_DECODED_WIDTH; index++) {
@@ -369,6 +376,75 @@ static void autotest_hotpath_asm_benchmark(void)
     }
     autotest_axis_overlap_asm_cycles =
         stress_cycle_counter_read() - start;
+
+    {
+        const SourceEnemyCacheSlot *result;
+        u8 slot_index;
+
+        memset(
+            source_enemy_cache_lookup_test_slots,
+            0,
+            sizeof(source_enemy_cache_lookup_test_slots)
+        );
+        for (slot_index = 0; slot_index < 4u; slot_index++) {
+            SourceEnemyCacheSlot *slot =
+                &source_enemy_cache_lookup_test_slots[slot_index];
+            u16 graphic = (u16)(0x5a31u + slot_index * 0x111u);
+            u8 shape_table = (u8)(7u + slot_index * 3u);
+            u8 size = (u8)(slot_index & 1u);
+            u8 filter = (u8)(0x2bu + slot_index * 0x11u);
+
+            slot->graphic = graphic;
+            slot->shape_table = shape_table;
+            slot->size = size;
+            slot->filter = filter;
+            slot->valid = 1;
+            source_enemy_cache_lookup_benchmark_keys[slot_index] =
+                source_enemy_cache_packed_key(
+                    shape_table,
+                    graphic,
+                    size
+                );
+            source_enemy_cache_lookup_benchmark_filters[slot_index] =
+                filter;
+        }
+
+        start = stress_cycle_counter_read();
+        for (
+            index = 0;
+            index < AUTOTEST_HOTPATH_BENCHMARK_CALLS;
+            index++
+        ) {
+            slot_index = (u8)(index & 3u);
+            result = source_enemy_cache_find_exact_c_reference(
+                source_enemy_cache_lookup_test_slots,
+                4,
+                source_enemy_cache_lookup_benchmark_keys[slot_index],
+                source_enemy_cache_lookup_benchmark_filters[slot_index]
+            );
+            sink += (u32)(result - source_enemy_cache_lookup_test_slots);
+        }
+        autotest_sprite2_exact_c_cycles =
+            stress_cycle_counter_read() - start;
+
+        start = stress_cycle_counter_read();
+        for (
+            index = 0;
+            index < AUTOTEST_HOTPATH_BENCHMARK_CALLS;
+            index++
+        ) {
+            slot_index = (u8)(index & 3u);
+            result = source_enemy_cache_find_exact_asm(
+                source_enemy_cache_lookup_test_slots,
+                4,
+                source_enemy_cache_lookup_benchmark_keys[slot_index],
+                source_enemy_cache_lookup_benchmark_filters[slot_index]
+            );
+            sink += (u32)(result - source_enemy_cache_lookup_test_slots);
+        }
+        autotest_sprite2_exact_asm_cycles =
+            stress_cycle_counter_read() - start;
+    }
     REG_IME = old_ime;
     autotest_hotpath_benchmark_sink = sink;
 }
@@ -1205,6 +1281,19 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(628, 512u);
     sram_write_u32(632, TYRIAN_GBA_DETAIL_EFFECT_ASM);
     sram_write_u32(636, autotest_detail_effect_benchmark_sink);
+    /* Additive v81 Sprite2 exact-scan differential and microbenchmark. */
+    sram_write_u32(640, autotest_sprite2_exact_differential_result);
+    sram_write_u32(644, autotest_sprite2_exact_c_cycles);
+    sram_write_u32(648, autotest_sprite2_exact_asm_cycles);
+    sram_write_u32(652, 16384u);
+    sram_write_u32(656, telemetry_sprite2_filter_admission_denials);
+    sram_write_u32(660, telemetry_sprite2_filter_fallback_hits);
+    sram_write_u32(664, telemetry_sprite2_filter_fallback_builds);
+    sram_write_u32(668, telemetry_sprite2_filter_evictions);
+    sram_write_u32(672, telemetry_sprite2_exact_lookup_probes);
+    sram_write_u32(676, telemetry_sprite2_exact_lookup_hits);
+    sram_write_u32(680, TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM);
+    sram_write_u32(684, TYRIAN_GBA_HOTPATH_ASM);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {
