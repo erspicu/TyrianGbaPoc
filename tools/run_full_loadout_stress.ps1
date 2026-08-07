@@ -44,6 +44,10 @@ param(
     [int]$ProjectileCacheHint = 1,
     [ValidateSet(0, 1)]
     [int]$ProjectileHintAsm = 0,
+    [ValidateSet(0, 1)]
+    [int]$EffectActiveMask = 1,
+    [ValidateSet(0, 1)]
+    [int]$PoolBitScanAsm = 0,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -79,9 +83,9 @@ $name = (
     "tyrian_gba_full_loadout_sprite_stress_" +
     "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
     "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
-    "detailasm${DetailEffectAsm}_exactasm${Sprite2ExactLookupAsm}_" +
-    "starasm${StarfieldBatchAsm}_projhint${ProjectileCacheHint}_" +
-    "projasm${ProjectileHintAsm}"
+    "detailasm${DetailEffectAsm}_x${Sprite2ExactLookupAsm}_" +
+    "s${StarfieldBatchAsm}_ph${ProjectileCacheHint}_" +
+    "pa${ProjectileHintAsm}_fx${EffectActiveMask}_bs${PoolBitScanAsm}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -129,6 +133,8 @@ if (-not $NoBuild) {
         "STARFIELD_BATCH_ASM=$StarfieldBatchAsm " +
         "PROJECTILE_CACHE_HINT=$ProjectileCacheHint " +
         "PROJECTILE_HINT_ASM=$ProjectileHintAsm " +
+        "EFFECT_ACTIVE_MASK=$EffectActiveMask " +
+        "POOL_BIT_SCAN_ASM=$PoolBitScanAsm " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -209,6 +215,7 @@ $loopWorkCyclesTotal = Read-U32 480
 $renderCompleted = Read-U32 276
 $diagnosticFlags = Read-U32 200
 $expectedAdaptive = if ($Variant -like "*_no_adaptive") { 0 } else { 1 }
+$expectedEffectMaskConsistency = if ($EffectActiveMask -eq 1) { 3 } else { 0 }
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
@@ -327,6 +334,15 @@ $telemetry = [ordered]@{
     projectile_hint_probes = Read-U32 9052
     projectile_hint_hits = Read-U32 9056
     projectile_hint_fallback_scans = Read-U32 9060
+    pool_bit_scan_differential = Read-U32 9064
+    pool_lowest_c_cycles = Read-U32 9068
+    pool_lowest_asm_cycles = Read-U32 9072
+    pool_highest_c_cycles = Read-U32 9076
+    pool_highest_asm_cycles = Read-U32 9080
+    pool_bit_scan_benchmark_calls = Read-U32 9084
+    effect_active_mask = Read-U32 9088
+    pool_bit_scan_asm = Read-U32 9092
+    effect_pool_mask_consistency = Read-U32 9096
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -512,6 +528,11 @@ if (
     $telemetry.projectile_hint_benchmark_calls -ne 16384 -or
     $telemetry.projectile_cache_hint -ne $ProjectileCacheHint -or
     $telemetry.projectile_hint_asm -ne $ProjectileHintAsm -or
+    $telemetry.pool_bit_scan_differential -ne 3 -or
+    $telemetry.pool_bit_scan_benchmark_calls -ne 16384 -or
+    $telemetry.effect_active_mask -ne $EffectActiveMask -or
+    $telemetry.pool_bit_scan_asm -ne $PoolBitScanAsm -or
+    $telemetry.effect_pool_mask_consistency -ne $expectedEffectMaskConsistency -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or

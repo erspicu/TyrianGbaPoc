@@ -3,24 +3,43 @@
 static void spawn_effect(s16 x, s16 y, u8 sequence)
 {
     u8 index;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+    u16 free_index = source_pool_find_first_clear(
+        effect_active_mask,
+        MAX_EFFECTS
+    );
+
+    if (free_index >= MAX_EFFECTS) {
+        telemetry_effect_drops++;
+        return;
+    }
+    index = (u8)free_index;
+#else
     for (index = 0; index < MAX_EFFECTS; index++) {
         if (!effects[index].active) {
-            effects[index].active = 1;
-            effects[index].x = x;
-            effects[index].y = y;
-            effects[index].frame = 0;
-            effects[index].sequence = sequence;
-            active_effect_count++;
-            if (index >= effect_slot_high_water) {
-                effect_slot_high_water = (u8)(index + 1);
-            }
-            if (active_effect_count > telemetry_max_effects) {
-                telemetry_max_effects = active_effect_count;
-            }
-            return;
+            break;
         }
     }
-    telemetry_effect_drops++;
+    if (index >= MAX_EFFECTS) {
+        telemetry_effect_drops++;
+        return;
+    }
+#endif
+    effects[index].active = 1;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+    source_pool_mask_set(effect_active_mask, index);
+#endif
+    effects[index].x = x;
+    effects[index].y = y;
+    effects[index].frame = 0;
+    effects[index].sequence = sequence;
+    active_effect_count++;
+    if (index >= effect_slot_high_water) {
+        effect_slot_high_water = (u8)(index + 1);
+    }
+    if (active_effect_count > telemetry_max_effects) {
+        telemetry_max_effects = active_effect_count;
+    }
 }
 
 static void spawn_large_effect(s16 x, s16 y, u8 ground)

@@ -10,6 +10,9 @@ static void clear_entities(void)
     source_last_superpixel = 0;
     source_active_superpixels = 0;
     for (index = 0; index < MAX_EFFECTS; index++) effects[index].active = 0;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+    memset(effect_active_mask, 0, sizeof(effect_active_mask));
+#endif
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
     for (index = 0; index < MAX_REWARDS; index++) rewards[index].active = 0;
 #endif
@@ -20,6 +23,13 @@ static void clear_entities(void)
     ) {
         pickup_explosions[index].active = 0;
     }
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+    memset(
+        pickup_explosion_active_mask,
+        0,
+        sizeof(pickup_explosion_active_mask)
+    );
+#endif
     active_effect_count = 0;
     effect_slot_high_water = 0;
 #ifdef AUTOTEST_REWARD_VISUAL_TEST

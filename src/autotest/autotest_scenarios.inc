@@ -39,6 +39,11 @@ static u32 autotest_starfield_plot_asm_cycles EWRAM_BSS;
 static u32 autotest_projectile_hint_differential_result EWRAM_BSS;
 static u32 autotest_projectile_hint_c_cycles EWRAM_BSS;
 static u32 autotest_projectile_hint_asm_cycles EWRAM_BSS;
+static u32 autotest_pool_bit_scan_differential_result EWRAM_BSS;
+static u32 autotest_pool_lowest_c_cycles EWRAM_BSS;
+static u32 autotest_pool_lowest_asm_cycles EWRAM_BSS;
+static u32 autotest_pool_highest_c_cycles EWRAM_BSS;
+static u32 autotest_pool_highest_asm_cycles EWRAM_BSS;
 static u32 autotest_hotpath_benchmark_sink EWRAM_BSS;
 static u32 autotest_detail_effect_differential_result EWRAM_BSS;
 static u32 autotest_detail_palette_c_cycles EWRAM_BSS;
@@ -190,6 +195,10 @@ static u8 autotest_hotpath_asm_self_test(void)
     autotest_projectile_hint_differential_result =
         source_projectile_cache_hint_differential_test();
     if (autotest_projectile_hint_differential_result != 1u) return 0;
+
+    autotest_pool_bit_scan_differential_result =
+        source_pool_bit_scan_differential_test();
+    if (autotest_pool_bit_scan_differential_result != 3u) return 0;
 
     autotest_sprite2_exact_differential_result =
         source_enemy_cache_find_exact_differential_test();
@@ -465,6 +474,42 @@ static void autotest_hotpath_asm_benchmark(void)
         );
     }
     autotest_axis_overlap_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= source_pool_lowest_set_bit_c_reference(
+            (u32)(index * 0x9e3779b9u) ^ 0xa5a55a5au
+        );
+    }
+    autotest_pool_lowest_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= source_pool_lowest_set_bit_asm(
+            (u32)(index * 0x9e3779b9u) ^ 0xa5a55a5au
+        );
+    }
+    autotest_pool_lowest_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= source_pool_highest_set_bit_c_reference(
+            (u32)(index * 0x9e3779b9u) ^ 0xa5a55a5au
+        );
+    }
+    autotest_pool_highest_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= source_pool_highest_set_bit_asm(
+            (u32)(index * 0x9e3779b9u) ^ 0xa5a55a5au
+        );
+    }
+    autotest_pool_highest_asm_cycles =
         stress_cycle_counter_read() - start;
 
     start = stress_cycle_counter_read();
@@ -1530,6 +1575,16 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(9052, telemetry_projectile_hint_probes);
     sram_write_u32(9056, telemetry_projectile_hint_hits);
     sram_write_u32(9060, telemetry_projectile_hint_fallback_scans);
+    /* Additive v84 effect-pool active directory and bit-scan validation. */
+    sram_write_u32(9064, autotest_pool_bit_scan_differential_result);
+    sram_write_u32(9068, autotest_pool_lowest_c_cycles);
+    sram_write_u32(9072, autotest_pool_lowest_asm_cycles);
+    sram_write_u32(9076, autotest_pool_highest_c_cycles);
+    sram_write_u32(9080, autotest_pool_highest_asm_cycles);
+    sram_write_u32(9084, 16384u);
+    sram_write_u32(9088, TYRIAN_GBA_EFFECT_ACTIVE_MASK);
+    sram_write_u32(9092, TYRIAN_GBA_POOL_BIT_SCAN_ASM);
+    sram_write_u32(9096, source_pool_mask_consistency_test());
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

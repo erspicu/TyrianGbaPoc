@@ -80,6 +80,26 @@
 #endif
 
 /*
+ * Preserve the stock lowest-free allocation and ascending/descending slot
+ * order while accelerating free-slot lookup in the 200-slot effect pools.
+ */
+#ifndef TYRIAN_GBA_EFFECT_ACTIVE_MASK
+#define TYRIAN_GBA_EFFECT_ACTIVE_MASK 1
+#endif
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK != 0 && \
+    TYRIAN_GBA_EFFECT_ACTIVE_MASK != 1
+#error TYRIAN_GBA_EFFECT_ACTIVE_MASK must be 0 or 1
+#endif
+
+#ifndef TYRIAN_GBA_POOL_BIT_SCAN_ASM
+#define TYRIAN_GBA_POOL_BIT_SCAN_ASM 0
+#endif
+#if TYRIAN_GBA_POOL_BIT_SCAN_ASM != 0 && \
+    TYRIAN_GBA_POOL_BIT_SCAN_ASM != 1
+#error TYRIAN_GBA_POOL_BIT_SCAN_ASM must be 0 or 1
+#endif
+
+/*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.
  */

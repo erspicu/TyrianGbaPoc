@@ -64,6 +64,63 @@ source_detail_palette_distance_asm:
 	.section .iwram, "ax", %progbits
 	.align 2
 
+	.global source_pool_lowest_set_bit_asm
+	.type source_pool_lowest_set_bit_asm, %function
+/* u32 source_pool_lowest_set_bit_asm(u32 bits), zero -> 32. */
+source_pool_lowest_set_bit_asm:
+	cmp     r0, #0
+	moveq   r0, #32
+	bxeq    lr
+	rsb     r1, r0, #0
+	and     r0, r0, r1
+	ldr     r1, =0x077cb531
+	mul     r2, r1, r0
+	adr     r1, .Lpool_debruijn_index
+	ldrb    r0, [r1, r2, lsr #27]
+	bx      lr
+	.size source_pool_lowest_set_bit_asm, \
+		.-source_pool_lowest_set_bit_asm
+
+	.align 2
+	.global source_pool_highest_set_bit_asm
+	.type source_pool_highest_set_bit_asm, %function
+/* u32 source_pool_highest_set_bit_asm(u32 bits), zero -> 32. */
+source_pool_highest_set_bit_asm:
+	cmp     r0, #0
+	moveq   r0, #32
+	bxeq    lr
+	mov     r1, #0
+	mov     r2, #1
+	mov     r2, r2, lsl #16
+	cmp     r0, r2
+	movhs   r0, r0, lsr #16
+	addhs   r1, r1, #16
+	cmp     r0, #0x100
+	movhs   r0, r0, lsr #8
+	addhs   r1, r1, #8
+	cmp     r0, #0x10
+	movhs   r0, r0, lsr #4
+	addhs   r1, r1, #4
+	cmp     r0, #0x4
+	movhs   r0, r0, lsr #2
+	addhs   r1, r1, #2
+	cmp     r0, #0x2
+	addhs   r1, r1, #1
+	mov     r0, r1
+	bx      lr
+	.size source_pool_highest_set_bit_asm, \
+		.-source_pool_highest_set_bit_asm
+
+	.align 2
+.Lpool_debruijn_index:
+	.byte   0, 1, 28, 2, 29, 14, 24, 3
+	.byte   30, 22, 20, 15, 25, 17, 4, 8
+	.byte   31, 27, 13, 23, 21, 19, 16, 7
+	.byte   26, 12, 18, 6, 11, 5, 10, 9
+	.ltorg
+
+	.align 2
+
 	.global source_enemy_cache_find_exact_asm
 	.type source_enemy_cache_find_exact_asm, %function
 /*

@@ -374,7 +374,7 @@ static void source_spawn_explosion(
     u8 fixed_position
 )
 {
-    u8 index;
+    u16 index;
 
     if (y <= -16 || y >= 190) return;
     if (type == 6) {
@@ -391,11 +391,23 @@ static void source_spawn_explosion(
         telemetry_pickup_explosion_drops++;
         return;
     }
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+    index = source_pool_find_first_clear(
+        pickup_explosion_active_mask,
+        MAX_PICKUP_EXPLOSIONS
+    );
+#else
     for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
+        if (!pickup_explosions[index].active) break;
+    }
+#endif
+    if (index < MAX_PICKUP_EXPLOSIONS) {
         PickupExplosion *explosion = &pickup_explosions[index];
 
-        if (explosion->active) continue;
         explosion->active = 1;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+        source_pool_mask_set(pickup_explosion_active_mask, index);
+#endif
         explosion->x = x;
         explosion->y = y;
         explosion->graphic =
@@ -432,8 +444,7 @@ static void source_spawn_fixed_pickup_explosion(
 
 static void source_update_explosions(void)
 {
-    u8 index;
-
+    u16 index;
     for (index = 0; index < MAX_PICKUP_EXPLOSIONS; index++) {
         PickupExplosion *explosion = &pickup_explosions[index];
 
@@ -454,6 +465,9 @@ static void source_update_explosions(void)
         if (explosion->ttl > 0) explosion->ttl--;
         if (explosion->ttl == 0) {
             explosion->active = 0;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+            source_pool_mask_clear(pickup_explosion_active_mask, index);
+#endif
             if (active_pickup_explosion_count) {
                 active_pickup_explosion_count--;
             }

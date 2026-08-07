@@ -2774,6 +2774,9 @@ static void update_effects(void)
             effects[index].frame++;
         } else {
             effects[index].active = 0;
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+            source_pool_mask_clear(effect_active_mask, index);
+#endif
             if (active_effect_count) active_effect_count--;
         }
     }

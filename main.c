@@ -1328,10 +1328,21 @@ static SourceSuperpixel source_superpixels[MAX_SUPERPIXELS] EWRAM_DATA;
 static u8 source_last_superpixel;
 static u8 source_active_superpixels;
 static Effect effects[MAX_EFFECTS] EWRAM_DATA;
+#define EFFECT_ACTIVE_MASK_WORDS ((MAX_EFFECTS + 31u) / 32u)
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+static u32 effect_active_mask[EFFECT_ACTIVE_MASK_WORDS] EWRAM_DATA;
+#endif
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
 static Reward rewards[MAX_REWARDS] EWRAM_DATA;
 #endif
 static PickupExplosion pickup_explosions[MAX_PICKUP_EXPLOSIONS] EWRAM_DATA;
+#define PICKUP_EXPLOSION_ACTIVE_MASK_WORDS \
+    ((MAX_PICKUP_EXPLOSIONS + 31u) / 32u)
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+static u32 pickup_explosion_active_mask[
+    PICKUP_EXPLOSION_ACTIVE_MASK_WORDS
+] EWRAM_DATA;
+#endif
 static u8 active_effect_count;
 static u8 effect_slot_high_water;
 #ifdef AUTOTEST_REWARD_VISUAL_TEST
@@ -2738,6 +2749,7 @@ static void source_effect_restore_shared_tiles_if_needed(void);
 #include "src/background_runtime.inc"
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
+#include "src/effect_pool_mask.inc"
 #include "src/level_setup.inc"
 #include "src/frontend_runtime.inc"
 #include "src/gameplay_overlay.inc"
