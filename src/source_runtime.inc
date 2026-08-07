@@ -7,26 +7,32 @@
  */
 
 typedef struct {
-    u16 graphic;
     u32 last_epoch;
+    u32 generation;
+    u16 graphic;
     u8 shape_table;
     u8 size;
     u8 filter;
     u8 valid;
+    u8 resident;
 } SourceEnemyCacheSlot;
 
 typedef struct {
+    u32 slot_generation;
+    u32 l2_generation;
     u8 slot;
     u8 l2_slot;
 } SourceEnemyUpload;
 
 typedef struct {
     u32 last_epoch;
+    u32 generation;
     u16 graphic;
     u8 shape_table;
     u8 size;
     u8 filter;
     u8 valid;
+    u8 pin_count;
 } SourceSprite2L2Slot;
 
 static SourceEnemyCacheSlot
@@ -51,8 +57,12 @@ static u32 source_enemy_cache_epoch;
 static u8 source_enemy_upload_count;
 static u16 source_player_cache_graphic;
 static u8 source_player_cache_valid;
+static u8 source_player_cache_resident;
 static u8 source_player_cache_visible;
 static u8 source_player_upload_pending;
+static u32 source_player_cache_generation;
+static u32 source_player_upload_cache_generation;
+static u32 source_player_upload_l2_generation;
 
 #ifdef AUTOTEST
 static u32 source_sprite2_pending_upload_count(void)
@@ -62,6 +72,7 @@ static u32 source_sprite2_pending_upload_count(void)
 }
 #endif
 static u8 source_player_upload_l2_slot;
+static u32 source_cache_generation_counter;
 static u8 source_enemy_palette_valid;
 static u8 source_enemy_first_decode_failure_valid;
 static u8 source_enemy_first_decode_failure_shape_table;
@@ -76,6 +87,320 @@ static s16 source_enemy_first_decode_failure_x;
 static s16 source_enemy_first_decode_failure_y;
 static u8 source_enemy_first_decode_failure_cycle;
 static u32 source_enemy_first_decode_failure_shape_banks;
+
+#if TYRIAN_GBA_STRESS_LOADOUT
+#define SOURCE_STATIC_ATLAS_MAX_SLOTS 4u
+#else
+#define SOURCE_STATIC_ATLAS_MAX_SLOTS SOURCE_SPECIAL_OPTION_BANANA_SLOT_COUNT
+#endif
+
+enum {
+    SOURCE_STATIC_ATLAS_OWNER_NONE = 0,
+    SOURCE_STATIC_ATLAS_OWNER_OPTION = 1,
+    SOURCE_STATIC_ATLAS_OWNER_SPECIAL = 2,
+    SOURCE_STATIC_BUILD_FAILED = 0,
+    SOURCE_STATIC_BUILD_READY = 1,
+    SOURCE_STATIC_BUILD_DEFERRED = 2,
+};
+
+typedef struct {
+    u32 l2_generation[SOURCE_STATIC_ATLAS_MAX_SLOTS];
+    u32 bytes;
+    u16 tile_base;
+    u16 owner_key;
+    u8 slot_count;
+    u8 owner;
+    u8 active;
+} SourceStaticAtlasUpload;
+
+static SourceStaticAtlasUpload source_static_atlas_upload EWRAM_BSS;
+static u8 source_option_projectile_resident;
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static u8 source_special_option_projectile_resident;
+static const u8 source_option_projectile_palette_slot[14] = {
+    1, 1, 4, 5, 6, 7, 8,
+    9, 10, 11, 12, 13, 14, 15,
+};
+#endif
+
+static u32 source_cache_next_generation(void)
+{
+    source_cache_generation_counter++;
+    if (source_cache_generation_counter == 0) {
+        source_cache_generation_counter = 1;
+    }
+    return source_cache_generation_counter;
+}
+
+static u8 source_sprite2_l2_pin(u8 slot, u32 generation)
+{
+    SourceSprite2L2Slot *entry;
+
+    if (slot >= SOURCE_SPRITE2_L2_SLOT_COUNT) return 0;
+    entry = &source_sprite2_l2[slot];
+    if (
+        entry->generation != generation ||
+        entry->pin_count == 0xffu
+    ) {
+        telemetry_sprite2_generation_mismatches++;
+        return 0;
+    }
+    entry->pin_count++;
+    return 1;
+}
+
+static void source_sprite2_l2_unpin(u8 slot, u32 generation)
+{
+    SourceSprite2L2Slot *entry;
+
+    if (slot >= SOURCE_SPRITE2_L2_SLOT_COUNT) return;
+    entry = &source_sprite2_l2[slot];
+    if (entry->generation != generation || entry->pin_count == 0) {
+        telemetry_sprite2_generation_mismatches++;
+        return;
+    }
+    entry->pin_count--;
+}
+
+static void source_enemy_cache_cancel_upload(u8 slot)
+{
+    u8 index = 0;
+
+    while (index < source_enemy_upload_count) {
+        SourceEnemyUpload *upload = &source_enemy_uploads[index];
+
+        if (upload->slot != slot) {
+            index++;
+            continue;
+        }
+        source_sprite2_l2_unpin(
+            upload->l2_slot,
+            upload->l2_generation
+        );
+        source_enemy_upload_count--;
+        if (index < source_enemy_upload_count) {
+            source_enemy_uploads[index] =
+                source_enemy_uploads[source_enemy_upload_count];
+        }
+        telemetry_sprite2_upload_coalesces++;
+        telemetry_sprite2_pending_cancellations++;
+    }
+}
+
+static u8 source_enemy_cache_upload_pending(u8 slot, u32 generation)
+{
+    u8 index;
+
+    for (index = 0; index < source_enemy_upload_count; index++) {
+        if (
+            source_enemy_uploads[index].slot == slot &&
+            source_enemy_uploads[index].slot_generation == generation
+        ) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void source_enemy_cache_invalidate_slot(u8 slot)
+{
+    if (slot >= SOURCE_ENEMY_CACHE_SLOT_COUNT) return;
+    source_enemy_cache_cancel_upload(slot);
+    source_enemy_cache[slot].valid = 0;
+    source_enemy_cache[slot].resident = 0;
+    source_enemy_cache[slot].generation = source_cache_next_generation();
+}
+
+static void source_static_atlas_cancel(u8 owner)
+{
+    u8 index;
+
+    if (
+        !source_static_atlas_upload.active ||
+        (
+            owner != SOURCE_STATIC_ATLAS_OWNER_NONE &&
+            source_static_atlas_upload.owner != owner
+        )
+    ) {
+        return;
+    }
+    for (
+        index = 0;
+        index < source_static_atlas_upload.slot_count;
+        index++
+    ) {
+        source_sprite2_l2_unpin(
+            index,
+            source_static_atlas_upload.l2_generation[index]
+        );
+    }
+    source_static_atlas_upload.active = 0;
+}
+
+static u8 source_static_atlas_begin(
+    u8 owner,
+    u16 owner_key,
+    u8 slot_count,
+    u16 tile_base,
+    u32 bytes
+)
+{
+    u8 index;
+
+    if (source_static_atlas_upload.active) {
+        telemetry_sprite2_scratch_deferrals++;
+        return 0;
+    }
+    if (
+        slot_count == 0 ||
+        slot_count > SOURCE_STATIC_ATLAS_MAX_SLOTS ||
+        slot_count > SOURCE_SPRITE2_L2_SLOT_COUNT
+    ) {
+        return 0;
+    }
+    for (index = 0; index < slot_count; index++) {
+        if (source_sprite2_l2[index].pin_count != 0) {
+            telemetry_sprite2_scratch_deferrals++;
+            return 0;
+        }
+    }
+    memset(&source_static_atlas_upload, 0, sizeof(source_static_atlas_upload));
+    source_static_atlas_upload.bytes = bytes;
+    source_static_atlas_upload.tile_base = tile_base;
+    source_static_atlas_upload.owner_key = owner_key;
+    source_static_atlas_upload.slot_count = slot_count;
+    source_static_atlas_upload.owner = owner;
+    source_static_atlas_upload.active = 1;
+    for (index = 0; index < slot_count; index++) {
+        SourceSprite2L2Slot *entry = &source_sprite2_l2[index];
+
+        entry->valid = 0;
+        entry->last_epoch = 0;
+        entry->generation = source_cache_next_generation();
+        entry->pin_count = 1;
+        source_static_atlas_upload.l2_generation[index] =
+            entry->generation;
+    }
+    return 1;
+}
+
+static u8 source_static_atlas_is_pending(u8 owner, u16 owner_key)
+{
+    return
+        source_static_atlas_upload.active &&
+        source_static_atlas_upload.owner == owner &&
+        source_static_atlas_upload.owner_key == owner_key;
+}
+
+static void source_static_atlas_upload_commit(void)
+{
+    u8 index;
+    u8 valid = 1;
+
+    if (!source_static_atlas_upload.active) return;
+    for (
+        index = 0;
+        index < source_static_atlas_upload.slot_count;
+        index++
+    ) {
+        const SourceSprite2L2Slot *entry = &source_sprite2_l2[index];
+
+        if (
+            entry->generation !=
+                source_static_atlas_upload.l2_generation[index] ||
+            entry->pin_count == 0
+        ) {
+            valid = 0;
+            break;
+        }
+    }
+    if (!valid) {
+        telemetry_sprite2_generation_mismatches++;
+        source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_NONE);
+        return;
+    }
+    dmaCopy(
+        source_sprite2_l2_tiles[0],
+        (u8 *)OBJ_BASE_ADR +
+            (u32)source_static_atlas_upload.tile_base * 32u,
+        source_static_atlas_upload.bytes
+    );
+    if (
+        source_static_atlas_upload.owner ==
+            SOURCE_STATIC_ATLAS_OWNER_OPTION &&
+        source_option_projectile_valid != 0
+    ) {
+        source_option_projectile_resident = 1;
+    }
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        source_static_atlas_upload.owner ==
+            SOURCE_STATIC_ATLAS_OWNER_SPECIAL &&
+        source_special_option_projectile_graphic ==
+            source_static_atlas_upload.owner_key
+    ) {
+        source_special_option_projectile_resident = 1;
+    }
+#endif
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_NONE);
+}
+
+#if !TYRIAN_GBA_STRESS_LOADOUT
+static void source_obj_palette_base_write(u16 index, u16 colour)
+{
+    if (!source_detail_obj_palette_base_valid) {
+        SPRITE_PALETTE[index] = colour;
+        return;
+    }
+    source_detail_obj_palette_base[index] = colour;
+    source_detail_effect_obj_palette[index] = colour;
+    source_detail_palette_dirty = 1;
+}
+
+static u8 source_option_projectile_palette_apply(void)
+{
+    OtDataView palette;
+    u8 colour;
+    u16 base = SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16u;
+
+    if (!ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)) {
+        return 0;
+    }
+    source_obj_palette_base_write(base, 0);
+    for (colour = 0; colour < 14; colour++) {
+        source_obj_palette_base_write(
+            (u16)(base + source_option_projectile_palette_slot[colour]),
+            title_palette_colour(&palette, (u8)(114u + colour))
+        );
+    }
+    source_obj_palette_base_write(
+        (u16)(base + 2u),
+        ((const u16 *)(const void *)obj_palette)[
+            OBJ_PAL_HUD_GENERATOR * 16u + 2u
+        ]
+    );
+    source_obj_palette_base_write(
+        (u16)(base + 3u),
+        ((const u16 *)(const void *)obj_palette)[
+            OBJ_PAL_HUD_GENERATOR * 16u + 3u
+        ]
+    );
+    return 1;
+}
+
+static void source_option_projectile_palette_restore(void)
+{
+    u8 colour;
+    u16 base = SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16u;
+
+    for (colour = 0; colour < 16u; colour++) {
+        source_obj_palette_base_write(
+            (u16)(base + colour),
+            ((const u16 *)(const void *)obj_palette)[base + colour]
+        );
+    }
+}
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
 enum {
     SOURCE_ENEMY_CACHE_DROP_RECORD_COUNT = 4,
@@ -317,19 +642,6 @@ static IWRAM_CODE ARM_CODE u32 source_sprite2_tile_offset(
  */
 static u8 source_option_projectile_build(void)
 {
-    u8 scratch_index;
-
-    /* This decoder borrows the head of the Sprite2 L2 pixel arena. */
-    for (
-        scratch_index = 0;
-        scratch_index <
-            (SOURCE_OPTION_PROJECTILE_BYTES +
-                SOURCE_SPRITE2_L2_FRAME_BYTES - 1u) /
-                SOURCE_SPRITE2_L2_FRAME_BYTES;
-        scratch_index++
-    ) {
-        source_sprite2_l2[scratch_index].valid = 0;
-    }
 #if TYRIAN_GBA_STRESS_LOADOUT
     OtShpSprite sprite;
     const u8 *encoded;
@@ -339,11 +651,7 @@ static u8 source_option_projectile_build(void)
     u16 y = 0;
 
     source_option_projectile_valid = 0;
-    memset(
-        target,
-        0,
-        SOURCE_OPTION_PROJECTILE_BYTES
-    );
+    source_option_projectile_resident = 0;
     if (
         !source_enemy_palette_valid ||
         !ot_data_shp_sprite_read(
@@ -355,14 +663,29 @@ static u8 source_option_projectile_build(void)
         sprite.width != SOURCE_OPTION_PROJECTILE_SOURCE_WIDTH ||
         sprite.height != SOURCE_OPTION_PROJECTILE_SOURCE_HEIGHT
     ) {
-        return 0;
+        return SOURCE_STATIC_BUILD_FAILED;
     }
+    if (
+        !source_static_atlas_begin(
+            SOURCE_STATIC_ATLAS_OWNER_OPTION,
+            SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC,
+            (u8)(
+                SOURCE_OPTION_PROJECTILE_BYTES /
+                    SOURCE_SPRITE2_L2_FRAME_BYTES
+            ),
+            SOURCE_OPTION_PROJECTILE_TILE_BASE,
+            SOURCE_OPTION_PROJECTILE_BYTES
+        )
+    ) {
+        return SOURCE_STATIC_BUILD_DEFERRED;
+    }
+    memset(target, 0, SOURCE_OPTION_PROJECTILE_BYTES);
     encoded = sprite.encoded.data;
     while (source < sprite.encoded.size && y < sprite.height) {
         u8 code = encoded[source++];
 
         if (code == 255) {
-            if (source >= sprite.encoded.size) return 0;
+            if (source >= sprite.encoded.size) goto option_build_failed;
             x = (u16)(x + encoded[source++]);
         } else if (code == 254) {
             x = sprite.width;
@@ -405,16 +728,16 @@ static u8 source_option_projectile_build(void)
         y < SOURCE_OPTION_PROJECTILE_CROP_Y +
             SOURCE_OPTION_PROJECTILE_SIZE
     ) {
-        return 0;
+        goto option_build_failed;
     }
-    dmaCopy(
-        target,
-        (u8 *)OBJ_BASE_ADR +
-            SOURCE_OPTION_PROJECTILE_TILE_BASE * 32,
-        SOURCE_OPTION_PROJECTILE_BYTES
-    );
     source_option_projectile_valid = 1;
-    return 1;
+    return SOURCE_STATIC_BUILD_READY;
+
+option_build_failed:
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_OPTION);
+    source_option_projectile_valid = 0;
+    source_option_projectile_resident = 0;
+    return SOURCE_STATIC_BUILD_FAILED;
 #else
     static const u8 expected_width[
         SOURCE_OPTION_PROJECTILE_FRAME_COUNT
@@ -422,49 +745,23 @@ static u8 source_option_projectile_build(void)
     static const u8 expected_height[
         SOURCE_OPTION_PROJECTILE_FRAME_COUNT
     ] = {24, 28, 23};
-    static const u8 palette_slot[14] = {
-        1, 1, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15,
-    };
-    OtDataView palette;
     u8 frame;
-    u8 colour;
 
     source_option_projectile_valid = 0;
+    source_option_projectile_resident = 0;
+    if (!source_enemy_palette_valid) return SOURCE_STATIC_BUILD_FAILED;
     if (
-        !source_enemy_palette_valid ||
-        !ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)
+        !source_static_atlas_begin(
+            SOURCE_STATIC_ATLAS_OWNER_OPTION,
+            SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC,
+            SOURCE_OPTION_PROJECTILE_FRAME_COUNT,
+            SOURCE_OPTION_PROJECTILE_TILE_BASE,
+            SOURCE_OPTION_PROJECTILE_BYTES *
+                SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        )
     ) {
-        return 0;
+        return SOURCE_STATIC_BUILD_DEFERRED;
     }
-    SPRITE_PALETTE[
-        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16
-    ] = 0;
-    for (colour = 0; colour < 14; colour++) {
-        SPRITE_PALETTE[
-            SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 +
-            palette_slot[colour]
-        ] = title_palette_colour(
-            &palette,
-            (u8)(114u + colour)
-        );
-    }
-    /*
-     * Palette bank 12 is otherwise the persistent gold GENERATOR digit
-     * bank. Plasma Storm needs fourteen red shades, so merge only its two
-     * darkest source entries and reserve slots 2/3 for the HUD. This avoids
-     * recolouring the OSD while that source-faithful sidekick is equipped.
-     */
-    SPRITE_PALETTE[
-        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 2u
-    ] = ((const u16 *)(const void *)obj_palette)[
-        OBJ_PAL_HUD_GENERATOR * 16u + 2u
-    ];
-    SPRITE_PALETTE[
-        SOURCE_OPTION_PROJECTILE_PALETTE_BANK * 16 + 3u
-    ] = ((const u16 *)(const void *)obj_palette)[
-        OBJ_PAL_HUD_GENERATOR * 16u + 3u
-    ];
     for (
         frame = 0;
         frame < SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
@@ -472,7 +769,7 @@ static u8 source_option_projectile_build(void)
     ) {
         OtShpSprite sprite;
         const u8 *encoded;
-        u8 *target = (u8 *)source_sprite2_l2_tiles;
+        u8 *target = source_sprite2_l2_tiles[frame];
         u32 source = 0;
         u16 x = 0;
         u16 y = 0;
@@ -491,7 +788,7 @@ static u8 source_option_projectile_build(void)
             sprite.width != expected_width[frame] ||
             sprite.height != expected_height[frame]
         ) {
-            return 0;
+            goto option_build_failed;
         }
         encoded = sprite.encoded.data;
         while (
@@ -501,7 +798,9 @@ static u8 source_option_projectile_build(void)
             u8 code = encoded[source++];
 
             if (code == 255) {
-                if (source >= sprite.encoded.size) return 0;
+                if (source >= sprite.encoded.size) {
+                    goto option_build_failed;
+                }
                 x = (u16)(x + encoded[source++]);
             } else if (code == 254) {
                 x = sprite.width;
@@ -515,8 +814,13 @@ static u8 source_option_projectile_build(void)
                     u32 target_offset;
                     u8 palette_index;
 
-                    if (code < 114 || code > 127) return 0;
-                    palette_index = palette_slot[code - 114u];
+                    if (code < 114 || code > 127) {
+                        goto option_build_failed;
+                    }
+                    palette_index =
+                        source_option_projectile_palette_slot[
+                            code - 114u
+                        ];
                     target_offset =
                         (u32)(
                             (y >> 3) *
@@ -543,22 +847,23 @@ static u8 source_option_projectile_build(void)
                 y++;
             }
         }
-        if (y < sprite.height) return 0;
-        dmaCopy(
-            target,
-            (u8 *)OBJ_BASE_ADR +
-                (
-                    SOURCE_OPTION_PROJECTILE_TILE_BASE +
-                    frame *
-                        SOURCE_OPTION_PROJECTILE_TILES_PER_FRAME
-                ) *
-                32,
-            SOURCE_OPTION_PROJECTILE_BYTES
-        );
+        if (y < sprite.height) goto option_build_failed;
         source_option_projectile_valid |= (u8)(1u << frame);
     }
-    return source_option_projectile_valid ==
-        (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u;
+    if (
+        source_option_projectile_valid !=
+            (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u ||
+        !source_option_projectile_palette_apply()
+    ) {
+        goto option_build_failed;
+    }
+    return SOURCE_STATIC_BUILD_READY;
+
+option_build_failed:
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_OPTION);
+    source_option_projectile_valid = 0;
+    source_option_projectile_resident = 0;
+    return SOURCE_STATIC_BUILD_FAILED;
 #endif
 }
 
@@ -731,7 +1036,6 @@ static u8 source_special_option_projectile_build(u16 graphic)
     u16 expected_height;
     u16 tile_base = source_special_option_tile_base(graphic);
     u8 scratch_slots = source_special_option_slot_count(graphic);
-    u8 scratch_index;
     u16 x = 0;
     u16 y = 0;
 
@@ -746,17 +1050,8 @@ static u8 source_special_option_projectile_build(u16 graphic)
     } else {
         return 0;
     }
-    /*
-     * The shared frontend/gameplay arena doubles as the Sprite2 L2 store.
-     * This cold adapter borrows its first 4/7 frames as a linear decode
-     * canvas; invalidate those keys before writing so a mid-level Special
-     * pickup can never turn a later L2 "hit" into corrupted enemy art.
-     */
-    for (scratch_index = 0; scratch_index < scratch_slots; scratch_index++) {
-        source_sprite2_l2[scratch_index].valid = 0;
-    }
     source_special_option_projectile_graphic = 0;
-    memset(target, 0, bytes);
+    source_special_option_projectile_resident = 0;
     if (
         tile_base == 0 ||
         !source_enemy_palette_valid ||
@@ -769,14 +1064,28 @@ static u8 source_special_option_projectile_build(u16 graphic)
         sprite.width != expected_width ||
         sprite.height != expected_height
     ) {
-        return 0;
+        return SOURCE_STATIC_BUILD_FAILED;
     }
+    if (
+        !source_static_atlas_begin(
+            SOURCE_STATIC_ATLAS_OWNER_SPECIAL,
+            graphic,
+            scratch_slots,
+            tile_base,
+            bytes
+        )
+    ) {
+        return SOURCE_STATIC_BUILD_DEFERRED;
+    }
+    memset(target, 0, bytes);
     encoded = sprite.encoded.data;
     while (source < sprite.encoded.size && y < sprite.height) {
         u8 code = encoded[source++];
 
         if (code == 255u) {
-            if (source >= sprite.encoded.size) return 0;
+            if (source >= sprite.encoded.size) {
+                goto special_build_failed;
+            }
             x = (u16)(x + encoded[source++]);
         } else if (code == 254u) {
             x = sprite.width;
@@ -802,14 +1111,15 @@ static u8 source_special_option_projectile_build(u16 graphic)
             y++;
         }
     }
-    if (y < sprite.height) return 0;
-    dmaCopy(
-        target,
-        (u8 *)OBJ_BASE_ADR + (u32)tile_base * 32u,
-        bytes
-    );
+    if (y < sprite.height) goto special_build_failed;
     source_special_option_projectile_graphic = graphic;
-    return 1;
+    return SOURCE_STATIC_BUILD_READY;
+
+special_build_failed:
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_SPECIAL);
+    source_special_option_projectile_graphic = 0;
+    source_special_option_projectile_resident = 0;
+    return SOURCE_STATIC_BUILD_FAILED;
 }
 
 static u8 source_special_option_projectile_sync(void)
@@ -817,12 +1127,30 @@ static u8 source_special_option_projectile_sync(void)
     u16 required = source_special_option_required_graphic();
     u8 slot_count;
     u8 index;
+    u8 build_result;
 
-    if (required == source_special_option_projectile_graphic) return 1;
+    if (
+        required == source_special_option_projectile_graphic &&
+        (
+            source_special_option_projectile_resident ||
+            source_static_atlas_is_pending(
+                SOURCE_STATIC_ATLAS_OWNER_SPECIAL,
+                required
+            )
+        )
+    ) {
+        return 1;
+    }
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_SPECIAL);
     source_special_option_projectile_graphic = 0;
+    source_special_option_projectile_resident = 0;
     if (required == 0) return 1;
     slot_count = source_special_option_slot_count(required);
     if (slot_count == 0) return 0;
+
+    build_result = source_special_option_projectile_build(required);
+    if (build_result == SOURCE_STATIC_BUILD_DEFERRED) return 1;
+    if (build_result != SOURCE_STATIC_BUILD_READY) return 0;
 
     for (
         index = (u8)(
@@ -835,9 +1163,9 @@ static u8 source_special_option_projectile_sync(void)
                 SOURCE_OPTION_PROJECTILE_FRAME_COUNT;
         index++
     ) {
-        source_enemy_cache[index].valid = 0;
+        source_enemy_cache_invalidate_slot(index);
     }
-    return source_special_option_projectile_build(required);
+    return 1;
 }
 #endif
 
@@ -906,23 +1234,60 @@ static u8 source_enemy_cache_slot_reserved(u8 slot)
 static u8 source_option_projectile_sync(void)
 {
 #if TYRIAN_GBA_STRESS_LOADOUT
-    if (source_option_projectile_valid) return 1;
-    return source_option_projectile_build();
+    u8 build_result;
+
+    if (
+        source_option_projectile_valid &&
+        (
+            source_option_projectile_resident ||
+            source_static_atlas_is_pending(
+                SOURCE_STATIC_ATLAS_OWNER_OPTION,
+                SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC
+            )
+        )
+    ) {
+        return 1;
+    }
+    build_result = source_option_projectile_build();
+    return build_result != SOURCE_STATIC_BUILD_FAILED;
 #else
     u8 required =
         source_parity_level.player_sidekick[0] == 9 ||
         source_parity_level.player_sidekick[1] == 9;
     u8 success = 1;
     u8 index;
+    u8 build_result;
 
     if (!required) {
+        u8 was_active = source_option_projectile_valid != 0;
+
+        source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_OPTION);
         source_option_projectile_valid = 0;
+        source_option_projectile_resident = 0;
+        if (was_active) source_option_projectile_palette_restore();
     } else if (
         source_option_projectile_valid ==
-            (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u
+            (1u << SOURCE_OPTION_PROJECTILE_FRAME_COUNT) - 1u &&
+        (
+            source_option_projectile_resident ||
+            source_static_atlas_is_pending(
+                SOURCE_STATIC_ATLAS_OWNER_OPTION,
+                SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC
+            )
+        )
     ) {
-        /* Already resident. */
+        /* Already resident or safely pinned for the next VBlank. */
     } else {
+        source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_OPTION);
+        source_option_projectile_valid = 0;
+        source_option_projectile_resident = 0;
+        build_result = source_option_projectile_build();
+        if (build_result == SOURCE_STATIC_BUILD_DEFERRED) {
+            /* A different static atlas owns the scratch until VBlank. */
+        } else if (build_result != SOURCE_STATIC_BUILD_READY) {
+            source_option_projectile_valid = 0;
+            success = 0;
+        } else {
         /*
          * The three 4bpp 64x32 Plasma Storm frames time-share the final
          * three full-size enemy cache slots only while option 9 is equipped.
@@ -934,11 +1299,8 @@ static u8 source_option_projectile_sync(void)
             index < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
             index++
         ) {
-            source_enemy_cache[index].valid = 0;
-        }
-        if (!source_option_projectile_build()) {
-            source_option_projectile_valid = 0;
-            success = 0;
+                source_enemy_cache_invalidate_slot(index);
+            }
         }
     }
     if (!source_special_option_projectile_sync()) success = 0;
@@ -1184,6 +1546,7 @@ static u8 source_sprite2_l2_acquire(
             telemetry_sprite2_l2_hits++;
             return index;
         }
+        if (slot->pin_count != 0) continue;
         if (!slot->valid) {
             if (free_slot == SOURCE_SPRITE2_L2_SLOT_COUNT) {
                 free_slot = index;
@@ -1201,6 +1564,16 @@ static u8 source_sprite2_l2_acquire(
         eviction_slot;
     telemetry_sprite2_l2_misses++;
     if (selected == SOURCE_SPRITE2_L2_SLOT_COUNT) {
+        for (
+            index = 0;
+            index < SOURCE_SPRITE2_L2_SLOT_COUNT;
+            index++
+        ) {
+            if (source_sprite2_l2[index].pin_count != 0) {
+                telemetry_sprite2_l2_pin_exhaustions++;
+                break;
+            }
+        }
         telemetry_sprite2_l2_drops++;
         return 0xff;
     }
@@ -1226,6 +1599,9 @@ static u8 source_sprite2_l2_acquire(
     source_sprite2_l2[selected].shape_table = shape_table;
     source_sprite2_l2[selected].size = size;
     source_sprite2_l2[selected].filter = filter;
+    source_sprite2_l2[selected].generation =
+        source_cache_next_generation();
+    source_sprite2_l2[selected].pin_count = 0;
     source_sprite2_l2[selected].valid = 1;
     return selected;
 }
@@ -1247,8 +1623,15 @@ static u16 source_player_cache_acquire(u16 graphic)
         source_player_cache_valid &&
         source_player_cache_graphic == graphic
     ) {
-        telemetry_sprite2_cache_hits++;
-        return SOURCE_PLAYER_CACHE_TILE_BASE;
+        if (
+            !source_player_cache_resident &&
+            !source_player_upload_pending
+        ) {
+            source_player_cache_valid = 0;
+        } else {
+            telemetry_sprite2_cache_hits++;
+            return SOURCE_PLAYER_CACHE_TILE_BASE;
+        }
     }
     if (!source_enemy_palette_valid || graphic == 0) {
         telemetry_source_unknown_visuals++;
@@ -1273,12 +1656,32 @@ static u16 source_player_cache_acquire(u16 graphic)
         telemetry_sprite2_cache_evictions++;
     }
     if (source_player_upload_pending) {
-        /* Supersede an uncommitted player frame without losing its upload. */
+        /* Supersede the old transaction, then pin the newer decoded frame. */
+        source_sprite2_l2_unpin(
+            source_player_upload_l2_slot,
+            source_player_upload_l2_generation
+        );
+        source_player_upload_pending = 0;
         telemetry_sprite2_upload_coalesces++;
     }
+    source_player_cache_generation = source_cache_next_generation();
     source_player_cache_graphic = graphic;
     source_player_cache_valid = 1;
+    source_player_cache_resident = 0;
     source_player_upload_l2_slot = l2_slot;
+    source_player_upload_cache_generation =
+        source_player_cache_generation;
+    source_player_upload_l2_generation =
+        source_sprite2_l2[l2_slot].generation;
+    if (
+        !source_sprite2_l2_pin(
+            l2_slot,
+            source_player_upload_l2_generation
+        )
+    ) {
+        source_player_cache_valid = 0;
+        return 0xffff;
+    }
     source_player_upload_pending = 1;
     if (
         source_enemy_upload_count + 1u >
@@ -1292,15 +1695,35 @@ static u16 source_player_cache_acquire(u16 graphic)
 
 static void source_player_cache_commit(void)
 {
-    if (!source_player_upload_pending) return;
+    u8 valid;
 
-    dmaCopy(
-        source_sprite2_l2_tiles[source_player_upload_l2_slot],
-        (u8 *)OBJ_BASE_ADR + SOURCE_PLAYER_CACHE_TILE_BASE * 32u,
-        SOURCE_ENEMY_FRAME_BYTES
+    if (!source_player_upload_pending) return;
+    valid =
+        source_player_cache_valid &&
+        source_player_cache_generation ==
+            source_player_upload_cache_generation &&
+        source_sprite2_l2[source_player_upload_l2_slot].valid &&
+        source_sprite2_l2[source_player_upload_l2_slot].generation ==
+            source_player_upload_l2_generation &&
+        source_sprite2_l2[source_player_upload_l2_slot].pin_count != 0;
+    if (valid) {
+        dmaCopy(
+            source_sprite2_l2_tiles[source_player_upload_l2_slot],
+            (u8 *)OBJ_BASE_ADR + SOURCE_PLAYER_CACHE_TILE_BASE * 32u,
+            SOURCE_ENEMY_FRAME_BYTES
+        );
+        source_player_cache_resident = 1;
+        telemetry_sprite2_uploads++;
+        telemetry_sprite2_upload_bytes += SOURCE_ENEMY_FRAME_BYTES;
+    } else {
+        source_player_cache_valid = 0;
+        source_player_cache_resident = 0;
+        telemetry_sprite2_generation_mismatches++;
+    }
+    source_sprite2_l2_unpin(
+        source_player_upload_l2_slot,
+        source_player_upload_l2_generation
     );
-    telemetry_sprite2_uploads++;
-    telemetry_sprite2_upload_bytes += SOURCE_ENEMY_FRAME_BYTES;
     source_player_upload_pending = 0;
 }
 
@@ -1403,13 +1826,15 @@ static void source_enemy_cache_begin_frame(void)
          * Leave it invalid until the overlay disappears so a later hit can
          * never reuse corrupted OBJ data.
          */
-        source_enemy_cache[
+        source_enemy_cache_invalidate_slot(
             SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + 1u
-        ].valid = 0;
+        );
     }
 #if !TYRIAN_GBA_STRESS_LOADOUT
     if (game_paused) {
-        source_enemy_cache[SOURCE_ENEMY_CACHE_SPLIT_SLOT].valid = 0;
+        source_enemy_cache_invalidate_slot(
+            SOURCE_ENEMY_CACHE_SPLIT_SLOT
+        );
     }
 #endif
     if (source_enemy_cache_epoch == 0) {
@@ -1567,9 +1992,18 @@ source_enemy_cache_acquire(
             slot->size == draw->size &&
             slot->filter == draw->filter
         ) {
-            slot->last_epoch = source_enemy_cache_epoch;
-            telemetry_sprite2_cache_hits++;
-            return source_enemy_cache_tile(index);
+            if (
+                slot->resident ||
+                source_enemy_cache_upload_pending(
+                    index,
+                    slot->generation
+                )
+            ) {
+                slot->last_epoch = source_enemy_cache_epoch;
+                telemetry_sprite2_cache_hits++;
+                return source_enemy_cache_tile(index);
+            }
+            source_enemy_cache_invalidate_slot(index);
         }
         if (!slot->valid) {
             if (free_slot == SOURCE_ENEMY_CACHE_SLOT_COUNT) {
@@ -1599,7 +2033,11 @@ source_enemy_cache_acquire(
     if (source_enemy_cache[selected].valid) {
         telemetry_sprite2_cache_evictions++;
     }
+    source_enemy_cache_invalidate_slot(selected);
+    source_enemy_cache[selected].generation =
+        source_cache_next_generation();
     source_enemy_cache[selected].valid = 1;
+    source_enemy_cache[selected].resident = 0;
     source_enemy_cache[selected].shape_table = draw->shape_table;
     source_enemy_cache[selected].graphic = draw->graphic;
     source_enemy_cache[selected].size = draw->size;
@@ -1639,7 +2077,7 @@ source_enemy_cache_acquire(
         }
         telemetry_source_unknown_visuals++;
         telemetry_sprite2_decode_failures++;
-        source_enemy_cache[selected].valid = 0;
+        source_enemy_cache_invalidate_slot(selected);
         return 0xffff;
     }
 
@@ -1652,7 +2090,24 @@ source_enemy_cache_acquire(
      */
     for (index = 0; index < source_enemy_upload_count; index++) {
         if (source_enemy_uploads[index].slot == selected) {
+            source_sprite2_l2_unpin(
+                source_enemy_uploads[index].l2_slot,
+                source_enemy_uploads[index].l2_generation
+            );
             source_enemy_uploads[index].l2_slot = l2_slot;
+            source_enemy_uploads[index].slot_generation =
+                source_enemy_cache[selected].generation;
+            source_enemy_uploads[index].l2_generation =
+                source_sprite2_l2[l2_slot].generation;
+            if (
+                !source_sprite2_l2_pin(
+                    l2_slot,
+                    source_enemy_uploads[index].l2_generation
+                )
+            ) {
+                source_enemy_cache_invalidate_slot(selected);
+                return 0xffff;
+            }
             telemetry_sprite2_upload_coalesces++;
             return source_enemy_cache_tile(selected);
         }
@@ -1665,11 +2120,24 @@ source_enemy_cache_acquire(
         );
 #endif
         telemetry_sprite2_cache_drops++;
-        source_enemy_cache[selected].valid = 0;
+        source_enemy_cache_invalidate_slot(selected);
         return 0xffff;
     }
     source_enemy_uploads[source_enemy_upload_count].slot = selected;
     source_enemy_uploads[source_enemy_upload_count].l2_slot = l2_slot;
+    source_enemy_uploads[source_enemy_upload_count].slot_generation =
+        source_enemy_cache[selected].generation;
+    source_enemy_uploads[source_enemy_upload_count].l2_generation =
+        source_sprite2_l2[l2_slot].generation;
+    if (
+        !source_sprite2_l2_pin(
+            l2_slot,
+            source_enemy_uploads[source_enemy_upload_count].l2_generation
+        )
+    ) {
+        source_enemy_cache_invalidate_slot(selected);
+        return 0xffff;
+    }
     source_enemy_upload_count++;
     if (
         source_enemy_upload_count +
@@ -1689,14 +2157,38 @@ static void source_enemy_cache_commit(void)
 
     for (index = 0; index < source_enemy_upload_count; index++) {
         const SourceEnemyUpload *upload = &source_enemy_uploads[index];
-        const u8 *source =
-            source_sprite2_l2_tiles[upload->l2_slot];
+        const u8 *source;
         u8 *target =
             (u8 *)OBJ_BASE_ADR +
             source_enemy_cache_tile(upload->slot) * 32;
         u32 bytes = source_enemy_cache_slot_is_compact(upload->slot) ?
             SOURCE_ENEMY_COMPACT_FRAME_BYTES :
             SOURCE_ENEMY_FRAME_BYTES;
+        u8 valid =
+            source_enemy_cache[upload->slot].valid &&
+            source_enemy_cache[upload->slot].generation ==
+                upload->slot_generation &&
+            source_sprite2_l2[upload->l2_slot].valid &&
+            source_sprite2_l2[upload->l2_slot].generation ==
+                upload->l2_generation &&
+            source_sprite2_l2[upload->l2_slot].pin_count != 0;
+
+        if (!valid) {
+            if (
+                source_enemy_cache[upload->slot].generation ==
+                    upload->slot_generation
+            ) {
+                source_enemy_cache[upload->slot].valid = 0;
+                source_enemy_cache[upload->slot].resident = 0;
+            }
+            telemetry_sprite2_generation_mismatches++;
+            source_sprite2_l2_unpin(
+                upload->l2_slot,
+                upload->l2_generation
+            );
+            continue;
+        }
+        source = source_sprite2_l2_tiles[upload->l2_slot];
 
         if (source_enemy_cache_tile_is_split(
                 source_enemy_cache_tile(upload->slot)
@@ -1729,23 +2221,32 @@ static void source_enemy_cache_commit(void)
         } else {
             dmaCopy(source, target, bytes);
         }
+        source_enemy_cache[upload->slot].resident = 1;
         telemetry_sprite2_uploads++;
         if (source_enemy_cache_slot_is_compact(upload->slot)) {
             telemetry_sprite2_compact_uploads++;
         }
         telemetry_sprite2_upload_bytes += bytes;
+        source_sprite2_l2_unpin(
+            upload->l2_slot,
+            upload->l2_generation
+        );
     }
     source_enemy_upload_count = 0;
 }
 
 typedef struct {
     u32 last_epoch;
+    u32 generation;
     u16 graphic;
     u8 shape_table;
     u8 valid;
+    u8 resident;
 } SourceProjectileCacheSlot;
 
 typedef struct {
+    u32 slot_generation;
+    u32 l2_generation;
     u8 slot;
     u8 l2_slot;
 } SourceProjectileUpload;
@@ -1758,6 +2259,62 @@ static SourceProjectileUpload source_projectile_uploads[
 ] EWRAM_BSS;
 static u32 source_projectile_cache_epoch;
 static u8 source_projectile_upload_count;
+
+static void source_projectile_cache_cancel_upload(u8 slot)
+{
+    u8 index = 0;
+
+    while (index < source_projectile_upload_count) {
+        SourceProjectileUpload *upload =
+            &source_projectile_uploads[index];
+
+        if (upload->slot != slot) {
+            index++;
+            continue;
+        }
+        source_sprite2_l2_unpin(
+            upload->l2_slot,
+            upload->l2_generation
+        );
+        source_projectile_upload_count--;
+        if (index < source_projectile_upload_count) {
+            source_projectile_uploads[index] =
+                source_projectile_uploads[
+                    source_projectile_upload_count
+                ];
+        }
+        telemetry_projectile_cache_upload_coalesces++;
+        telemetry_sprite2_pending_cancellations++;
+    }
+}
+
+static void source_projectile_cache_invalidate_slot(u8 slot)
+{
+    if (slot >= SOURCE_PROJECTILE_CACHE_SLOT_COUNT) return;
+    source_projectile_cache_cancel_upload(slot);
+    source_projectile_cache[slot].valid = 0;
+    source_projectile_cache[slot].resident = 0;
+    source_projectile_cache[slot].generation =
+        source_cache_next_generation();
+}
+
+static u8 source_projectile_cache_upload_pending(
+    u8 slot,
+    u32 generation
+)
+{
+    u8 index;
+
+    for (index = 0; index < source_projectile_upload_count; index++) {
+        if (
+            source_projectile_uploads[index].slot == slot &&
+            source_projectile_uploads[index].slot_generation == generation
+        ) {
+            return 1;
+        }
+    }
+    return 0;
+}
 
 static u16 source_projectile_cache_tile(u8 slot)
 {
@@ -1843,9 +2400,18 @@ static u16 source_projectile_cache_acquire(
             slot->shape_table == shape_table &&
             slot->graphic == graphic
         ) {
-            slot->last_epoch = source_projectile_cache_epoch;
-            telemetry_projectile_cache_hits++;
-            return source_projectile_cache_tile(index);
+            if (
+                slot->resident ||
+                source_projectile_cache_upload_pending(
+                    index,
+                    slot->generation
+                )
+            ) {
+                slot->last_epoch = source_projectile_cache_epoch;
+                telemetry_projectile_cache_hits++;
+                return source_projectile_cache_tile(index);
+            }
+            source_projectile_cache_invalidate_slot(index);
         }
         if (!slot->valid) {
             if (free_slot == SOURCE_PROJECTILE_CACHE_SLOT_COUNT) {
@@ -1879,7 +2445,11 @@ static u16 source_projectile_cache_acquire(
     if (source_projectile_cache[selected].valid) {
         telemetry_projectile_cache_evictions++;
     }
+    source_projectile_cache_invalidate_slot(selected);
+    source_projectile_cache[selected].generation =
+        source_cache_next_generation();
     source_projectile_cache[selected].valid = 1;
+    source_projectile_cache[selected].resident = 0;
     source_projectile_cache[selected].shape_table = shape_table;
     source_projectile_cache[selected].graphic = graphic;
     source_projectile_cache[selected].last_epoch =
@@ -1892,13 +2462,30 @@ static u16 source_projectile_cache_acquire(
         0
     );
     if (l2_slot == 0xff) {
-        source_projectile_cache[selected].valid = 0;
+        source_projectile_cache_invalidate_slot(selected);
         telemetry_projectile_cache_drops++;
         return 0xffff;
     }
     for (index = 0; index < source_projectile_upload_count; index++) {
         if (source_projectile_uploads[index].slot == selected) {
+            source_sprite2_l2_unpin(
+                source_projectile_uploads[index].l2_slot,
+                source_projectile_uploads[index].l2_generation
+            );
             source_projectile_uploads[index].l2_slot = l2_slot;
+            source_projectile_uploads[index].slot_generation =
+                source_projectile_cache[selected].generation;
+            source_projectile_uploads[index].l2_generation =
+                source_sprite2_l2[l2_slot].generation;
+            if (
+                !source_sprite2_l2_pin(
+                    l2_slot,
+                    source_projectile_uploads[index].l2_generation
+                )
+            ) {
+                source_projectile_cache_invalidate_slot(selected);
+                return 0xffff;
+            }
             telemetry_projectile_cache_upload_coalesces++;
             return source_projectile_cache_tile(selected);
         }
@@ -1907,7 +2494,7 @@ static u16 source_projectile_cache_acquire(
         source_projectile_upload_count >=
         SOURCE_PROJECTILE_CACHE_SLOT_COUNT
     ) {
-        source_projectile_cache[selected].valid = 0;
+        source_projectile_cache_invalidate_slot(selected);
         telemetry_projectile_cache_drops++;
         return 0xffff;
     }
@@ -1917,6 +2504,23 @@ static u16 source_projectile_cache_acquire(
     source_projectile_uploads[
         source_projectile_upload_count
     ].l2_slot = l2_slot;
+    source_projectile_uploads[
+        source_projectile_upload_count
+    ].slot_generation = source_projectile_cache[selected].generation;
+    source_projectile_uploads[
+        source_projectile_upload_count
+    ].l2_generation = source_sprite2_l2[l2_slot].generation;
+    if (
+        !source_sprite2_l2_pin(
+            l2_slot,
+            source_projectile_uploads[
+                source_projectile_upload_count
+            ].l2_generation
+        )
+    ) {
+        source_projectile_cache_invalidate_slot(selected);
+        return 0xffff;
+    }
     source_projectile_upload_count++;
     if (
         source_projectile_upload_count >
@@ -1964,16 +2568,39 @@ static void source_projectile_cache_commit(void)
         index < source_projectile_upload_count;
         index++
     ) {
-        u8 slot = source_projectile_uploads[index].slot;
-        u8 l2_slot = source_projectile_uploads[index].l2_slot;
+        const SourceProjectileUpload *upload =
+            &source_projectile_uploads[index];
+        u8 slot = upload->slot;
+        u8 l2_slot = upload->l2_slot;
+        u8 valid =
+            source_projectile_cache[slot].valid &&
+            source_projectile_cache[slot].generation ==
+                upload->slot_generation &&
+            source_sprite2_l2[l2_slot].valid &&
+            source_sprite2_l2[l2_slot].generation ==
+                upload->l2_generation &&
+            source_sprite2_l2[l2_slot].pin_count != 0;
 
-        dmaCopy(
-            source_sprite2_l2_tiles[l2_slot],
-            (u8 *)OBJ_BASE_ADR +
-                source_projectile_cache_tile(slot) * 32,
-            SOURCE_PROJECTILE_FRAME_BYTES
-        );
-        telemetry_projectile_cache_uploads++;
+        if (valid) {
+            dmaCopy(
+                source_sprite2_l2_tiles[l2_slot],
+                (u8 *)OBJ_BASE_ADR +
+                    source_projectile_cache_tile(slot) * 32,
+                SOURCE_PROJECTILE_FRAME_BYTES
+            );
+            source_projectile_cache[slot].resident = 1;
+            telemetry_projectile_cache_uploads++;
+        } else {
+            if (
+                source_projectile_cache[slot].generation ==
+                    upload->slot_generation
+            ) {
+                source_projectile_cache[slot].valid = 0;
+                source_projectile_cache[slot].resident = 0;
+            }
+            telemetry_sprite2_generation_mismatches++;
+        }
+        source_sprite2_l2_unpin(l2_slot, upload->l2_generation);
     }
     source_projectile_upload_count = 0;
 }

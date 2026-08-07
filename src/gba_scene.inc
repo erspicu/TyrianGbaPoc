@@ -349,7 +349,8 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     frame !=
                         60001 +
                             SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC ||
-                    !source_option_projectile_valid
+                    !source_option_projectile_valid ||
+                    !source_option_projectile_resident
                 ) {
                     telemetry_stress_loadout_failures++;
                     continue;
@@ -391,6 +392,7 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     if (
                         source_special_option_projectile_graphic !=
                             option_graphic ||
+                        !source_special_option_projectile_resident ||
                         oam_count + required_oam > oam_limit
                     ) {
                         telemetry_player_shot_oam_culls++;
@@ -507,7 +509,8 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     (
                         source_option_projectile_valid &
                         (1u << option_frame)
-                    ) == 0
+                    ) == 0 ||
+                    !source_option_projectile_resident
                 ) {
                     continue;
                 }

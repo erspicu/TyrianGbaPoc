@@ -1380,6 +1380,19 @@ static void source_runtime_reset(void)
     u32 layer_passed_checks;
     u32 layer_failed_checks;
 
+    source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_NONE);
+    memset(
+        &source_static_atlas_upload,
+        0,
+        sizeof(source_static_atlas_upload)
+    );
+    source_cache_generation_counter = 0;
+    source_option_projectile_valid = 0;
+    source_option_projectile_resident = 0;
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    source_special_option_projectile_graphic = 0;
+    source_special_option_projectile_resident = 0;
+#endif
     memset(source_enemy_cache, 0, sizeof(source_enemy_cache));
     memset(
         source_repeating_explosion,
@@ -1389,9 +1402,13 @@ static void source_runtime_reset(void)
     memset(source_enemy_uploads, 0, sizeof(source_enemy_uploads));
     source_player_cache_graphic = 0;
     source_player_cache_valid = 0;
+    source_player_cache_resident = 0;
     source_player_cache_visible = 0;
     source_player_upload_pending = 0;
     source_player_upload_l2_slot = 0;
+    source_player_cache_generation = 0;
+    source_player_upload_cache_generation = 0;
+    source_player_upload_l2_generation = 0;
     memset(
         source_projectile_cache,
         0,
@@ -1489,6 +1506,10 @@ static void source_runtime_reset(void)
     telemetry_sprite2_upload_coalesces = 0;
     telemetry_sprite2_max_uploads = 0;
     telemetry_sprite2_max_visible_unique = 0;
+    telemetry_sprite2_generation_mismatches = 0;
+    telemetry_sprite2_l2_pin_exhaustions = 0;
+    telemetry_sprite2_pending_cancellations = 0;
+    telemetry_sprite2_scratch_deferrals = 0;
     telemetry_boss_perf_started = 0;
     telemetry_boss_perf_completed = 0;
     telemetry_boss_perf_start_position = 0;

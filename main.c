@@ -2195,6 +2195,10 @@ volatile u32 telemetry_sprite2_split_uploads;
 volatile u32 telemetry_sprite2_upload_coalesces EWRAM_BSS;
 volatile u32 telemetry_sprite2_max_uploads;
 volatile u32 telemetry_sprite2_max_visible_unique;
+volatile u32 telemetry_sprite2_generation_mismatches EWRAM_BSS;
+volatile u32 telemetry_sprite2_l2_pin_exhaustions EWRAM_BSS;
+volatile u32 telemetry_sprite2_pending_cancellations EWRAM_BSS;
+volatile u32 telemetry_sprite2_scratch_deferrals EWRAM_BSS;
 volatile u32 telemetry_projectile_cache_hits;
 volatile u32 telemetry_projectile_cache_misses;
 volatile u32 telemetry_projectile_cache_evictions;
@@ -2632,6 +2636,7 @@ static void gameplay_overlay_prepare_frame(void);
 static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
 static void source_projectile_cache_commit(void);
+static void source_static_atlas_upload_commit(void);
 static void source_effect_cache_commit(void);
 static u8 source_option_projectile_sync(void);
 static void source_spawn_explosion(

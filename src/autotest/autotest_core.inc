@@ -298,6 +298,13 @@ static u8 autotest_source_upgrade_loadout(void)
         active == 3 &&
         special_frames == 7 &&
         source_option_projectile_valid == 7;
+    /*
+     * Production commits this pinned atlas in VBlank.  This cold-start unit
+     * probe intentionally advances that transaction before it requests the
+     * independent Xega atlas below; otherwise the one-entry static queue is
+     * correctly busy and the second build is deferred by one display frame.
+     */
+    source_static_atlas_upload_commit();
 
     /*
      * tyrian2.c: shield generation consumes power before powerAdd, and
