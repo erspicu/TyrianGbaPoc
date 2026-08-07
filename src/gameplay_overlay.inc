@@ -8,6 +8,24 @@
  * avoids spending scarce OAM entries or redrawing a 240x160 bitmap.
  */
 
+static ARM_CODE __attribute__((noinline, noclone)) u32
+gameplay_overlay_colour_distance_c_reference(u16 left, u16 right)
+{
+    s16 red = (s16)(left & 31u) - (s16)(right & 31u);
+    s16 green =
+        (s16)((left >> 5) & 31u) - (s16)((right >> 5) & 31u);
+    s16 blue =
+        (s16)((left >> 10) & 31u) - (s16)((right >> 10) & 31u);
+
+    return
+        (u32)(red * red) +
+        (u32)(green * green) +
+        (u32)(blue * blue);
+}
+
+#if TYRIAN_GBA_HOTPATH_ASM
+extern u32 gameplay_overlay_colour_distance(u16 left, u16 right);
+#else
 static u32 gameplay_overlay_colour_distance(u16 left, u16 right)
 {
     s16 red = (s16)(left & 31u) - (s16)(right & 31u);
@@ -21,6 +39,7 @@ static u32 gameplay_overlay_colour_distance(u16 left, u16 right)
         (u32)(green * green) +
         (u32)(blue * blue);
 }
+#endif
 
 static u8 gameplay_overlay_best_nibble(
     u16 source,

@@ -30,6 +30,14 @@ param(
     [int]$EndPosition = 0,
     [ValidateRange(1, 20000)]
     [int]$DurationVBlanks = 3600,
+    [ValidateRange(30000, 600000)]
+    [int]$RuntimeTimeoutMilliseconds = 120000,
+    [ValidateSet(0, 1)]
+    [int]$HotpathAsm = 1,
+    [ValidateSet(0, 1)]
+    [int]$DetailEffectAsm = 1,
+    [ValidateRange(0.0, 100.0)]
+    [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
     [switch]$NoFire,
     [switch]$NoBuild
@@ -62,7 +70,8 @@ $stressFire = if ($NoFire) { 0 } else { 1 }
 $name = (
     "tyrian_gba_full_loadout_sprite_stress_" +
     "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
-    "${Variant}_detail_${DetailLevel}_speed_normal"
+    "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
+    "detailasm${DetailEffectAsm}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -104,6 +113,8 @@ if (-not $NoBuild) {
         "cd '$msysProject'; " +
         "make -j2 PYTHON=$python " +
         "DETAIL_LEVEL=$DetailLevel GAME_SPEED=normal " +
+        "HOTPATH_ASM=$HotpathAsm " +
+        "DETAIL_EFFECT_ASM=$DetailEffectAsm " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -133,7 +144,7 @@ $process = Start-Process `
     -RedirectStandardOutput $stdout `
     -RedirectStandardError $stderr `
     -PassThru
-if (-not $process.WaitForExit(120000)) {
+if (-not $process.WaitForExit($RuntimeTimeoutMilliseconds)) {
     $process.Kill($true)
     throw "Stress runtime timed out: $name"
 }
@@ -156,7 +167,7 @@ if ($runtimeErrors.Count -ne 0) {
 }
 
 $bytes = [IO.File]::ReadAllBytes($save)
-if ($bytes.Length -lt 540) {
+if ($bytes.Length -lt 592) {
     throw "Stress SRAM is truncated: $($bytes.Length) bytes"
 }
 $magic = [Text.Encoding]::ASCII.GetString($bytes, 0, 4)
@@ -331,6 +342,31 @@ $telemetry = [ordered]@{
     adaptive_dispatch_severe_at_finish = Read-U32 528
     adaptive_dispatch_pressure_at_finish = Read-U32 532
     adaptive_dispatch_enabled = Read-U32 536
+    hotpath_asm_self_test = Read-U32 540
+    iwram_stack_canary_remaining = Read-U32 544
+    iwram_stack_canary_filled = Read-U32 548
+    level_port_asm_differential = Read-U32 552
+    colour_distance_asm_differential = Read-U32 556
+    overlay_distance_c_cycles = Read-U32 560
+    overlay_distance_asm_cycles = Read-U32 564
+    palette_distance_c_cycles = Read-U32 568
+    palette_distance_asm_cycles = Read-U32 572
+    axis_overlap_c_cycles = Read-U32 576
+    axis_overlap_asm_cycles = Read-U32 580
+    hotpath_benchmark_calls = Read-U32 584
+    hotpath_benchmark_sink = Read-U32 588
+    detail_effect_asm_differential = Read-U32 592
+    detail_palette_c_cycles = Read-U32 596
+    detail_palette_asm_cycles = Read-U32 600
+    detail_palette_benchmark_calls = Read-U32 604
+    detail_spotlight_c_cycles = Read-U32 608
+    detail_spotlight_asm_cycles = Read-U32 612
+    detail_spotlight_benchmark_calls = Read-U32 616
+    detail_wave_c_cycles = Read-U32 620
+    detail_wave_asm_cycles = Read-U32 624
+    detail_wave_benchmark_calls = Read-U32 628
+    detail_effect_asm_enabled = Read-U32 632
+    detail_effect_benchmark_sink = Read-U32 636
     screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
@@ -424,6 +460,10 @@ if (
     $telemetry.stress_loadout_enabled -ne 1 -or
     $telemetry.adaptive_dispatch_enabled -ne $expectedAdaptive -or
     $telemetry.detail_adapter_self_test -ne 1 -or
+    $telemetry.hotpath_asm_self_test -ne 1 -or
+    $telemetry.level_port_asm_differential -ne 3 -or
+    $telemetry.colour_distance_asm_differential -ne 3 -or
+    $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or
     $telemetry.stop_end_position -ne $EndPosition -or
@@ -442,7 +482,8 @@ if (($diagnosticFlags -band 0x1000) -ne 0) {
         $displayFrames -ne $telemetry.wall_vblanks -or
         $vblankRecoveryLoops -ne $telemetry.missed_vblanks -or
         $audioFrames -gt $telemetry.wall_vblanks -or
-        ($audioFrameLoss * 100) -gt $displayFrames
+        ($audioFrameLoss * 100.0) -gt
+            ($displayFrames * $MaxAudioFrameLossPercent)
     ) {
         throw (
             "VBlank recovery lost timing parity: " +

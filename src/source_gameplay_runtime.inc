@@ -999,11 +999,14 @@ source_autotest_route_combat_assist(void)
 }
 #endif
 
-#if TYRIAN_GBA_STRESS_LOADOUT
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
-#else
-static void
-#endif
+/*
+ * Keep the large orchestration shell in ROM.  The packed collision kernel it
+ * invokes remains ARM/IWRAM, while this 4 KiB callback/data-routing function
+ * previously displaced the shared user/IRQ stack until an ASTEROID 1 event
+ * peak overwrote the return path.  Code placement must not trade correctness
+ * for a small call-site gain.
+ */
+static __attribute__((noinline, noclone)) void
 source_process_player_collisions(bool collide_player)
 {
 #if !(TYRIAN_GBA_STRESS_LOADOUT && \

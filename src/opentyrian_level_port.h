@@ -592,6 +592,26 @@ ARM_CODE void ot_level_port_begin_player_shot_collision_phase(
 void ot_level_port_end_player_shot_collision_phase(
     OtLevelPortState *state
 );
+/*
+ * Strict source-parity axis test used by the ARM collision kernels.  It is
+ * public only so the GBA differential harness can exercise every int16_t
+ * input; gameplay callers should normally use the packed collision API.
+ */
+#if TYRIAN_GBA_HOTPATH_ASM
+#if TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+IWRAM_CODE ARM_CODE bool ot_player_shot_axis_overlaps_unsigned_asm(
+    int16_t delta,
+    uint16_t radius
+);
+#define ot_player_shot_axis_overlaps \
+    ot_player_shot_axis_overlaps_unsigned_asm
+#else
+IWRAM_CODE ARM_CODE bool ot_player_shot_axis_overlaps(
+    int16_t delta,
+    uint16_t radius
+);
+#endif
+#endif
 IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot(
     OtLevelPortState *state,
     int16_t shot_x,
@@ -614,6 +634,47 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_sized(
     uint8_t radius_h,
     OtShotCollisionResult *result
 );
+#if TYRIAN_GBA_HOTPATH_ASM
+IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_packed_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
+IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_instrumented_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
+IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_generic_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
+#if \
+    TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
+    TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
+    TYRIAN_GBA_COLLISION_LAZY_RESULT && \
+    !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+#define ot_level_port_collide_player_shot_packed \
+    ot_level_port_collide_player_shot_packed_instrumented_asm
+#else
+#define ot_level_port_collide_player_shot_packed \
+    ot_level_port_collide_player_shot_packed_asm
+#endif
+#else
+#define ot_level_port_collide_player_shot_packed \
+    ot_level_port_collide_player_shot_packed_generic_asm
+#endif
+#else
 IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_packed(
     OtLevelPortState *state,
     int16_t shot_x,
@@ -621,11 +682,22 @@ IWRAM_CODE ARM_CODE void ot_level_port_collide_player_shot_packed(
     OtShotCollisionResult *result,
     uint32_t damage_and_radii
 );
+#endif
 IWRAM_CODE ARM_CODE bool ot_level_port_player_shot_overlaps(
     OtLevelPortState *state,
     int16_t shot_x,
     int16_t shot_y
 );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+uint32_t ot_level_port_hotpath_asm_differential_test(
+    OtLevelPortState *state
+);
+IWRAM_CODE ARM_CODE bool
+ot_player_shot_axis_overlaps_c_reference(
+    int16_t delta,
+    uint16_t radius
+);
+#endif
 void ot_level_port_collide_player(
     OtLevelPortState *state,
     bool player_vulnerable,

@@ -88,7 +88,7 @@ $frontendTransitionStackRemainingLimit = 1504
 # once.  Keep its measured heap contract separate as well; the independent
 # 8 KiB remaining-space floor below is still mandatory.
 $frontendTransitionEwramHeapHighWaterLimit = 7KB
-$configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}"
+$configSuffix = "detail_${DetailLevel}_speed_${GameSpeed}_detailasm1"
 $releaseName = "tyrian_gba_level1_pc_flow_mode4_romfs_v40_$configSuffix"
 $testName = "tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$configSuffix"
 $deathTestName = "tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$configSuffix"

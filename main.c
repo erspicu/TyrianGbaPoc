@@ -1957,6 +1957,9 @@ static u16 source_detail_effect_bg_palette[256]
     EWRAM_BSS __attribute__((aligned(4)));
 static u16 source_detail_effect_obj_palette[256]
     EWRAM_BSS __attribute__((aligned(4)));
+/* ARM palette builder: filtered source index -> final GBA 15-bit colour. */
+static u16 source_detail_effect_colour_lut[256]
+    EWRAM_BSS __attribute__((aligned(4)));
 static u16 source_detail_obj_palette_base[256]
     EWRAM_BSS __attribute__((aligned(4)));
 /*
@@ -2030,7 +2033,7 @@ static u8 source_detail_wave_table_pending;
 /* Transparent hardware BG3: source starfield and in-level text/warnings. */
 static u8 gameplay_overlay_tiles[
     GAMEPLAY_OVERLAY_TILE_BYTES
-] EWRAM_BSS;
+] EWRAM_BSS __attribute__((aligned(4)));
 static u16 gameplay_overlay_map[
     GAMEPLAY_OVERLAY_MAP_ENTRIES
 ] EWRAM_BSS;

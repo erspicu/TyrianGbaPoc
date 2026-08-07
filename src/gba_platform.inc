@@ -158,24 +158,52 @@ static u16 source_detail_spotlight_window_value(
     return (u16)((left << 8) | right);
 }
 
+static __attribute__((noinline, noclone)) void
+source_detail_spotlight_prepare_table_c_reference(
+    u16 *destination,
+    s16 center_x,
+    s16 apex_y
+)
+{
+    u16 line;
+
+    for (line = 0; line < SCREEN_HEIGHT; line++) {
+        destination[line] = source_detail_spotlight_window_value(
+            line,
+            center_x,
+            apex_y
+        );
+    }
+    destination[SCREEN_HEIGHT] = 0;
+}
+
+extern IWRAM_CODE ARM_CODE void
+source_detail_spotlight_prepare_table_asm(
+    u16 *destination,
+    s16 center_x,
+    s16 apex_y
+);
+
 static void source_detail_spotlight_prepare(
     s16 center_x,
     s16 apex_y
 )
 {
     u8 table_index = (u8)(source_detail_spotlight_table_active ^ 1u);
-    u16 line;
 
-    for (line = 0; line < SCREEN_HEIGHT; line++) {
-        source_detail_spotlight_table[table_index][line] =
-            source_detail_spotlight_window_value(
-                line,
-                center_x,
-                apex_y
-            );
-    }
-    /* Consumed by the HBlank following the final visible line. */
-    source_detail_spotlight_table[table_index][SCREEN_HEIGHT] = 0;
+#if TYRIAN_GBA_DETAIL_EFFECT_ASM
+    source_detail_spotlight_prepare_table_asm(
+        source_detail_spotlight_table[table_index],
+        center_x,
+        apex_y
+    );
+#else
+    source_detail_spotlight_prepare_table_c_reference(
+        source_detail_spotlight_table[table_index],
+        center_x,
+        apex_y
+    );
+#endif
     source_detail_spotlight_table_pending = table_index;
 }
 
@@ -187,11 +215,11 @@ enum {
 };
 
 static u16 source_detail_palette_colour(
-    const OtDataView *palette,
+    const u8 *palette,
     u8 index
 )
 {
-    const u8 *rgb = palette->data + (u32)index * 3u;
+    const u8 *rgb = palette + (u32)index * 3u;
 
     return (u16)(
         (rgb[0] >> 1) |
@@ -200,6 +228,27 @@ static u16 source_detail_palette_colour(
     );
 }
 
+static ARM_CODE __attribute__((noinline, noclone)) u32
+source_detail_palette_distance_c_reference(
+    u16 colour,
+    const u8 *rgb
+)
+{
+    s16 red = (s16)(colour & 31u) - (s16)(rgb[0] >> 1);
+    s16 green =
+        (s16)((colour >> 5) & 31u) - (s16)(rgb[1] >> 1);
+    s16 blue =
+        (s16)((colour >> 10) & 31u) - (s16)(rgb[2] >> 1);
+
+    return
+        (u32)(red * red) +
+        (u32)(green * green) +
+        (u32)(blue * blue);
+}
+
+#if TYRIAN_GBA_HOTPATH_ASM
+extern u32 source_detail_palette_distance(u16 colour, const u8 *rgb);
+#else
 static u32 source_detail_palette_distance(u16 colour, const u8 *rgb)
 {
     s16 red = (s16)(colour & 31u) - (s16)(rgb[0] >> 1);
@@ -213,6 +262,7 @@ static u32 source_detail_palette_distance(u16 colour, const u8 *rgb)
         (u32)(green * green) +
         (u32)(blue * blue);
 }
+#endif
 
 static u8 source_detail_nearest_source_index(
     u16 colour,
@@ -327,6 +377,121 @@ static u8 source_detail_filtered_source_index(
     return (u8)((hue << 4) | (u8)value);
 }
 
+static __attribute__((noinline, noclone)) void
+source_detail_build_effect_palette_c_reference(
+    const u8 *palette,
+    const u8 *bg_source_index,
+    const u8 *obj_source_index,
+    const u16 *obj_palette_base,
+    u16 *effect_bg_palette,
+    u16 *effect_obj_palette,
+    u8 effect_kind,
+    u8 effect_hue,
+    s8 brightness,
+    u8 filter_objects
+)
+{
+    u16 index;
+
+    for (index = 0; index < 256u; index++) {
+        u8 bg_source = source_detail_filtered_source_index(
+            bg_source_index[index],
+            effect_kind,
+            effect_hue,
+            brightness
+        );
+
+        effect_bg_palette[index] =
+            source_detail_palette_colour(palette, bg_source);
+        if (
+            filter_objects &&
+            source_detail_world_obj_palette_entry(index)
+        ) {
+            u8 obj_source = source_detail_filtered_source_index(
+                obj_source_index[index],
+                effect_kind,
+                effect_hue,
+                brightness
+            );
+
+            effect_obj_palette[index] =
+                source_detail_palette_colour(palette, obj_source);
+        } else {
+            effect_obj_palette[index] = obj_palette_base[index];
+        }
+    }
+}
+
+extern ARM_CODE void source_detail_build_colour_lut_asm(
+    u16 *destination,
+    const u8 *source_rgb,
+    u32 effect_kind,
+    u32 hue_brightness
+);
+extern ARM_CODE void source_detail_apply_colour_lut_asm(
+    u16 *destination,
+    const u8 *source_indices,
+    const u16 *colour_lut,
+    u32 count
+);
+
+static __attribute__((noinline, noclone)) void
+source_detail_build_effect_palette_asm(
+    const u8 *palette,
+    const u8 *bg_source_index,
+    const u8 *obj_source_index,
+    const u16 *obj_palette_base,
+    u16 *effect_bg_palette,
+    u16 *effect_obj_palette,
+    u8 effect_kind,
+    u8 effect_hue,
+    s8 brightness,
+    u8 filter_objects
+)
+{
+    u32 hue_brightness =
+        ((u32)(effect_hue & 0x0fu) << 8) |
+        (u8)brightness;
+
+    source_detail_build_colour_lut_asm(
+        source_detail_effect_colour_lut,
+        palette,
+        effect_kind,
+        hue_brightness
+    );
+    source_detail_apply_colour_lut_asm(
+        effect_bg_palette,
+        bg_source_index,
+        source_detail_effect_colour_lut,
+        256u
+    );
+    if (filter_objects) {
+        source_detail_apply_colour_lut_asm(
+            effect_obj_palette,
+            obj_source_index,
+            source_detail_effect_colour_lut,
+            256u
+        );
+        /* PC leaves UI/reserved OBJ palette banks 9..12 and 14 untouched. */
+        memcpy(
+            effect_obj_palette + 9u * 16u,
+            obj_palette_base + 9u * 16u,
+            4u * 16u * sizeof(u16)
+        );
+        memcpy(
+            effect_obj_palette + 14u * 16u,
+            obj_palette_base + 14u * 16u,
+            16u * sizeof(u16)
+        );
+    } else {
+        memcpy(
+            effect_obj_palette,
+            obj_palette_base,
+            256u * sizeof(u16)
+        );
+    }
+}
+
 static u8 source_detail_build_effect_palette(
     u8 effect_kind,
     u8 effect_hue,
@@ -335,7 +500,6 @@ static u8 source_detail_build_effect_palette(
 )
 {
     OtDataView palette;
-    u16 index;
 
     if (
         !source_detail_palette_indices_valid ||
@@ -343,34 +507,22 @@ static u8 source_detail_build_effect_palette(
     ) {
         return 0;
     }
-    for (index = 0; index < 256u; index++) {
-        u8 bg_source = source_detail_filtered_source_index(
-            source_detail_bg_source_index[index],
-            effect_kind,
-            effect_hue,
-            brightness
-        );
-
-        source_detail_effect_bg_palette[index] =
-            source_detail_palette_colour(&palette, bg_source);
-        if (
-            filter_objects &&
-            source_detail_world_obj_palette_entry(index)
-        ) {
-            u8 obj_source = source_detail_filtered_source_index(
-                source_detail_obj_source_index[index],
-                effect_kind,
-                effect_hue,
-                brightness
-            );
-
-            source_detail_effect_obj_palette[index] =
-                source_detail_palette_colour(&palette, obj_source);
-        } else {
-            source_detail_effect_obj_palette[index] =
-                source_detail_obj_palette_base[index];
-        }
-    }
+#if TYRIAN_GBA_DETAIL_EFFECT_ASM
+    source_detail_build_effect_palette_asm(
+#else
+    source_detail_build_effect_palette_c_reference(
+#endif
+        palette.data,
+        source_detail_bg_source_index,
+        source_detail_obj_source_index,
+        source_detail_obj_palette_base,
+        source_detail_effect_bg_palette,
+        source_detail_effect_obj_palette,
+        effect_kind,
+        effect_hue,
+        brightness,
+        filter_objects
+    );
     telemetry_detail_palette_rebuilds++;
     return 1;
 }
@@ -513,31 +665,31 @@ static u8 source_detail_wave_hardware_active(void)
     return 1;
 }
 
-static void source_detail_wave_prepare(u8 water)
+static __attribute__((noinline, noclone)) void
+source_detail_wave_prepare_table_c_reference(
+    u16 *destination,
+    const s8 *profile,
+    u32 strength_q8,
+    u32 bg0_hofs_vofs,
+    u32 bg1_hofs_vofs
+)
 {
-    u8 table_index = (u8)(source_detail_wave_table_active ^ 1u);
-    u8 profile_index = water != 0;
-    u16 bg0_hofs = source_background_hofs(0);
-    u16 bg1_hofs = source_background_hofs(1);
-    u16 bg0_vofs = source_background_vofs(0);
-    u16 bg1_vofs = source_background_vofs(1);
+    u16 bg0_hofs = (u16)bg0_hofs_vofs;
+    u16 bg1_hofs = (u16)bg1_hofs_vofs;
+    u16 bg0_vofs = (u16)(bg0_hofs_vofs >> 16);
+    u16 bg1_vofs = (u16)(bg1_hofs_vofs >> 16);
     u16 line;
 
     for (line = 0; line <= SCREEN_HEIGHT; line++) {
-        s8 profile_wave =
-            source_detail_wave_profile[profile_index][line];
+        s8 profile_wave = profile[line];
         s8 wave;
 
-        if (
-            source_detail_wave_strength_q8 ==
-            SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8
-        ) {
+        if (strength_q8 == SOURCE_DETAIL_WAVE_STRENGTH_FULL_Q8) {
             wave = profile_wave;
-        } else if (source_detail_wave_strength_q8 == 0) {
+        } else if (strength_q8 == 0) {
             wave = 0;
         } else {
-            s32 scaled =
-                (s32)profile_wave * source_detail_wave_strength_q8;
+            s32 scaled = (s32)profile_wave * strength_q8;
 
             if (scaled >= 0) {
                 wave = (s8)((scaled + 128) >> 8);
@@ -546,13 +698,43 @@ static void source_detail_wave_prepare(u8 water)
             }
         }
 
-        source_detail_wave_table[table_index][line][0] =
-            (u16)(bg0_hofs + wave);
-        source_detail_wave_table[table_index][line][1] = bg0_vofs;
-        source_detail_wave_table[table_index][line][2] =
-            (u16)(bg1_hofs + wave);
-        source_detail_wave_table[table_index][line][3] = bg1_vofs;
+        destination[line * 4u + 0u] = (u16)(bg0_hofs + wave);
+        destination[line * 4u + 1u] = bg0_vofs;
+        destination[line * 4u + 2u] = (u16)(bg1_hofs + wave);
+        destination[line * 4u + 3u] = bg1_vofs;
     }
+}
+
+extern IWRAM_CODE ARM_CODE void source_detail_wave_prepare_table_asm(
+    u16 *destination,
+    const s8 *profile,
+    u32 strength_q8,
+    u32 bg0_hofs_vofs,
+    u32 bg1_hofs_vofs
+);
+
+static void source_detail_wave_prepare(u8 water)
+{
+    u8 table_index = (u8)(source_detail_wave_table_active ^ 1u);
+    u8 profile_index = water != 0;
+    u16 bg0_hofs = source_background_hofs(0);
+    u16 bg1_hofs = source_background_hofs(1);
+    u16 bg0_vofs = source_background_vofs(0);
+    u16 bg1_vofs = source_background_vofs(1);
+    u32 bg0_hofs_vofs = bg0_hofs | ((u32)bg0_vofs << 16);
+    u32 bg1_hofs_vofs = bg1_hofs | ((u32)bg1_vofs << 16);
+
+#if TYRIAN_GBA_DETAIL_EFFECT_ASM
+    source_detail_wave_prepare_table_asm(
+#else
+    source_detail_wave_prepare_table_c_reference(
+#endif
+        &source_detail_wave_table[table_index][0][0],
+        source_detail_wave_profile[profile_index],
+        source_detail_wave_strength_q8,
+        bg0_hofs_vofs,
+        bg1_hofs_vofs
+    );
     source_detail_wave_table_pending = table_index;
 }
 #endif

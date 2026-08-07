@@ -1,4 +1,719 @@
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+extern u32 gameplay_overlay_colour_distance_asm(u16 left, u16 right);
+extern u32 source_detail_palette_distance_asm(
+    u16 colour,
+    const u8 *rgb
+);
+extern IWRAM_CODE ARM_CODE bool ot_player_shot_axis_overlaps_asm(
+    int16_t delta,
+    uint16_t radius
+);
+extern IWRAM_CODE ARM_CODE bool
+ot_player_shot_axis_overlaps_unsigned_asm(
+    int16_t delta,
+    uint16_t radius
+);
+#if TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+#define AUTOTEST_AXIS_OVERLAPS_ASM \
+    ot_player_shot_axis_overlaps_unsigned_asm
+#else
+#define AUTOTEST_AXIS_OVERLAPS_ASM ot_player_shot_axis_overlaps_asm
+#endif
+
+static u32 autotest_colour_distance_differential_result EWRAM_BSS;
+static u32 autotest_level_port_hotpath_differential_result EWRAM_BSS;
+static u32 autotest_overlay_distance_c_cycles EWRAM_BSS;
+static u32 autotest_overlay_distance_asm_cycles EWRAM_BSS;
+static u32 autotest_palette_distance_c_cycles EWRAM_BSS;
+static u32 autotest_palette_distance_asm_cycles EWRAM_BSS;
+static u32 autotest_axis_overlap_c_cycles EWRAM_BSS;
+static u32 autotest_axis_overlap_asm_cycles EWRAM_BSS;
+static u32 autotest_hotpath_benchmark_sink EWRAM_BSS;
+static u32 autotest_detail_effect_differential_result EWRAM_BSS;
+static u32 autotest_detail_palette_c_cycles EWRAM_BSS;
+static u32 autotest_detail_palette_asm_cycles EWRAM_BSS;
+static u32 autotest_detail_spotlight_c_cycles EWRAM_BSS;
+static u32 autotest_detail_spotlight_asm_cycles EWRAM_BSS;
+static u32 autotest_detail_wave_c_cycles EWRAM_BSS;
+static u32 autotest_detail_wave_asm_cycles EWRAM_BSS;
+static u32 autotest_detail_effect_benchmark_sink EWRAM_BSS;
+
+static u32 autotest_mt_rand_reference(OtLevelPortState *state)
+{
+    OtMt19937 *rng = &state->rng;
+    u32 combined =
+        (rng->values[rng->p0] & 0x80000000u) |
+        (rng->values[rng->p1] & 0x7fffffffu);
+    u32 odd_mask = 0u - (rng->values[rng->p1] & 1u);
+    u32 value = rng->values[rng->pm] ^ (combined >> 1) ^
+        (odd_mask & 0x9908b0dfu);
+
+    rng->values[rng->p0] = value;
+    rng->p0 = rng->p1;
+    rng->p1++;
+    rng->pm++;
+    if (rng->pm == OT_MT_STATE_COUNT) rng->pm = 0;
+    if (rng->p1 == OT_MT_STATE_COUNT) rng->p1 = 0;
+
+    value ^= value >> 11;
+    value ^= (value << 7) & 0x9d2c5680u;
+    value ^= (value << 15) & 0xefc60000u;
+    value ^= value >> 18;
+    state->rng_call_count++;
+    return value;
+}
+
+static u32 autotest_sprite2_pack_reference(
+    const u8 *raw,
+    u8 filter,
+    const u8 *palette_map
+)
+{
+    u32 packed = 0;
+    u8 lane;
+
+    for (lane = 0; lane < 4; lane++) {
+        u8 pixel = raw[lane];
+
+        if (pixel != 0) {
+            if (filter != 0) {
+                pixel = (u8)(filter | (pixel & 0x0fu));
+            }
+            pixel = palette_map[pixel];
+        }
+        packed |= (u32)pixel << (lane * 8u);
+    }
+    return packed;
+}
+
+static u8 autotest_hotpath_asm_self_test(void)
+{
+    u8 *scale_source = (u8 *)(void *)&frontend_gameplay_arena;
+    u8 *scale_expected = (u8 *)(void *)frontend_sprite2_decode_scratch;
+    u8 raw[4];
+    u8 rgb[3];
+    u32 colour_index;
+    u16 channel;
+    u16 left_component;
+    u16 right_component;
+    u16 rgb_component;
+    u16 index;
+    u16 filter;
+
+    /* Exact in-place 320-byte row -> 240-byte row comparison. */
+    for (index = 0; index < OT_PIC_DECODED_WIDTH; index++) {
+        scale_source[index] = (u8)(index * 73u + (index >> 2) + 19u);
+    }
+    for (index = 0; index < SCREEN_WIDTH / 12u; index++) {
+        const u32 *source = (const u32 *)(const void *)(
+            scale_source + (u32)index * 16u
+        );
+        u32 *destination = (u32 *)(void *)(
+            scale_expected + (u32)index * 12u
+        );
+        u32 source0 = source[0];
+        u32 source1 = source[1];
+        u32 source2 = source[2];
+        u32 source3 = source[3];
+
+        destination[0] =
+            (source0 & 0x00ffffffu) |
+            ((source1 & 0x000000ffu) << 24);
+        destination[1] =
+            ((source1 >> 8) & 0x0000ffffu) |
+            ((source2 & 0x0000ffffu) << 16);
+        destination[2] =
+            ((source2 >> 16) & 0x000000ffu) |
+            ((source3 & 0x00ffffffu) << 8);
+    }
+    frontend_scale_swar_row_asm(
+        (u32 *)(void *)scale_source,
+        (const u32 *)(const void *)scale_source,
+        SCREEN_WIDTH / 12u
+    );
+    if (memcmp(scale_source, scale_expected, SCREEN_WIDTH) != 0) return 0;
+
+    /*
+     * Exercise every source byte and filter byte against a deliberately
+     * non-monotonic map.  Back up and restore the live level palette map.
+     */
+    memcpy(scale_expected, source_enemy_palette_map, OT_PALETTE_COLOUR_COUNT);
+    for (index = 0; index < OT_PALETTE_COLOUR_COUNT; index++) {
+        source_enemy_palette_map[index] = (u8)(index * 73u + 19u);
+    }
+    for (filter = 0; filter < 256u; filter++) {
+        for (index = 0; index < 256u; index++) {
+            raw[0] = (u8)index;
+            raw[1] = (u8)(index ^ 0x55u);
+            raw[2] = (u8)(index + 0x71u);
+            raw[3] = (u8)(255u - index);
+            if (
+                source_sprite2_l2_pack_raw_word_asm(
+                    raw,
+                    (u8)filter,
+                    source_enemy_palette_map
+                ) !=
+                autotest_sprite2_pack_reference(
+                    raw,
+                    (u8)filter,
+                    source_enemy_palette_map
+                )
+            ) {
+                memcpy(
+                    source_enemy_palette_map,
+                    scale_expected,
+                    OT_PALETTE_COLOUR_COUNT
+                );
+                return 0;
+            }
+        }
+    }
+    memcpy(
+        source_enemy_palette_map,
+        scale_expected,
+        OT_PALETTE_COLOUR_COUNT
+    );
+
+    autotest_colour_distance_differential_result = 0;
+    /*
+     * Exhaust every 5-bit pair independently in R/G/B, then sweep every
+     * 15-bit colour with a full-colour permutation to validate accumulation.
+     * The distance is a separable sum, so this covers the complete component
+     * input domain without attempting an impractical 2^30 pair loop on GBA.
+     */
+    for (channel = 0; channel < 3u; channel++) {
+        u16 shift = (u16)(channel * 5u);
+
+        for (left_component = 0; left_component < 32u; left_component++) {
+            for (right_component = 0;
+                 right_component < 32u;
+                 right_component++) {
+                u16 left = (u16)(left_component << shift);
+                u16 right = (u16)(right_component << shift);
+
+                if (
+                    gameplay_overlay_colour_distance_asm(left, right) !=
+                    gameplay_overlay_colour_distance_c_reference(left, right)
+                ) {
+                    return 0;
+                }
+            }
+        }
+    }
+    for (colour_index = 0; colour_index < 32768u; colour_index++) {
+        u16 left = (u16)colour_index;
+        u16 right = (u16)(
+            (colour_index * 24593u + 0x5a5au) & 0x7fffu
+        );
+
+        if (
+            gameplay_overlay_colour_distance_asm(left, right) !=
+            gameplay_overlay_colour_distance_c_reference(left, right)
+        ) {
+            return 0;
+        }
+    }
+    autotest_colour_distance_differential_result |= 1u;
+    /* Complete 5-bit colour-channel x 8-bit source-channel domain. */
+    for (channel = 0; channel < 3u; channel++) {
+        u16 shift = (u16)(channel * 5u);
+
+        for (left_component = 0; left_component < 32u; left_component++) {
+            for (rgb_component = 0; rgb_component < 256u; rgb_component++) {
+                u16 colour = (u16)(left_component << shift);
+
+                rgb[0] = 0;
+                rgb[1] = 0;
+                rgb[2] = 0;
+                rgb[channel] = (u8)rgb_component;
+                if (
+                    source_detail_palette_distance_asm(colour, rgb) !=
+                    source_detail_palette_distance_c_reference(colour, rgb)
+                ) {
+                    return 0;
+                }
+            }
+        }
+    }
+    for (colour_index = 0; colour_index < 32768u; colour_index++) {
+        u16 colour = (u16)colour_index;
+
+        rgb[0] = (u8)(colour_index * 73u + 19u);
+        rgb[1] = (u8)(colour_index * 151u + 0xa5u);
+        rgb[2] = (u8)(colour_index * 199u + 0x31u);
+        if (
+            source_detail_palette_distance_asm(colour, rgb) !=
+            source_detail_palette_distance_c_reference(colour, rgb)
+        ) {
+            return 0;
+        }
+    }
+    autotest_colour_distance_differential_result |= 2u;
+
+    /*
+     * Advance one shared MT state through both implementations.  Restoring
+     * the single word and cursors touched by the ARM call lets the C oracle
+     * replay exactly the same step without allocating a second 2.5 KiB MT.
+     */
+    for (index = 0; index < 4096u; index++) {
+        OtMt19937 *rng = &source_parity_level.rng;
+        u16 old_p0 = rng->p0;
+        u16 old_p1 = rng->p1;
+        u16 old_pm = rng->pm;
+        u32 old_word = rng->values[old_p0];
+        u32 old_calls = source_parity_level.rng_call_count;
+        u32 asm_value = ot_level_port_random(&source_parity_level);
+        u16 asm_p0 = rng->p0;
+        u16 asm_p1 = rng->p1;
+        u16 asm_pm = rng->pm;
+        u32 asm_word = rng->values[old_p0];
+        u32 asm_calls = source_parity_level.rng_call_count;
+        u32 reference_value;
+
+        rng->p0 = old_p0;
+        rng->p1 = old_p1;
+        rng->pm = old_pm;
+        rng->values[old_p0] = old_word;
+        source_parity_level.rng_call_count = old_calls;
+        reference_value = autotest_mt_rand_reference(&source_parity_level);
+        if (
+            asm_value != reference_value ||
+            asm_p0 != rng->p0 ||
+            asm_p1 != rng->p1 ||
+            asm_pm != rng->pm ||
+            asm_word != rng->values[old_p0] ||
+            asm_calls != source_parity_level.rng_call_count
+        ) {
+            return 0;
+        }
+    }
+    autotest_level_port_hotpath_differential_result =
+        ot_level_port_hotpath_asm_differential_test(
+            &source_parity_level
+        );
+    if (autotest_level_port_hotpath_differential_result != 3u) {
+        return 0;
+    }
+    return 1;
+}
+
+static void autotest_hotpath_asm_benchmark(void)
+{
+    enum { AUTOTEST_HOTPATH_BENCHMARK_CALLS = 16384 };
+    u8 rgb[3] = { 0, 0, 0 };
+    u16 old_ime = REG_IME;
+    u32 start;
+    u32 index;
+    u32 sink = 0;
+
+    REG_IME = 0;
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= gameplay_overlay_colour_distance_c_reference(
+            (u16)index,
+            (u16)((index * 24593u + 0x5a5au) & 0x7fffu)
+        );
+    }
+    autotest_overlay_distance_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= gameplay_overlay_colour_distance_asm(
+            (u16)index,
+            (u16)((index * 24593u + 0x5a5au) & 0x7fffu)
+        );
+    }
+    autotest_overlay_distance_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        rgb[0] = (u8)(index * 73u + 19u);
+        rgb[1] = (u8)(index * 151u + 0xa5u);
+        rgb[2] = (u8)(index * 199u + 0x31u);
+        sink ^= source_detail_palette_distance_c_reference(
+            (u16)index,
+            rgb
+        );
+    }
+    autotest_palette_distance_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        rgb[0] = (u8)(index * 73u + 19u);
+        rgb[1] = (u8)(index * 151u + 0xa5u);
+        rgb[2] = (u8)(index * 199u + 0x31u);
+        sink ^= source_detail_palette_distance_asm((u16)index, rgb);
+    }
+    autotest_palette_distance_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= ot_player_shot_axis_overlaps_c_reference(
+            (int16_t)(index * 4051u),
+            (uint16_t)((index & 255u) + 1u)
+        );
+    }
+    autotest_axis_overlap_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= AUTOTEST_AXIS_OVERLAPS_ASM(
+            (int16_t)(index * 4051u),
+            (uint16_t)((index & 255u) + 1u)
+        );
+    }
+    autotest_axis_overlap_asm_cycles =
+        stress_cycle_counter_read() - start;
+    REG_IME = old_ime;
+    autotest_hotpath_benchmark_sink = sink;
+}
+
+static void autotest_detail_palette_prepare_inputs(
+    u8 *palette,
+    u8 *bg_source,
+    u8 *obj_source,
+    u16 *obj_base
+)
+{
+    u16 index;
+
+    for (index = 0; index < 768u; index++) {
+        palette[index] = (u8)(index * 73u + (index >> 2) + 19u);
+    }
+    for (index = 0; index < 256u; index++) {
+        bg_source[index] = (u8)(index * 151u + 0xa5u);
+        obj_source[index] = (u8)(index * 199u + 0x31u);
+        obj_base[index] = (u16)(
+            (index * 24593u + 0x5a5au) & 0x7fffu
+        );
+    }
+}
+
+static u32 autotest_detail_effect_asm_differential_test(void)
+{
+    u8 *scratch = gameplay_overlay_tiles;
+    u8 *palette = scratch;
+    u8 *bg_source = scratch + 768u;
+    u8 *obj_source = scratch + 1024u;
+    u16 *obj_base = (u16 *)(void *)(scratch + 1280u);
+    u16 *expected_bg = (u16 *)(void *)(scratch + 1792u);
+    u16 *expected_obj = (u16 *)(void *)(scratch + 2304u);
+    static const s16 spotlight_centres[] = {
+        -64, -1, 0, 1, 119, 120, 239, 240, 304,
+    };
+    static const s16 spotlight_apices[] = {
+        -32, 0, 1, 80, 159, 160, 240,
+    };
+    u32 result = 0;
+    s16 brightness;
+    u16 index;
+    u8 effect_kind;
+    u8 filter_objects;
+    u8 hue;
+
+    autotest_detail_palette_prepare_inputs(
+        palette,
+        bg_source,
+        obj_source,
+        obj_base
+    );
+    /* Every brightness value, effect kind and OBJ policy; hue is permuted. */
+    for (effect_kind = SOURCE_DETAIL_EFFECT_NONE;
+         effect_kind <= SOURCE_DETAIL_EFFECT_WATER_HUE;
+         effect_kind++) {
+        for (brightness = -15; brightness <= 15; brightness++) {
+            hue = (u8)(brightness * 11 + effect_kind * 5) & 0x0fu;
+            for (filter_objects = 0; filter_objects <= 1; filter_objects++) {
+                source_detail_build_effect_palette_c_reference(
+                    palette,
+                    bg_source,
+                    obj_source,
+                    obj_base,
+                    expected_bg,
+                    expected_obj,
+                    effect_kind,
+                    hue,
+                    (s8)brightness,
+                    filter_objects
+                );
+                source_detail_build_effect_palette_asm(
+                    palette,
+                    bg_source,
+                    obj_source,
+                    obj_base,
+                    source_detail_effect_bg_palette,
+                    source_detail_effect_obj_palette,
+                    effect_kind,
+                    hue,
+                    (s8)brightness,
+                    filter_objects
+                );
+                if (
+                    memcmp(
+                        expected_bg,
+                        source_detail_effect_bg_palette,
+                        256u * sizeof(u16)
+                    ) != 0 ||
+                    memcmp(
+                        expected_obj,
+                        source_detail_effect_obj_palette,
+                        256u * sizeof(u16)
+                    ) != 0
+                ) {
+                    return result;
+                }
+            }
+        }
+    }
+    /* Sweep all replacement hues independently for both hue-changing modes. */
+    for (effect_kind = SOURCE_DETAIL_EFFECT_GLOBAL_HUE;
+         effect_kind <= SOURCE_DETAIL_EFFECT_WATER_HUE;
+         effect_kind++) {
+        for (hue = 0; hue < 16u; hue++) {
+            source_detail_build_effect_palette_c_reference(
+                palette, bg_source, obj_source, obj_base,
+                expected_bg, expected_obj,
+                effect_kind, hue, -7, 1
+            );
+            source_detail_build_effect_palette_asm(
+                palette, bg_source, obj_source, obj_base,
+                source_detail_effect_bg_palette,
+                source_detail_effect_obj_palette,
+                effect_kind, hue, -7, 1
+            );
+            if (
+                memcmp(
+                    expected_bg,
+                    source_detail_effect_bg_palette,
+                    256u * sizeof(u16)
+                ) != 0 ||
+                memcmp(
+                    expected_obj,
+                    source_detail_effect_obj_palette,
+                    256u * sizeof(u16)
+                ) != 0
+            ) {
+                return result;
+            }
+        }
+    }
+    result |= 1u;
+
+    for (index = 0;
+         index < sizeof(spotlight_centres) / sizeof(spotlight_centres[0]);
+         index++) {
+        u16 apex_index;
+        u16 *expected = (u16 *)(void *)scratch;
+        u16 *actual = (u16 *)(void *)(scratch + 512u);
+
+        for (apex_index = 0;
+             apex_index <
+                sizeof(spotlight_apices) / sizeof(spotlight_apices[0]);
+             apex_index++) {
+            source_detail_spotlight_prepare_table_c_reference(
+                expected,
+                spotlight_centres[index],
+                spotlight_apices[apex_index]
+            );
+            source_detail_spotlight_prepare_table_asm(
+                actual,
+                spotlight_centres[index],
+                spotlight_apices[apex_index]
+            );
+            if (
+                memcmp(
+                    expected,
+                    actual,
+                    SOURCE_DETAIL_SPOTLIGHT_SCANLINES * sizeof(u16)
+                ) != 0
+            ) {
+                return result;
+            }
+        }
+    }
+    result |= 2u;
+
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
+    {
+        static const u16 strengths[] = { 0, 1, 8, 159, 160, 255, 256 };
+        static const u32 bg0_pairs[] = {
+            0x00000000u, 0x01ff0001u, 0xffff01ffu,
+        };
+        static const u32 bg1_pairs[] = {
+            0x00000000u, 0x00a500ffu, 0xffff0000u,
+        };
+        s8 *profile = (s8 *)(void *)scratch;
+        u16 *expected = (u16 *)(void *)(scratch + 256u);
+        u16 *actual = (u16 *)(void *)(scratch + 1600u);
+        u16 strength_index;
+        u16 pair_index;
+
+        for (index = 0; index < SOURCE_DETAIL_WAVE_SCANLINES; index++) {
+            profile[index] = (s8)((index % 7u) - 3);
+        }
+        for (strength_index = 0;
+             strength_index < sizeof(strengths) / sizeof(strengths[0]);
+             strength_index++) {
+            for (pair_index = 0;
+                 pair_index < sizeof(bg0_pairs) / sizeof(bg0_pairs[0]);
+                 pair_index++) {
+                source_detail_wave_prepare_table_c_reference(
+                    expected,
+                    profile,
+                    strengths[strength_index],
+                    bg0_pairs[pair_index],
+                    bg1_pairs[pair_index]
+                );
+                source_detail_wave_prepare_table_asm(
+                    actual,
+                    profile,
+                    strengths[strength_index],
+                    bg0_pairs[pair_index],
+                    bg1_pairs[pair_index]
+                );
+                if (
+                    memcmp(
+                        expected,
+                        actual,
+                        SOURCE_DETAIL_WAVE_SCANLINES * 4u * sizeof(u16)
+                    ) != 0
+                ) {
+                    return result;
+                }
+            }
+        }
+        result |= 4u;
+    }
+#endif
+    return result;
+}
+
+static void autotest_detail_effect_asm_benchmark(void)
+{
+    enum {
+        AUTOTEST_DETAIL_PALETTE_CALLS = 64,
+        AUTOTEST_DETAIL_SCANLINE_CALLS = 512,
+    };
+    u8 *scratch = gameplay_overlay_tiles;
+    u8 *palette = scratch;
+    u8 *bg_source = scratch + 768u;
+    u8 *obj_source = scratch + 1024u;
+    u16 *obj_base = (u16 *)(void *)(scratch + 1280u);
+    u16 *palette_bg = (u16 *)(void *)(scratch + 1792u);
+    u16 *palette_obj = (u16 *)(void *)(scratch + 2304u);
+    u16 *scanline_output = (u16 *)(void *)(scratch + 2816u);
+    u16 old_ime = REG_IME;
+    u32 start;
+    u32 sink = 0;
+    u32 index;
+
+    autotest_detail_palette_prepare_inputs(
+        palette,
+        bg_source,
+        obj_source,
+        obj_base
+    );
+    REG_IME = 0;
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_PALETTE_CALLS; index++) {
+        source_detail_build_effect_palette_c_reference(
+            palette, bg_source, obj_source, obj_base,
+            palette_bg, palette_obj,
+            (u8)(index % 3u),
+            (u8)(index & 15u),
+            (s8)((s32)(index % 31u) - 15),
+            (u8)(index & 1u)
+        );
+        sink ^= palette_bg[index & 255u];
+        sink ^= palette_obj[(index * 13u) & 255u];
+    }
+    autotest_detail_palette_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_PALETTE_CALLS; index++) {
+        source_detail_build_effect_palette_asm(
+            palette, bg_source, obj_source, obj_base,
+            source_detail_effect_bg_palette,
+            source_detail_effect_obj_palette,
+            (u8)(index % 3u),
+            (u8)(index & 15u),
+            (s8)((s32)(index % 31u) - 15),
+            (u8)(index & 1u)
+        );
+        sink ^= source_detail_effect_bg_palette[index & 255u];
+        sink ^= source_detail_effect_obj_palette[(index * 13u) & 255u];
+    }
+    autotest_detail_palette_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_SCANLINE_CALLS; index++) {
+        source_detail_spotlight_prepare_table_c_reference(
+            scanline_output,
+            (s16)((index * 37u) % 369u - 64),
+            (s16)((index * 53u) % 273u - 32)
+        );
+        sink ^= scanline_output[index % SOURCE_DETAIL_SPOTLIGHT_SCANLINES];
+    }
+    autotest_detail_spotlight_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_SCANLINE_CALLS; index++) {
+        source_detail_spotlight_prepare_table_asm(
+            scanline_output,
+            (s16)((index * 37u) % 369u - 64),
+            (s16)((index * 53u) % 273u - 32)
+        );
+        sink ^= scanline_output[index % SOURCE_DETAIL_SPOTLIGHT_SCANLINES];
+    }
+    autotest_detail_spotlight_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+#if TYRIAN_GBA_DETAIL_HAS_LAVA_WATER
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_SCANLINE_CALLS; index++) {
+        source_detail_wave_prepare_table_c_reference(
+            scanline_output,
+            source_detail_wave_profile[index & 1u],
+            index % 257u,
+            0x01230045u,
+            0x02340067u
+        );
+        sink ^= scanline_output[
+            (index % SOURCE_DETAIL_WAVE_SCANLINES) * 4u
+        ];
+    }
+    autotest_detail_wave_c_cycles = stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_DETAIL_SCANLINE_CALLS; index++) {
+        source_detail_wave_prepare_table_asm(
+            scanline_output,
+            source_detail_wave_profile[index & 1u],
+            index % 257u,
+            0x01230045u,
+            0x02340067u
+        );
+        sink ^= scanline_output[
+            (index % SOURCE_DETAIL_WAVE_SCANLINES) * 4u
+        ];
+    }
+    autotest_detail_wave_asm_cycles = stress_cycle_counter_read() - start;
+#else
+    autotest_detail_wave_c_cycles = 0;
+    autotest_detail_wave_asm_cycles = 0;
+#endif
+    REG_IME = old_ime;
+    autotest_detail_effect_benchmark_sink = sink;
+}
+
 static u8 autotest_detail_adapter_self_test(void)
 {
     u8 pass = 1;
@@ -448,6 +1163,48 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(536, TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH);
     /* The self-test mutates smoothie state, so run it after the snapshot. */
     sram_write_u32(396, autotest_detail_adapter_self_test());
+    autotest_hotpath_asm_benchmark();
+    sram_write_u32(540, autotest_hotpath_asm_self_test());
+    autotest_detail_effect_differential_result =
+        autotest_detail_effect_asm_differential_test();
+    autotest_detail_effect_asm_benchmark();
+#ifdef AUTOTEST_STACK_CANARY
+    sram_write_u32(544, autotest_stack_canary_remaining());
+    sram_write_u32(548, autotest_stack_canary_filled_bytes);
+#else
+    sram_write_u32(544, UINT32_MAX);
+    sram_write_u32(548, 0);
+#endif
+    /* Additive v79 assembly differential and same-ROM microbench data. */
+    sram_write_u32(
+        552,
+        autotest_level_port_hotpath_differential_result
+    );
+    sram_write_u32(
+        556,
+        autotest_colour_distance_differential_result
+    );
+    sram_write_u32(560, autotest_overlay_distance_c_cycles);
+    sram_write_u32(564, autotest_overlay_distance_asm_cycles);
+    sram_write_u32(568, autotest_palette_distance_c_cycles);
+    sram_write_u32(572, autotest_palette_distance_asm_cycles);
+    sram_write_u32(576, autotest_axis_overlap_c_cycles);
+    sram_write_u32(580, autotest_axis_overlap_asm_cycles);
+    sram_write_u32(584, 16384u);
+    sram_write_u32(588, autotest_hotpath_benchmark_sink);
+    /* Additive v80 Detail-effect ARM differential and microbench data. */
+    sram_write_u32(592, autotest_detail_effect_differential_result);
+    sram_write_u32(596, autotest_detail_palette_c_cycles);
+    sram_write_u32(600, autotest_detail_palette_asm_cycles);
+    sram_write_u32(604, 64u);
+    sram_write_u32(608, autotest_detail_spotlight_c_cycles);
+    sram_write_u32(612, autotest_detail_spotlight_asm_cycles);
+    sram_write_u32(616, 512u);
+    sram_write_u32(620, autotest_detail_wave_c_cycles);
+    sram_write_u32(624, autotest_detail_wave_asm_cycles);
+    sram_write_u32(628, 512u);
+    sram_write_u32(632, TYRIAN_GBA_DETAIL_EFFECT_ASM);
+    sram_write_u32(636, autotest_detail_effect_benchmark_sink);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

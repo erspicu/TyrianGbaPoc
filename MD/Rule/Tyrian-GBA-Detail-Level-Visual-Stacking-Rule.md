@@ -1,6 +1,6 @@
 # TyrianGbaPoc Detail Level 畫面效果累加規則
 
-日期：2026-08-05
+日期：2026-08-07
 狀態：目前正式實作規則
 適用選項：`LOW`、`NORMAL`、`HIGH`、`PENTIUM`、`CUSTOM`
 
@@ -362,7 +362,51 @@ Detail Level 只改變呈現方式；敵人、Boss、子彈、碰撞、RNG、獎
 High／Pentium 專用的雙緩衝 wave table；CUSTOM 的 ROM 也不保留該表，這
 不是 runtime 只把效果旗標關閉。
 
-## 11. 維護規則
+## 11. Detail Effect ARM 組語加速規則
+
+正式建置預設 `DETAIL_EFFECT_ASM=1`。這個開關只替換三段會由 CPU
+逐項建立 GBA 硬體輸入資料的固定迴圈，不更動 PC 事件 gate、draw stage、
+調色盤語意、遊戲邏輯或實際 PPU／DMA 呈現規則：
+
+- iced、lava／water 與 final hue／brightness 共用的 256-entry palette
+  LUT 建立及 BG／OBJ palette mapping。
+- NORMAL／HIGH／PENTIUM 的 161-line spotlight `WIN0H` 表建立。
+- HIGH／PENTIUM 的 161×4 halfword lava／water wave 表建立。
+
+各 profile 的 release linker 保留範圍如下：
+
+| Profile | Palette ARM | Spotlight ARM | Wave ARM | 額外 IWRAM | 額外 EWRAM |
+|---|---|---|---|---:|---:|
+| LOW | 否 | 否 | 否 | 0 B | 0 B |
+| NORMAL | 是 | 是 | 否 | 112 B | 512 B |
+| HIGH | 是 | 是 | 是 | 328 B | 512 B |
+| PENTIUM | 是 | 是 | 是 | 328 B | 512 B |
+| CUSTOM | 是 | 否 | 否 | 0 B | 512 B |
+
+三個 kernel 分成獨立 object，未被 profile 使用的 IWRAM routine 必須由
+`--gc-sections` 移除。512 B EWRAM 是 palette 最終色彩 LUT；LOW 完全不走
+runtime effect palette，因此也會被移除。PPU Alpha、BLDY、OBJ mode bit、
+HBlank DMA 啟動與 OAM／cache 數量瓶頸不應為了形式而改寫成組語，因為
+這些路徑的 CPU 算術成本極低，或真正限制並不在指令執行時間。
+
+組語路徑的正確性門檻是與保留的 C reference **逐位元一致**，不能只用
+截圖目視判斷。stress autotest 會覆蓋全部 brightness、effect kind、OBJ
+palette 保護規則、spotlight 邊界，以及 wave 的 signed scale／座標回繞，
+並把 `detail_effect_asm_differential` 寫入 telemetry。HIGH／PENTIUM 必須為
+`7`（palette + spotlight + wave）；沒有 wave capability 的測試 profile 為
+`3`（palette + spotlight reference test）。
+
+若要診斷或重跑純 C 對照，可直接覆寫 Make 參數：
+
+```powershell
+make DETAIL_LEVEL=high DETAIL_EFFECT_ASM=0 all
+make DETAIL_LEVEL=high DETAIL_EFFECT_ASM=1 all
+```
+
+正式版保持 `DETAIL_EFFECT_ASM=1`。完整量測方法與結果記錄於
+`MD/Detail-Level-ARM-Optimization-Comparison-2026-08-07.md`。
+
+## 12. 維護規則
 
 後續修改 Detail Level 時必須遵守：
 
@@ -378,3 +422,7 @@ High／Pentium 專用的雙緩衝 wave table；CUSTOM 的 ROM 也不保留該表
 6. `SuperWild` 不屬於 Pentium，不得意外啟用。
 7. Detail Level 只能改變 presentation；敵人、碰撞、關卡事件、RNG、獎賞
    與 GameLoop 結果必須保持一致。
+8. 修改 Detail ARM kernel 時必須同步保留 C reference，先通過 differential
+   test，再談效能；不得以近似公式換取不一致的色盤或掃描線位置。
+9. 組語檔必須依 capability 拆分，不能把 wave／spotlight 綁回同一個
+   IWRAM section，否則 CUSTOM／LOW 會承擔沒有使用到的 IWRAM 成本。

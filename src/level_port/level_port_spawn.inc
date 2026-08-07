@@ -79,9 +79,17 @@ static void ot_mt_seed(OtMt19937 *rng, uint32_t seed)
     rng->pm = OT_MT_M;
 }
 
+extern uint32_t ot_mt_rand_core_asm(OtMt19937 *rng);
+
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) uint32_t
 ot_mt_rand(OtLevelPortState *state)
 {
+#if TYRIAN_GBA_HOTPATH_ASM
+    uint32_t y = ot_mt_rand_core_asm(&state->rng);
+
+    state->rng_call_count++;
+    return y;
+#else
     OtMt19937 *rng = &state->rng;
     uint32_t y;
     uint32_t combined;
@@ -106,6 +114,7 @@ ot_mt_rand(OtLevelPortState *state)
     y ^= y >> 18;
     state->rng_call_count++;
     return y;
+#endif
 }
 
 uint32_t ot_level_port_random(OtLevelPortState *state)
@@ -128,7 +137,7 @@ static int16_t ot_abs_s16(int16_t value)
     return (int16_t)(value < 0 ? -value : value);
 }
 
-static inline bool ot_player_shot_axis_overlaps(
+static inline bool ot_player_shot_axis_overlaps_c_inline(
     int16_t delta,
     uint16_t radius
 )
@@ -148,6 +157,27 @@ static inline bool ot_player_shot_axis_overlaps(
     return ot_abs_s16(delta) < (int16_t)radius;
 #endif
 }
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) bool
+ot_player_shot_axis_overlaps_c_reference(
+    int16_t delta,
+    uint16_t radius
+)
+{
+    return ot_player_shot_axis_overlaps_c_inline(delta, radius);
+}
+#endif
+
+#if !TYRIAN_GBA_HOTPATH_ASM
+static inline bool ot_player_shot_axis_overlaps(
+    int16_t delta,
+    uint16_t radius
+)
+{
+    return ot_player_shot_axis_overlaps_c_inline(delta, radius);
+}
+#endif
 
 enum {
     OT_ENEMY_SHAPE_SLOT_FIXED_21 = 0xfd,

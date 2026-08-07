@@ -18,6 +18,30 @@
 
 #include "Configure.h"
 
+/*
+ * Keep a compile-time C reference path for reproducible before/after
+ * measurements and emergency diagnosis.  Production builds default to the
+ * bit-exact ARM/IWRAM hot paths.
+ */
+#ifndef TYRIAN_GBA_HOTPATH_ASM
+#define TYRIAN_GBA_HOTPATH_ASM 1
+#endif
+#if TYRIAN_GBA_HOTPATH_ASM != 0 && TYRIAN_GBA_HOTPATH_ASM != 1
+#error TYRIAN_GBA_HOTPATH_ASM must be 0 or 1
+#endif
+
+/*
+ * Detail-effect kernels have their own switch so their C/ARM measurements do
+ * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.
+ */
+#ifndef TYRIAN_GBA_DETAIL_EFFECT_ASM
+#define TYRIAN_GBA_DETAIL_EFFECT_ASM 1
+#endif
+#if TYRIAN_GBA_DETAIL_EFFECT_ASM != 0 && \
+    TYRIAN_GBA_DETAIL_EFFECT_ASM != 1
+#error TYRIAN_GBA_DETAIL_EFFECT_ASM must be 0 or 1
+#endif
+
 #define TYRIAN_GBA_DETAIL_LOW 0
 #define TYRIAN_GBA_DETAIL_NORMAL 1
 #define TYRIAN_GBA_DETAIL_HIGH 2

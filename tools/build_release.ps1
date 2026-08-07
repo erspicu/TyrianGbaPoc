@@ -44,7 +44,7 @@ $stageRom = Join-Path $stageRoot "TyrianGBA.gba"
 $finalRom = Join-Path $buildDir "TyrianGBA.gba"
 $generatedName =
     "tyrian_gba_level1_pc_flow_mode4_romfs_v40_" +
-    "detail_${DetailLevel}_speed_${GameSpeed}.gba"
+    "detail_${DetailLevel}_speed_${GameSpeed}_detailasm1.gba"
 $generatedRom = Join-Path $buildDir $generatedName
 
 function Assert-ChildPath {

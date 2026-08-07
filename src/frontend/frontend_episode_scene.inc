@@ -68,6 +68,12 @@ static void frontend_scene_palette_rgb(
     }
 }
 
+extern void frontend_scale_swar_row_asm(
+    u32 *destination,
+    const u32 *source,
+    u32 block_count
+);
+
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
 frontend_scene_scale_pc_frame_rows(
     u8 first_row,
@@ -95,8 +101,6 @@ frontend_scene_scale_pc_frame_rows(
         u32 *destination = (u32 *)(void *)(
             frame + (u32)y * SCREEN_WIDTH
         );
-        u8 block;
-
         /*
          * Exact floor(x * 4 / 3) nearest-neighbour projection.  Every four
          * aligned source words become three destination words, discarding
@@ -105,24 +109,36 @@ frontend_scene_scale_pc_frame_rows(
          * register packs and is safe in-place because destination trails the
          * unread 320-wide source.
          */
-        for (block = 0; block < SCREEN_WIDTH / 12u; block++) {
-            u32 source0 = source[0];
-            u32 source1 = source[1];
-            u32 source2 = source[2];
-            u32 source3 = source[3];
+#if TYRIAN_GBA_HOTPATH_ASM
+        frontend_scale_swar_row_asm(
+            destination,
+            source,
+            SCREEN_WIDTH / 12u
+        );
+#else
+        {
+            u8 block;
 
-            destination[0] =
-                (source0 & 0x00ffffffu) |
-                ((source1 & 0x000000ffu) << 24);
-            destination[1] =
-                ((source1 >> 8) & 0x0000ffffu) |
-                ((source2 & 0x0000ffffu) << 16);
-            destination[2] =
-                ((source2 >> 16) & 0x000000ffu) |
-                ((source3 & 0x00ffffffu) << 8);
-            source += 4;
-            destination += 3;
+            for (block = 0; block < SCREEN_WIDTH / 12u; block++) {
+                u32 source0 = source[0];
+                u32 source1 = source[1];
+                u32 source2 = source[2];
+                u32 source3 = source[3];
+
+                destination[0] =
+                    (source0 & 0x00ffffffu) |
+                    ((source1 & 0x000000ffu) << 24);
+                destination[1] =
+                    ((source1 >> 8) & 0x0000ffffu) |
+                    ((source2 & 0x0000ffffu) << 16);
+                destination[2] =
+                    ((source2 >> 16) & 0x000000ffu) |
+                    ((source3 & 0x00ffffffu) << 8);
+                source += 4;
+                destination += 3;
+            }
         }
+#endif
     }
 }
 

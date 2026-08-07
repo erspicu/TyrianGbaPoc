@@ -2,6 +2,8 @@
 
 DETAIL_LEVEL ?= config
 GAME_SPEED ?= normal
+HOTPATH_ASM ?= 1
+DETAIL_EFFECT_ASM ?= 1
 ROUTE_EPISODE ?= 1
 ROUTE_SECTION ?= 5
 ROUTE_FRONT_WEAPON_POWER ?= 11
@@ -51,28 +53,44 @@ else
 $(error GAME_SPEED must be low or normal)
 endif
 
+ifneq ($(HOTPATH_ASM),0)
+ifneq ($(HOTPATH_ASM),1)
+$(error HOTPATH_ASM must be 0 or 1)
+endif
+endif
+
+ifneq ($(DETAIL_EFFECT_ASM),0)
+ifneq ($(DETAIL_EFFECT_ASM),1)
+$(error DETAIL_EFFECT_ASM must be 0 or 1)
+endif
+endif
+
 ifeq ($(STRESS_DIAGNOSTIC),baseline)
 STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
 	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_COLLISION_MASK_FAST_PATH=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
 else ifeq ($(STRESS_DIAGNOSTIC),no_collision)
 STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
 	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_COLLISION_MASK_FAST_PATH=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=1 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
 else ifeq ($(STRESS_DIAGNOSTIC),no_render)
 STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=0 \
 	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_COLLISION_MASK_FAST_PATH=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=1
 else ifeq ($(STRESS_DIAGNOSTIC),precache_cull)
 STRESS_DIAGNOSTIC_FLAGS := \
 	-DTYRIAN_GBA_PROJECTILE_PRECACHE_CULL=1 \
 	-DTYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK=0 \
+	-DTYRIAN_GBA_COLLISION_MASK_FAST_PATH=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_COLLISION=0 \
 	-DTYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER=0
 else ifeq ($(STRESS_DIAGNOSTIC),active_mask)
@@ -245,7 +263,7 @@ STRESS_DIAGNOSTIC_FLAGS += \
 	-DTYRIAN_GBA_WALL_CLOCK_LOGIC=0
 endif
 
-CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)
+CONFIG_SUFFIX := detail_$(DETAIL_LEVEL)_speed_$(GAME_SPEED)_detailasm$(DETAIL_EFFECT_ASM)
 TARGET := tyrian_gba_level1_pc_flow_mode4_romfs_v40_$(CONFIG_SUFFIX)
 TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_autotest_romfs_v40_$(CONFIG_SUFFIX)
 DEATH_TEST_TARGET := tyrian_gba_level1_pc_flow_mode4_death_autotest_romfs_v40_$(CONFIG_SUFFIX)
@@ -269,7 +287,7 @@ else
 $(error STRESS_FIRE must be 0 or 1)
 endif
 STRESS_RUN_TAG := ep$(STRESS_EPISODE)_section$(STRESS_SECTION)_$(STRESS_STOP_TAG)$(STRESS_INPUT_TAG)
-STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_$(STRESS_RUN_TAG)_v70_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX)
+STRESS_TARGET := tyrian_gba_full_loadout_sprite_stress_$(STRESS_RUN_TAG)_v70_$(STRESS_DIAGNOSTIC)_hotpath$(HOTPATH_ASM)_$(CONFIG_SUFFIX)
 PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_TAG := _sel$(CAPTURE_SELECTION)
@@ -319,7 +337,7 @@ FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v48_$
 BUILD := build
 RES := res
 STRESS_MAIN_OBJECT := \
-	$(BUILD)/main_full_loadout_stress_$(STRESS_RUN_TAG)_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o
+	$(BUILD)/main_full_loadout_stress_$(STRESS_RUN_TAG)_$(STRESS_DIAGNOSTIC)_hotpath$(HOTPATH_ASM)_$(CONFIG_SUFFIX).o
 
 PROJECT_ROOT := $(CURDIR)
 VENDOR_ROOT := $(PROJECT_ROOT)/vendor
@@ -341,7 +359,9 @@ CFLAGS := $(ARCH) -std=gnu17 -O3 -g -Wall -Wextra \
 CFLAGS += $(EXTRA_CFLAGS)
 CFLAGS += \
 	$(DETAIL_LEVEL_CPPFLAG) \
-	-DTYRIAN_GBA_GAME_SPEED=$(GAME_SPEED_VALUE)
+	-DTYRIAN_GBA_GAME_SPEED=$(GAME_SPEED_VALUE) \
+	-DTYRIAN_GBA_HOTPATH_ASM=$(HOTPATH_ASM) \
+	-DTYRIAN_GBA_DETAIL_EFFECT_ASM=$(DETAIL_EFFECT_ASM)
 ASFLAGS := $(ARCH) -x assembler-with-cpp
 LINKFLAGS := $(ARCH) -B$(GBA_CRT)/ -specs=$(GBA_CRT)/gba.specs \
 	-Wl,--gc-sections \
@@ -487,6 +507,10 @@ AUDIO_INPUTS := \
 
 COMMON_OBJECTS := \
 	$(BUILD)/assets.o \
+	$(BUILD)/gba_hotpath_asm.o \
+	$(BUILD)/gba_detail_effect_asm.o \
+	$(BUILD)/gba_detail_spotlight_asm.o \
+	$(BUILD)/gba_detail_wave_asm.o \
 	$(BUILD)/gba_heap.o \
 	$(BUILD)/opentyrian_data.o \
 	$(BUILD)/opentyrian_season.o \
@@ -496,7 +520,7 @@ COMMON_OBJECTS := \
 	$(BUILD)/opentyrian_rom_io.o
 
 STRESS_LEVEL_OBJECT := \
-	$(BUILD)/opentyrian_level_port_stress_$(STRESS_DIAGNOSTIC)_$(CONFIG_SUFFIX).o
+	$(BUILD)/opentyrian_level_port_stress_$(STRESS_DIAGNOSTIC)_hotpath$(HOTPATH_ASM)_$(CONFIG_SUFFIX).o
 STRESS_COMMON_OBJECTS := \
 	$(filter-out $(BUILD)/opentyrian_level_port.o,$(COMMON_OBJECTS)) \
 	$(STRESS_LEVEL_OBJECT)
@@ -734,6 +758,7 @@ $(STRESS_MAIN_OBJECT): \
 		-DAUTOTEST_FRONTEND_ROUTE_SECTION=$(STRESS_SECTION) \
 		-DAUTOTEST_FULL_LOADOUT_STRESS_END_POSITION=$(STRESS_END_POSITION) \
 		-DAUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS=$(STRESS_DURATION_VBLANKS) \
+		-DAUTOTEST_STACK_CANARY \
 		-DTYRIAN_GBA_DEV_PLAYER_INVINCIBLE=1 \
 		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
 		$(STRESS_INPUT_FLAG) \
@@ -849,6 +874,19 @@ $(BUILD)/opentyrian_rom_io.o: src/opentyrian_rom_io.c \
 $(BUILD)/assets.o: assets.s $(ASSET_BINARIES) \
 		$(RES)/soundbank.bin $(VFS_IMAGE) $(TEXTRES_IMAGE) \
 		$(RES)/sprite2_raw_meta.h | $(BUILD)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(BUILD)/gba_hotpath_asm.o: src/gba_hotpath_asm.s \
+		src/gba_hotpath_layout.inc | $(BUILD)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(BUILD)/gba_detail_effect_asm.o: src/gba_detail_effect_asm.s | $(BUILD)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(BUILD)/gba_detail_spotlight_asm.o: src/gba_detail_spotlight_asm.s | $(BUILD)
+	$(CC) $(ASFLAGS) -c $< -o $@
+
+$(BUILD)/gba_detail_wave_asm.o: src/gba_detail_wave_asm.s | $(BUILD)
 	$(CC) $(ASFLAGS) -c $< -o $@
 
 $(BUILD)/$(TARGET).elf: \

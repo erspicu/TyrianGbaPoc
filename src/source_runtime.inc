@@ -44,12 +44,14 @@ static SourceSprite2L2Slot source_sprite2_l2[
 ] EWRAM_BSS;
 /*
  * The complete build-time raw Sprite2 catalog makes this 2 KiB decoder
- * scratch a debug/fallback-only path.  Keep it in IWRAM BSS: the packed
- * background colour-error table recovered enough IWRAM headroom, while this
- * placement preserves the release 12 KiB EWRAM heap floor without shrinking
- * L2.  Runtime stack-canary tests independently guard the IWRAM boundary.
+ * scratch a debug/fallback-only path.  Retail keeps it in IWRAM so the 12 KiB
+ * EWRAM heap floor is unchanged.  A full-loadout build also places the large
+ * collision dispatcher in IWRAM; move only this cold scratch to EWRAM there
+ * so the benchmark/playable stress ROM retains a usable call stack.  The
+ * stress EWRAM map still keeps the project's 6 KiB minimum heap margin.
  */
 static u16 source_enemy_decode_pixels[OT_SPRITE2_FRAME_PIXELS]
+    STRESS_EWRAM_BSS
     __attribute__((aligned(4)));
 static u8 source_enemy_palette_map[OT_PALETTE_COLOUR_COUNT]
     EWRAM_BSS;
@@ -1308,8 +1310,15 @@ static u8 source_option_projectile_sync(void)
 #endif
 }
 
+extern u32 source_sprite2_l2_pack_raw_word_asm(
+    const u8 *raw,
+    u8 filter,
+    const u8 *palette_map
+);
+
+#if !TYRIAN_GBA_HOTPATH_ASM
 static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u32
-source_sprite2_l2_pack_raw_word(
+source_sprite2_l2_pack_raw_word_c(
     const u8 *raw,
     u8 filter
 )
@@ -1322,7 +1331,7 @@ source_sprite2_l2_pack_raw_word(
 
         if (pixel != 0) {
             if (filter != 0) {
-                pixel = (u8)(filter | (pixel & 0x0f));
+                pixel = (u8)(filter | (pixel & 0x0fu));
             }
             pixel = source_enemy_palette_map[pixel];
         }
@@ -1330,6 +1339,7 @@ source_sprite2_l2_pack_raw_word(
     }
     return packed;
 }
+#endif
 
 /*
  * Keep this as a real ARM/IWRAM leaf.  With -O3 the former annotation was
@@ -1374,9 +1384,27 @@ source_sprite2_l2_write_raw_component(
                 ) * 64u
             ) +
             (u32)(target_y & 7u) * 8u;
-        u32 word0 = source_sprite2_l2_pack_raw_word(raw, filter);
-        u32 word1 = source_sprite2_l2_pack_raw_word(raw + 4, filter);
-        u32 word2 = source_sprite2_l2_pack_raw_word(raw + 8, filter);
+#if TYRIAN_GBA_HOTPATH_ASM
+        u32 word0 = source_sprite2_l2_pack_raw_word_asm(
+            raw,
+            filter,
+            source_enemy_palette_map
+        );
+        u32 word1 = source_sprite2_l2_pack_raw_word_asm(
+            raw + 4,
+            filter,
+            source_enemy_palette_map
+        );
+        u32 word2 = source_sprite2_l2_pack_raw_word_asm(
+            raw + 8,
+            filter,
+            source_enemy_palette_map
+        );
+#else
+        u32 word0 = source_sprite2_l2_pack_raw_word_c(raw, filter);
+        u32 word1 = source_sprite2_l2_pack_raw_word_c(raw + 4, filter);
+        u32 word2 = source_sprite2_l2_pack_raw_word_c(raw + 8, filter);
+#endif
 
         if (row_offset == 0) {
             ((u32 *)row)[0] = word0;
