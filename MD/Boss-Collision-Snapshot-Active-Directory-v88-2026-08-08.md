@@ -99,4 +99,3 @@ IWRAM stack canary 仍剩 3,448 bytes，高於專案 3,072-byte 門檻；因此
 death spawn、event jump 等分支繁多的 source semantics 留在 C，再用 exact
 active directory 消除 100-slot 空掃。這保留逐行移植行為，也避免大型 ARM
 函式侵占有限 IWRAM。
-
