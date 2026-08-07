@@ -106,6 +106,48 @@ source_enemy_cache_find_exact_asm:
 		.-source_enemy_cache_find_exact_asm
 
 	.align 2
+	.global source_projectile_cache_find_hint_asm
+	.type source_projectile_cache_find_hint_asm, %function
+/*
+ * const SourceProjectileCacheSlot *source_projectile_cache_find_hint_asm(
+ *     const u8 *hint, const SourceProjectileCacheSlot *cache,
+ *     u32 packed_key, u32 slot_count
+ * )
+ *
+ * The directory is advisory.  This leaf validates the encoded index, valid
+ * flag and complete shape/graphic key before returning a slot; any collision
+ * or stale value returns NULL and lets C perform its authoritative scan.
+ */
+source_projectile_cache_find_hint_asm:
+	eor     r12, r2, r2, lsr #6
+	eor     r12, r12, r2, lsr #12
+	and     r12, r12, #63
+	ldrb    r0, [r0, r12]
+	subs    r0, r0, #1
+	movmi   r0, #0
+	bxmi    lr
+	cmp     r0, r3
+	movhs   r0, #0
+	bxhs    lr
+	add     r0, r1, r0, lsl #4
+	ldrb    r1, [r0, #SOURCE_PROJECTILE_ASM_VALID_OFFSET]
+	cmp     r1, #0
+	moveq   r0, #0
+	bxeq    lr
+	ldrh    r1, [r0, #SOURCE_PROJECTILE_ASM_GRAPHIC_OFFSET]
+	mov     r12, r2, lsl #16
+	mov     r12, r12, lsr #16
+	cmp     r1, r12
+	movne   r0, #0
+	bxne    lr
+	ldrb    r1, [r0, #SOURCE_PROJECTILE_ASM_SHAPE_TABLE_OFFSET]
+	cmp     r1, r2, lsr #16
+	movne   r0, #0
+	bx      lr
+	.size source_projectile_cache_find_hint_asm, \
+		.-source_projectile_cache_find_hint_asm
+
+	.align 2
 	.global gameplay_overlay_divmod320_asm
 	.type gameplay_overlay_divmod320_asm, %function
 /*

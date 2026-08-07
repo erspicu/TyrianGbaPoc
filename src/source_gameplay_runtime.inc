@@ -1423,6 +1423,11 @@ static void source_runtime_reset(void)
         sizeof(source_projectile_uploads)
     );
     memset(
+        source_projectile_cache_hint,
+        0,
+        sizeof(source_projectile_cache_hint)
+    );
+    memset(
         source_effect_cache_last_epoch,
         0,
         sizeof(source_effect_cache_last_epoch)

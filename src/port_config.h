@@ -59,6 +59,27 @@
 #endif
 
 /*
+ * Player projectiles repeatedly request a small set of Sprite2 frames.  A
+ * 64-byte direct-mapped directory is only a validated hint: collisions and
+ * stale entries always fall back to the authoritative replacement scan.
+ */
+#ifndef TYRIAN_GBA_PROJECTILE_CACHE_HINT
+#define TYRIAN_GBA_PROJECTILE_CACHE_HINT 1
+#endif
+#if TYRIAN_GBA_PROJECTILE_CACHE_HINT != 0 && \
+    TYRIAN_GBA_PROJECTILE_CACHE_HINT != 1
+#error TYRIAN_GBA_PROJECTILE_CACHE_HINT must be 0 or 1
+#endif
+
+#ifndef TYRIAN_GBA_PROJECTILE_HINT_ASM
+#define TYRIAN_GBA_PROJECTILE_HINT_ASM 0
+#endif
+#if TYRIAN_GBA_PROJECTILE_HINT_ASM != 0 && \
+    TYRIAN_GBA_PROJECTILE_HINT_ASM != 1
+#error TYRIAN_GBA_PROJECTILE_HINT_ASM must be 0 or 1
+#endif
+
+/*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.
  */

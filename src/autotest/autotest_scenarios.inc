@@ -36,6 +36,9 @@ static u32 autotest_starfield_divmod_c_cycles EWRAM_BSS;
 static u32 autotest_starfield_divmod_asm_cycles EWRAM_BSS;
 static u32 autotest_starfield_plot_c_cycles EWRAM_BSS;
 static u32 autotest_starfield_plot_asm_cycles EWRAM_BSS;
+static u32 autotest_projectile_hint_differential_result EWRAM_BSS;
+static u32 autotest_projectile_hint_c_cycles EWRAM_BSS;
+static u32 autotest_projectile_hint_asm_cycles EWRAM_BSS;
 static u32 autotest_hotpath_benchmark_sink EWRAM_BSS;
 static u32 autotest_detail_effect_differential_result EWRAM_BSS;
 static u32 autotest_detail_palette_c_cycles EWRAM_BSS;
@@ -183,6 +186,10 @@ static u8 autotest_hotpath_asm_self_test(void)
         }
     }
     autotest_starfield_differential_result |= 2u;
+
+    autotest_projectile_hint_differential_result =
+        source_projectile_cache_hint_differential_test();
+    if (autotest_projectile_hint_differential_result != 1u) return 0;
 
     autotest_sprite2_exact_differential_result =
         source_enemy_cache_find_exact_differential_test();
@@ -583,6 +590,77 @@ static void autotest_hotpath_asm_benchmark(void)
             sink += (u32)(result - source_enemy_cache_lookup_test_slots);
         }
         autotest_sprite2_exact_asm_cycles =
+            stress_cycle_counter_read() - start;
+    }
+
+    {
+        static const u16 graphics[4] = { 1u, 2u, 3u, 4u };
+        static const u8 shape_tables[4] = { 4u, 4u, 5u, 5u };
+        const SourceProjectileCacheSlot *result;
+        u8 slot_index;
+
+        memset(
+            source_projectile_hint_test_slots,
+            0,
+            sizeof(source_projectile_hint_test_slots)
+        );
+        memset(
+            source_projectile_hint_test_directory,
+            0,
+            sizeof(source_projectile_hint_test_directory)
+        );
+        for (slot_index = 0; slot_index < 4u; slot_index++) {
+            SourceProjectileCacheSlot *slot =
+                &source_projectile_hint_test_slots[slot_index];
+            u32 packed_key = source_projectile_cache_packed_key(
+                shape_tables[slot_index],
+                graphics[slot_index]
+            );
+
+            slot->graphic = graphics[slot_index];
+            slot->shape_table = shape_tables[slot_index];
+            slot->valid = 1;
+            source_projectile_hint_benchmark_keys[slot_index] =
+                packed_key;
+            source_projectile_hint_test_directory[
+                source_projectile_cache_hint_hash(packed_key)
+            ] = (u8)(slot_index + 1u);
+        }
+
+        start = stress_cycle_counter_read();
+        for (
+            index = 0;
+            index < AUTOTEST_HOTPATH_BENCHMARK_CALLS;
+            index++
+        ) {
+            slot_index = (u8)(index & 3u);
+            result = source_projectile_cache_find_hint_c_reference(
+                source_projectile_hint_test_directory,
+                source_projectile_hint_test_slots,
+                source_projectile_hint_benchmark_keys[slot_index],
+                4u
+            );
+            sink += (u32)(result - source_projectile_hint_test_slots);
+        }
+        autotest_projectile_hint_c_cycles =
+            stress_cycle_counter_read() - start;
+
+        start = stress_cycle_counter_read();
+        for (
+            index = 0;
+            index < AUTOTEST_HOTPATH_BENCHMARK_CALLS;
+            index++
+        ) {
+            slot_index = (u8)(index & 3u);
+            result = source_projectile_cache_find_hint_asm(
+                source_projectile_hint_test_directory,
+                source_projectile_hint_test_slots,
+                source_projectile_hint_benchmark_keys[slot_index],
+                4u
+            );
+            sink += (u32)(result - source_projectile_hint_test_slots);
+        }
+        autotest_projectile_hint_asm_cycles =
             stress_cycle_counter_read() - start;
     }
     REG_IME = old_ime;
@@ -1442,6 +1520,16 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(9016, autotest_starfield_plot_asm_cycles);
     sram_write_u32(9020, 16384u);
     sram_write_u32(9024, TYRIAN_GBA_STARFIELD_BATCH_ASM);
+    /* Additive v83 projectile direct-hint differential and microbench. */
+    sram_write_u32(9028, autotest_projectile_hint_differential_result);
+    sram_write_u32(9032, autotest_projectile_hint_c_cycles);
+    sram_write_u32(9036, autotest_projectile_hint_asm_cycles);
+    sram_write_u32(9040, 16384u);
+    sram_write_u32(9044, TYRIAN_GBA_PROJECTILE_CACHE_HINT);
+    sram_write_u32(9048, TYRIAN_GBA_PROJECTILE_HINT_ASM);
+    sram_write_u32(9052, telemetry_projectile_hint_probes);
+    sram_write_u32(9056, telemetry_projectile_hint_hits);
+    sram_write_u32(9060, telemetry_projectile_hint_fallback_scans);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

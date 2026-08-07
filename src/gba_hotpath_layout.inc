@@ -52,3 +52,9 @@
 #define SOURCE_ENEMY_ASM_SIZE_OFFSET                  11
 #define SOURCE_ENEMY_ASM_FILTER_OFFSET                12
 #define SOURCE_ENEMY_ASM_VALID_OFFSET                 13
+
+/* SourceProjectileCacheSlot layout for the validated direct-map hint leaf. */
+#define SOURCE_PROJECTILE_ASM_CACHE_SLOT_SIZE          16
+#define SOURCE_PROJECTILE_ASM_GRAPHIC_OFFSET            8
+#define SOURCE_PROJECTILE_ASM_SHAPE_TABLE_OFFSET       10
+#define SOURCE_PROJECTILE_ASM_VALID_OFFSET             11

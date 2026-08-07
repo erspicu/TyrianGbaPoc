@@ -762,6 +762,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_projectile_cache_upload_coalesces = 0;
     telemetry_projectile_cache_max_uploads = 0;
     telemetry_projectile_cache_max_visible_unique = 0;
+    telemetry_projectile_hint_probes = 0;
+    telemetry_projectile_hint_hits = 0;
+    telemetry_projectile_hint_fallback_scans = 0;
     telemetry_structural_oam_required_max = 0;
     telemetry_effect_oam_culls = 0;
     telemetry_enemy_shot_oam_culls = 0;

@@ -2093,6 +2093,8 @@ static SourceProjectileUpload source_projectile_uploads[
 static u32 source_projectile_cache_epoch;
 static u8 source_projectile_upload_count;
 
+#include "source_projectile_cache_lookup.inc"
+
 static void source_projectile_cache_cancel_upload(u8 slot)
 {
     u8 index = 0;
@@ -2124,6 +2126,9 @@ static void source_projectile_cache_cancel_upload(u8 slot)
 static void source_projectile_cache_invalidate_slot(u8 slot)
 {
     if (slot >= SOURCE_PROJECTILE_CACHE_SLOT_COUNT) return;
+#if TYRIAN_GBA_PROJECTILE_CACHE_HINT
+    source_projectile_cache_hint_clear_slot(slot);
+#endif
     source_projectile_cache_cancel_upload(slot);
     source_projectile_cache[slot].valid = 0;
     source_projectile_cache[slot].resident = 0;
@@ -2220,6 +2225,36 @@ static u16 source_projectile_cache_acquire(
         telemetry_projectile_cache_drops++;
         return 0xffff;
     }
+#if TYRIAN_GBA_PROJECTILE_CACHE_HINT
+    {
+        u32 packed_key = source_projectile_cache_packed_key(
+            shape_table,
+            graphic
+        );
+        const SourceProjectileCacheSlot *hint_slot;
+
+        telemetry_projectile_hint_probes++;
+        hint_slot = source_projectile_cache_find_hint(packed_key);
+        if (hint_slot != 0) {
+            index = (u8)(hint_slot - source_projectile_cache);
+            if (
+                hint_slot->resident ||
+                source_projectile_cache_upload_pending(
+                    index,
+                    hint_slot->generation
+                )
+            ) {
+                source_projectile_cache[index].last_epoch =
+                    source_projectile_cache_epoch;
+                telemetry_projectile_hint_hits++;
+                telemetry_projectile_cache_hits++;
+                return source_projectile_cache_tile(index);
+            }
+            source_projectile_cache_invalidate_slot(index);
+        }
+        telemetry_projectile_hint_fallback_scans++;
+    }
+#endif
     for (
         index = 0;
         index < SOURCE_PROJECTILE_CACHE_SLOT_COUNT;
@@ -2241,6 +2276,13 @@ static u16 source_projectile_cache_acquire(
                 )
             ) {
                 slot->last_epoch = source_projectile_cache_epoch;
+#if TYRIAN_GBA_PROJECTILE_CACHE_HINT
+                source_projectile_cache_hint_store(
+                    shape_table,
+                    graphic,
+                    index
+                );
+#endif
                 telemetry_projectile_cache_hits++;
                 return source_projectile_cache_tile(index);
             }
@@ -2287,6 +2329,13 @@ static u16 source_projectile_cache_acquire(
     source_projectile_cache[selected].graphic = graphic;
     source_projectile_cache[selected].last_epoch =
         source_projectile_cache_epoch;
+#if TYRIAN_GBA_PROJECTILE_CACHE_HINT
+    source_projectile_cache_hint_store(
+        shape_table,
+        graphic,
+        selected
+    );
+#endif
     telemetry_projectile_cache_misses++;
     l2_slot = source_sprite2_l2_acquire(
         shape_table,

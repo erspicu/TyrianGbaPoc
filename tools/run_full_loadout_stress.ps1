@@ -40,6 +40,10 @@ param(
     [int]$Sprite2ExactLookupAsm = 1,
     [ValidateSet(0, 1)]
     [int]$StarfieldBatchAsm = 1,
+    [ValidateSet(0, 1)]
+    [int]$ProjectileCacheHint = 1,
+    [ValidateSet(0, 1)]
+    [int]$ProjectileHintAsm = 0,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -76,7 +80,8 @@ $name = (
     "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
     "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
     "detailasm${DetailEffectAsm}_exactasm${Sprite2ExactLookupAsm}_" +
-    "starasm${StarfieldBatchAsm}"
+    "starasm${StarfieldBatchAsm}_projhint${ProjectileCacheHint}_" +
+    "projasm${ProjectileHintAsm}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -122,6 +127,8 @@ if (-not $NoBuild) {
         "DETAIL_EFFECT_ASM=$DetailEffectAsm " +
         "SPRITE2_EXACT_LOOKUP_ASM=$Sprite2ExactLookupAsm " +
         "STARFIELD_BATCH_ASM=$StarfieldBatchAsm " +
+        "PROJECTILE_CACHE_HINT=$ProjectileCacheHint " +
+        "PROJECTILE_HINT_ASM=$ProjectileHintAsm " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -311,6 +318,15 @@ $telemetry = [ordered]@{
     starfield_plot_asm_cycles = Read-U32 9016
     starfield_benchmark_calls = Read-U32 9020
     starfield_batch_asm = Read-U32 9024
+    projectile_hint_differential = Read-U32 9028
+    projectile_hint_c_cycles = Read-U32 9032
+    projectile_hint_asm_cycles = Read-U32 9036
+    projectile_hint_benchmark_calls = Read-U32 9040
+    projectile_cache_hint = Read-U32 9044
+    projectile_hint_asm = Read-U32 9048
+    projectile_hint_probes = Read-U32 9052
+    projectile_hint_hits = Read-U32 9056
+    projectile_hint_fallback_scans = Read-U32 9060
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -492,6 +508,10 @@ if (
     $telemetry.starfield_differential -ne 3 -or
     $telemetry.starfield_benchmark_calls -ne 16384 -or
     $telemetry.starfield_batch_asm -ne $StarfieldBatchAsm -or
+    $telemetry.projectile_hint_differential -ne 1 -or
+    $telemetry.projectile_hint_benchmark_calls -ne 16384 -or
+    $telemetry.projectile_cache_hint -ne $ProjectileCacheHint -or
+    $telemetry.projectile_hint_asm -ne $ProjectileHintAsm -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or

@@ -1005,6 +1005,9 @@ static void autotest_finish(void)
     sram_write_u32(8792, telemetry_sprite2_filter_evictions);
     sram_write_u32(8796, telemetry_sprite2_exact_lookup_probes);
     sram_write_u32(8800, telemetry_sprite2_exact_lookup_hits);
+    sram_write_u32(8804, telemetry_projectile_hint_probes);
+    sram_write_u32(8808, telemetry_projectile_hint_hits);
+    sram_write_u32(8812, telemetry_projectile_hint_fallback_scans);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;
