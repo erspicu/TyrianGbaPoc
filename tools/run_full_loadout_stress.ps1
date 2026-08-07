@@ -30,6 +30,12 @@ param(
     [int]$EndPosition = 0,
     [ValidateRange(1, 20000)]
     [int]$DurationVBlanks = 3600,
+    [ValidateRange(0, 65535)]
+    [int]$FastForwardPosition = 0,
+    [ValidateRange(1, 16)]
+    [int]$FastForwardTicks = 8,
+    [ValidateRange(0, 20000)]
+    [int]$BossWindowVBlanks = 0,
     [ValidateRange(30000, 600000)]
     [int]$RuntimeTimeoutMilliseconds = 120000,
     [ValidateSet(0, 1)]
@@ -54,6 +60,10 @@ param(
     [int]$PlayerShotUpdateMask = 1,
     [ValidateSet(0, 1)]
     [int]$EnemyActiveMask = 1,
+    [ValidateSet(0, 1)]
+    [int]$CollisionSnapshot = 1,
+    [ValidateSet(0, 1)]
+    [int]$CollisionActiveDirectory = 1,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -83,16 +93,26 @@ $stopTag = if ($EndPosition -gt 0) {
 } else {
     "vb$DurationVBlanks"
 }
+$fastForwardTag = if ($FastForwardPosition -gt 0) {
+    "_ff${FastForwardPosition}x${FastForwardTicks}"
+} else {
+    ""
+}
+$bossTag = if ($BossWindowVBlanks -gt 0) {
+    "_boss${BossWindowVBlanks}"
+} else {
+    ""
+}
 $inputTag = if ($NoFire) { "_nofire" } else { "" }
 $stressFire = if ($NoFire) { 0 } else { 1 }
 $name = (
-    "tyrian_gba_full_loadout_sprite_stress_" +
-    "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
-    "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
+    "tgw8_ep${Episode}_s${Section}_${stopTag}${fastForwardTag}${bossTag}${inputTag}_v88_" +
+    "${Variant}_h${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
     "detailasm${DetailEffectAsm}_x${Sprite2ExactLookupAsm}_" +
     "s${StarfieldBatchAsm}_ph${ProjectileCacheHint}_" +
     "pa${ProjectileHintAsm}_fx${EffectActiveMask}_bs${PoolBitScanAsm}_" +
-    "sf${PlayerShotFreeMask}_su${PlayerShotUpdateMask}_em${EnemyActiveMask}"
+    "sf${PlayerShotFreeMask}_su${PlayerShotUpdateMask}_em${EnemyActiveMask}_" +
+    "cs${CollisionSnapshot}_cd${CollisionActiveDirectory}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -145,9 +165,14 @@ if (-not $NoBuild) {
         "PLAYER_SHOT_FREE_MASK=$PlayerShotFreeMask " +
         "PLAYER_SHOT_UPDATE_MASK=$PlayerShotUpdateMask " +
         "ENEMY_ACTIVE_MASK=$EnemyActiveMask " +
+        "COLLISION_SNAPSHOT=$CollisionSnapshot " +
+        "COLLISION_ACTIVE_DIRECTORY=$CollisionActiveDirectory " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
+        "STRESS_FAST_FORWARD_POSITION=$FastForwardPosition " +
+        "STRESS_FAST_FORWARD_TICKS=$FastForwardTicks " +
+        "STRESS_BOSS_WINDOW_VBLANKS=$BossWindowVBlanks " +
         "STRESS_FIRE=$stressFire " +
         "STRESS_DIAGNOSTIC=$Variant full-loadout-stress"
     )
@@ -168,7 +193,7 @@ foreach ($old in @($save, $stdout, $stderr, $json, $screenshot)) {
 $env:PATH = "$mgbaRoot;$armBin;$env:PATH"
 $process = Start-Process `
     -FilePath $headless `
-    -ArgumentList @("-O", $screenshot, "-S", "3", "$name.gba") `
+    -ArgumentList @("-l", "0", "-O", $screenshot, "-S", "3", "$name.gba") `
     -WorkingDirectory $buildDir `
     -WindowStyle Hidden `
     -RedirectStandardOutput $stdout `
@@ -231,6 +256,11 @@ $expectedPlayerShotUpdateMask = if (
     $PlayerShotFreeMask -eq 1 -and $PlayerShotUpdateMask -eq 1
 ) { 1 } else { 0 }
 $expectedEnemyMaskConsistency = if ($EnemyActiveMask -eq 1) { 7 } else { 0 }
+$expectedCollisionSnapshot = if (
+    $CollisionSnapshot -eq 1 -and
+    $Variant -like "active_mask_fast*" -and
+    $Variant -ne "active_mask_fast"
+) { 1 } else { 0 }
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
@@ -379,6 +409,60 @@ $telemetry = [ordered]@{
     player_shot_update_trail_visits = Read-U32 9172
     player_shot_update_aimed_visits = Read-U32 9176
     player_shot_update_superpixel_visits = Read-U32 9180
+    fast_forward_position = Read-U32 9184
+    fast_forward_ticks = Read-U32 9188
+    boss_window_requested_vblanks = Read-U32 9192
+    boss_started = Read-U32 9196
+    boss_completed = Read-U32 9200
+    boss_start_position = Read-U32 9204
+    boss_end_position = Read-U32 9208
+    boss_display_frames = Read-U32 9212
+    boss_missed_vblanks = Read-U32 9216
+    boss_logic_updates = Read-U32 9220
+    boss_logic_cycles = Read-U32 9224
+    boss_render_cycles = Read-U32 9228
+    boss_collision_cycles = Read-U32 9232
+    boss_player_shot_update_cycles = Read-U32 9236
+    boss_collision_candidate_visits = Read-U32 9240
+    boss_collision_hits = Read-U32 9244
+    boss_shot_update_active_visits = Read-U32 9248
+    boss_shot_update_linear_visits = Read-U32 9252
+    boss_shot_update_trail_visits = Read-U32 9256
+    boss_enemy_active_visits = Read-U32 9260
+    boss_projectile_cache_hits = Read-U32 9264
+    boss_projectile_cache_misses = Read-U32 9268
+    boss_effect_cache_hits = Read-U32 9272
+    boss_effect_cache_misses = Read-U32 9276
+    boss_render_completed = Read-U32 9280
+    boss_render_deferred = Read-U32 9284
+    boss_player_shot_spawns = Read-U32 9288
+    boss_sprite2_misses = Read-U32 9292
+    boss_sprite2_evictions = Read-U32 9296
+    boss_sprite2_upload_bytes = Read-U32 9300
+    boss_sprite2_l2_hits = Read-U32 9304
+    boss_sprite2_l2_misses = Read-U32 9308
+    boss_filter_admission_denials = Read-U32 9312
+    boss_filter_fallback_hits = Read-U32 9316
+    boss_filter_fallback_builds = Read-U32 9320
+    boss_effect_oam_culls = Read-U32 9324
+    boss_player_shot_oam_culls = Read-U32 9328
+    boss_enemy_kills = Read-U32 9332
+    boss_audio_frames = Read-U32 9336
+    boss_wall_vblanks = Read-U32 9340
+    collision_snapshot = Read-U32 9344
+    collision_active_directory = Read-U32 9348
+    collision_hit_apply_calls = Read-U32 9352
+    collision_status_link_visits = Read-U32 9356
+    collision_kill_group_visits = Read-U32 9360
+    collision_damaged_transition_visits = Read-U32 9364
+    collision_player_contact_visits = Read-U32 9368
+    collision_zinglon_visits = Read-U32 9372
+    boss_hit_apply_calls = Read-U32 9376
+    boss_status_link_visits = Read-U32 9380
+    boss_kill_group_visits = Read-U32 9384
+    boss_damaged_transition_visits = Read-U32 9388
+    boss_player_contact_visits = Read-U32 9392
+    boss_zinglon_visits = Read-U32 9396
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -573,6 +657,10 @@ if (
     $telemetry.player_shot_free_mask -ne $PlayerShotFreeMask -or
     ($stressFire -ne 0 -and $telemetry.player_shot_allocator_calls -eq 0) -or
     $telemetry.enemy_active_mask -ne $EnemyActiveMask -or
+    $telemetry.collision_snapshot -ne $expectedCollisionSnapshot -or
+    $telemetry.collision_active_directory -ne (
+        $CollisionActiveDirectory -band $EnemyActiveMask
+    ) -or
     $telemetry.enemy_mask_consistency -ne $expectedEnemyMaskConsistency -or
     $telemetry.player_shot_update_mask -ne $expectedPlayerShotUpdateMask -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
@@ -580,6 +668,10 @@ if (
     $telemetry.route_section -ne $Section -or
     $telemetry.stop_end_position -ne $EndPosition -or
     $telemetry.stop_duration_vblanks -ne $DurationVBlanks -or
+    $telemetry.fast_forward_position -ne $FastForwardPosition -or
+    $telemetry.fast_forward_ticks -ne $FastForwardTicks -or
+    $telemetry.boss_window_requested_vblanks -ne $BossWindowVBlanks -or
+    ($BossWindowVBlanks -gt 0 -and $telemetry.boss_started -ne 1) -or
     (
         $EndPosition -gt 0 -and
         $telemetry.level_position -lt $EndPosition
@@ -589,7 +681,10 @@ if (
 ) {
     throw "Stress telemetry reported a validation failure"
 }
-if (($diagnosticFlags -band 0x1000) -ne 0) {
+if (
+    ($diagnosticFlags -band 0x1000) -ne 0 -and
+    $FastForwardPosition -eq 0
+) {
     if (
         $displayFrames -ne $telemetry.wall_vblanks -or
         $vblankRecoveryLoops -ne $telemetry.missed_vblanks -or

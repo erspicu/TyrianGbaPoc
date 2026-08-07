@@ -377,11 +377,126 @@ static void render_boss_bar_at(u8 armor, s16 centre_x)
     }
 }
 
-static void render_source_boss_bars(void)
+static void source_boss_perf_capture_interval(void)
 {
-    u8 armor[2];
-    u8 count = 0;
-    u8 index;
+    if (!telemetry_boss_perf_started) return;
+
+    telemetry_boss_perf_end_position = level_position;
+    telemetry_boss_perf_display_frames =
+        telemetry_display_frames - boss_perf_start_display_frames;
+    telemetry_boss_perf_missed_vblanks =
+        telemetry_missed_vblanks - boss_perf_start_missed_vblanks;
+    telemetry_boss_perf_sprite2_misses =
+        telemetry_sprite2_cache_misses - boss_perf_start_sprite2_misses;
+    telemetry_boss_perf_sprite2_evictions =
+        telemetry_sprite2_cache_evictions - boss_perf_start_sprite2_evictions;
+    telemetry_boss_perf_sprite2_upload_bytes =
+        telemetry_sprite2_upload_bytes - boss_perf_start_sprite2_upload_bytes;
+    telemetry_boss_perf_projectile_misses =
+        telemetry_projectile_cache_misses - boss_perf_start_projectile_misses;
+    telemetry_boss_perf_l2_hits =
+        telemetry_sprite2_l2_hits - boss_perf_start_l2_hits;
+    telemetry_boss_perf_l2_misses =
+        telemetry_sprite2_l2_misses - boss_perf_start_l2_misses;
+    telemetry_boss_perf_l2_evictions =
+        telemetry_sprite2_l2_evictions - boss_perf_start_l2_evictions;
+    telemetry_boss_perf_l2_raw_builds =
+        telemetry_sprite2_l2_raw_builds - boss_perf_start_l2_raw_builds;
+    telemetry_boss_perf_l2_fallbacks =
+        telemetry_sprite2_l2_rle_fallbacks - boss_perf_start_l2_fallbacks;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    telemetry_boss_perf_logic_updates =
+        telemetry_logic_updates - boss_perf_start_logic_updates;
+    telemetry_boss_perf_logic_cycles =
+        telemetry_stress_logic_cycles_total - boss_perf_start_logic_cycles;
+    telemetry_boss_perf_render_cycles =
+        telemetry_stress_render_cycles_total - boss_perf_start_render_cycles;
+    telemetry_boss_perf_collision_cycles =
+        telemetry_stress_collision_cycles_total -
+            boss_perf_start_collision_cycles;
+    telemetry_boss_perf_player_shot_update_cycles =
+        telemetry_player_shot_update_cycles_total -
+            boss_perf_start_player_shot_update_cycles;
+    telemetry_boss_perf_collision_candidate_visits =
+        source_parity_level.player_shot_collision_candidate_visit_count -
+            boss_perf_start_collision_candidate_visits;
+    telemetry_boss_perf_collision_hits =
+        source_parity_level.player_shot_collision_count -
+            boss_perf_start_collision_hits;
+    telemetry_boss_perf_shot_update_active_visits =
+        telemetry_player_shot_update_active_visits -
+            boss_perf_start_shot_update_active_visits;
+    telemetry_boss_perf_shot_update_linear_visits =
+        telemetry_player_shot_update_linear_visits -
+            boss_perf_start_shot_update_linear_visits;
+    telemetry_boss_perf_shot_update_trail_visits =
+        telemetry_player_shot_update_trail_visits -
+            boss_perf_start_shot_update_trail_visits;
+    telemetry_boss_perf_enemy_active_visits =
+        source_parity_level.enemy_pool_active_visits -
+            boss_perf_start_enemy_active_visits;
+    telemetry_boss_perf_projectile_hits =
+        telemetry_projectile_cache_hits - boss_perf_start_projectile_hits;
+    telemetry_boss_perf_effect_hits =
+        telemetry_effect_cache_hits - boss_perf_start_effect_hits;
+    telemetry_boss_perf_effect_misses =
+        telemetry_effect_cache_misses - boss_perf_start_effect_misses;
+    telemetry_boss_perf_presentation_completed =
+        telemetry_presentation_render_completed -
+            boss_perf_start_presentation_completed;
+    telemetry_boss_perf_presentation_deferred =
+        telemetry_presentation_render_deferred -
+            boss_perf_start_presentation_deferred;
+    telemetry_boss_perf_player_shot_spawns =
+        telemetry_player_shot_spawns - boss_perf_start_player_shot_spawns;
+    telemetry_boss_perf_filter_admission_denials =
+        telemetry_sprite2_filter_admission_denials -
+            boss_perf_start_filter_admission_denials;
+    telemetry_boss_perf_filter_fallback_hits =
+        telemetry_sprite2_filter_fallback_hits -
+            boss_perf_start_filter_fallback_hits;
+    telemetry_boss_perf_filter_fallback_builds =
+        telemetry_sprite2_filter_fallback_builds -
+            boss_perf_start_filter_fallback_builds;
+    telemetry_boss_perf_effect_oam_culls =
+        telemetry_effect_oam_culls - boss_perf_start_effect_oam_culls;
+    telemetry_boss_perf_player_shot_oam_culls =
+        telemetry_player_shot_oam_culls -
+            boss_perf_start_player_shot_oam_culls;
+    telemetry_boss_perf_enemy_kills =
+        source_parity_level.enemy_kill_count - boss_perf_start_enemy_kills;
+    telemetry_boss_perf_audio_frames =
+        telemetry_audio_frames - boss_perf_start_audio_frames;
+    telemetry_boss_perf_wall_vblanks =
+        telemetry_wall_vblanks - boss_perf_start_wall_vblanks;
+    telemetry_boss_perf_hit_apply_calls =
+        source_parity_level.collision_hit_apply_calls -
+            boss_perf_start_hit_apply_calls;
+    telemetry_boss_perf_status_link_visits =
+        source_parity_level.collision_status_link_visits -
+            boss_perf_start_status_link_visits;
+    telemetry_boss_perf_kill_group_visits =
+        source_parity_level.collision_kill_group_visits -
+            boss_perf_start_kill_group_visits;
+    telemetry_boss_perf_damaged_transition_visits =
+        source_parity_level.collision_damaged_transition_visits -
+            boss_perf_start_damaged_transition_visits;
+    telemetry_boss_perf_player_contact_visits =
+        source_parity_level.collision_player_contact_visits -
+            boss_perf_start_player_contact_visits;
+    telemetry_boss_perf_zinglon_visits =
+        source_parity_level.collision_zinglon_visits -
+            boss_perf_start_zinglon_visits;
+#endif
+}
+
+/*
+ * Keep the benchmark boundary on authoritative source ticks.  Detecting the
+ * links from render_source_boss_bars() made otherwise identical A/B builds
+ * start one tick apart whenever adaptive presentation skipped a frame.
+ */
+static void source_boss_perf_update_interval(void)
+{
     u8 had_link =
         source_parity_level.boss_bar_link[0] != 0 ||
         source_parity_level.boss_bar_link[1] != 0;
@@ -391,24 +506,83 @@ static void render_source_boss_bars(void)
         telemetry_boss_perf_start_position = level_position;
         boss_perf_start_display_frames = telemetry_display_frames;
         boss_perf_start_missed_vblanks = telemetry_missed_vblanks;
-        boss_perf_start_sprite2_misses =
-            telemetry_sprite2_cache_misses;
-        boss_perf_start_sprite2_evictions =
-            telemetry_sprite2_cache_evictions;
-        boss_perf_start_sprite2_upload_bytes =
-            telemetry_sprite2_upload_bytes;
-        boss_perf_start_projectile_misses =
-            telemetry_projectile_cache_misses;
+        boss_perf_start_sprite2_misses = telemetry_sprite2_cache_misses;
+        boss_perf_start_sprite2_evictions = telemetry_sprite2_cache_evictions;
+        boss_perf_start_sprite2_upload_bytes = telemetry_sprite2_upload_bytes;
+        boss_perf_start_projectile_misses = telemetry_projectile_cache_misses;
         boss_perf_start_l2_hits = telemetry_sprite2_l2_hits;
         boss_perf_start_l2_misses = telemetry_sprite2_l2_misses;
-        boss_perf_start_l2_evictions =
-            telemetry_sprite2_l2_evictions;
-        boss_perf_start_l2_raw_builds =
-            telemetry_sprite2_l2_raw_builds;
-        boss_perf_start_l2_fallbacks =
-            telemetry_sprite2_l2_rle_fallbacks;
+        boss_perf_start_l2_evictions = telemetry_sprite2_l2_evictions;
+        boss_perf_start_l2_raw_builds = telemetry_sprite2_l2_raw_builds;
+        boss_perf_start_l2_fallbacks = telemetry_sprite2_l2_rle_fallbacks;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        boss_perf_start_logic_updates = telemetry_logic_updates;
+        boss_perf_start_logic_cycles = telemetry_stress_logic_cycles_total;
+        boss_perf_start_render_cycles = telemetry_stress_render_cycles_total;
+        boss_perf_start_collision_cycles =
+            telemetry_stress_collision_cycles_total;
+        boss_perf_start_player_shot_update_cycles =
+            telemetry_player_shot_update_cycles_total;
+        boss_perf_start_collision_candidate_visits =
+            source_parity_level.player_shot_collision_candidate_visit_count;
+        boss_perf_start_collision_hits =
+            source_parity_level.player_shot_collision_count;
+        boss_perf_start_shot_update_active_visits =
+            telemetry_player_shot_update_active_visits;
+        boss_perf_start_shot_update_linear_visits =
+            telemetry_player_shot_update_linear_visits;
+        boss_perf_start_shot_update_trail_visits =
+            telemetry_player_shot_update_trail_visits;
+        boss_perf_start_enemy_active_visits =
+            source_parity_level.enemy_pool_active_visits;
+        boss_perf_start_projectile_hits = telemetry_projectile_cache_hits;
+        boss_perf_start_effect_hits = telemetry_effect_cache_hits;
+        boss_perf_start_effect_misses = telemetry_effect_cache_misses;
+        boss_perf_start_presentation_completed =
+            telemetry_presentation_render_completed;
+        boss_perf_start_presentation_deferred =
+            telemetry_presentation_render_deferred;
+        boss_perf_start_player_shot_spawns = telemetry_player_shot_spawns;
+        boss_perf_start_filter_admission_denials =
+            telemetry_sprite2_filter_admission_denials;
+        boss_perf_start_filter_fallback_hits =
+            telemetry_sprite2_filter_fallback_hits;
+        boss_perf_start_filter_fallback_builds =
+            telemetry_sprite2_filter_fallback_builds;
+        boss_perf_start_effect_oam_culls = telemetry_effect_oam_culls;
+        boss_perf_start_player_shot_oam_culls =
+            telemetry_player_shot_oam_culls;
+        boss_perf_start_enemy_kills = source_parity_level.enemy_kill_count;
+        boss_perf_start_audio_frames = telemetry_audio_frames;
+        boss_perf_start_wall_vblanks = telemetry_wall_vblanks;
+        boss_perf_start_hit_apply_calls =
+            source_parity_level.collision_hit_apply_calls;
+        boss_perf_start_status_link_visits =
+            source_parity_level.collision_status_link_visits;
+        boss_perf_start_kill_group_visits =
+            source_parity_level.collision_kill_group_visits;
+        boss_perf_start_damaged_transition_visits =
+            source_parity_level.collision_damaged_transition_visits;
+        boss_perf_start_player_contact_visits =
+            source_parity_level.collision_player_contact_visits;
+        boss_perf_start_zinglon_visits =
+            source_parity_level.collision_zinglon_visits;
+#endif
+    } else if (
+        telemetry_boss_perf_started &&
+        !telemetry_boss_perf_completed &&
+        !had_link
+    ) {
+        telemetry_boss_perf_completed = 1;
+        source_boss_perf_capture_interval();
     }
+}
 
+static void render_source_boss_bars(void)
+{
+    u8 armor[2];
+    u8 count = 0;
+    u8 index;
     for (index = 0; index < 2; index++) {
         u8 value = source_boss_bar_armor(index);
 
@@ -428,47 +602,5 @@ static void render_source_boss_bars(void)
             armor[1],
             TYRIAN_GBA_LAYOUT_BOSS_BAR_RIGHT_CENTER_X
         );
-    }
-    if (
-        telemetry_boss_perf_started &&
-        !telemetry_boss_perf_completed &&
-        source_parity_level.boss_bar_link[0] == 0 &&
-        source_parity_level.boss_bar_link[1] == 0
-    ) {
-        telemetry_boss_perf_completed = 1;
-        telemetry_boss_perf_end_position = level_position;
-        telemetry_boss_perf_display_frames =
-            telemetry_display_frames -
-            boss_perf_start_display_frames;
-        telemetry_boss_perf_missed_vblanks =
-            telemetry_missed_vblanks -
-            boss_perf_start_missed_vblanks;
-        telemetry_boss_perf_sprite2_misses =
-            telemetry_sprite2_cache_misses -
-            boss_perf_start_sprite2_misses;
-        telemetry_boss_perf_sprite2_evictions =
-            telemetry_sprite2_cache_evictions -
-            boss_perf_start_sprite2_evictions;
-        telemetry_boss_perf_sprite2_upload_bytes =
-            telemetry_sprite2_upload_bytes -
-            boss_perf_start_sprite2_upload_bytes;
-        telemetry_boss_perf_projectile_misses =
-            telemetry_projectile_cache_misses -
-            boss_perf_start_projectile_misses;
-        telemetry_boss_perf_l2_hits =
-            telemetry_sprite2_l2_hits -
-            boss_perf_start_l2_hits;
-        telemetry_boss_perf_l2_misses =
-            telemetry_sprite2_l2_misses -
-            boss_perf_start_l2_misses;
-        telemetry_boss_perf_l2_evictions =
-            telemetry_sprite2_l2_evictions -
-            boss_perf_start_l2_evictions;
-        telemetry_boss_perf_l2_raw_builds =
-            telemetry_sprite2_l2_raw_builds -
-            boss_perf_start_l2_raw_builds;
-        telemetry_boss_perf_l2_fallbacks =
-            telemetry_sprite2_l2_rle_fallbacks -
-            boss_perf_start_l2_fallbacks;
     }
 }

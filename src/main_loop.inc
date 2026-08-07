@@ -1406,6 +1406,13 @@ int main(void)
         } else {
             u8 logic_updates_this_loop = 0;
             u8 rendered_this_loop = 0;
+#if defined(AUTOTEST_FULL_LOADOUT_STRESS) && \
+    AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION != 0
+            u8 stress_fast_forward_this_loop = 0;
+#endif
+#if TYRIAN_GBA_WALL_CLOCK_LOGIC
+            u8 logic_update_limit = PRESENTATION_MAX_CATCHUP_TICKS;
+#endif
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
             u8 game_state_before_logic = game_state;
 #endif
@@ -1432,8 +1439,33 @@ int main(void)
 #endif
             } else {
 #if TYRIAN_GBA_WALL_CLOCK_LOGIC
+#if defined(AUTOTEST_FULL_LOADOUT_STRESS) && \
+    AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION != 0
+                if (
+                    game_state == STATE_PLAY &&
+                    level_position <
+                        AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION
+                ) {
+                    /*
+                     * Test-only source-tick fast-forward.  Every gameplay
+                     * update and authored event still runs in order; only
+                     * presentation between those ticks is omitted.  Once
+                     * the requested position is reached, the ordinary
+                     * wall-clock scheduler resumes before the measured
+                     * Boss interval.
+                     */
+                    logic_accumulator +=
+                        TYRIAN_GBA_LOGIC_DENOMINATOR *
+                        AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS;
+                    logic_update_limit =
+                        AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS;
+                    stress_fast_forward_this_loop = 1;
+                } else
+#endif
+                {
                 logic_accumulator +=
                     vblank_steps * TYRIAN_GBA_LOGIC_NUMERATOR;
+                }
 #else
                 logic_accumulator += TYRIAN_GBA_LOGIC_NUMERATOR;
 #endif
@@ -1443,7 +1475,7 @@ int main(void)
 #if TYRIAN_GBA_WALL_CLOCK_LOGIC
                     &&
                     logic_updates_this_loop <
-                        PRESENTATION_MAX_CATCHUP_TICKS
+                        logic_update_limit
 #else
                     &&
                     logic_updates_this_loop == 0
@@ -1479,6 +1511,7 @@ int main(void)
                         &telemetry_stress_logic_cycles_max
                     );
 #endif
+                    source_boss_perf_update_interval();
                     logic_updates_this_loop++;
                     /*
                      * keysDown() describes one physical sample, not every
@@ -1613,6 +1646,52 @@ int main(void)
                     telemetry_logic_updates_per_loop_max =
                         logic_updates_this_loop;
                 }
+#if defined(AUTOTEST_FULL_LOADOUT_STRESS) && \
+    AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION != 0 && \
+    TYRIAN_GBA_RECOVER_MISSED_VBLANK
+                if (
+                    stress_fast_forward_this_loop &&
+                    level_position >=
+                        AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION
+                ) {
+                    u32 newest_vblank = telemetry_vblank_irqs;
+
+                    /*
+                     * Discard only the artificial pre-measurement LCD
+                     * backlog.  Without this resynchronisation the normal
+                     * scheduler would spend the Boss warm-up replaying
+                     * thousands of stale recovery loops and never render.
+                     * Gameplay state is untouched: all source ticks and
+                     * events above have already executed in order.
+                     */
+                    if (newest_vblank > vblank_irq_latch_consumed) {
+                        IntrWait(0, IRQ_VBLANK);
+                        newest_vblank = telemetry_vblank_irqs;
+                    }
+                    last_vblank_seen = newest_vblank;
+                    vblank_irq_latch_consumed = newest_vblank;
+                    audio_vblank_seen = newest_vblank;
+                    logic_accumulator %= TYRIAN_GBA_LOGIC_DENOMINATOR;
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                    presentation_render_ewma = 133630u;
+                    presentation_render_deviation = 8192u;
+                    presentation_render_estimate =
+                        PRESENTATION_INITIAL_RENDER_ESTIMATE;
+                    presentation_render_pending = 0;
+                    presentation_pending_logic_ticks = 0;
+                    presentation_release_held_window = 0;
+#if TYRIAN_GBA_ADAPTIVE_PRESENTATION_DISPATCH
+                    presentation_adaptive_dispatch_active = 0;
+                    presentation_adaptive_dispatch_severe = 0;
+                    presentation_adaptive_dispatch_pressure = 0;
+                    presentation_adaptive_dispatch_recovery_ticks = 0;
+                    presentation_adaptive_dispatch_idle_render = 0;
+                    presentation_adaptive_dispatch_missed_baseline =
+                        telemetry_missed_vblanks;
+#endif
+#endif
+                }
+#endif
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
                 if (
                     presentation_render_pending &&
@@ -1691,6 +1770,19 @@ int main(void)
             telemetry_display_frames++;
 #ifdef AUTOTEST
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+#if AUTOTEST_FULL_LOADOUT_STRESS_BOSS_WINDOW_VBLANKS != 0
+            if (
+                telemetry_boss_perf_completed ||
+                (
+                    telemetry_boss_perf_started &&
+                    telemetry_display_frames -
+                        boss_perf_start_display_frames >=
+                            AUTOTEST_FULL_LOADOUT_STRESS_BOSS_WINDOW_VBLANKS
+                )
+            ) {
+                autotest_full_loadout_stress_finish();
+            }
+#else
             if (
                 game_state == STATE_PLAY &&
 #if AUTOTEST_FULL_LOADOUT_STRESS_END_POSITION != 0
@@ -1708,6 +1800,7 @@ int main(void)
             ) {
                 autotest_full_loadout_stress_finish();
             }
+#endif
 #endif
             if (
                 autotest_running &&

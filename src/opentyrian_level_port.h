@@ -31,6 +31,19 @@
 #error TYRIAN_GBA_ENEMY_ACTIVE_MASK must be 0 or 1
 #endif
 
+/* Reuse the exact enemy directory for linked-hit and player-contact scans. */
+#ifndef TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY
+#define TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY 1
+#endif
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY != 0 && \
+    TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY != 1
+#error TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY must be 0 or 1
+#endif
+#define TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED ( \
+    TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY && \
+    TYRIAN_GBA_ENEMY_ACTIVE_MASK \
+)
+
 /*
  * Measured collision-kernel experiments.  They are separate from the
  * active-mask semantic switch so the deterministic full-loadout harness can
@@ -69,10 +82,34 @@
     TYRIAN_GBA_COLLISION_PACKED_CALL != 1
 #error TYRIAN_GBA_COLLISION_PACKED_CALL must be 0 or 1
 #endif
+
+/*
+ * Build one compact, source-exact collision record per active enemy at the
+ * beginning of the player-shot phase.  The ARM miss path then reads two
+ * adjacent EWRAM words instead of four fields spread across a 134-byte
+ * OtEnemy record.  Hit-side gameplay remains in the authoritative C path.
+ */
+#ifndef TYRIAN_GBA_COLLISION_SNAPSHOT
+#define TYRIAN_GBA_COLLISION_SNAPSHOT ( \
+    TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
+    TYRIAN_GBA_COLLISION_MASK_FAST_PATH \
+)
+#endif
+#if TYRIAN_GBA_COLLISION_SNAPSHOT != 0 && \
+    TYRIAN_GBA_COLLISION_SNAPSHOT != 1
+#error TYRIAN_GBA_COLLISION_SNAPSHOT must be 0 or 1
+#endif
 #if TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
     !TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
 #error TYRIAN_GBA_COLLISION_MASK_FAST_PATH requires the active mask
 #endif
+#define TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED ( \
+    TYRIAN_GBA_COLLISION_SNAPSHOT && \
+    TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
+    TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
+    TYRIAN_GBA_COLLISION_LAZY_RESULT && \
+    !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE \
+)
 
 enum {
     OT_LOGICAL_SCREEN_WIDTH = 320,
@@ -261,6 +298,18 @@ typedef struct {
     uint32_t cash_awarded;
     OtHitEffect effects[OT_HIT_EFFECT_COUNT];
 } OtShotCollisionResult;
+
+/*
+ * Exact compact form of the four fields used by player-shot AABB tests.
+ * y already includes the source enemycycle-dependent -12/-6 adjustment;
+ * radius_x/radius_y retain the strict source bounds 25/29 or 13/15.
+ */
+typedef struct {
+    int16_t x;
+    int16_t y;
+    uint16_t radius_x;
+    uint16_t radius_y;
+} OtPlayerShotCollisionSnapshot;
 
 enum {
     OT_PICKUP_MESSAGE_NONE = 0,
@@ -551,6 +600,11 @@ typedef struct {
     uint32_t high_value_pickup_count;
     uint32_t death_control_event_count;
     uint32_t death_assignment_count;
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    /* Cold relative to OtEnemy, hot and tightly packed during shot scans. */
+    OtPlayerShotCollisionSnapshot
+        player_shot_collision_snapshot[OT_ENEMY_COUNT];
+#endif
 #if TYRIAN_GBA_ENEMY_ACTIVE_MASK
     /* Runtime-only directory; enemy_avail[] remains authoritative. */
     uint32_t enemy_active_mask[4];
@@ -560,6 +614,12 @@ typedef struct {
     uint32_t enemy_pool_linear_visits;
     uint32_t enemy_allocator_mask_word_probes;
     uint32_t enemy_allocator_slot_probes;
+    uint32_t collision_hit_apply_calls;
+    uint32_t collision_status_link_visits;
+    uint32_t collision_kill_group_visits;
+    uint32_t collision_damaged_transition_visits;
+    uint32_t collision_player_contact_visits;
+    uint32_t collision_zinglon_visits;
 #endif
 } OtLevelPortState;
 
@@ -682,17 +742,43 @@ ot_level_port_collide_player_shot_packed_generic_asm(
     OtShotCollisionResult *result,
     uint32_t damage_and_radii
 );
+IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_snapshot_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
+IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
 #if \
     TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
     TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
     TYRIAN_GBA_COLLISION_LAZY_RESULT && \
     !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+#define ot_level_port_collide_player_shot_packed \
+    ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
+#else
+#define ot_level_port_collide_player_shot_packed \
+    ot_level_port_collide_player_shot_packed_snapshot_asm
+#endif
+#else
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
 #define ot_level_port_collide_player_shot_packed \
     ot_level_port_collide_player_shot_packed_instrumented_asm
 #else
 #define ot_level_port_collide_player_shot_packed \
     ot_level_port_collide_player_shot_packed_asm
+#endif
 #endif
 #else
 #define ot_level_port_collide_player_shot_packed \

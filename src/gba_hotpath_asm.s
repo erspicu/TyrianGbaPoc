@@ -717,6 +717,181 @@ ot_level_port_collide_player_shot_packed_instrumented_asm:
 	.byte   26, 12, 18, 6, 11, 5, 10, 9
 	.ltorg
 
+	/* The snapshot kernel is independently garbage-collectable from v35. */
+	.section .iwram, "ax", %progbits, unique, 3
+	.align 2
+	.global ot_level_port_collide_player_shot_packed_snapshot_asm
+	.global ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
+	.type ot_level_port_collide_player_shot_packed_snapshot_asm, %function
+	.type ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm, \
+		%function
+/*
+ * Source-exact packed collision over an 8-byte EWRAM snapshot per enemy.
+ * The phase builder has folded ex+mapoffset and enemycycle's Y/radius choice
+ * into two adjacent words.  Misses therefore avoid four sparse loads from
+ * the 134-byte OtEnemy array; every true hit still enters the reviewed C
+ * mutation path and then re-reads the live mask in source slot order.
+ */
+ot_level_port_collide_player_shot_packed_snapshot_asm:
+	cmp     r3, #0
+	bxeq    lr
+	stmfd   sp!, {r4-r11, lr}
+	mov     r5, #0x80000000
+	b       .Lpacked_snapshot_setup
+
+ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm:
+	cmp     r3, #0
+	bxeq    lr
+	stmfd   sp!, {r4-r11, lr}
+	mov     r5, #0
+
+.Lpacked_snapshot_setup:
+	/* 12 local bytes restore 8-byte AAPCS alignment after the 36-byte save. */
+	sub     sp, sp, #12
+	str     r3, [sp, #0]
+	mov     r4, r0
+	mov     r0, #0
+	strb    r0, [r3, #OT_ASM_RESULT_COLLIDED_OFFSET]
+	cmp     r4, #0
+	beq     .Lpacked_snapshot_return
+
+	ldr     r12, [sp, #48]
+	str     r12, [sp, #4]
+	mov     r6, r12, lsr #8
+	and     r6, r6, #0xff
+	mov     r7, r12, lsr #16
+	and     r7, r7, #0xff
+	mov     r8, r2, lsl #16
+	mov     r8, r8, asr #16
+	mov     r10, r1, lsl #16
+	mov     r10, r10, asr #16
+	ldr     r3, =OT_ASM_STATE_COLLISION_SNAPSHOT_OFFSET
+	add     r3, r4, r3
+	str     r3, [sp, #8]
+	mov     r11, #0
+
+.Lpacked_snapshot_mask:
+	mov     r3, r11, lsr #5
+	/* state + 13652 + word_index * 4; split for ARM immediates. */
+	add     r2, r3, #3408
+	add     r2, r2, #4
+	add     r2, r4, r2, lsl #2
+	ldr     r9, [r2, #4]
+	and     r1, r11, #31
+	mvn     r0, #0
+	ands    r9, r9, r0, lsl r1
+	beq     .Lpacked_snapshot_next_word
+
+.Lpacked_snapshot_extract_candidate:
+	/* Ascending ctz; clear the candidate locally until a hit mutates mask. */
+	rsb     r1, r9, #0
+	and     r2, r9, r1
+	bic     r9, r9, r2
+	ldr     r0, =0x077cb531
+	mul     r1, r0, r2
+	adr     r0, .Lpacked_snapshot_debruijn_index
+	bic     r12, r11, #31
+	ldrb    r11, [r0, r1, lsr #27]
+	add     r11, r11, r12
+	and     r11, r11, #0xff
+	cmp     r11, #99
+	bhi     .Lpacked_snapshot_done
+	add     r5, r5, #1
+
+	/* Two sequential EWRAM words: {s16 x,s16 y,u16 rx,u16 ry}. */
+	ldr     r2, [sp, #8]
+	add     r2, r2, r11, lsl #3
+	ldmia   r2, {r0, r1}
+
+	/* Strict source X test: abs((s16)(x-shot_x-rw)) < base_rx+rw. */
+	mov     r2, r0, lsl #16
+	mov     r2, r2, asr #16
+	sub     r2, r2, r10
+	sub     r2, r2, r6
+	mov     r2, r2, lsl #16
+	mov     r2, r2, asr #16
+	cmp     r2, #0
+	rsblt   r2, r2, #0
+	movlt   r2, r2, lsl #16
+	movlt   r2, r2, asr #16
+	mov     r3, r1, lsl #16
+	mov     r3, r3, lsr #16
+	add     r3, r3, r6
+	cmp     r3, r2
+	ble     .Lpacked_snapshot_miss
+
+	/* Strict source Y test; snapshot y already includes -12 or -6. */
+	mov     r2, r0, asr #16
+	sub     r2, r2, r8
+	sub     r2, r2, r7
+	mov     r2, r2, lsl #16
+	mov     r2, r2, asr #16
+	cmp     r2, #0
+	rsblt   r2, r2, #0
+	movlt   r2, r2, lsl #16
+	movlt   r2, r2, asr #16
+	mov     r3, r1, lsr #16
+	add     r3, r3, r7
+	cmp     r3, r2
+	ble     .Lpacked_snapshot_miss
+
+.Lpacked_snapshot_hit:
+	mov     r0, r4
+	mov     r1, r11
+	mov     r2, r10
+	mov     r3, r8
+	bl      ot_player_shot_collision_apply_hit_c
+	cmp     r0, #0
+	bne     .Lpacked_snapshot_done
+	/* A hit can release/spawn/change linked candidates; re-read live state. */
+	add     r11, r11, #1
+	and     r11, r11, #0xff
+	cmp     r11, #100
+	blo     .Lpacked_snapshot_mask
+	b       .Lpacked_snapshot_done
+
+.Lpacked_snapshot_miss:
+	cmp     r9, #0
+	bne     .Lpacked_snapshot_extract_candidate
+	bic     r11, r11, #31
+	add     r11, r11, #32
+	cmp     r11, #99
+	bls     .Lpacked_snapshot_mask
+	b       .Lpacked_snapshot_done
+
+.Lpacked_snapshot_next_word:
+	add     r3, r3, #1
+	mov     r3, r3, lsl #5
+	and     r11, r3, #0xff
+	cmp     r11, #99
+	bls     .Lpacked_snapshot_mask
+
+.Lpacked_snapshot_done:
+	tst     r5, #0x80000000
+	bne     .Lpacked_snapshot_return
+	add     r0, r4, #0x4000
+	ldr     r3, [r0, #(OT_ASM_STATE_CANDIDATE_VISITS_OFFSET - 0x4000)]
+	add     r3, r3, r5
+	str     r3, [r0, #(OT_ASM_STATE_CANDIDATE_VISITS_OFFSET - 0x4000)]
+
+.Lpacked_snapshot_return:
+	add     sp, sp, #12
+	ldmfd   sp!, {r4-r11, lr}
+	bx      lr
+
+	.size ot_level_port_collide_player_shot_packed_snapshot_asm, \
+		.-ot_level_port_collide_player_shot_packed_snapshot_asm
+	.size ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm, \
+		.-ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
+
+	.align 2
+.Lpacked_snapshot_debruijn_index:
+	.byte   0, 1, 28, 2, 29, 14, 24, 3
+	.byte   30, 22, 20, 15, 25, 17, 4, 8
+	.byte   31, 27, 13, 23, 21, 19, 16, 7
+	.byte   26, 12, 18, 6, 11, 5, 10, 9
+	.ltorg
+
 	.section .iwram, "ax", %progbits, unique, 2
 	.align 2
 	.global ot_level_port_collide_player_shot_packed_generic_asm

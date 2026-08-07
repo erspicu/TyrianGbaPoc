@@ -637,6 +637,29 @@ static inline uint8_t ot_enemy_mask_lowest_set_bit(uint32_t bits)
 }
 #endif
 
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+static inline void ot_level_port_refresh_player_shot_collision_snapshot(
+    OtLevelPortState *state,
+    uint8_t enemy_index
+)
+{
+    const OtEnemy *enemy = &state->enemy[enemy_index];
+    OtPlayerShotCollisionSnapshot *snapshot =
+        &state->player_shot_collision_snapshot[enemy_index];
+
+    snapshot->x = (int16_t)(enemy->ex + enemy->mapoffset);
+    if (enemy->enemycycle == 0) {
+        snapshot->y = (int16_t)(enemy->ey - 12);
+        snapshot->radius_x = 25;
+        snapshot->radius_y = 29;
+    } else {
+        snapshot->y = (int16_t)(enemy->ey - 6);
+        snapshot->radius_x = 13;
+        snapshot->radius_y = 15;
+    }
+}
+#endif
+
 void ot_level_port_set_enemy_avail(
     OtLevelPortState *state,
     uint8_t enemy_index,
@@ -655,6 +678,14 @@ void ot_level_port_set_enemy_avail(
     }
 #endif
     ot_player_shot_collision_mask_set(state, enemy_index, avail == 0);
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    if (avail == 0 && state->player_shot_collision_mask_active) {
+        ot_level_port_refresh_player_shot_collision_snapshot(
+            state,
+            enemy_index
+        );
+    }
+#endif
 }
 
 #if TYRIAN_GBA_ENEMY_ACTIVE_MASK
@@ -691,6 +722,36 @@ static inline bool ot_next_active_enemy_in_pool(
     }
     return false;
 }
+
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+static inline bool ot_next_active_enemy_for_collision(
+    const OtLevelPortState *state,
+    uint8_t *cursor,
+    uint8_t *enemy_index
+)
+{
+    uint8_t search = *cursor;
+
+    while (search < OT_ENEMY_COUNT) {
+        uint8_t word = (uint8_t)(search >> 5);
+        uint32_t candidates = state->enemy_active_mask[word] &
+            (UINT32_MAX << (search & 31u));
+
+        if (candidates != 0) {
+            uint8_t candidate = (uint8_t)(
+                (word << 5) + ot_enemy_mask_lowest_set_bit(candidates)
+            );
+
+            if (candidate >= OT_ENEMY_COUNT) return false;
+            *enemy_index = candidate;
+            *cursor = (uint8_t)(candidate + 1u);
+            return true;
+        }
+        search = (uint8_t)((word + 1u) << 5);
+    }
+    return false;
+}
+#endif
 
 static inline uint8_t ot_find_free_enemy_in_pool(
     OtLevelPortState *state,

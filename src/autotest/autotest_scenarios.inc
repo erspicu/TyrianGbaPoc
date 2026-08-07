@@ -58,6 +58,12 @@ static u32 autotest_enemy_pool_active_visits_snapshot EWRAM_BSS;
 static u32 autotest_enemy_pool_linear_visits_snapshot EWRAM_BSS;
 static u32 autotest_enemy_allocator_mask_probes_snapshot EWRAM_BSS;
 static u32 autotest_enemy_allocator_slot_probes_snapshot EWRAM_BSS;
+static u32 autotest_collision_hit_apply_calls_snapshot EWRAM_BSS;
+static u32 autotest_collision_status_link_visits_snapshot EWRAM_BSS;
+static u32 autotest_collision_kill_group_visits_snapshot EWRAM_BSS;
+static u32 autotest_collision_damaged_transition_visits_snapshot EWRAM_BSS;
+static u32 autotest_collision_player_contact_visits_snapshot EWRAM_BSS;
+static u32 autotest_collision_zinglon_visits_snapshot EWRAM_BSS;
 
 static u32 autotest_enemy_pool_mask_consistency(void)
 {
@@ -1246,6 +1252,9 @@ static void autotest_full_loadout_stress_finish(void)
     u8 active_shots = 0;
     u8 index;
 
+    /* Capture an in-progress Boss window at an exact stress stop point. */
+    source_boss_perf_capture_interval();
+
     /*
      * The packed-collision differential test below deliberately reuses and
      * clears source_parity_level.  Preserve gameplay-only enemy-directory
@@ -1262,6 +1271,18 @@ static void autotest_full_loadout_stress_finish(void)
         source_parity_level.enemy_allocator_mask_word_probes;
     autotest_enemy_allocator_slot_probes_snapshot =
         source_parity_level.enemy_allocator_slot_probes;
+    autotest_collision_hit_apply_calls_snapshot =
+        source_parity_level.collision_hit_apply_calls;
+    autotest_collision_status_link_visits_snapshot =
+        source_parity_level.collision_status_link_visits;
+    autotest_collision_kill_group_visits_snapshot =
+        source_parity_level.collision_kill_group_visits;
+    autotest_collision_damaged_transition_visits_snapshot =
+        source_parity_level.collision_damaged_transition_visits;
+    autotest_collision_player_contact_visits_snapshot =
+        source_parity_level.collision_player_contact_visits;
+    autotest_collision_zinglon_visits_snapshot =
+        source_parity_level.collision_zinglon_visits;
 
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (player_shots[index].active) active_shots++;
@@ -1678,6 +1699,76 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(9172, telemetry_player_shot_update_trail_visits);
     sram_write_u32(9176, telemetry_player_shot_update_aimed_visits);
     sram_write_u32(9180, telemetry_player_shot_update_superpixel_visits);
+    /* Additive v88 focused Boss-window diagnostics. */
+    sram_write_u32(
+        9184,
+        AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION
+    );
+    sram_write_u32(9188, AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS);
+    sram_write_u32(
+        9192,
+        AUTOTEST_FULL_LOADOUT_STRESS_BOSS_WINDOW_VBLANKS
+    );
+    sram_write_u32(9196, telemetry_boss_perf_started);
+    sram_write_u32(9200, telemetry_boss_perf_completed);
+    sram_write_u32(9204, telemetry_boss_perf_start_position);
+    sram_write_u32(9208, telemetry_boss_perf_end_position);
+    sram_write_u32(9212, telemetry_boss_perf_display_frames);
+    sram_write_u32(9216, telemetry_boss_perf_missed_vblanks);
+    sram_write_u32(9220, telemetry_boss_perf_logic_updates);
+    sram_write_u32(9224, telemetry_boss_perf_logic_cycles);
+    sram_write_u32(9228, telemetry_boss_perf_render_cycles);
+    sram_write_u32(9232, telemetry_boss_perf_collision_cycles);
+    sram_write_u32(9236, telemetry_boss_perf_player_shot_update_cycles);
+    sram_write_u32(9240, telemetry_boss_perf_collision_candidate_visits);
+    sram_write_u32(9244, telemetry_boss_perf_collision_hits);
+    sram_write_u32(9248, telemetry_boss_perf_shot_update_active_visits);
+    sram_write_u32(9252, telemetry_boss_perf_shot_update_linear_visits);
+    sram_write_u32(9256, telemetry_boss_perf_shot_update_trail_visits);
+    sram_write_u32(9260, telemetry_boss_perf_enemy_active_visits);
+    sram_write_u32(9264, telemetry_boss_perf_projectile_hits);
+    sram_write_u32(9268, telemetry_boss_perf_projectile_misses);
+    sram_write_u32(9272, telemetry_boss_perf_effect_hits);
+    sram_write_u32(9276, telemetry_boss_perf_effect_misses);
+    sram_write_u32(9280, telemetry_boss_perf_presentation_completed);
+    sram_write_u32(9284, telemetry_boss_perf_presentation_deferred);
+    sram_write_u32(9288, telemetry_boss_perf_player_shot_spawns);
+    sram_write_u32(9292, telemetry_boss_perf_sprite2_misses);
+    sram_write_u32(9296, telemetry_boss_perf_sprite2_evictions);
+    sram_write_u32(9300, telemetry_boss_perf_sprite2_upload_bytes);
+    sram_write_u32(9304, telemetry_boss_perf_l2_hits);
+    sram_write_u32(9308, telemetry_boss_perf_l2_misses);
+    sram_write_u32(9312, telemetry_boss_perf_filter_admission_denials);
+    sram_write_u32(9316, telemetry_boss_perf_filter_fallback_hits);
+    sram_write_u32(9320, telemetry_boss_perf_filter_fallback_builds);
+    sram_write_u32(9324, telemetry_boss_perf_effect_oam_culls);
+    sram_write_u32(9328, telemetry_boss_perf_player_shot_oam_culls);
+    sram_write_u32(9332, telemetry_boss_perf_enemy_kills);
+    sram_write_u32(9336, telemetry_boss_perf_audio_frames);
+    sram_write_u32(9340, telemetry_boss_perf_wall_vblanks);
+    sram_write_u32(9344, TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED);
+    sram_write_u32(
+        9348,
+        TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    );
+    sram_write_u32(9352, autotest_collision_hit_apply_calls_snapshot);
+    sram_write_u32(9356, autotest_collision_status_link_visits_snapshot);
+    sram_write_u32(9360, autotest_collision_kill_group_visits_snapshot);
+    sram_write_u32(
+        9364,
+        autotest_collision_damaged_transition_visits_snapshot
+    );
+    sram_write_u32(
+        9368,
+        autotest_collision_player_contact_visits_snapshot
+    );
+    sram_write_u32(9372, autotest_collision_zinglon_visits_snapshot);
+    sram_write_u32(9376, telemetry_boss_perf_hit_apply_calls);
+    sram_write_u32(9380, telemetry_boss_perf_status_link_visits);
+    sram_write_u32(9384, telemetry_boss_perf_kill_group_visits);
+    sram_write_u32(9388, telemetry_boss_perf_damaged_transition_visits);
+    sram_write_u32(9392, telemetry_boss_perf_player_contact_visits);
+    sram_write_u32(9396, telemetry_boss_perf_zinglon_visits);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

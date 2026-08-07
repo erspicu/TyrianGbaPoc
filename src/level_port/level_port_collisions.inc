@@ -53,6 +53,40 @@ _Static_assert(
     ) == OT_ASM_STATE_CANDIDATE_VISITS_OFFSET,
     "OtLevelPortState collision visits ARM offset"
 );
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+_Static_assert(
+    sizeof(OtPlayerShotCollisionSnapshot) ==
+        OT_ASM_COLLISION_SNAPSHOT_SIZE,
+    "collision snapshot ARM size"
+);
+_Static_assert(
+    __builtin_offsetof(OtPlayerShotCollisionSnapshot, x) ==
+        OT_ASM_COLLISION_SNAPSHOT_X_OFFSET,
+    "collision snapshot x ARM offset"
+);
+_Static_assert(
+    __builtin_offsetof(OtPlayerShotCollisionSnapshot, y) ==
+        OT_ASM_COLLISION_SNAPSHOT_Y_OFFSET,
+    "collision snapshot y ARM offset"
+);
+_Static_assert(
+    __builtin_offsetof(OtPlayerShotCollisionSnapshot, radius_x) ==
+        OT_ASM_COLLISION_SNAPSHOT_RADIUS_X_OFFSET,
+    "collision snapshot radius-x ARM offset"
+);
+_Static_assert(
+    __builtin_offsetof(OtPlayerShotCollisionSnapshot, radius_y) ==
+        OT_ASM_COLLISION_SNAPSHOT_RADIUS_Y_OFFSET,
+    "collision snapshot radius-y ARM offset"
+);
+_Static_assert(
+    __builtin_offsetof(
+        OtLevelPortState,
+        player_shot_collision_snapshot
+    ) == OT_ASM_STATE_COLLISION_SNAPSHOT_OFFSET,
+    "OtLevelPortState collision snapshot ARM offset"
+);
+#endif
 _Static_assert(
     sizeof(OtShotCollisionResult) == OT_ASM_RESULT_SIZE,
     "OtShotCollisionResult ARM size"
@@ -225,6 +259,17 @@ static void ot_spawn_death_enemy(
     child->scoreitem = child->evalue != 0;
     child->ex = dead->ex;
     child->ey = dead->ey;
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    if (
+        state->player_shot_collision_mask_active &&
+        state->enemy_avail[created - 1] == 0
+    ) {
+        ot_level_port_refresh_player_shot_collision_snapshot(
+            state,
+            (uint8_t)(created - 1)
+        );
+    }
+#endif
 }
 
 static void ot_credit_destroyed_enemy(
@@ -281,6 +326,12 @@ ot_kill_enemy_group(
 {
     uint8_t index;
     uint8_t target_link = state->enemy[hit_index].linknum;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    uint8_t cursor = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    uint32_t visits = 0;
+#endif
 
     if (target_link == 0) target_link = 255;
     /*
@@ -300,10 +351,19 @@ ot_kill_enemy_group(
     ) {
         state->super_enemy_254_jump_count++;
     }
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    while (ot_next_active_enemy_for_collision(state, &cursor, &index)) {
+#else
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
+#endif
         OtEnemy *enemy;
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        visits++;
+#endif
+#if !TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
         if (state->enemy_avail[index] == 1) continue;
+#endif
         enemy = &state->enemy[index];
         if (
             index != hit_index &&
@@ -359,6 +419,9 @@ ot_kill_enemy_group(
         }
         result->kill_count++;
     }
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->collision_kill_group_visits += visits;
+#endif
 }
 
 static ARM_CODE __attribute__((noinline, noclone)) void
@@ -370,13 +433,28 @@ ot_apply_damaged_transition(
 )
 {
     uint8_t index;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    uint8_t cursor = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    uint32_t visits = 0;
+#endif
 
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    while (ot_next_active_enemy_for_collision(state, &cursor, &index)) {
+#else
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
+#endif
         OtEnemy *enemy;
         uint8_t link;
         bool matches;
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        visits++;
+#endif
+#if !TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
         if (state->enemy_avail[index] == 1) continue;
+#endif
         enemy = &state->enemy[index];
         link = enemy->linknum;
         matches =
@@ -430,45 +508,21 @@ ot_apply_damaged_transition(
             enemy->enemyground,
             enemy->size == 1 ? (uint8_t)(enemy->explonum / 2u) : 0
         );
-    }
-}
-
-ARM_CODE __attribute__((noinline, noclone)) void
-ot_level_port_begin_player_shot_collision_phase(
-    OtLevelPortState *state
-)
-{
-#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
-#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
-    uint8_t index;
-#endif
-
-    if (state == 0) return;
-#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
-    state->player_shot_collision_active_mask[0] = 0;
-    state->player_shot_collision_active_mask[1] = 0;
-    state->player_shot_collision_active_mask[2] = 0;
-    state->player_shot_collision_active_mask[3] = 0;
-    for (index = 0; index < OT_ENEMY_COUNT; index++) {
-        if (state->enemy_avail[index] == 0) {
-            state->player_shot_collision_active_mask[index >> 5] |=
-                1u << (index & 31);
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+        if (
+            state->player_shot_collision_mask_active &&
+            state->enemy_avail[index] == 0
+        ) {
+            ot_level_port_refresh_player_shot_collision_snapshot(
+                state,
+                index
+            );
         }
+#endif
     }
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->collision_damaged_transition_visits += visits;
 #endif
-    state->player_shot_collision_mask_active = true;
-    state->player_shot_collision_mask_rebuild_count++;
-#else
-    (void)state;
-#endif
-}
-
-void ot_level_port_end_player_shot_collision_phase(
-    OtLevelPortState *state
-)
-{
-    if (state == 0) return;
-    state->player_shot_collision_mask_active = false;
 }
 
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
@@ -491,7 +545,70 @@ static inline uint8_t ot_collision_lowest_set_bit(uint32_t bits)
     ];
 }
 #endif
+#endif
 
+ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_begin_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    uint8_t index;
+#endif
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    uint8_t word_index;
+#endif
+
+    if (state == 0) return;
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    state->player_shot_collision_active_mask[0] = 0;
+    state->player_shot_collision_active_mask[1] = 0;
+    state->player_shot_collision_active_mask[2] = 0;
+    state->player_shot_collision_active_mask[3] = 0;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        if (state->enemy_avail[index] == 0) {
+            state->player_shot_collision_active_mask[index >> 5] |=
+                1u << (index & 31);
+        }
+    }
+#endif
+    state->player_shot_collision_mask_active = true;
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    for (word_index = 0; word_index < 4; word_index++) {
+        uint32_t candidates =
+            state->player_shot_collision_active_mask[word_index];
+
+        while (candidates != 0) {
+            uint8_t index = (uint8_t)(
+                (word_index << 5) +
+                ot_collision_lowest_set_bit(candidates)
+            );
+
+            if (index >= OT_ENEMY_COUNT) break;
+            ot_level_port_refresh_player_shot_collision_snapshot(
+                state,
+                index
+            );
+            candidates &= candidates - 1u;
+        }
+    }
+#endif
+    state->player_shot_collision_mask_rebuild_count++;
+#else
+    (void)state;
+#endif
+}
+
+void ot_level_port_end_player_shot_collision_phase(
+    OtLevelPortState *state
+)
+{
+    if (state == 0) return;
+    state->player_shot_collision_mask_active = false;
+}
+
+#if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
 /*
  * Return collision candidates in the same ascending slot order as the
  * original 0..99 loop.  The live mask is re-read after every candidate:
@@ -573,12 +690,32 @@ ot_level_port_player_shot_overlaps(
             &index
         )
     ) {
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+        const OtPlayerShotCollisionSnapshot *snapshot;
+#else
         const OtEnemy *enemy;
+#endif
 
         visits++;
 #if !TYRIAN_GBA_COLLISION_MASK_FAST_PATH
         if (state->enemy_avail[index] != 0) continue;
 #endif
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+        snapshot = &state->player_shot_collision_snapshot[index];
+        if (
+            ot_player_shot_axis_overlaps(
+                (int16_t)(snapshot->x - shot_x),
+                snapshot->radius_x
+            ) &&
+            ot_player_shot_axis_overlaps(
+                (int16_t)(snapshot->y - shot_y),
+                snapshot->radius_y
+            )
+        ) {
+            ot_record_player_shot_collision_visits(state, visits);
+            return true;
+        }
+#else
         enemy = &state->enemy[index];
         if (
             (
@@ -613,6 +750,7 @@ ot_level_port_player_shot_overlaps(
             ot_record_player_shot_collision_visits(state, visits);
             return true;
         }
+#endif
     }
     ot_record_player_shot_collision_visits(state, visits);
 #else
@@ -672,16 +810,37 @@ static void ot_apply_player_shot_status(
     if (enemy->enemyground) enemy->filter = blast_filter;
     if (target_link != 255) {
         uint8_t linked_index;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+        uint8_t cursor = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        uint32_t visits = 0;
+#endif
 
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+        while (
+            ot_next_active_enemy_for_collision(
+                state,
+                &cursor,
+                &linked_index
+            )
+        ) {
+#else
         for (
             linked_index = 0;
             linked_index < OT_ENEMY_COUNT;
             linked_index++
         ) {
+#endif
             OtEnemy *linked = &state->enemy[linked_index];
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            visits++;
+#endif
             if (
+#if !TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
                 state->enemy_avail[linked_index] != 1 &&
+#endif
                 linked->enemyground &&
                 linked->linknum == target_link
             ) {
@@ -689,6 +848,9 @@ static void ot_apply_player_shot_status(
                 linked->filter = blast_filter;
             }
         }
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        state->collision_status_link_visits += visits;
+#endif
     }
 }
 
@@ -719,6 +881,10 @@ ot_player_shot_collision_apply_hit_c(
     OtEnemy *enemy = &state->enemy[index];
     uint16_t armor;
     uint8_t target_link;
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->collision_hit_apply_calls++;
+#endif
 
 #if TYRIAN_GBA_COLLISION_LAZY_RESULT
     if (!result->collided) {
@@ -976,13 +1142,34 @@ ot_level_port_collide_player_shot_packed_generic_asm(
     OtShotCollisionResult *result,
     uint32_t damage_and_radii
 );
+extern IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_snapshot_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
+extern IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
 #if \
     TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
     TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
     TYRIAN_GBA_COLLISION_LAZY_RESULT && \
     !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+#define OT_COLLISION_TEST_PACKED_ASM \
+    ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
+#else
 #define OT_COLLISION_TEST_PACKED_ASM \
     ot_level_port_collide_player_shot_packed_instrumented_asm
+#endif
 #else
 #define OT_COLLISION_TEST_PACKED_ASM \
     ot_level_port_collide_player_shot_packed_generic_asm
@@ -1012,6 +1199,47 @@ static void ot_collision_test_fill(
     uint8_t *bytes = (uint8_t *)data;
 
     while (size-- != 0) *bytes++ = value;
+}
+
+static bool ot_collision_test_snapshot_consistent(
+    const OtLevelPortState *state
+)
+{
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    uint8_t index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy;
+        const OtPlayerShotCollisionSnapshot *snapshot;
+        int16_t expected_y;
+        uint16_t expected_radius_x;
+        uint16_t expected_radius_y;
+
+        if (state->enemy_avail[index] != 0) continue;
+        enemy = &state->enemy[index];
+        snapshot = &state->player_shot_collision_snapshot[index];
+        if (enemy->enemycycle == 0) {
+            expected_y = (int16_t)(enemy->ey - 12);
+            expected_radius_x = 25;
+            expected_radius_y = 29;
+        } else {
+            expected_y = (int16_t)(enemy->ey - 6);
+            expected_radius_x = 13;
+            expected_radius_y = 15;
+        }
+        if (
+            snapshot->x != (int16_t)(enemy->ex + enemy->mapoffset) ||
+            snapshot->y != expected_y ||
+            snapshot->radius_x != expected_radius_x ||
+            snapshot->radius_y != expected_radius_y
+        ) {
+            return false;
+        }
+    }
+#else
+    (void)state;
+#endif
+    return true;
 }
 
 static OtEnemy *ot_collision_test_enemy(
@@ -1109,11 +1337,30 @@ static uint32_t ot_collision_test_prepare(
         enemy->setto = true;
         packed = 1u;
         break;
+    case 9: /* live-phase setter must refresh changed geometry */
+        ot_collision_test_enemy(state, 7, 220, 150, 10, 0);
+        break;
     default:
         break;
     }
     ot_level_port_begin_player_shot_collision_phase(state);
     return packed;
+}
+
+static void ot_collision_test_post_prepare_mutation(
+    OtLevelPortState *state,
+    uint8_t test_case
+)
+{
+    if (test_case == 9) {
+        OtEnemy *enemy = &state->enemy[7];
+
+        enemy->ex = 96;
+        enemy->ey = 86;
+        enemy->mapoffset = 4;
+        enemy->enemycycle = 1;
+        ot_level_port_set_enemy_avail(state, 7, 0);
+    }
 }
 
 static bool ot_collision_test_one_case(
@@ -1127,6 +1374,8 @@ static bool ot_collision_test_one_case(
     uint32_t asm_hash;
 
     packed = ot_collision_test_prepare(state, test_case);
+    ot_collision_test_post_prepare_mutation(state, test_case);
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     ot_collision_test_fill(&result, 0xa5, sizeof(result));
     ot_level_port_collide_player_shot_packed_c_reference(
         state,
@@ -1135,6 +1384,7 @@ static bool ot_collision_test_one_case(
         &result,
         packed
     );
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     c_hash = ot_collision_test_hash(
         2166136261u,
         state,
@@ -1143,6 +1393,8 @@ static bool ot_collision_test_one_case(
     c_hash = ot_collision_test_hash(c_hash, &result, sizeof(result));
 
     packed = ot_collision_test_prepare(state, test_case);
+    ot_collision_test_post_prepare_mutation(state, test_case);
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     ot_collision_test_fill(&result, 0xa5, sizeof(result));
     OT_COLLISION_TEST_PACKED_ASM(
         state,
@@ -1151,6 +1403,7 @@ static bool ot_collision_test_one_case(
         &result,
         packed
     );
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     asm_hash = ot_collision_test_hash(
         2166136261u,
         state,
@@ -1251,6 +1504,7 @@ static bool ot_collision_test_random_case(
         &result,
         packed
     );
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     c_hash = ot_collision_test_hash(
         2166136261u,
         state,
@@ -1272,6 +1526,7 @@ static bool ot_collision_test_random_case(
         &result,
         packed
     );
+    if (!ot_collision_test_snapshot_consistent(state)) return false;
     asm_hash = ot_collision_test_hash(
         2166136261u,
         state,
@@ -1315,7 +1570,7 @@ uint32_t ot_level_port_hotpath_asm_differential_test(
     }
     result |= 1u;
     if (state == 0) return result;
-    for (test_case = 0; test_case < 9; test_case++) {
+    for (test_case = 0; test_case < 10; test_case++) {
         if (!ot_collision_test_one_case(state, test_case)) {
             return 0x100u | test_case;
         }
@@ -1350,6 +1605,12 @@ void ot_level_port_collide_zinglon_beam(
 )
 {
     uint8_t index;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    uint8_t cursor = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    uint32_t visits = 0;
+#endif
 
     if (result == 0) return;
     result->collided = false;
@@ -1363,12 +1624,19 @@ void ot_level_port_collide_zinglon_beam(
     result->cash_awarded = 0;
     if (state == 0 || half_width == 0) return;
 
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    while (ot_next_active_enemy_for_collision(state, &cursor, &index)) {
+#else
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
+#endif
         OtEnemy *enemy;
         int16_t delta_x;
         uint16_t armor;
         uint8_t target_link;
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        visits++;
+#endif
         if (state->enemy_avail[index] != 0) continue;
         enemy = &state->enemy[index];
         delta_x = (int16_t)(
@@ -1421,6 +1689,9 @@ void ot_level_port_collide_zinglon_beam(
             ot_kill_enemy_group(state, index, result);
         }
     }
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->collision_zinglon_visits += visits;
+#endif
 }
 
 IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
@@ -1553,6 +1824,12 @@ void ot_level_port_collide_player(
 )
 {
     uint8_t index;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    uint8_t cursor = 0;
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    uint32_t visits = 0;
+#endif
 
     if (result == 0) return;
     /*
@@ -1582,7 +1859,11 @@ void ot_level_port_collide_player(
     result->pickup_effect_count = 0;
     if (state == 0) return;
 
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+    while (ot_next_active_enemy_for_collision(state, &cursor, &index)) {
+#else
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
+#endif
         OtEnemy *enemy;
         uint8_t availability;
         int16_t value;
@@ -1591,7 +1872,12 @@ void ot_level_port_collide_player(
         bool suppress_contact = false;
         bool show_fixed_pickup_effect = false;
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        visits++;
+#endif
+#if !TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
         if (state->enemy_avail[index] == 1) continue;
+#endif
         enemy = &state->enemy[index];
         if (
             ot_abs_s16(
@@ -1853,6 +2139,9 @@ void ot_level_port_collide_player(
                 state->frame_sound_queue[5] = 3; /* S_ENEMY_HIT */
             } else {
                 uint8_t linked_index;
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+                uint8_t linked_cursor = 0;
+#endif
 
                 /*
                  * Literal single-player contact-death group predicate from
@@ -1860,16 +2149,28 @@ void ot_level_port_collide_player(
                  * path: contact deaths do not award cash, spawn enemydie, set
                  * special flags, or invoke the link-254 event jump.
                  */
+#if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
+                while (
+                    ot_next_active_enemy_for_collision(
+                        state,
+                        &linked_cursor,
+                        &linked_index
+                    )
+                ) {
+#else
                 for (
                     linked_index = 0;
                     linked_index < OT_ENEMY_COUNT;
                     linked_index++
                 ) {
+#endif
                     OtEnemy *linked;
                     uint8_t linked_link;
                     bool matches;
 
+#if !TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
                     if (state->enemy_avail[linked_index] == 1) continue;
+#endif
                     linked = &state->enemy[linked_index];
                     linked_link = linked->linknum;
                     matches =
@@ -1908,6 +2209,9 @@ void ot_level_port_collide_player(
             }
         }
     }
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    state->collision_player_contact_visits += visits;
+#endif
 }
 
 /*

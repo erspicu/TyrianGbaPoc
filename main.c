@@ -122,8 +122,21 @@ _Static_assert(
 #ifndef AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS
 #define AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS 3600
 #endif
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION
+#define AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_POSITION 0
+#endif
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS
+#define AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS 8
+#endif
+#ifndef AUTOTEST_FULL_LOADOUT_STRESS_BOSS_WINDOW_VBLANKS
+#define AUTOTEST_FULL_LOADOUT_STRESS_BOSS_WINDOW_VBLANKS 0
+#endif
 #if AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS < 1
 #error AUTOTEST_FULL_LOADOUT_STRESS_DURATION_VBLANKS must be positive
+#endif
+#if AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS < 1 || \
+    AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS > 16
+#error AUTOTEST_FULL_LOADOUT_STRESS_FAST_FORWARD_TICKS must be 1..16
 #endif
 #endif
 #if TYRIAN_GBA_STRESS_LOADOUT
@@ -2455,6 +2468,39 @@ volatile u32 telemetry_boss_perf_l2_misses STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_l2_evictions STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_l2_raw_builds STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_l2_fallbacks STRESS_COLD_BSS;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+volatile u32 telemetry_boss_perf_logic_updates STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_logic_cycles STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_render_cycles STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_collision_cycles STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_player_shot_update_cycles STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_collision_candidate_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_collision_hits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_shot_update_active_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_shot_update_linear_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_shot_update_trail_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_enemy_active_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_projectile_hits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_effect_hits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_effect_misses STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_presentation_completed STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_presentation_deferred STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_player_shot_spawns STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_filter_admission_denials STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_filter_fallback_hits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_filter_fallback_builds STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_effect_oam_culls STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_player_shot_oam_culls STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_enemy_kills STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_audio_frames STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_wall_vblanks STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_hit_apply_calls STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_status_link_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_kill_group_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_damaged_transition_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_player_contact_visits STRESS_COLD_BSS;
+volatile u32 telemetry_boss_perf_zinglon_visits STRESS_COLD_BSS;
+#endif
 volatile u32 telemetry_waitcnt;
 volatile u32 telemetry_wall_vblanks;
 volatile u32 telemetry_presentation_render_attempts;
@@ -2543,6 +2589,39 @@ static u32 boss_perf_start_l2_misses STRESS_COLD_BSS;
 static u32 boss_perf_start_l2_evictions STRESS_COLD_BSS;
 static u32 boss_perf_start_l2_raw_builds STRESS_COLD_BSS;
 static u32 boss_perf_start_l2_fallbacks STRESS_COLD_BSS;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static u32 boss_perf_start_logic_updates STRESS_COLD_BSS;
+static u32 boss_perf_start_logic_cycles STRESS_COLD_BSS;
+static u32 boss_perf_start_render_cycles STRESS_COLD_BSS;
+static u32 boss_perf_start_collision_cycles STRESS_COLD_BSS;
+static u32 boss_perf_start_player_shot_update_cycles STRESS_COLD_BSS;
+static u32 boss_perf_start_collision_candidate_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_collision_hits STRESS_COLD_BSS;
+static u32 boss_perf_start_shot_update_active_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_shot_update_linear_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_shot_update_trail_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_enemy_active_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_projectile_hits STRESS_COLD_BSS;
+static u32 boss_perf_start_effect_hits STRESS_COLD_BSS;
+static u32 boss_perf_start_effect_misses STRESS_COLD_BSS;
+static u32 boss_perf_start_presentation_completed STRESS_COLD_BSS;
+static u32 boss_perf_start_presentation_deferred STRESS_COLD_BSS;
+static u32 boss_perf_start_player_shot_spawns STRESS_COLD_BSS;
+static u32 boss_perf_start_filter_admission_denials STRESS_COLD_BSS;
+static u32 boss_perf_start_filter_fallback_hits STRESS_COLD_BSS;
+static u32 boss_perf_start_filter_fallback_builds STRESS_COLD_BSS;
+static u32 boss_perf_start_effect_oam_culls STRESS_COLD_BSS;
+static u32 boss_perf_start_player_shot_oam_culls STRESS_COLD_BSS;
+static u32 boss_perf_start_enemy_kills STRESS_COLD_BSS;
+static u32 boss_perf_start_audio_frames STRESS_COLD_BSS;
+static u32 boss_perf_start_wall_vblanks STRESS_COLD_BSS;
+static u32 boss_perf_start_hit_apply_calls STRESS_COLD_BSS;
+static u32 boss_perf_start_status_link_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_kill_group_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_damaged_transition_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_player_contact_visits STRESS_COLD_BSS;
+static u32 boss_perf_start_zinglon_visits STRESS_COLD_BSS;
+#endif
 
 static const u16 boss_bar_fill_colours[7][3] = {
     {
