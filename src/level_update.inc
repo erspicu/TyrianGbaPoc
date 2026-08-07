@@ -473,6 +473,9 @@ static void update_logic(void)
 #ifdef AUTOTEST_ROUTE_PERF
     u32 route_stage_start = stress_cycle_counter_read();
 #endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    u32 player_shot_update_start;
+#endif
 
     level_tick++;
     telemetry_logic_updates++;
@@ -564,7 +567,17 @@ static void update_logic(void)
      * Keeping that phase boundary prevents a newly fired shot from
      * travelling and damaging an enemy in its creation tick.
      */
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    player_shot_update_start = stress_cycle_counter_read();
+#endif
     update_shots();
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    stress_cycle_accumulate(
+        player_shot_update_start,
+        &telemetry_player_shot_update_cycles_total,
+        &telemetry_player_shot_update_cycles_max
+    );
+#endif
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
         ROUTE_PERF_LOGIC_STAGE_PLAYER_SHOTS

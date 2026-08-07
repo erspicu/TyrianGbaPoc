@@ -1668,6 +1668,16 @@ static void autotest_full_loadout_stress_finish(void)
         9144,
         autotest_enemy_allocator_slot_probes_snapshot
     );
+    /* Additive v87 player-shot update traversal and feature mix. */
+    sram_write_u32(9148, TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK);
+    sram_write_u32(9152, telemetry_player_shot_update_cycles_total);
+    sram_write_u32(9156, telemetry_player_shot_update_cycles_max);
+    sram_write_u32(9160, telemetry_player_shot_update_active_visits);
+    sram_write_u32(9164, telemetry_player_shot_update_linear_visits);
+    sram_write_u32(9168, telemetry_player_shot_update_complicated_visits);
+    sram_write_u32(9172, telemetry_player_shot_update_trail_visits);
+    sram_write_u32(9176, telemetry_player_shot_update_aimed_visits);
+    sram_write_u32(9180, telemetry_player_shot_update_superpixel_visits);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

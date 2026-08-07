@@ -108,6 +108,20 @@
 #error TYRIAN_GBA_PLAYER_SHOT_FREE_MASK must be 0 or 1
 #endif
 
+/* Iterate only active MAX_PWEAPON slots while preserving ascending order. */
+#ifndef TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK
+#define TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK 1
+#endif
+#if TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK != 0 && \
+    TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK != 1
+#error TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK must be 0 or 1
+#endif
+#if !TYRIAN_GBA_PLAYER_SHOT_FREE_MASK && \
+    TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK
+#undef TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK
+#define TYRIAN_GBA_PLAYER_SHOT_UPDATE_MASK 0
+#endif
+
 /* Persistent enemy active/collidable directories; source slot order stays. */
 #ifndef TYRIAN_GBA_ENEMY_ACTIVE_MASK
 #define TYRIAN_GBA_ENEMY_ACTIVE_MASK 1

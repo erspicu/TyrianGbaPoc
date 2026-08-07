@@ -2489,6 +2489,14 @@ volatile u32 telemetry_audio_frames;
 volatile u32 telemetry_player_shot_allocator_calls;
 volatile u32 telemetry_player_shot_allocator_slot_probes;
 volatile u32 telemetry_player_shot_allocator_mask_word_probes;
+volatile u32 telemetry_player_shot_update_cycles_total;
+volatile u32 telemetry_player_shot_update_cycles_max;
+volatile u32 telemetry_player_shot_update_active_visits;
+volatile u32 telemetry_player_shot_update_linear_visits;
+volatile u32 telemetry_player_shot_update_complicated_visits;
+volatile u32 telemetry_player_shot_update_trail_visits;
+volatile u32 telemetry_player_shot_update_aimed_visits;
+volatile u32 telemetry_player_shot_update_superpixel_visits;
 #endif
 
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
