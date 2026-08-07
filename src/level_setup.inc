@@ -51,7 +51,7 @@ static u8 autotest_secret_level_collision(void)
 
     source_parity_level.player_x = 80;
     source_parity_level.player_y = 96;
-    source_parity_level.enemy_avail[0] = 2;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 2);
     memset(portal, 0, sizeof(*portal));
     portal->ex = 80;
     portal->ey = 96;
@@ -73,7 +73,7 @@ static u8 autotest_secret_level_collision(void)
      * JE_playerCollide() evalue==-3 must request the HDT weapon-104 misc
      * shot, not merely remove the score item and increment telemetry.
      */
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     memset(portal, 0, sizeof(*portal));
     portal->ex = 80;
     portal->ey = 96;
@@ -95,7 +95,7 @@ static u8 autotest_secret_level_collision(void)
      * preserves the original-armour push-back, and damages the enemy.
      */
     memset(portal, 0, sizeof(*portal));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     source_parity_level.damage_rate = 3;
     portal->ex = 80;
     portal->ey = 96;
@@ -121,8 +121,8 @@ static u8 autotest_secret_level_collision(void)
     /* Contact death releases the exact mainint.c linked group. */
     memset(portal, 0, sizeof(*portal));
     memset(&source_parity_level.enemy[1], 0, sizeof(OtEnemy));
-    source_parity_level.enemy_avail[0] = 0;
-    source_parity_level.enemy_avail[1] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
+    ot_level_port_set_enemy_avail(&source_parity_level, 1, 0);
     portal->ex = 80;
     portal->ey = 96;
     portal->enemyground = true;
@@ -153,8 +153,8 @@ static u8 autotest_secret_level_collision(void)
      */
     memset(portal, 0, sizeof(*portal));
     memset(&source_parity_level.enemy[1], 0, sizeof(OtEnemy));
-    source_parity_level.enemy_avail[0] = 0;
-    source_parity_level.enemy_avail[1] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
+    ot_level_port_set_enemy_avail(&source_parity_level, 1, 0);
     portal->ex = 80;
     portal->ey = 96;
     portal->enemyground = true;
@@ -196,7 +196,7 @@ static u8 autotest_arcade_equipment_collision(void)
      * 100 credits, and advances the front weapon's purple-ball progression.
      */
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 30000;
@@ -216,7 +216,7 @@ static u8 autotest_arcade_equipment_collision(void)
      * evalue>32100: player-one special-weapon pickup branch.
      */
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 32102;
@@ -233,7 +233,7 @@ static u8 autotest_arcade_equipment_collision(void)
         source_parity_level.enemy_avail[0] == 1;
 
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 32021;
@@ -251,7 +251,7 @@ static u8 autotest_arcade_equipment_collision(void)
         source_parity_level.enemy_avail[0] == 1;
 
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 31029;
@@ -269,7 +269,7 @@ static u8 autotest_arcade_equipment_collision(void)
         source_parity_level.enemy_avail[0] == 1;
 
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 30007;
@@ -290,7 +290,7 @@ static u8 autotest_arcade_equipment_collision(void)
     /* Super Arcade ship 1 maps its red pickup through SAWeapon[0][0]. */
     source_parity_level.player_super_arcade_mode = 1;
     memset(pickup, 0, sizeof(*pickup));
-    source_parity_level.enemy_avail[0] = 0;
+    ot_level_port_set_enemy_avail(&source_parity_level, 0, 0);
     pickup->ex = 80;
     pickup->ey = 96;
     pickup->evalue = 30001;

@@ -23,6 +23,14 @@
 #error TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK must be 0 or 1
 #endif
 
+#ifndef TYRIAN_GBA_ENEMY_ACTIVE_MASK
+#define TYRIAN_GBA_ENEMY_ACTIVE_MASK 1
+#endif
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK != 0 && \
+    TYRIAN_GBA_ENEMY_ACTIVE_MASK != 1
+#error TYRIAN_GBA_ENEMY_ACTIVE_MASK must be 0 or 1
+#endif
+
 /*
  * Measured collision-kernel experiments.  They are separate from the
  * active-mask semantic switch so the deterministic full-loadout harness can
@@ -543,7 +551,23 @@ typedef struct {
     uint32_t high_value_pickup_count;
     uint32_t death_control_event_count;
     uint32_t death_assignment_count;
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    /* Runtime-only directory; enemy_avail[] remains authoritative. */
+    uint32_t enemy_active_mask[4];
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    uint32_t enemy_pool_active_visits;
+    uint32_t enemy_pool_linear_visits;
+    uint32_t enemy_allocator_mask_word_probes;
+    uint32_t enemy_allocator_slot_probes;
+#endif
 } OtLevelPortState;
+
+void ot_level_port_set_enemy_avail(
+    OtLevelPortState *state,
+    uint8_t enemy_index,
+    uint8_t avail
+);
 
 void ot_level_port_init(
     OtLevelPortState *state,

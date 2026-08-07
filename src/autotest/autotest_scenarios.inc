@@ -53,6 +53,42 @@ static u32 autotest_detail_spotlight_asm_cycles EWRAM_BSS;
 static u32 autotest_detail_wave_c_cycles EWRAM_BSS;
 static u32 autotest_detail_wave_asm_cycles EWRAM_BSS;
 static u32 autotest_detail_effect_benchmark_sink EWRAM_BSS;
+static u32 autotest_enemy_pool_consistency_snapshot EWRAM_BSS;
+static u32 autotest_enemy_pool_active_visits_snapshot EWRAM_BSS;
+static u32 autotest_enemy_pool_linear_visits_snapshot EWRAM_BSS;
+static u32 autotest_enemy_allocator_mask_probes_snapshot EWRAM_BSS;
+static u32 autotest_enemy_allocator_slot_probes_snapshot EWRAM_BSS;
+
+static u32 autotest_enemy_pool_mask_consistency(void)
+{
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    u8 index;
+    u32 result = 0;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        u32 bit = 1u << (index & 31u);
+        u8 active = (
+            source_parity_level.enemy_active_mask[index >> 5] & bit
+        ) != 0;
+        u8 collidable = (
+            source_parity_level.player_shot_collision_active_mask[
+                index >> 5
+            ] & bit
+        ) != 0;
+
+        if (active != (source_parity_level.enemy_avail[index] != 1)) {
+            return result;
+        }
+        if (collidable != (source_parity_level.enemy_avail[index] == 0)) {
+            return result | 1u;
+        }
+    }
+    result |= 3u;
+    return result | 4u;
+#else
+    return 0;
+#endif
+}
 
 static u32 autotest_mt_rand_reference(OtLevelPortState *state)
 {
@@ -1210,6 +1246,23 @@ static void autotest_full_loadout_stress_finish(void)
     u8 active_shots = 0;
     u8 index;
 
+    /*
+     * The packed-collision differential test below deliberately reuses and
+     * clears source_parity_level.  Preserve gameplay-only enemy-directory
+     * telemetry before running any self-test so SRAM reports the measured
+     * route rather than the synthetic test fixture's final state.
+     */
+    autotest_enemy_pool_consistency_snapshot =
+        autotest_enemy_pool_mask_consistency();
+    autotest_enemy_pool_active_visits_snapshot =
+        source_parity_level.enemy_pool_active_visits;
+    autotest_enemy_pool_linear_visits_snapshot =
+        source_parity_level.enemy_pool_linear_visits;
+    autotest_enemy_allocator_mask_probes_snapshot =
+        source_parity_level.enemy_allocator_mask_word_probes;
+    autotest_enemy_allocator_slot_probes_snapshot =
+        source_parity_level.enemy_allocator_slot_probes;
+
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (player_shots[index].active) active_shots++;
     }
@@ -1596,6 +1649,25 @@ static void autotest_full_loadout_stress_finish(void)
 #else
     sram_write_u32(9120, 0);
 #endif
+    /* Additive v86 persistent enemy active/collidable directories. */
+    sram_write_u32(9124, TYRIAN_GBA_ENEMY_ACTIVE_MASK);
+    sram_write_u32(9128, autotest_enemy_pool_consistency_snapshot);
+    sram_write_u32(
+        9132,
+        autotest_enemy_pool_active_visits_snapshot
+    );
+    sram_write_u32(
+        9136,
+        autotest_enemy_pool_linear_visits_snapshot
+    );
+    sram_write_u32(
+        9140,
+        autotest_enemy_allocator_mask_probes_snapshot
+    );
+    sram_write_u32(
+        9144,
+        autotest_enemy_allocator_slot_probes_snapshot
+    );
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

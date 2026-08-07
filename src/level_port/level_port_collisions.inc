@@ -345,8 +345,7 @@ ot_kill_enemy_group(
             target_link == enemy->linknum
         ) {
             enemy->edlevel = 0;
-            state->enemy_avail[index] = 2;
-            ot_player_shot_collision_mask_set(state, index, false);
+            ot_level_port_set_enemy_avail(state, index, 2);
             enemy->egr[0] = enemy->edgr;
             enemy->ani = 1;
             enemy->aniactive = 0;
@@ -440,9 +439,12 @@ ot_level_port_begin_player_shot_collision_phase(
 )
 {
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
     uint8_t index;
+#endif
 
     if (state == 0) return;
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
     state->player_shot_collision_active_mask[0] = 0;
     state->player_shot_collision_active_mask[1] = 0;
     state->player_shot_collision_active_mask[2] = 0;
@@ -453,6 +455,7 @@ ot_level_port_begin_player_shot_collision_phase(
                 1u << (index & 31);
         }
     }
+#endif
     state->player_shot_collision_mask_active = true;
     state->player_shot_collision_mask_rebuild_count++;
 #else
@@ -469,6 +472,9 @@ void ot_level_port_end_player_shot_collision_phase(
 }
 
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+#define ot_collision_lowest_set_bit ot_enemy_mask_lowest_set_bit
+#else
 static const uint8_t ot_collision_debruijn_index[32] = {
     0, 1, 28, 2, 29, 14, 24, 3,
     30, 22, 20, 15, 25, 17, 4, 8,
@@ -484,6 +490,7 @@ static inline uint8_t ot_collision_lowest_set_bit(uint32_t bits)
         (isolated * 0x077cb531u) >> 27
     ];
 }
+#endif
 
 /*
  * Return collision candidates in the same ascending slot order as the
@@ -1018,7 +1025,7 @@ static OtEnemy *ot_collision_test_enemy(
 {
     OtEnemy *enemy = &state->enemy[index];
 
-    state->enemy_avail[index] = 0;
+    ot_level_port_set_enemy_avail(state, index, 0);
     state->active_enemy_count++;
     enemy->ex = x;
     enemy->ey = y;
@@ -1039,7 +1046,7 @@ static uint32_t ot_collision_test_prepare(
 
     ot_collision_test_fill(state, 0, sizeof(*state));
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
-        state->enemy_avail[index] = 1;
+        ot_level_port_set_enemy_avail(state, index, 1);
     }
     state->assets_valid = true;
 
@@ -1082,7 +1089,7 @@ static uint32_t ot_collision_test_prepare(
         enemy->linknum = 7;
         enemy->enemyground = true;
         enemy = &state->enemy[6];
-        state->enemy_avail[6] = 2;
+        ot_level_port_set_enemy_avail(state, 6, 2);
         enemy->linknum = 7;
         enemy->enemyground = true;
         packed = 2u | (10u << 24) | (1u << 28);
@@ -1172,7 +1179,7 @@ static uint32_t ot_collision_test_prepare_random(
 
     ot_collision_test_fill(state, 0, sizeof(*state));
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
-        state->enemy_avail[index] = 1;
+        ot_level_port_set_enemy_avail(state, index, 1);
     }
     state->assets_valid = true;
     desired = (uint8_t)(1u + (ot_collision_test_random_next(&seed) % 30u));

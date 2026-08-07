@@ -35,8 +35,7 @@ static void ot_release_enemy(
     ) {
         state->score_item_active_count--;
     }
-    state->enemy_avail[enemy_index] = 1;
-    ot_player_shot_collision_mask_set(state, enemy_index, false);
+    ot_level_port_set_enemy_avail(state, enemy_index, 1);
     if (state->active_enemy_count > 0) state->active_enemy_count--;
     state->enemy_release_count++;
 }
@@ -514,7 +513,25 @@ static void ot_draw_enemy_pool(
 {
     uint8_t index;
 
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    {
+        uint8_t cursor = pool;
+
+        while (ot_next_active_enemy_in_pool(
+            state,
+            pool,
+            &cursor,
+            &index
+        )) {
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            state->enemy_pool_active_visits++;
+#endif
+#else
     for (index = pool; index < pool + OT_ENEMY_POOL_SIZE; index++) {
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        state->enemy_pool_linear_visits++;
+#endif
+#endif
         OtEnemy *enemy;
 
         if (state->enemy_avail[index] == 1) continue;
@@ -682,6 +699,9 @@ static void ot_draw_enemy_pool(
         if (!ot_enemy_fire_slots(state, enemy)) continue;
         ot_enemy_launch(state, enemy, pool);
     }
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    }
+#endif
 }
 
 static void ot_spawn_continual_enemy(OtLevelPortState *state)

@@ -602,7 +602,9 @@ static inline void ot_player_shot_collision_mask_set(
     uint32_t bit;
     uint8_t word;
 
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
     if (!state->player_shot_collision_mask_active) return;
+#endif
     word = (uint8_t)(enemy_index >> 5);
     bit = 1u << (enemy_index & 31);
     if (active) {
@@ -616,6 +618,112 @@ static inline void ot_player_shot_collision_mask_set(
     (void)active;
 #endif
 }
+
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+static const uint8_t ot_enemy_mask_debruijn_index[32] = {
+    0, 1, 28, 2, 29, 14, 24, 3,
+    30, 22, 20, 15, 25, 17, 4, 8,
+    31, 27, 13, 23, 21, 19, 16, 7,
+    26, 12, 18, 6, 11, 5, 10, 9,
+};
+
+static inline uint8_t ot_enemy_mask_lowest_set_bit(uint32_t bits)
+{
+    uint32_t isolated = bits & (0u - bits);
+
+    return ot_enemy_mask_debruijn_index[
+        (isolated * 0x077cb531u) >> 27
+    ];
+}
+#endif
+
+void ot_level_port_set_enemy_avail(
+    OtLevelPortState *state,
+    uint8_t enemy_index,
+    uint8_t avail
+)
+{
+    if (state == 0 || enemy_index >= OT_ENEMY_COUNT) return;
+    state->enemy_avail[enemy_index] = avail;
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    if (avail != 1) {
+        state->enemy_active_mask[enemy_index >> 5] |=
+            1u << (enemy_index & 31u);
+    } else {
+        state->enemy_active_mask[enemy_index >> 5] &=
+            ~(1u << (enemy_index & 31u));
+    }
+#endif
+    ot_player_shot_collision_mask_set(state, enemy_index, avail == 0);
+}
+
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+static inline bool ot_next_active_enemy_in_pool(
+    const OtLevelPortState *state,
+    uint8_t pool,
+    uint8_t *cursor,
+    uint8_t *enemy_index
+)
+{
+    uint8_t search = *cursor;
+    uint8_t end = (uint8_t)(pool + OT_ENEMY_POOL_SIZE);
+
+    while (search < end) {
+        uint8_t word = (uint8_t)(search >> 5);
+        uint8_t word_end = (uint8_t)((word + 1u) << 5);
+        uint32_t candidates = state->enemy_active_mask[word] &
+            (UINT32_MAX << (search & 31u));
+
+        if (end < word_end) {
+            candidates &= (1u << (end & 31u)) - 1u;
+        }
+        if (candidates != 0) {
+            uint8_t candidate = (uint8_t)(
+                (word << 5) + ot_enemy_mask_lowest_set_bit(candidates)
+            );
+
+            if (candidate >= end) return false;
+            *enemy_index = candidate;
+            *cursor = (uint8_t)(candidate + 1u);
+            return true;
+        }
+        search = word_end;
+    }
+    return false;
+}
+
+static inline uint8_t ot_find_free_enemy_in_pool(
+    OtLevelPortState *state,
+    uint8_t pool
+)
+{
+    uint8_t search = pool;
+    uint8_t end = (uint8_t)(pool + OT_ENEMY_POOL_SIZE);
+
+    while (search < end) {
+        uint8_t word = (uint8_t)(search >> 5);
+        uint8_t word_end = (uint8_t)((word + 1u) << 5);
+        uint32_t candidates = ~state->enemy_active_mask[word] &
+            (UINT32_MAX << (search & 31u));
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        state->enemy_allocator_mask_word_probes++;
+#endif
+        if (end < word_end) {
+            candidates &= (1u << (end & 31u)) - 1u;
+        }
+        if (candidates != 0) {
+            uint8_t candidate = (uint8_t)(
+                (word << 5) + ot_enemy_mask_lowest_set_bit(candidates)
+            );
+
+            return candidate < end ? candidate : OT_ENEMY_COUNT;
+        }
+        search = word_end;
+    }
+    return OT_ENEMY_COUNT;
+}
+#endif
 
 /*
  * Direct translation of JE_newEnemy()'s 25-slot allocation boundary.  Event,
@@ -639,22 +747,31 @@ static uint8_t ot_new_enemy_with_definition(
     const OtEnemyDefinition *definition_override
 )
 {
+#if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
     uint8_t index;
+#endif
     uint8_t avail;
     uint8_t slot = OT_ENEMY_COUNT;
 
     ot_record_spawn_attempt(state, origin);
     state->last_created_slot = 0;
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK
+    slot = ot_find_free_enemy_in_pool(state, enemy_offset);
+#else
     for (
         index = enemy_offset;
         index < (uint8_t)(enemy_offset + OT_ENEMY_POOL_SIZE);
         index++
     ) {
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        state->enemy_allocator_slot_probes++;
+#endif
         if (state->enemy_avail[index] == 1) {
             slot = index;
             break;
         }
     }
+#endif
     if (slot == OT_ENEMY_COUNT) {
         ot_record_spawn_pool_full(state, origin);
         return 0;
@@ -672,8 +789,7 @@ static uint8_t ot_new_enemy_with_definition(
         return 0;
     }
 
-    state->enemy_avail[slot] = avail;
-    ot_player_shot_collision_mask_set(state, slot, avail == 0);
+    ot_level_port_set_enemy_avail(state, slot, avail);
     if (avail == 2 && state->enemy[slot].scoreitem) {
         state->score_item_spawn_count++;
         state->score_item_active_count++;
@@ -905,7 +1021,7 @@ void ot_level_port_init(
     state->display_flash = 0;
     state->display_flash_change = 1;
     for (index = 0; index < OT_ENEMY_COUNT; index++) {
-        state->enemy_avail[index] = 1;
+        ot_level_port_set_enemy_avail(state, index, 1);
         state->enemy[index].shape_slot =
             preserve_shape_history ?
                 inherited_shape_slot[index] :

@@ -108,6 +108,15 @@
 #error TYRIAN_GBA_PLAYER_SHOT_FREE_MASK must be 0 or 1
 #endif
 
+/* Persistent enemy active/collidable directories; source slot order stays. */
+#ifndef TYRIAN_GBA_ENEMY_ACTIVE_MASK
+#define TYRIAN_GBA_ENEMY_ACTIVE_MASK 1
+#endif
+#if TYRIAN_GBA_ENEMY_ACTIVE_MASK != 0 && \
+    TYRIAN_GBA_ENEMY_ACTIVE_MASK != 1
+#error TYRIAN_GBA_ENEMY_ACTIVE_MASK must be 0 or 1
+#endif
+
 /*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.

@@ -82,7 +82,7 @@ static void ot_clear_enemy_range(
         ) {
             state->score_item_active_count--;
         }
-        state->enemy_avail[index] = 1;
+        ot_level_port_set_enemy_avail(state, index, 1);
         state->enemy_draw[index].active = false;
         if (state->active_enemy_count > 0) {
             state->active_enemy_count--;

@@ -50,6 +50,8 @@ param(
     [int]$PoolBitScanAsm = 0,
     [ValidateSet(0, 1)]
     [int]$PlayerShotFreeMask = 1,
+    [ValidateSet(0, 1)]
+    [int]$EnemyActiveMask = 1,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -88,7 +90,7 @@ $name = (
     "detailasm${DetailEffectAsm}_x${Sprite2ExactLookupAsm}_" +
     "s${StarfieldBatchAsm}_ph${ProjectileCacheHint}_" +
     "pa${ProjectileHintAsm}_fx${EffectActiveMask}_bs${PoolBitScanAsm}_" +
-    "sf${PlayerShotFreeMask}"
+    "sf${PlayerShotFreeMask}_em${EnemyActiveMask}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -139,6 +141,7 @@ if (-not $NoBuild) {
         "EFFECT_ACTIVE_MASK=$EffectActiveMask " +
         "POOL_BIT_SCAN_ASM=$PoolBitScanAsm " +
         "PLAYER_SHOT_FREE_MASK=$PlayerShotFreeMask " +
+        "ENEMY_ACTIVE_MASK=$EnemyActiveMask " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -221,6 +224,7 @@ $diagnosticFlags = Read-U32 200
 $expectedAdaptive = if ($Variant -like "*_no_adaptive") { 0 } else { 1 }
 $expectedEffectMaskConsistency = if ($EffectActiveMask -eq 1) { 3 } else { 0 }
 $expectedPlayerShotMaskConsistency = if ($PlayerShotFreeMask -eq 1) { 1 } else { 0 }
+$expectedEnemyMaskConsistency = if ($EnemyActiveMask -eq 1) { 7 } else { 0 }
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
@@ -354,6 +358,12 @@ $telemetry = [ordered]@{
     player_shot_allocator_slot_probes = Read-U32 9112
     player_shot_allocator_mask_word_probes = Read-U32 9116
     player_shot_active_count_at_finish = Read-U32 9120
+    enemy_active_mask = Read-U32 9124
+    enemy_mask_consistency = Read-U32 9128
+    enemy_pool_active_visits = Read-U32 9132
+    enemy_pool_linear_visits = Read-U32 9136
+    enemy_allocator_mask_word_probes = Read-U32 9140
+    enemy_allocator_slot_probes = Read-U32 9144
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -547,6 +557,8 @@ if (
     $telemetry.player_shot_pool_consistency -ne $expectedPlayerShotMaskConsistency -or
     $telemetry.player_shot_free_mask -ne $PlayerShotFreeMask -or
     $telemetry.player_shot_allocator_calls -eq 0 -or
+    $telemetry.enemy_active_mask -ne $EnemyActiveMask -or
+    $telemetry.enemy_mask_consistency -ne $expectedEnemyMaskConsistency -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or
