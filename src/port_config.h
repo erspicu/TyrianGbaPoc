@@ -99,6 +99,15 @@
 #error TYRIAN_GBA_POOL_BIT_SCAN_ASM must be 0 or 1
 #endif
 
+/* Preserve MAX_PWEAPON's lowest-free allocation without scanning 81 bytes. */
+#ifndef TYRIAN_GBA_PLAYER_SHOT_FREE_MASK
+#define TYRIAN_GBA_PLAYER_SHOT_FREE_MASK 1
+#endif
+#if TYRIAN_GBA_PLAYER_SHOT_FREE_MASK != 0 && \
+    TYRIAN_GBA_PLAYER_SHOT_FREE_MASK != 1
+#error TYRIAN_GBA_PLAYER_SHOT_FREE_MASK must be 0 or 1
+#endif
+
 /*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.

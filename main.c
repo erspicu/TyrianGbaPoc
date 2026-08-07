@@ -1324,6 +1324,11 @@ typedef struct {
 } PickupExplosion;
 
 static PlayerShot player_shots[MAX_PLAYER_SHOTS] EWRAM_DATA;
+#define PLAYER_SHOT_FREE_MASK_WORDS ((MAX_PLAYER_SHOTS + 31u) / 32u)
+#if TYRIAN_GBA_PLAYER_SHOT_FREE_MASK
+static u32 player_shot_active_mask[PLAYER_SHOT_FREE_MASK_WORDS] EWRAM_DATA;
+static u8 active_player_shot_count;
+#endif
 static SourceSuperpixel source_superpixels[MAX_SUPERPIXELS] EWRAM_DATA;
 static u8 source_last_superpixel;
 static u8 source_active_superpixels;
@@ -2481,6 +2486,12 @@ volatile u32 telemetry_vblank_recovery_loops;
 volatile u32 telemetry_audio_frames;
 
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+volatile u32 telemetry_player_shot_allocator_calls;
+volatile u32 telemetry_player_shot_allocator_slot_probes;
+volatile u32 telemetry_player_shot_allocator_mask_word_probes;
+#endif
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
 volatile u32 telemetry_stress_logic_cycles_total;
 volatile u32 telemetry_stress_logic_cycles_max;
 volatile u32 telemetry_stress_render_cycles_total;
@@ -2750,6 +2761,7 @@ static void source_effect_restore_shared_tiles_if_needed(void);
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"
 #include "src/effect_pool_mask.inc"
+#include "src/player_shot_pool.inc"
 #include "src/level_setup.inc"
 #include "src/frontend_runtime.inc"
 #include "src/gameplay_overlay.inc"

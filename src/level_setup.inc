@@ -6,6 +6,10 @@ static void clear_entities(void)
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         player_shots[index].active = 0;
     }
+#if TYRIAN_GBA_PLAYER_SHOT_FREE_MASK
+    memset(player_shot_active_mask, 0, sizeof(player_shot_active_mask));
+    active_player_shot_count = 0;
+#endif
     memset(source_superpixels, 0, sizeof(source_superpixels));
     source_last_superpixel = 0;
     source_active_superpixels = 0;

@@ -48,6 +48,8 @@ param(
     [int]$EffectActiveMask = 1,
     [ValidateSet(0, 1)]
     [int]$PoolBitScanAsm = 0,
+    [ValidateSet(0, 1)]
+    [int]$PlayerShotFreeMask = 1,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -85,7 +87,8 @@ $name = (
     "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
     "detailasm${DetailEffectAsm}_x${Sprite2ExactLookupAsm}_" +
     "s${StarfieldBatchAsm}_ph${ProjectileCacheHint}_" +
-    "pa${ProjectileHintAsm}_fx${EffectActiveMask}_bs${PoolBitScanAsm}"
+    "pa${ProjectileHintAsm}_fx${EffectActiveMask}_bs${PoolBitScanAsm}_" +
+    "sf${PlayerShotFreeMask}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -135,6 +138,7 @@ if (-not $NoBuild) {
         "PROJECTILE_HINT_ASM=$ProjectileHintAsm " +
         "EFFECT_ACTIVE_MASK=$EffectActiveMask " +
         "POOL_BIT_SCAN_ASM=$PoolBitScanAsm " +
+        "PLAYER_SHOT_FREE_MASK=$PlayerShotFreeMask " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -216,6 +220,7 @@ $renderCompleted = Read-U32 276
 $diagnosticFlags = Read-U32 200
 $expectedAdaptive = if ($Variant -like "*_no_adaptive") { 0 } else { 1 }
 $expectedEffectMaskConsistency = if ($EffectActiveMask -eq 1) { 3 } else { 0 }
+$expectedPlayerShotMaskConsistency = if ($PlayerShotFreeMask -eq 1) { 1 } else { 0 }
 $vblankRecoveryLoops = Read-U32 328
 $audioFrames = Read-U32 332
 $commitFrames = $displayFrames - $vblankRecoveryLoops
@@ -343,6 +348,12 @@ $telemetry = [ordered]@{
     effect_active_mask = Read-U32 9088
     pool_bit_scan_asm = Read-U32 9092
     effect_pool_mask_consistency = Read-U32 9096
+    player_shot_pool_consistency = Read-U32 9100
+    player_shot_free_mask = Read-U32 9104
+    player_shot_allocator_calls = Read-U32 9108
+    player_shot_allocator_slot_probes = Read-U32 9112
+    player_shot_allocator_mask_word_probes = Read-U32 9116
+    player_shot_active_count_at_finish = Read-U32 9120
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -533,6 +544,9 @@ if (
     $telemetry.effect_active_mask -ne $EffectActiveMask -or
     $telemetry.pool_bit_scan_asm -ne $PoolBitScanAsm -or
     $telemetry.effect_pool_mask_consistency -ne $expectedEffectMaskConsistency -or
+    $telemetry.player_shot_pool_consistency -ne $expectedPlayerShotMaskConsistency -or
+    $telemetry.player_shot_free_mask -ne $PlayerShotFreeMask -or
+    $telemetry.player_shot_allocator_calls -eq 0 -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or

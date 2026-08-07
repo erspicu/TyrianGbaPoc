@@ -824,11 +824,11 @@ static __attribute__((unused)) void source_apply_player_shot_result(
     if (shot != 0) {
         if (shot->infinite) {
             shot->damage = original_damage;
-            shot->active = 1;
+            player_shot_set_active_ptr(shot, 1);
         } else
         {
             shot->damage = result->remaining_damage;
-            if (result->consumed) shot->active = 0;
+            if (result->consumed) player_shot_set_active_ptr(shot, 0);
         }
     }
     player_cash += result->cash_awarded;
@@ -1123,7 +1123,7 @@ source_process_player_collisions(bool collide_player)
                 } else {
                     telemetry_stress_loadout_failures++;
                 }
-                shot->active = 0;
+                player_shot_set_active(shot_index, 0);
             }
             continue;
         }

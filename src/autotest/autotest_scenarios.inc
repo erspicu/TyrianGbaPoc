@@ -1585,6 +1585,17 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(9088, TYRIAN_GBA_EFFECT_ACTIVE_MASK);
     sram_write_u32(9092, TYRIAN_GBA_POOL_BIT_SCAN_ASM);
     sram_write_u32(9096, source_pool_mask_consistency_test());
+    /* Additive v85 player-shot lowest-free directory validation. */
+    sram_write_u32(9100, player_shot_pool_consistency_test());
+    sram_write_u32(9104, TYRIAN_GBA_PLAYER_SHOT_FREE_MASK);
+    sram_write_u32(9108, telemetry_player_shot_allocator_calls);
+    sram_write_u32(9112, telemetry_player_shot_allocator_slot_probes);
+    sram_write_u32(9116, telemetry_player_shot_allocator_mask_word_probes);
+#if TYRIAN_GBA_PLAYER_SHOT_FREE_MASK
+    sram_write_u32(9120, active_player_shot_count);
+#else
+    sram_write_u32(9120, 0);
+#endif
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

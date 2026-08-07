@@ -409,12 +409,16 @@ static void stress_loadout_init(void)
 
 static void stress_update_shot_peak(void)
 {
+#if TYRIAN_GBA_PLAYER_SHOT_FREE_MASK
+    u8 active = active_player_shot_count;
+#else
     u8 index;
     u8 active = 0;
 
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (player_shots[index].active) active++;
     }
+#endif
     if (active > telemetry_player_shot_max_active) {
         telemetry_player_shot_max_active = active;
     }
@@ -448,11 +452,9 @@ static void stress_spawn_weapon(
         u8 attack;
         u8 delay;
 
-        for (shot_index = 0; shot_index < MAX_PLAYER_SHOTS; shot_index++) {
-            if (!player_shots[shot_index].active) {
-                shot = &player_shots[shot_index];
-                break;
-            }
+        shot_index = player_shot_find_free_slot();
+        if (shot_index < MAX_PLAYER_SHOTS) {
+            shot = &player_shots[shot_index];
         }
         if (shot == 0) {
             telemetry_player_shot_drops++;
@@ -477,7 +479,7 @@ static void stress_spawn_weapon(
         }
 
         memset(shot, 0, sizeof(*shot));
-        shot->active = 1;
+        player_shot_set_active(shot_index, 1);
         shot->ttl = delay;
         shot->x = (s16)(origin_x + weapon->bx[position]);
         shot->y = (s16)(origin_y + weapon->by[position]);
@@ -587,12 +589,8 @@ static u8 source_spawn_weapon(
         u8 attack;
         u8 circle;
 
-        for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
-            if (!player_shots[index].active) {
-                shot = &player_shots[index];
-                break;
-            }
-        }
+        index = player_shot_find_free_slot();
+        if (index < MAX_PLAYER_SHOTS) shot = &player_shots[index];
         if (shot == 0) {
             telemetry_player_shot_drops++;
             /* player_shot_create() returns MAX_PWEAPON immediately. */
@@ -741,8 +739,8 @@ static u8 source_spawn_weapon(
             }
         }
         shot->ttl = delay;
-        shot->active = shot->graphic != 0 && delay != 0;
-        if (shot->active) {
+        if (shot->graphic != 0 && delay != 0) {
+            player_shot_set_active(index, 1);
             source_last_spawned_shot_index = index;
             telemetry_player_shot_spawns++;
             spawned++;
@@ -782,12 +780,8 @@ static u8 spawn_orbiting_asteroid_shot(void)
         !source_weapon_is_valid(&weapon)) {
         return 0;
     }
-    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
-        if (!player_shots[index].active) {
-            shot = &player_shots[index];
-            break;
-        }
-    }
+    index = player_shot_find_free_slot();
+    if (index < MAX_PLAYER_SHOTS) shot = &player_shots[index];
     if (shot == 0) {
         telemetry_player_shot_drops++;
         return 0;
@@ -851,7 +845,10 @@ static u8 spawn_orbiting_asteroid_shot(void)
         shot->dir_x = 1;
         shot->dir_y = -1;
     }
-    shot->active = shot->graphic != 0 && delay != 0;
+    player_shot_set_active(
+        index,
+        shot->graphic != 0 && delay != 0
+    );
     if (weapon.sound > 0) {
         /* shots.c soundChannel[SHOT_MISC] is source queue slot two. */
         source_parity_level.frame_sound_queue[2] = weapon.sound;
@@ -2569,7 +2566,7 @@ static void update_shots(void)
         player_shot = &player_shots[index];
         if (!player_shot->active) continue;
         if (player_shot->ttl == 0) {
-            player_shot->active = 0;
+            player_shot_set_active(index, 0);
             continue;
         }
         player_shot->ttl--;
@@ -2639,7 +2636,7 @@ static void update_shots(void)
             player_shot->y < -15 ||
             player_shot->y > 190
         ) {
-            player_shot->active = 0;
+            player_shot_set_active(index, 0);
             continue;
         }
         if (player_shot->trail != 255) {
