@@ -38,6 +38,8 @@ param(
     [int]$DetailEffectAsm = 1,
     [ValidateSet(0, 1)]
     [int]$Sprite2ExactLookupAsm = 1,
+    [ValidateSet(0, 1)]
+    [int]$StarfieldBatchAsm = 1,
     [ValidateRange(0.0, 100.0)]
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
@@ -73,7 +75,8 @@ $name = (
     "tyrian_gba_full_loadout_sprite_stress_" +
     "ep${Episode}_section${Section}_${stopTag}${inputTag}_v70_" +
     "${Variant}_hotpath${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
-    "detailasm${DetailEffectAsm}_exactasm${Sprite2ExactLookupAsm}"
+    "detailasm${DetailEffectAsm}_exactasm${Sprite2ExactLookupAsm}_" +
+    "starasm${StarfieldBatchAsm}"
 )
 $rom = Join-Path $buildDir "$name.gba"
 $save = Join-Path $buildDir "$name.sav"
@@ -118,6 +121,7 @@ if (-not $NoBuild) {
         "HOTPATH_ASM=$HotpathAsm " +
         "DETAIL_EFFECT_ASM=$DetailEffectAsm " +
         "SPRITE2_EXACT_LOOKUP_ASM=$Sprite2ExactLookupAsm " +
+        "STARFIELD_BATCH_ASM=$StarfieldBatchAsm " +
         "STRESS_EPISODE=$Episode STRESS_SECTION=$Section " +
         "STRESS_END_POSITION=$EndPosition " +
         "STRESS_DURATION_VBLANKS=$DurationVBlanks " +
@@ -300,6 +304,13 @@ $telemetry = [ordered]@{
     sprite2_exact_lookup_hits = Read-U32 676
     sprite2_exact_lookup_asm = Read-U32 680
     hotpath_asm = Read-U32 684
+    starfield_differential = Read-U32 9000
+    starfield_divmod_c_cycles = Read-U32 9004
+    starfield_divmod_asm_cycles = Read-U32 9008
+    starfield_plot_c_cycles = Read-U32 9012
+    starfield_plot_asm_cycles = Read-U32 9016
+    starfield_benchmark_calls = Read-U32 9020
+    starfield_batch_asm = Read-U32 9024
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -478,6 +489,9 @@ if (
     $telemetry.hotpath_asm_self_test -ne 1 -or
     $telemetry.level_port_asm_differential -ne 3 -or
     $telemetry.colour_distance_asm_differential -ne 3 -or
+    $telemetry.starfield_differential -ne 3 -or
+    $telemetry.starfield_benchmark_calls -ne 16384 -or
+    $telemetry.starfield_batch_asm -ne $StarfieldBatchAsm -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or

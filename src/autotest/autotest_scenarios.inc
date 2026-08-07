@@ -31,6 +31,11 @@ static u32 autotest_axis_overlap_asm_cycles EWRAM_BSS;
 static u32 autotest_sprite2_exact_differential_result EWRAM_BSS;
 static u32 autotest_sprite2_exact_c_cycles EWRAM_BSS;
 static u32 autotest_sprite2_exact_asm_cycles EWRAM_BSS;
+static u32 autotest_starfield_differential_result EWRAM_BSS;
+static u32 autotest_starfield_divmod_c_cycles EWRAM_BSS;
+static u32 autotest_starfield_divmod_asm_cycles EWRAM_BSS;
+static u32 autotest_starfield_plot_c_cycles EWRAM_BSS;
+static u32 autotest_starfield_plot_asm_cycles EWRAM_BSS;
 static u32 autotest_hotpath_benchmark_sink EWRAM_BSS;
 static u32 autotest_detail_effect_differential_result EWRAM_BSS;
 static u32 autotest_detail_palette_c_cycles EWRAM_BSS;
@@ -95,13 +100,89 @@ static u8 autotest_hotpath_asm_self_test(void)
     u8 *scale_expected = (u8 *)(void *)frontend_sprite2_decode_scratch;
     u8 raw[4];
     u8 rgb[3];
+    u8 star_expected[32];
+    u8 star_actual[32];
     u32 colour_index;
+    u32 position;
     u16 channel;
     u16 left_component;
     u16 right_component;
     u16 rgb_component;
     u16 index;
     u16 filter;
+
+    autotest_starfield_differential_result = 0;
+    /* Complete u16 source-position domain for the exact divmod projection. */
+    for (position = 0; position < 65536u; position++) {
+        if (
+            gameplay_overlay_divmod320_asm((u16)position) !=
+            gameplay_overlay_divmod320_c_reference((u16)position)
+        ) {
+            return 0;
+        }
+    }
+    autotest_starfield_differential_result |= 1u;
+    /*
+     * Complete 8x8 local coordinate x all 4-bit centre/dim combinations.
+     * A non-zero pattern also proves that untouched neighbour nibbles remain
+     * bit-identical, not merely that the requested pixels appear.
+     */
+    {
+        u8 local_y;
+
+        for (local_y = 0; local_y < 8u; local_y++) {
+            u8 local_x;
+
+            for (local_x = 0; local_x < 8u; local_x++) {
+                u8 centre;
+
+                for (centre = 0; centre < 16u; centre++) {
+                    u8 dim;
+
+                    for (dim = 0; dim < 16u; dim++) {
+                        u8 byte_index;
+                        u32 packed =
+                            (u32)centre | ((u32)dim << 8);
+
+                        for (byte_index = 0; byte_index < 32u; byte_index++) {
+                            u8 value = (u8)(
+                                byte_index * 73u +
+                                local_x * 19u +
+                                local_y * 31u +
+                                centre * 7u +
+                                dim * 11u
+                            );
+
+                            star_expected[byte_index] = value;
+                            star_actual[byte_index] = value;
+                        }
+                        gameplay_overlay_plot_star_tile_c_reference(
+                            star_expected,
+                            local_x,
+                            local_y,
+                            packed
+                        );
+                        gameplay_overlay_plot_star_tile_asm(
+                            star_actual,
+                            local_x,
+                            local_y,
+                            packed
+                        );
+                        if (
+                            memcmp(
+                                star_expected,
+                                star_actual,
+                                sizeof(star_expected)
+                            ) != 0
+                        ) {
+                            return 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    autotest_starfield_differential_result |= 2u;
 
     autotest_sprite2_exact_differential_result =
         source_enemy_cache_find_exact_differential_test();
@@ -308,6 +389,8 @@ static void autotest_hotpath_asm_benchmark(void)
 {
     enum { AUTOTEST_HOTPATH_BENCHMARK_CALLS = 16384 };
     u8 rgb[3] = { 0, 0, 0 };
+    u8 star_c[32] = { 0 };
+    u8 star_asm[32] = { 0 };
     u16 old_ime = REG_IME;
     u32 start;
     u32 index;
@@ -376,6 +459,63 @@ static void autotest_hotpath_asm_benchmark(void)
     }
     autotest_axis_overlap_asm_cycles =
         stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= gameplay_overlay_divmod320_c_reference(
+            (u16)(index * 4051u)
+        );
+    }
+    autotest_starfield_divmod_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        sink ^= gameplay_overlay_divmod320_asm(
+            (u16)(index * 4051u)
+        );
+    }
+    autotest_starfield_divmod_asm_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        u8 local_x = (u8)(index & 7u);
+        u8 local_y = (u8)((index >> 3) & 7u);
+        u32 packed =
+            (u32)(index & 15u) |
+            ((u32)((index * 7u) & 15u) << 8);
+
+        gameplay_overlay_plot_star_tile_c_reference(
+            star_c,
+            local_x,
+            local_y,
+            packed
+        );
+    }
+    autotest_starfield_plot_c_cycles =
+        stress_cycle_counter_read() - start;
+
+    start = stress_cycle_counter_read();
+    for (index = 0; index < AUTOTEST_HOTPATH_BENCHMARK_CALLS; index++) {
+        u8 local_x = (u8)(index & 7u);
+        u8 local_y = (u8)((index >> 3) & 7u);
+        u32 packed =
+            (u32)(index & 15u) |
+            ((u32)((index * 7u) & 15u) << 8);
+
+        gameplay_overlay_plot_star_tile_asm(
+            star_asm,
+            local_x,
+            local_y,
+            packed
+        );
+    }
+    autotest_starfield_plot_asm_cycles =
+        stress_cycle_counter_read() - start;
+    for (index = 0; index < sizeof(star_c); index++) {
+        sink += (u32)star_c[index] + (u32)star_asm[index];
+    }
 
     {
         const SourceEnemyCacheSlot *result;
@@ -1294,6 +1434,14 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(676, telemetry_sprite2_exact_lookup_hits);
     sram_write_u32(680, TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM);
     sram_write_u32(684, TYRIAN_GBA_HOTPATH_ASM);
+    /* Additive v82 starfield batch differential and same-ROM microbench. */
+    sram_write_u32(9000, autotest_starfield_differential_result);
+    sram_write_u32(9004, autotest_starfield_divmod_c_cycles);
+    sram_write_u32(9008, autotest_starfield_divmod_asm_cycles);
+    sram_write_u32(9012, autotest_starfield_plot_c_cycles);
+    sram_write_u32(9016, autotest_starfield_plot_asm_cycles);
+    sram_write_u32(9020, 16384u);
+    sram_write_u32(9024, TYRIAN_GBA_STARFIELD_BATCH_ASM);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

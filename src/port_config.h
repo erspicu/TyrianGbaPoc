@@ -45,6 +45,20 @@
 #endif
 
 /*
+ * The source star field stores every point as a linear 320-wide position.
+ * The production fast path uses two small IWRAM ARM leaves: an exact
+ * divmod-320 projection and an in-tile 4bpp centre/cross plot.  Setting this
+ * to zero retains the old per-pixel C path for controlled stress A/B runs.
+ */
+#ifndef TYRIAN_GBA_STARFIELD_BATCH_ASM
+#define TYRIAN_GBA_STARFIELD_BATCH_ASM TYRIAN_GBA_HOTPATH_ASM
+#endif
+#if TYRIAN_GBA_STARFIELD_BATCH_ASM != 0 && \
+    TYRIAN_GBA_STARFIELD_BATCH_ASM != 1
+#error TYRIAN_GBA_STARFIELD_BATCH_ASM must be 0 or 1
+#endif
+
+/*
  * Detail-effect kernels have their own switch so their C/ARM measurements do
  * not include the unrelated collision, RNG, scaling and Sprite2 hot paths.
  */

@@ -669,6 +669,98 @@ static void gameplay_overlay_draw_fine_text(
     }
 }
 
+#if TYRIAN_GBA_STARFIELD_BATCH_ASM || \
+    defined(AUTOTEST_FULL_LOADOUT_STRESS)
+extern IWRAM_CODE ARM_CODE u32 gameplay_overlay_divmod320_asm(
+    u16 position
+);
+extern IWRAM_CODE ARM_CODE void gameplay_overlay_plot_star_tile_asm(
+    u8 *tile,
+    u8 local_x,
+    u8 local_y,
+    u32 packed_nibbles
+);
+#endif
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+static ARM_CODE __attribute__((noinline, noclone, noipa)) u32
+gameplay_overlay_divmod320_c_reference(u16 position)
+{
+    u16 source_y = (u16)(position / 320u);
+    u16 source_x = (u16)(position % 320u);
+
+    return (u32)source_x | ((u32)source_y << 16);
+}
+
+static inline void gameplay_overlay_plot_star_pixel_c_reference(
+    u8 *tile,
+    u8 local_x,
+    u8 local_y,
+    u8 nibble
+)
+{
+    u8 *pixel = tile + (u16)local_y * 4u + (local_x >> 1);
+
+    if (local_x & 1u) {
+        *pixel = (u8)((*pixel & 0x0fu) | (nibble << 4));
+    } else {
+        *pixel = (u8)((*pixel & 0xf0u) | nibble);
+    }
+}
+
+static ARM_CODE __attribute__((noinline, noclone, noipa)) void
+gameplay_overlay_plot_star_tile_c_reference(
+    u8 *tile,
+    u8 local_x,
+    u8 local_y,
+    u32 packed_nibbles
+)
+{
+    u8 centre = (u8)packed_nibbles;
+    u8 dim = (u8)(packed_nibbles >> 8);
+
+    gameplay_overlay_plot_star_pixel_c_reference(
+        tile,
+        local_x,
+        local_y,
+        centre
+    );
+    if (dim == 0) return;
+    if (local_x != 0) {
+        gameplay_overlay_plot_star_pixel_c_reference(
+            tile,
+            (u8)(local_x - 1u),
+            local_y,
+            dim
+        );
+    }
+    if (local_x != 7u) {
+        gameplay_overlay_plot_star_pixel_c_reference(
+            tile,
+            (u8)(local_x + 1u),
+            local_y,
+            dim
+        );
+    }
+    if (local_y != 0) {
+        gameplay_overlay_plot_star_pixel_c_reference(
+            tile,
+            local_x,
+            (u8)(local_y - 1u),
+            dim
+        );
+    }
+    if (local_y != 7u) {
+        gameplay_overlay_plot_star_pixel_c_reference(
+            tile,
+            local_x,
+            (u8)(local_y + 1u),
+            dim
+        );
+    }
+}
+#endif
+
 static void gameplay_overlay_draw_starfield(void)
 {
     int16_t index;
@@ -691,8 +783,18 @@ static void gameplay_overlay_draw_starfield(void)
         u8 nibble;
 
         if (position >= 177u * 320u) continue;
+#if TYRIAN_GBA_STARFIELD_BATCH_ASM
+        {
+            u32 source_position =
+                gameplay_overlay_divmod320_asm(position);
+
+            source_x = (s16)(u16)source_position;
+            source_y = (s16)(u16)(source_position >> 16);
+        }
+#else
         source_x = (s16)(position % 320u);
         source_y = (s16)(position / 320u);
+#endif
         x = (s16)(source_x - SOURCE_PRESENTATION_X_ORIGIN);
         y = (s16)(source_y - SOURCE_PRESENTATION_Y_ORIGIN);
         if (
@@ -709,6 +811,25 @@ static void gameplay_overlay_draw_starfield(void)
         }
         colour = (u8)(source_parity_level.star_meta[index] >> 4);
         nibble = gameplay_overlay_star_nibble[colour];
+#if TYRIAN_GBA_STARFIELD_BATCH_ASM
+        {
+            u8 tile = gameplay_overlay_allocate_tile(
+                (u16)(y >> 3) * 32u + (u16)(x >> 3),
+                gameplay_overlay_star_bank
+            );
+            u8 dim = colour >= 4u ?
+                gameplay_overlay_star_nibble[colour - 4u] :
+                0;
+
+            if (tile == 0) continue;
+            gameplay_overlay_plot_star_tile_asm(
+                gameplay_overlay_tiles + (u16)tile * 32u,
+                (u8)x & 7u,
+                (u8)y & 7u,
+                (u32)nibble | ((u32)dim << 8)
+            );
+        }
+#else
         gameplay_overlay_set_pixel(
             x,
             y,
@@ -744,6 +865,7 @@ static void gameplay_overlay_draw_starfield(void)
                 );
             }
         }
+#endif
     }
 }
 

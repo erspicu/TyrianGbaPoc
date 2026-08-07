@@ -105,6 +105,123 @@ source_enemy_cache_find_exact_asm:
 	.size source_enemy_cache_find_exact_asm, \
 		.-source_enemy_cache_find_exact_asm
 
+	.align 2
+	.global gameplay_overlay_divmod320_asm
+	.type gameplay_overlay_divmod320_asm, %function
+/*
+ * u32 gameplay_overlay_divmod320_asm(u16 position)
+ *
+ * Return x in bits 0..15 and y in bits 16..31.  For a 16-bit input,
+ * floor((position >> 6) * 205 / 1024) is exactly position / 320 for the
+ * complete domain.  The remainder is then position - y * 320.
+ */
+gameplay_overlay_divmod320_asm:
+	mov     r0, r0, lsl #16
+	mov     r0, r0, lsr #16
+	mov     r1, r0, lsr #6
+	mov     r2, #205
+	mul     r3, r2, r1
+	mov     r1, r3, lsr #10
+	add     r2, r1, r1, lsl #2
+	sub     r0, r0, r2, lsl #6
+	orr     r0, r0, r1, lsl #16
+	bx      lr
+	.size gameplay_overlay_divmod320_asm, \
+		.-gameplay_overlay_divmod320_asm
+
+	.align 2
+	.global gameplay_overlay_plot_star_tile_asm
+	.type gameplay_overlay_plot_star_tile_asm, %function
+/*
+ * void gameplay_overlay_plot_star_tile_asm(
+ *     u8 *tile, u8 local_x, u8 local_y, u32 packed_nibbles
+ * )
+ *
+ * packed_nibbles is centre | dim<<8; dim zero suppresses the bright-star
+ * cross.  Every optional arm remains inside the same 8x8 4bpp tile, matching
+ * the old per-pixel clipping rule while avoiding four repeated tile lookups.
+ */
+gameplay_overlay_plot_star_tile_asm:
+	stmfd   sp!, {r4, r5}
+	and     r4, r3, #0xff
+	mov     r5, r3, lsr #8
+	and     r5, r5, #0xff
+
+	/* Centre. */
+	add     r12, r0, r2, lsl #2
+	add     r12, r12, r1, lsr #1
+	ldrb    r3, [r12]
+	tst     r1, #1
+	bicne   r3, r3, #0xf0
+	orrne   r3, r3, r4, lsl #4
+	biceq   r3, r3, #0x0f
+	orreq   r3, r3, r4
+	strb    r3, [r12]
+	cmp     r5, #0
+	beq     .Lstar_plot_return
+
+	/* Left. */
+	cmp     r1, #0
+	beq     .Lstar_plot_right
+	sub     r4, r1, #1
+	add     r12, r0, r2, lsl #2
+	add     r12, r12, r4, lsr #1
+	ldrb    r3, [r12]
+	tst     r4, #1
+	bicne   r3, r3, #0xf0
+	orrne   r3, r3, r5, lsl #4
+	biceq   r3, r3, #0x0f
+	orreq   r3, r3, r5
+	strb    r3, [r12]
+
+.Lstar_plot_right:
+	cmp     r1, #7
+	beq     .Lstar_plot_up
+	add     r4, r1, #1
+	add     r12, r0, r2, lsl #2
+	add     r12, r12, r4, lsr #1
+	ldrb    r3, [r12]
+	tst     r4, #1
+	bicne   r3, r3, #0xf0
+	orrne   r3, r3, r5, lsl #4
+	biceq   r3, r3, #0x0f
+	orreq   r3, r3, r5
+	strb    r3, [r12]
+
+.Lstar_plot_up:
+	cmp     r2, #0
+	beq     .Lstar_plot_down
+	sub     r4, r2, #1
+	add     r12, r0, r4, lsl #2
+	add     r12, r12, r1, lsr #1
+	ldrb    r3, [r12]
+	tst     r1, #1
+	bicne   r3, r3, #0xf0
+	orrne   r3, r3, r5, lsl #4
+	biceq   r3, r3, #0x0f
+	orreq   r3, r3, r5
+	strb    r3, [r12]
+
+.Lstar_plot_down:
+	cmp     r2, #7
+	beq     .Lstar_plot_return
+	add     r4, r2, #1
+	add     r12, r0, r4, lsl #2
+	add     r12, r12, r1, lsr #1
+	ldrb    r3, [r12]
+	tst     r1, #1
+	bicne   r3, r3, #0xf0
+	orrne   r3, r3, r5, lsl #4
+	biceq   r3, r3, #0x0f
+	orreq   r3, r3, r5
+	strb    r3, [r12]
+
+.Lstar_plot_return:
+	ldmfd   sp!, {r4, r5}
+	bx      lr
+	.size gameplay_overlay_plot_star_tile_asm, \
+		.-gameplay_overlay_plot_star_tile_asm
+
 	.global ot_mt_rand_core_asm
 	.type ot_mt_rand_core_asm, %function
 /*
