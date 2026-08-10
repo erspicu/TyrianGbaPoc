@@ -13,6 +13,7 @@ enum {
     FRONTEND_PENDING_FULL_FRAME = 1,
     FRONTEND_PENDING_SELECTION_PATCH = 2,
     FRONTEND_PENDING_DIRTY_RECTS = 3,
+    FRONTEND_PENDING_PREPARED_FULL_FRAME = 4,
     FRONTEND_STATS_STAGE_COMPLETED = 0,
     FRONTEND_STATS_STAGE_CASH = 1,
     FRONTEND_STATS_STAGE_ENEMIES = 2,
@@ -321,6 +322,7 @@ static void frontend_upgrade_sim_enter_prepare(void);
 static void frontend_upgrade_sim_enter_finish(void);
 static void frontend_upgrade_sim_update(void);
 static void frontend_upgrade_sim_mark_loadout_dirty(void);
+static void frontend_upgrade_sim_play_menu_effect(u16 effect);
 static void frontend_upgrade_sim_commit_vblank(void);
 static void frontend_upgrade_sim_disable(void);
 static u8 frontend_nav_dot_count(u8 destination);
@@ -1542,6 +1544,41 @@ static void frontend_present(
     frontend_frame_pending = 1;
 }
 
+/*
+ * Ship Type redraws are already complete in EWRAM.  Upload them to the
+ * hidden Mode-4 page immediately, outside the VBlank commit budget; the LCD
+ * keeps scanning the old page and the next VBlank only performs the tiny
+ * palette copy plus page-bit flip.  If the upload itself crosses a VBlank,
+ * frame_pending is not armed until it has completed, so the old page remains
+ * visible for one more frame instead of ever exposing a partial bitmap.
+ */
+static void frontend_present_prepared_ewram(
+    const u8 *frame,
+    const u8 *palette
+)
+{
+    u8 next_page;
+    u8 *target;
+
+    telemetry_frontend_full_redraws++;
+    if (!frontend_mode4_active) {
+        frontend_show_immediate(frame, palette);
+        return;
+    }
+    next_page = frontend_display_page ^ 1u;
+    target = next_page ?
+        FRONTEND_MODE4_PAGE1 :
+        FRONTEND_MODE4_PAGE0;
+    dmaCopy(frame, target, FRONTEND_FRAME_BYTES);
+    frontend_prepared_display_page = next_page;
+    frontend_pending_frame = frame;
+    frontend_pending_palette = palette;
+    frontend_pending_kind = FRONTEND_PENDING_PREPARED_FULL_FRAME;
+    frontend_palette_pending = 0;
+    frontend_dirty_count = 0;
+    frontend_frame_pending = 1;
+}
+
 static void frontend_dirty_begin(void)
 {
     frontend_dirty_count = 0;
@@ -1590,10 +1627,10 @@ static void frontend_dirty_add(
         );
 
         if (
-            x <= old_right &&
-            right >= (s16)frontend_dirty_x[index] &&
-            y <= old_bottom &&
-            bottom >= (s16)frontend_dirty_y[index]
+            x < old_right &&
+            right > (s16)frontend_dirty_x[index] &&
+            y < old_bottom &&
+            bottom > (s16)frontend_dirty_y[index]
         ) {
             s16 merged_x =
                 x < (s16)frontend_dirty_x[index] ?
@@ -1763,9 +1800,25 @@ static void frontend_commit_rect(
 {
     u16 row;
 
+    if (x == 0 && width == SCREEN_WIDTH) {
+        u32 offset = (u32)y * SCREEN_WIDTH;
+        u32 bytes = (u32)width * height;
+
+        telemetry_frontend_dma_calls++;
+        telemetry_frontend_dma_bytes += bytes;
+        dmaCopy(
+            source_frame + offset,
+            target_frame + offset,
+            bytes
+        );
+        return;
+    }
+
     for (row = 0; row < height; row++) {
         u32 offset = (u32)(y + row) * SCREEN_WIDTH + x;
 
+        telemetry_frontend_dma_calls++;
+        telemetry_frontend_dma_bytes += width;
         dmaCopy(
             source_frame + offset,
             target_frame + offset,
@@ -1841,13 +1894,30 @@ static void frontend_commit_dirty_rects(void)
         u32 bytes =
             (u32)frontend_dirty_width[index] *
             frontend_dirty_height[index];
+        u16 commit_x = frontend_dirty_x[index];
+        u16 commit_width = frontend_dirty_width[index];
+
+        /*
+         * DMA setup costs more than the extra Mode-4 bandwidth for a wide,
+         * multi-row patch.  frontend_frame_scratch is the authoritative
+         * bitmap for dirty updates, so promote these patches to complete
+         * scanlines and submit one contiguous transfer instead of one DMA
+         * launch per row.  Hardware OBJ previews remain independent.
+         */
+        if (
+            commit_width >= 64u &&
+            frontend_dirty_height[index] >= 8u
+        ) {
+            commit_x = 0;
+            commit_width = SCREEN_WIDTH;
+        }
 
         frontend_commit_rect(
             frontend_pending_frame,
             target,
-            frontend_dirty_x[index],
+            commit_x,
             frontend_dirty_y[index],
-            frontend_dirty_width[index],
+            commit_width,
             frontend_dirty_height[index]
         );
         telemetry_frontend_dirty_bytes += bytes;
@@ -1860,6 +1930,7 @@ static void frontend_commit_vblank(void)
 {
     u8 next_page;
     u8 *target;
+    u8 prepared_flip = 0;
 
     frontend_nav_obj_commit_vblank();
     frontend_upgrade_sim_commit_vblank();
@@ -1874,6 +1945,14 @@ static void frontend_commit_vblank(void)
                 FRONTEND_PENDING_DIRTY_RECTS
         ) {
             frontend_commit_dirty_rects();
+        } else if (
+            frontend_pending_kind ==
+                FRONTEND_PENDING_PREPARED_FULL_FRAME
+        ) {
+            dmaCopy(frontend_pending_palette, BG_PALETTE, 512);
+            frontend_display_page = frontend_prepared_display_page;
+            frontend_palette_pending = 0;
+            prepared_flip = 1;
         } else {
             next_page = frontend_display_page ^ 1u;
             target = next_page ?
@@ -1896,6 +1975,18 @@ static void frontend_commit_vblank(void)
         frontend_palette_pending = 0;
     }
     frontend_commit_mode4_registers();
+    if (prepared_flip) {
+        u16 vcount = REG_VCOUNT;
+
+        telemetry_frontend_prepared_flips++;
+        telemetry_frontend_prepared_flip_vcount_last = vcount;
+        if (vcount > telemetry_frontend_prepared_flip_vcount_max) {
+            telemetry_frontend_prepared_flip_vcount_max = vcount;
+        }
+        if (vcount < SCREEN_HEIGHT) {
+            telemetry_frontend_prepared_flip_outside_vblank++;
+        }
+    }
 }
 
 static u8 frontend_runtime_font_tile(char character)
@@ -3323,7 +3414,7 @@ frontend_copy_frame_rows(
     }
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+static __attribute__((noinline, noclone)) u8
 frontend_copy_static_menu_panel_rows(
     u8 panel_index,
     u8 first_row,

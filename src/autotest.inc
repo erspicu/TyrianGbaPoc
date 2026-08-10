@@ -8,4 +8,5 @@
 #include "autotest/autotest_telemetry.inc"
 #include "autotest/autotest_input.inc"
 #include "autotest/autotest_frontend_transitions.inc"
+#include "autotest/autotest_upgrade_sidekick_stress.inc"
 #endif

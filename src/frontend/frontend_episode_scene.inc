@@ -74,7 +74,7 @@ extern void frontend_scale_swar_row_asm(
     u32 block_count
 );
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+static __attribute__((noinline, noclone)) void
 frontend_scene_scale_pc_frame_rows(
     u8 first_row,
     u8 row_count

@@ -2332,7 +2332,7 @@ static void audio_level_music_fade_in_update(void)
     }
 }
 
-static void audio_effect(u16 effect)
+static mm_sfxhand audio_effect_start(u16 effect)
 {
 #if TYRIAN_GBA_STRESS_LOADOUT && TYRIAN_GBA_STRESS_PSG_AUDIO
     /*
@@ -2354,12 +2354,18 @@ static void audio_effect(u16 effect)
     REG_SOUND1CNT_X =
         (u16)(frequency | (1u << 14) | (1u << 15));
     telemetry_stress_psg_triggers++;
+    return 0;
 #else
-    mmEffect(effect);
+    return mmEffect(effect);
 #endif
 }
 
-static void source_sound_effect(u8 source_sound)
+static void audio_effect(u16 effect)
+{
+    (void)audio_effect_start(effect);
+}
+
+static mm_sfxhand source_sound_effect_start(u8 source_sound)
 {
     static const u16 source_sound_to_maxmod[39] = {
         0,
@@ -2397,7 +2403,7 @@ static void source_sound_effect(u8 source_sound)
             sizeof(source_sound_to_maxmod) /
                 sizeof(source_sound_to_maxmod[0])
     ) {
-        return;
+        return 0;
     }
 #ifdef AUTOTEST
     if (source_sound <= 32) {
@@ -2412,10 +2418,16 @@ static void source_sound_effect(u8 source_sound)
         ot_season_mode() == OT_SEASON_XMAS &&
         source_sound >= 30u
     ) {
-        audio_effect(source_xmas_voice_to_maxmod[source_sound - 30u]);
-        return;
+        return audio_effect_start(
+            source_xmas_voice_to_maxmod[source_sound - 30u]
+        );
     }
-    audio_effect(source_sound_to_maxmod[source_sound]);
+    return audio_effect_start(source_sound_to_maxmod[source_sound]);
+}
+
+static void source_sound_effect(u8 source_sound)
+{
+    (void)source_sound_effect_start(source_sound);
 }
 
 static void toggle_pause(void)

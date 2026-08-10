@@ -429,6 +429,7 @@ static __attribute__((
             frontend_transition_phase = 4;
             break;
         case 4:
+            frontend_upgrade_preview_cache_capture();
             frontend_draw_upgrade_submenu_preview_details();
             frontend_transition_work_index = 0;
             frontend_transition_phase = 5;

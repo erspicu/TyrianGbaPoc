@@ -6,9 +6,253 @@ enum {
      * Maxmod for one oversized draw call.
      */
     FRONTEND_UPGRADE_STAMP_RUNS_PER_STEP = 48,
+    FRONTEND_UPGRADE_PREVIEW_CACHE_X = 8,
+    FRONTEND_UPGRADE_PREVIEW_CACHE_Y = 104,
+    FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH = 112,
+    FRONTEND_UPGRADE_PREVIEW_CACHE_HEIGHT = 48,
+    FRONTEND_UPGRADE_CASH_DIRTY_X = 44,
+    FRONTEND_UPGRADE_CASH_DIRTY_Y = 134,
+    FRONTEND_UPGRADE_CASH_DIRTY_WIDTH = 72,
+    FRONTEND_UPGRADE_CASH_DIRTY_HEIGHT = 14,
+    FRONTEND_UPGRADE_SUBMENU_ROW_Y = 21,
+    FRONTEND_UPGRADE_SUBMENU_ROW_STEP = 21,
+    /* 6-pixel glyph + one shadow row, twice, at y and y + 9. */
+    FRONTEND_UPGRADE_SUBMENU_ROW_TEXT_HEIGHT = 16,
 };
 
 static FrontendSourceStampJob frontend_upgrade_stamp_job EWRAM_BSS;
+
+/*
+ * The immutable OPTION_SHAPES simulator chrome already exists in the Mode-4
+ * frame.  Preserve only the small area underneath its power/cash text in the
+ * gameplay-only background cache arena.  Upgrade menus and gameplay never
+ * overlap, so this avoids another permanent EWRAM allocation.
+ */
+static void frontend_upgrade_preview_cache_capture(void)
+{
+    u8 row;
+
+    if (!frontend_upgrade_sim_category_active()) {
+        frontend_upgrade_preview_cache_valid = 0;
+        return;
+    }
+    for (
+        row = 0;
+        row < FRONTEND_UPGRADE_PREVIEW_CACHE_HEIGHT;
+        row++
+    ) {
+        memcpy(
+            frontend_ship_panel_cache +
+                (u16)row * FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH,
+            frontend_frame_scratch +
+                (u32)(FRONTEND_UPGRADE_PREVIEW_CACHE_Y + row) *
+                    SCREEN_WIDTH +
+                FRONTEND_UPGRADE_PREVIEW_CACHE_X,
+            FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH
+        );
+    }
+    /* The same arena no longer contains a keyed ship-panel image. */
+    frontend_ship_panel_cache_valid = 0;
+    frontend_upgrade_preview_cache_category =
+        frontend_upgrade_category;
+    frontend_upgrade_preview_cache_valid = 1;
+}
+
+static u8 frontend_upgrade_preview_cache_restore(
+    u8 x,
+    u8 y,
+    u8 width,
+    u8 height
+)
+{
+    u8 row;
+
+    if (
+        !frontend_upgrade_preview_cache_valid ||
+        frontend_upgrade_preview_cache_category !=
+            frontend_upgrade_category ||
+        x < FRONTEND_UPGRADE_PREVIEW_CACHE_X ||
+        y < FRONTEND_UPGRADE_PREVIEW_CACHE_Y ||
+        x + width >
+            FRONTEND_UPGRADE_PREVIEW_CACHE_X +
+                FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH ||
+        y + height >
+            FRONTEND_UPGRADE_PREVIEW_CACHE_Y +
+                FRONTEND_UPGRADE_PREVIEW_CACHE_HEIGHT
+    ) {
+        return 0;
+    }
+    for (row = 0; row < height; row++) {
+        memcpy(
+            frontend_frame_scratch +
+                (u32)(y + row) * SCREEN_WIDTH + x,
+            frontend_ship_panel_cache +
+                (u16)(y - FRONTEND_UPGRADE_PREVIEW_CACHE_Y + row) *
+                    FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH +
+                (u16)(x - FRONTEND_UPGRADE_PREVIEW_CACHE_X),
+            width
+        );
+    }
+    return 1;
+}
+
+static u8 frontend_upgrade_ship_preview_cache_matches_items(
+    const FrontendPlayerItems *items,
+    u32 cash,
+    u8 armor
+)
+{
+    return
+        frontend_upgrade_ship_preview_cache_valid &&
+        items != 0 &&
+        frontend_upgrade_ship_preview_cache_cash == cash &&
+        frontend_upgrade_ship_preview_cache_armor == armor &&
+        memcmp(
+            &frontend_upgrade_ship_preview_cache_items,
+            items,
+            sizeof(*items)
+        ) == 0;
+}
+
+static u8 frontend_upgrade_static_panel_category_active(void)
+{
+    return
+        frontend_upgrade_category == FRONTEND_UPGRADE_SHIP ||
+        frontend_upgrade_category == FRONTEND_UPGRADE_SHIELD;
+}
+
+static void frontend_upgrade_ship_preview_copy_to_cache(void)
+{
+    u16 row;
+
+    if (!frontend_player_items_valid) {
+        frontend_upgrade_ship_preview_cache_valid = 0;
+        return;
+    }
+    for (
+        row = 0;
+        row < FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_HEIGHT;
+        row++
+    ) {
+        const u32 *source = (const u32 *)(const void *)(
+            frontend_frame_scratch +
+                (u32)(FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_Y + row) *
+                    SCREEN_WIDTH
+        );
+        u32 *destination = (u32 *)(void *)(
+            frontend_upgrade_ship_preview_cache +
+                (u32)row * FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH
+        );
+        u8 word;
+
+        for (
+            word = 0;
+            word < FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH / 4u;
+            word++
+        ) {
+            destination[word] = source[word];
+        }
+    }
+    frontend_upgrade_ship_preview_cache_items = frontend_player_items;
+    frontend_upgrade_ship_preview_cache_cash = player_cash;
+    frontend_upgrade_ship_preview_cache_armor = player_armor;
+    frontend_upgrade_ship_preview_cache_valid = 1;
+}
+
+static void frontend_upgrade_ship_preview_prepare_candidate(u8 item)
+{
+    FrontendPlayerItems candidate;
+
+    if (
+        !frontend_upgrade_static_panel_category_active() ||
+        !frontend_player_items_valid
+    ) {
+        frontend_upgrade_ship_preview_swap_pending = 0;
+        return;
+    }
+    candidate = frontend_player_items;
+    if (frontend_upgrade_category == FRONTEND_UPGRADE_SHIP) {
+        candidate.ship = item;
+    } else {
+        candidate.shield = item;
+    }
+    if (
+        frontend_upgrade_ship_preview_cache_matches_items(
+            &candidate,
+            player_cash,
+            player_armor
+        )
+    ) {
+        /* Preserve the panel currently in scratch as the next cache entry. */
+        frontend_upgrade_ship_preview_swap_items = frontend_player_items;
+        frontend_upgrade_ship_preview_swap_cash = player_cash;
+        frontend_upgrade_ship_preview_swap_armor = player_armor;
+        frontend_upgrade_ship_preview_swap_pending = 1;
+        return;
+    }
+    frontend_upgrade_ship_preview_swap_pending = 0;
+    frontend_upgrade_ship_preview_copy_to_cache();
+}
+
+static u8 frontend_upgrade_ship_preview_apply_cached(void)
+{
+    u16 row;
+    u8 swap;
+
+    if (
+        !frontend_upgrade_static_panel_category_active() ||
+        !frontend_upgrade_ship_preview_cache_matches_items(
+            &frontend_player_items,
+            player_cash,
+            player_armor
+        )
+    ) {
+        frontend_upgrade_ship_preview_swap_pending = 0;
+        return 0;
+    }
+    swap = frontend_upgrade_ship_preview_swap_pending;
+    for (
+        row = 0;
+        row < FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_HEIGHT;
+        row++
+    ) {
+        u32 *frame = (u32 *)(void *)(
+            frontend_frame_scratch +
+                (u32)(FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_Y + row) *
+                    SCREEN_WIDTH
+        );
+        u32 *cache = (u32 *)(void *)(
+            frontend_upgrade_ship_preview_cache +
+                (u32)row * FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH
+        );
+        u8 word;
+
+        for (
+            word = 0;
+            word < FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH / 4u;
+            word++
+        ) {
+            u32 cached = cache[word];
+
+            if (swap) {
+                cache[word] = frame[word];
+            }
+            frame[word] = cached;
+        }
+    }
+    if (swap) {
+        frontend_upgrade_ship_preview_cache_items =
+            frontend_upgrade_ship_preview_swap_items;
+        frontend_upgrade_ship_preview_cache_cash =
+            frontend_upgrade_ship_preview_swap_cash;
+        frontend_upgrade_ship_preview_cache_armor =
+            frontend_upgrade_ship_preview_swap_armor;
+        telemetry_frontend_upgrade_ship_cache_swaps++;
+    }
+    telemetry_frontend_upgrade_ship_cache_hits++;
+    frontend_upgrade_ship_preview_swap_pending = 0;
+    return 1;
+}
 
 static const char *frontend_game_menu_label(u8 index)
 {
@@ -920,7 +1164,24 @@ static u8 frontend_upgrade_begin_submenu(u8 category)
                     1;
         }
     }
+    for (index = 0; index < frontend_upgrade_sub_count; index++) {
+        frontend_upgrade_item_name(
+            category,
+            frontend_upgrade_sub_item[index],
+            frontend_upgrade_sub_name[index],
+            sizeof(frontend_upgrade_sub_name[index])
+        );
+        frontend_upgrade_sub_cost[index] =
+            frontend_upgrade_total_cost(
+                category,
+                frontend_upgrade_sub_item[index],
+                frontend_upgrade_sub_power[index]
+            );
+    }
     frontend_upgrade_sub_scroll = 0;
+    /* The cold arena may have been used by Data, Ship Specs or a simulator. */
+    frontend_upgrade_ship_preview_cache_valid = 0;
+    frontend_upgrade_ship_preview_swap_pending = 0;
     return 1;
 }
 
@@ -985,6 +1246,12 @@ static u32 frontend_upgrade_equipped_cost(void)
     u8 power = 1;
 
     if (field == 0) return 0;
+    if (
+        frontend_selection < frontend_upgrade_sub_count &&
+        frontend_upgrade_sub_item[frontend_selection] == *field
+    ) {
+        return frontend_upgrade_sub_cost[frontend_selection];
+    }
     if (
         frontend_upgrade_category ==
             FRONTEND_UPGRADE_FRONT_WEAPON
@@ -1079,13 +1346,22 @@ static void frontend_upgrade_move_submenu(s8 direction)
         attempts++;
     } while (
         frontend_selection < frontend_upgrade_sub_count &&
-        frontend_upgrade_total_cost(
-            frontend_upgrade_category,
-            frontend_upgrade_sub_item[frontend_selection],
-            frontend_upgrade_sub_power[frontend_selection]
-        ) > frontend_upgrade_trade_cash &&
+        frontend_upgrade_sub_cost[frontend_selection] >
+            frontend_upgrade_trade_cash &&
         attempts < item_count
     );
+    if (frontend_upgrade_static_panel_category_active()) {
+        u8 candidate_item =
+            frontend_selection < frontend_upgrade_sub_count ?
+                frontend_upgrade_sub_item[frontend_selection] :
+                (
+                    frontend_upgrade_category == FRONTEND_UPGRADE_SHIP ?
+                        frontend_upgrade_accepted_items.ship :
+                        frontend_upgrade_accepted_items.shield
+                );
+
+        frontend_upgrade_ship_preview_prepare_candidate(candidate_item);
+    }
     frontend_upgrade_apply_preview();
     if (frontend_selection < frontend_upgrade_sub_scroll) {
         frontend_upgrade_sub_scroll = frontend_selection;
@@ -1097,7 +1373,7 @@ static void frontend_upgrade_move_submenu(s8 direction)
             (u8)(frontend_selection - 5u);
     }
     if (frontend_selection != old_selection) {
-        audio_effect(SFX_CURSOR);
+        frontend_upgrade_sim_play_menu_effect(SFX_CURSOR);
         frontend_render_upgrade_submenu_update(
             old_selection,
             old_scroll
@@ -1151,8 +1427,14 @@ static void frontend_upgrade_power_adjust(s8 direction)
         }
     }
     *power = candidate;
+    frontend_upgrade_sub_cost[frontend_selection] =
+        frontend_upgrade_total_cost(
+            frontend_upgrade_category,
+            frontend_upgrade_sub_item[frontend_selection],
+            candidate
+        );
     frontend_upgrade_apply_preview();
-    audio_effect(SFX_CURSOR);
+    frontend_upgrade_sim_play_menu_effect(SFX_CURSOR);
     frontend_render_upgrade_submenu_update(
         old_selection,
         old_scroll
@@ -1347,6 +1629,21 @@ static void frontend_draw_upgrade_submenu_preview_art(void)
     }
 }
 
+static void frontend_draw_upgrade_submenu_cash(void)
+{
+    char digits[11];
+
+    frontend_u32_string(frontend_upgrade_cash_left(), digits);
+    frontend_draw_upgrade_list_text(
+        frontend_frame_scratch,
+        digits,
+        frontend_source_to_screen_x(65),
+        frontend_source_to_screen_y(173),
+        frontend_source_to_screen_x(140),
+        0x1eu
+    );
+}
+
 static void frontend_draw_upgrade_submenu_preview_details(void)
 {
     char line[40];
@@ -1514,58 +1811,54 @@ static void frontend_draw_upgrade_submenu_preview_details(void)
     }
 
     /* game_menu.c:JE_drawScore(), after every simulator frame. */
-    frontend_u32_string(frontend_upgrade_cash_left(), digits);
-    frontend_draw_upgrade_list_text(
-        frontend_frame_scratch,
-        digits,
-        frontend_source_to_screen_x(65),
-        frontend_source_to_screen_y(173),
-        frontend_source_to_screen_x(140),
-        0x1eu
-    );
+    frontend_draw_upgrade_submenu_cash();
 }
 
 static void frontend_draw_upgrade_submenu_preview(void)
 {
     frontend_draw_upgrade_submenu_preview_art();
+    frontend_upgrade_preview_cache_capture();
     frontend_draw_upgrade_submenu_preview_details();
 }
 
-static void frontend_draw_upgrade_submenu_row(u8 visible_index)
+static void frontend_draw_upgrade_submenu_row_content(
+    u8 visible_index,
+    u8 draw_art
+)
 {
     u8 item_index = (u8)(
         frontend_upgrade_sub_scroll + visible_index
     );
-    s16 y = (s16)(21 + visible_index * 21u);
+    s16 y = (s16)(
+        FRONTEND_UPGRADE_SUBMENU_ROW_Y +
+        visible_index * FRONTEND_UPGRADE_SUBMENU_ROW_STEP
+    );
     u8 selected = item_index == frontend_selection;
     char line[40];
 
     if (item_index < frontend_upgrade_sub_count) {
         u8 item = frontend_upgrade_sub_item[item_index];
-        u32 cost = frontend_upgrade_total_cost(
-            frontend_upgrade_category,
-            item,
-            frontend_upgrade_sub_power[item_index]
-        );
+        u32 cost = frontend_upgrade_sub_cost[item_index];
         u8 affordable = cost <= frontend_upgrade_trade_cash;
         const u8 *owned = frontend_player_item_field_const(
             &frontend_upgrade_accepted_items,
             frontend_upgrade_category
         );
 
-        frontend_upgrade_item_name(
-            frontend_upgrade_category,
-            item,
+        frontend_copy_string(
             line,
-            sizeof(line)
+            sizeof(line),
+            frontend_upgrade_sub_name[item_index]
         );
-        frontend_draw_item_source(
-            frontend_frame_scratch,
-            frontend_upgrade_category,
-            item,
-            160,
-            (s16)(y * 5 / 4 - 4)
-        );
+        if (draw_art) {
+            frontend_draw_item_source(
+                frontend_frame_scratch,
+                frontend_upgrade_category,
+                item,
+                160,
+                (s16)(y * 5 / 4 - 4)
+            );
+        }
         frontend_draw_upgrade_list_text(
             frontend_frame_scratch,
             line,
@@ -1617,6 +1910,58 @@ static void frontend_draw_upgrade_submenu_row(u8 visible_index)
     }
 }
 
+static void frontend_draw_upgrade_submenu_row(u8 visible_index)
+{
+    frontend_draw_upgrade_submenu_row_content(visible_index, 1);
+}
+
+static void frontend_draw_upgrade_submenu_row_text(u8 visible_index)
+{
+    frontend_draw_upgrade_submenu_row_content(visible_index, 0);
+}
+
+extern IWRAM_CODE ARM_CODE void frontend_upgrade_recolour_words_asm(
+    u32 *pixels,
+    u32 word_count,
+    u32 selected
+);
+
+static void frontend_recolour_upgrade_submenu_row(
+    u8 visible_index,
+    u8 selected
+)
+{
+    u8 item_index = (u8)(
+        frontend_upgrade_sub_scroll + visible_index
+    );
+    u8 x0 = item_index < frontend_upgrade_sub_count ? 140u : 132u;
+    u8 y0 = (u8)(
+        FRONTEND_UPGRADE_SUBMENU_ROW_Y +
+        visible_index * FRONTEND_UPGRADE_SUBMENU_ROW_STEP
+    );
+    u8 y;
+
+    _Static_assert((SCREEN_WIDTH & 3u) == 0, "Mode-4 row must be word aligned");
+    _Static_assert((132u & 3u) == 0, "Done row must be word aligned");
+    _Static_assert((140u & 3u) == 0, "Item row must be word aligned");
+    for (
+        y = y0;
+        y < y0 + FRONTEND_UPGRADE_SUBMENU_ROW_TEXT_HEIGHT &&
+            y < SCREEN_HEIGHT;
+        y++
+    ) {
+        u32 *pixel = (u32 *)(void *)(
+            frontend_frame_scratch + (u32)y * SCREEN_WIDTH + x0
+        );
+
+        frontend_upgrade_recolour_words_asm(
+            pixel,
+            (SCREEN_WIDTH - x0) >> 2,
+            selected
+        );
+    }
+}
+
 static void frontend_draw_upgrade_submenu_rows(void)
 {
     u8 visible_index;
@@ -1642,6 +1987,7 @@ static void frontend_draw_upgrade_submenu_title(void)
 
 static void frontend_prepare_upgrade_submenu_base(void)
 {
+    frontend_upgrade_preview_cache_valid = 0;
     memcpy(
         frontend_frame_scratch,
         frontend_frame_address(FRONTEND_FRAME_MENU_CHROME),
@@ -1670,19 +2016,65 @@ static void frontend_render_upgrade_submenu_update(
     u8 index;
 
     frontend_dirty_begin();
-    /*
-     * The left preview is the only configuration-dependent illustration.
-     * Rebuild it without touching the 120-pixel-wide list or page chrome.
-     */
-    frontend_restore_menu_chrome_rect(0, 16, 120, 144);
-    frontend_draw_upgrade_submenu_preview();
-    frontend_dirty_add(0, 16, 120, 144);
+    if (
+        frontend_upgrade_sim_category_active() &&
+        frontend_upgrade_preview_cache_valid &&
+        frontend_upgrade_preview_cache_category ==
+            frontend_upgrade_category
+    ) {
+        if (
+            frontend_upgrade_category ==
+                FRONTEND_UPGRADE_FRONT_WEAPON ||
+            frontend_upgrade_category ==
+                FRONTEND_UPGRADE_REAR_WEAPON
+        ) {
+            (void)frontend_upgrade_preview_cache_restore(
+                FRONTEND_UPGRADE_PREVIEW_CACHE_X,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_Y,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_HEIGHT
+            );
+            frontend_draw_upgrade_submenu_preview_details();
+            frontend_dirty_add(
+                FRONTEND_UPGRADE_PREVIEW_CACHE_X,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_Y,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_WIDTH,
+                FRONTEND_UPGRADE_PREVIEW_CACHE_HEIGHT
+            );
+        } else {
+            /* Generator/sidekick selection changes only JE_drawScore(). */
+            (void)frontend_upgrade_preview_cache_restore(
+                FRONTEND_UPGRADE_CASH_DIRTY_X,
+                FRONTEND_UPGRADE_CASH_DIRTY_Y,
+                FRONTEND_UPGRADE_CASH_DIRTY_WIDTH,
+                FRONTEND_UPGRADE_CASH_DIRTY_HEIGHT
+            );
+            frontend_draw_upgrade_submenu_cash();
+            frontend_dirty_add(
+                FRONTEND_UPGRADE_CASH_DIRTY_X,
+                FRONTEND_UPGRADE_CASH_DIRTY_Y,
+                FRONTEND_UPGRADE_CASH_DIRTY_WIDTH,
+                FRONTEND_UPGRADE_CASH_DIRTY_HEIGHT
+            );
+        }
+    } else {
+        if (!frontend_upgrade_ship_preview_apply_cached()) {
+            if (frontend_upgrade_static_panel_category_active()) {
+                telemetry_frontend_upgrade_ship_cache_misses++;
+            }
+            /* Ship/shield illustrations really change with the selection. */
+            frontend_restore_menu_chrome_rect(0, 16, 120, 144);
+            frontend_draw_upgrade_submenu_preview();
+        }
+        frontend_dirty_add(0, 16, 120, 144);
+    }
 
     if (old_scroll != frontend_upgrade_sub_scroll) {
         frontend_restore_menu_chrome_rect(120, 16, 120, 132);
         frontend_draw_upgrade_submenu_rows();
         frontend_dirty_add(120, 16, 120, 132);
-    } else {
+    } else if (old_selection != frontend_selection) {
+        /* Only the two source text ramps change on a cursor move. */
         for (index = 0; index < 2; index++) {
             u8 item_index = selection[index];
 
@@ -1694,20 +2086,74 @@ static void frontend_render_upgrade_submenu_update(
                 u8 visible_index = (u8)(
                     item_index - frontend_upgrade_sub_scroll
                 );
-                s16 y = (s16)(17 + visible_index * 21u);
-
-                frontend_restore_menu_chrome_rect(
-                    120,
-                    (u16)y,
-                    120,
-                    27
+                u8 x =
+                    item_index < frontend_upgrade_sub_count ?
+                        140u : 132u;
+                s16 y = (s16)(
+                    FRONTEND_UPGRADE_SUBMENU_ROW_Y +
+                    visible_index * FRONTEND_UPGRADE_SUBMENU_ROW_STEP
                 );
-                frontend_draw_upgrade_submenu_row(visible_index);
-                frontend_dirty_add(120, y, 120, 27);
+
+                frontend_recolour_upgrade_submenu_row(
+                    visible_index,
+                    index == 1
+                );
+                frontend_dirty_add(
+                    x,
+                    y,
+                    (u16)(SCREEN_WIDTH - x),
+                    FRONTEND_UPGRADE_SUBMENU_ROW_TEXT_HEIGHT
+                );
             }
         }
+    } else if (
+        frontend_selection >= frontend_upgrade_sub_scroll &&
+        frontend_selection < frontend_upgrade_sub_scroll + 6u
+    ) {
+        /* Power adjustment changes the selected row's numeric cost. */
+        u8 visible_index = (u8)(
+            frontend_selection - frontend_upgrade_sub_scroll
+        );
+        u8 x =
+            frontend_selection < frontend_upgrade_sub_count ?
+                140u : 132u;
+        s16 y = (s16)(
+            FRONTEND_UPGRADE_SUBMENU_ROW_Y +
+            visible_index * FRONTEND_UPGRADE_SUBMENU_ROW_STEP
+        );
+
+        frontend_restore_menu_chrome_rect(
+            x,
+            (u16)y,
+            (u16)(SCREEN_WIDTH - x),
+            FRONTEND_UPGRADE_SUBMENU_ROW_TEXT_HEIGHT
+        );
+        frontend_draw_upgrade_submenu_row_text(visible_index);
+        frontend_dirty_add(
+            x,
+            y,
+            (u16)(SCREEN_WIDTH - x),
+            FRONTEND_UPGRADE_SUBMENU_ROW_TEXT_HEIGHT
+        );
     }
-    frontend_dirty_present();
+    if (frontend_upgrade_static_panel_category_active()) {
+        /*
+         * A Ship Type or Shield change touches most of the left 120x144
+         * panel.  The
+         * generic dirty path promotes that rectangle and both text rows to
+         * full scanlines, which can exceed one VBlank and visibly tear the
+         * in-place page during rapid Up/Down input.  Commit the authoritative
+         * scratch frame to the hidden Mode-4 page outside VBlank, then let the
+         * next VBlank perform only the atomic page flip.  A partial bitmap is
+         * therefore never exposed to the LCD scanout.
+         */
+        frontend_present_prepared_ewram(
+            frontend_frame_scratch,
+            frontend_palette_address(FRONTEND_FRAME_MENU_CHROME)
+        );
+    } else {
+        frontend_dirty_present();
+    }
 }
 
 static void frontend_quit_capture_choice_background(void)

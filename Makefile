@@ -425,6 +425,8 @@ FRONTEND_MENU_STRESS_TARGET := tyrian_gba_frontend_menu_stress_v42_$(CONFIG_SUFF
 FRONTEND_NAV_STRESS_TARGET := tyrian_gba_frontend_nav_obj_stress_v43_$(CONFIG_SUFFIX)
 FRONTEND_NAV_CAMERA_STRESS_TARGET := tyrian_gba_frontend_nav_camera_stress_v43_$(CONFIG_SUFFIX)
 FRONTEND_TRANSITION_STRESS_TARGET := tyrian_gba_frontend_transition_stress_v48_$(CONFIG_SUFFIX)
+UPGRADE_SIDEKICK_STRESS_TARGET := tyrian_gba_upgrade_sidekick_stress_v89_$(CONFIG_SUFFIX)
+UPGRADE_SIDEKICK_STRESS_FLAGS ?=
 BUILD := build
 RES := res
 STRESS_MAIN_OBJECT := \
@@ -638,7 +640,7 @@ MAIN_INCLUDES := \
 	campaign-smoke-autotest \
 	full-loadout-stress full-loadout-playable frontend-capture \
 	frontend-menu-stress frontend-nav-stress frontend-nav-camera-stress \
-	frontend-transition-stress \
+	frontend-transition-stress upgrade-sidekick-stress \
 	assets clean distclean FORCE
 
 all: $(BUILD)/$(TARGET).gba
@@ -678,6 +680,8 @@ frontend-nav-stress: $(BUILD)/$(FRONTEND_NAV_STRESS_TARGET).gba
 frontend-nav-camera-stress: $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba
 
 frontend-transition-stress: $(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba
+
+upgrade-sidekick-stress: $(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).gba
 
 assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS) \
 	$(BOSS_MANIFEST_OUTPUTS)
@@ -957,6 +961,20 @@ $(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o: \
 		-DTYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER=11 \
 		-MMD -MP -c $< -o $@
 
+$(BUILD)/main_upgrade_sidekick_stress_$(CONFIG_SUFFIX).o: \
+		main.c $(MAIN_INCLUDES) \
+		src/opentyrian_data.h src/opentyrian_level_port.h \
+		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
+		$(RES)/asset_meta.h $(RES)/sprite2_raw_meta.h \
+		$(RES)/soundbank.h $(VFS_META) Makefile | $(BUILD)
+	$(CC) $(CFLAGS) -DAUTOTEST -DAUTOTEST_UPGRADE_SIDEKICK_STRESS \
+		-DAUTOTEST_LOAD_SAVE_SLOT=0 \
+		-DAUTOTEST_STACK_CANARY \
+		-DTYRIAN_GBA_DYNAMIC_FRAME_DROP=0 \
+		-DTYRIAN_GBA_WALL_CLOCK_LOGIC=0 \
+		$(UPGRADE_SIDEKICK_STRESS_FLAGS) \
+		-MMD -MP -c $< -o $@
+
 $(BUILD)/gba_heap.o: gba_heap.c | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
@@ -1139,6 +1157,13 @@ $(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).elf: \
 		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).map $^ \
+	-lmm -lgba -o $@
+	$(SIZE) $@
+
+$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).elf: \
+		$(BUILD)/main_upgrade_sidekick_stress_$(CONFIG_SUFFIX).o \
+		$(COMMON_OBJECTS)
+	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).map $^ \
 		-lmm -lgba -o $@
 	$(SIZE) $@
 
@@ -1228,6 +1253,11 @@ $(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba: \
 	$(OBJCOPY) -O binary $< $@
 	$(TOOLS)/gbafix $@ "-tTYR UI MOVE" -cTYGW -m00
 
+$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).gba: \
+		$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).elf
+	$(OBJCOPY) -O binary $< $@
+	$(TOOLS)/gbafix $@ "-tTYR SIDEKICK" -cTYGU -m00
+
 clean:
 	rm -f \
 		$(BUILD)/main_release_$(CONFIG_SUFFIX).o \
@@ -1270,6 +1300,8 @@ clean:
 		$(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_upgrade_sidekick_stress_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_upgrade_sidekick_stress_$(CONFIG_SUFFIX).d \
 		$(BUILD)/gba_heap.o $(BUILD)/gba_heap.d \
 		$(BUILD)/opentyrian_data.o \
 		$(BUILD)/opentyrian_data.d \
@@ -1337,7 +1369,10 @@ clean:
 		$(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).map \
 		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).elf \
 		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba \
-		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).map
+		$(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).map \
+		$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).elf \
+		$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).gba \
+		$(BUILD)/$(UPGRADE_SIDEKICK_STRESS_TARGET).map
 
 distclean: clean
 	rm -f \
@@ -1353,6 +1388,7 @@ distclean: clean
 -include $(BUILD)/main_frontend_nav_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_nav_camera_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_transition_stress_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_upgrade_sidekick_stress_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_romfs_matrix_test_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_route_test_ep$(ROUTE_EPISODE)_section$(ROUTE_SECTION)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_arcade_route_test_ep1_section1_$(CONFIG_SUFFIX).d

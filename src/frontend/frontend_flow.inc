@@ -1106,6 +1106,29 @@ static __attribute__((
     frontend_upgrade_sim_update();
     if (frontend_save_frontend_update()) return;
 
+    if (
+        game_state == STATE_UPGRADE_SUBMENU &&
+        frontend_upgrade_static_panel_category_active()
+    ) {
+        if (
+            frontend_frame_pending &&
+            frontend_pending_kind ==
+                FRONTEND_PENDING_PREPARED_FULL_FRAME
+        ) {
+            /* Preserve the latest tap until the prepared page is visible. */
+            if (pad_pressed != 0) {
+                frontend_upgrade_ship_deferred_pressed = pad_pressed;
+            }
+            return;
+        }
+        if (frontend_upgrade_ship_deferred_pressed != 0) {
+            pad_pressed |= frontend_upgrade_ship_deferred_pressed;
+            frontend_upgrade_ship_deferred_pressed = 0;
+        }
+    } else {
+        frontend_upgrade_ship_deferred_pressed = 0;
+    }
+
     if (game_state == STATE_NEXT_LEVEL_MENU) {
         s16 delta_x = (s16)(
             frontend_nav_target_x - frontend_nav_x

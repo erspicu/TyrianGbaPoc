@@ -538,6 +538,8 @@ int main(void)
                 game_state == STATE_GAME_MENU ?
                     0 :
                     KEY_A;
+#elif defined(AUTOTEST_UPGRADE_SIDEKICK_STRESS)
+            pad_pressed = 0;
 #elif defined(AUTOTEST_FRONTEND_CAPTURE_STATE)
             /*
              * Deterministically route to the requested front-end page.
@@ -961,6 +963,9 @@ int main(void)
 #endif
 #ifdef AUTOTEST_FRONTEND_TRANSITION_STRESS
             autotest_frontend_transition_update(current_vblank);
+#endif
+#ifdef AUTOTEST_UPGRADE_SIDEKICK_STRESS
+            autotest_upgrade_sidekick_stress_update(current_vblank);
 #endif
 #ifdef AUTOTEST_FRONTEND_NAV_CAMERA_STRESS
             {

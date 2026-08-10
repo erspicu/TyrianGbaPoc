@@ -84,6 +84,7 @@ _Static_assert(
 
 #if defined(AUTOTEST_FULL_LOADOUT_STRESS) || \
     defined(AUTOTEST_FRONTEND_TRANSITION_STRESS) || \
+    defined(AUTOTEST_UPGRADE_SIDEKICK_STRESS) || \
     defined(AUTOTEST_ROUTE_PERF) || \
     TYRIAN_GBA_DYNAMIC_FRAME_DROP
 #define TYRIAN_GBA_PERF_TIMER 1
@@ -1541,8 +1542,33 @@ static u8 frontend_upgrade_sub_item[
 static u8 frontend_upgrade_sub_power[
     OT_EPISODE_ITEM_GROUP_CAPACITY + 1
 ] EWRAM_BSS;
+static char frontend_upgrade_sub_name[
+    OT_EPISODE_ITEM_GROUP_CAPACITY + 1
+][40] EWRAM_BSS;
+static u32 frontend_upgrade_sub_cost[
+    OT_EPISODE_ITEM_GROUP_CAPACITY + 1
+] EWRAM_BSS;
 static u8 frontend_upgrade_sub_scroll EWRAM_BSS;
 static u32 frontend_upgrade_trade_cash EWRAM_BSS;
+static u8 frontend_upgrade_preview_cache_valid EWRAM_BSS;
+static u8 frontend_upgrade_preview_cache_category EWRAM_BSS;
+static FrontendPlayerItems
+    frontend_upgrade_ship_preview_cache_items EWRAM_BSS;
+static FrontendPlayerItems
+    frontend_upgrade_ship_preview_swap_items EWRAM_BSS;
+static u32 frontend_upgrade_ship_preview_cache_cash EWRAM_BSS;
+static u32 frontend_upgrade_ship_preview_swap_cash EWRAM_BSS;
+static u8 frontend_upgrade_ship_preview_cache_armor EWRAM_BSS;
+static u8 frontend_upgrade_ship_preview_swap_armor EWRAM_BSS;
+static u8 frontend_upgrade_ship_preview_cache_valid EWRAM_BSS;
+static u8 frontend_upgrade_ship_preview_swap_pending EWRAM_BSS;
+/*
+ * Authoritative simulator lifetime must not live inside the shared cold
+ * arena: Ship/Data/Ship Specs deliberately overwrite that storage.
+ */
+static u8 frontend_upgrade_sim_live EWRAM_BSS;
+static mm_sfxhand frontend_upgrade_menu_effect_handle EWRAM_BSS;
+static u16 frontend_upgrade_ship_deferred_pressed EWRAM_BSS;
 static u8 frontend_quit_yes EWRAM_BSS;
 static u8 frontend_quit_dialog_cache_valid EWRAM_BSS;
 static u8 frontend_quit_dialog_cache_selection EWRAM_BSS;
@@ -1571,6 +1597,7 @@ static u8 frontend_stats_glyph_width[
 static u16 frontend_stats_obj_palette[48] EWRAM_BSS;
 static u8 frontend_mode4_active;
 static u8 frontend_display_page EWRAM_BSS;
+static u8 frontend_prepared_display_page EWRAM_BSS;
 static u8 frontend_frame_pending EWRAM_BSS;
 static u8 frontend_title_brand_pending EWRAM_BSS;
 static u8 frontend_pending_kind EWRAM_BSS;
@@ -1660,6 +1687,20 @@ static FrontendGameplayArena frontend_gameplay_arena
         FRONTEND_FRAME_BYTES + \
         OT_SPRITE2_FRAME_PIXELS * sizeof(u16) \
     )
+#define FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_Y 16u
+#define FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH 120u
+#define FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_HEIGHT \
+    (SCREEN_HEIGHT - FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_Y)
+#define FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_BYTES \
+    ( \
+        FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_WIDTH * \
+        FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_HEIGHT \
+    )
+#define frontend_upgrade_ship_preview_cache \
+    ((u8 *)(void *)( \
+        (u8 *)(void *)&frontend_gameplay_arena + \
+        FRONTEND_COLD_PAGE_CACHE_OFFSET \
+    ))
 /*
  * Datacube pages and the quit dialog are mutually exclusive.  Reuse the
  * shared arena tail for the four decrypted stock cube records and their
@@ -1737,6 +1778,12 @@ _Static_assert(
         OT_PALETTE_COLOUR_COUNT * sizeof(u16) <=
         sizeof(FrontendGameplayArena),
     "datacube records and face palette must fit the shared arena tail"
+);
+_Static_assert(
+    FRONTEND_COLD_PAGE_CACHE_OFFSET +
+        FRONTEND_UPGRADE_SHIP_PREVIEW_CACHE_BYTES <=
+        sizeof(FrontendGameplayArena),
+    "Upgrade Ship preview cache must fit the shared cold arena tail"
 );
 _Static_assert(
     FRONTEND_COLD_PAGE_CACHE_OFFSET + sizeof(OtShipInfo) <=
@@ -2297,6 +2344,15 @@ volatile u32 telemetry_state_transitions;
 volatile u32 telemetry_frontend_full_redraws;
 volatile u32 telemetry_frontend_dirty_commits;
 volatile u32 telemetry_frontend_dirty_bytes;
+volatile u32 telemetry_frontend_dma_calls;
+volatile u32 telemetry_frontend_dma_bytes;
+volatile u32 telemetry_frontend_upgrade_ship_cache_hits;
+volatile u32 telemetry_frontend_upgrade_ship_cache_misses;
+volatile u32 telemetry_frontend_upgrade_ship_cache_swaps;
+volatile u32 telemetry_frontend_prepared_flips;
+volatile u32 telemetry_frontend_prepared_flip_outside_vblank;
+volatile u32 telemetry_frontend_prepared_flip_vcount_max;
+volatile u32 telemetry_frontend_prepared_flip_vcount_last;
 volatile u32 telemetry_frontend_runtime_shp_decodes;
 volatile u32 telemetry_frontend_runtime_sprite2_decodes;
 volatile u32 telemetry_frontend_transition_job_cycles_max;

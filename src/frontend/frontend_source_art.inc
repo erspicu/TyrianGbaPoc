@@ -88,7 +88,7 @@ frontend_apply_static_sparse_overlay(
     return consumed == total_bytes;
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+static __attribute__((noinline, noclone)) u8
 frontend_apply_static_dense_overlay(
     const u8 *overlay,
     u8 magic_2,
@@ -215,7 +215,7 @@ static u8 frontend_apply_static_quit_choice(void)
     );
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) u8
+static __attribute__((noinline, noclone)) u8
 frontend_apply_static_quit_shade(void)
 {
     const u8 *source = frontend_static_quit_shade;
@@ -1015,7 +1015,7 @@ static u8 frontend_blit_comp_source(
     return 1;
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+static __attribute__((noinline, noclone)) void
 frontend_shade_source_rect(
     u8 *frame,
     s16 source_x0,

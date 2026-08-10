@@ -117,6 +117,15 @@ typedef struct {
     u32 projectile_epoch;
     u32 projectile_pending_mask;
     u32 random_state;
+    u32 telemetry_sound_starts;
+    u32 telemetry_projectile_dma_calls;
+    u32 telemetry_projectile_upload_bytes;
+    u32 telemetry_loadout_refreshes;
+    u32 telemetry_ship_tile_builds;
+    u32 telemetry_sound_replacements;
+    u32 telemetry_sound_cancels;
+    mm_sfxhand sound_handle[6];
+    mm_sfxhand menu_effect_handle;
     u16 power;
     u8 repeat[FRONTEND_UPGRADE_SIM_BAY_COUNT];
     u8 multi_position[FRONTEND_UPGRADE_SIM_BAY_COUNT];
@@ -125,6 +134,8 @@ typedef struct {
     u8 frame_wait;
     u8 active;
     u8 loadout_dirty;
+    u8 loadout_settle_wait;
+    u8 loadout_initialized;
     u8 palette_pending;
     u8 star_tiles_pending;
     u8 ship_tiles_pending;
@@ -149,11 +160,6 @@ _Static_assert(
     "Upgrade simulator must fit the shared cold front-end arena"
 );
 
-static u8 frontend_upgrade_sim_is_active(void)
-{
-    return frontend_upgrade_sim->active;
-}
-
 static u8 frontend_upgrade_sim_category_active(void)
 {
     return
@@ -166,6 +172,19 @@ static u8 frontend_upgrade_sim_category_active(void)
             FRONTEND_UPGRADE_LEFT_SIDEKICK ||
         frontend_upgrade_category ==
             FRONTEND_UPGRADE_RIGHT_SIDEKICK;
+}
+
+static u8 frontend_upgrade_sim_is_active(void)
+{
+    /*
+     * Short-circuit on the external flag and category before reading the
+     * aliased arena.  In Ship/Data/Ship Specs that memory contains cache
+     * pixels or records, not a FrontendUpgradeSimArena.
+     */
+    return
+        frontend_upgrade_sim_live &&
+        frontend_upgrade_sim_category_active() &&
+        frontend_upgrade_sim->active;
 }
 
 static u32 frontend_upgrade_sim_random(void)
@@ -397,44 +416,88 @@ static void frontend_upgrade_sim_build_ship_tile(void)
     }
     frontend_upgrade_sim->ship_tile_valid = 1;
     frontend_upgrade_sim->ship_tiles_pending = 1;
+    frontend_upgrade_sim->telemetry_ship_tile_builds++;
 }
 
 static void frontend_upgrade_sim_refresh_loadout(void)
 {
+    u8 initial = !frontend_upgrade_sim->loadout_initialized;
     u8 rear_mode;
     u8 side;
     OtPowerDefinition generator;
 
-    frontend_upgrade_sim->loadout = frontend_player_items;
-    frontend_upgrade_sim->generator_power = 0;
+    frontend_upgrade_sim->telemetry_loadout_refreshes++;
     if (
-        frontend_player_items.generator != 0 &&
-        ot_data_hdt_power_read(
-            frontend_player_items.generator,
-            &generator
-        )
+        initial ||
+        frontend_upgrade_sim->loadout.generator !=
+            frontend_player_items.generator
     ) {
-        frontend_upgrade_sim->generator_power = generator.power;
+        frontend_upgrade_sim->generator_power = 0;
+        if (
+            frontend_player_items.generator != 0 &&
+            ot_data_hdt_power_read(
+                frontend_player_items.generator,
+                &generator
+            )
+        ) {
+            frontend_upgrade_sim->generator_power = generator.power;
+        }
     }
-    frontend_upgrade_sim_load_weapon_bay(
-        0,
-        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id,
-        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power,
-        0
-    );
+    if (
+        initial ||
+        frontend_upgrade_sim->loadout.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].id != frontend_player_items.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].id ||
+        frontend_upgrade_sim->loadout.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].power != frontend_player_items.weapon[
+            FRONTEND_WEAPON_FRONT
+        ].power
+    ) {
+        frontend_upgrade_sim_load_weapon_bay(
+            0,
+            frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id,
+            frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power,
+            0
+        );
+    }
     rear_mode = frontend_player_items.weapon_mode;
     if (rear_mode == 0) rear_mode = 1;
-    frontend_upgrade_sim_load_weapon_bay(
-        1,
-        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id,
-        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power,
-        (u8)(rear_mode - 1u)
-    );
+    if (
+        initial ||
+        frontend_upgrade_sim->loadout.weapon[
+            FRONTEND_WEAPON_REAR
+        ].id != frontend_player_items.weapon[
+            FRONTEND_WEAPON_REAR
+        ].id ||
+        frontend_upgrade_sim->loadout.weapon[
+            FRONTEND_WEAPON_REAR
+        ].power != frontend_player_items.weapon[
+            FRONTEND_WEAPON_REAR
+        ].power ||
+        frontend_upgrade_sim->loadout.weapon_mode !=
+            frontend_player_items.weapon_mode
+    ) {
+        frontend_upgrade_sim_load_weapon_bay(
+            1,
+            frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id,
+            frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power,
+            (u8)(rear_mode - 1u)
+        );
+    }
     for (side = 0; side < 2; side++) {
         FrontendUpgradeSimWeaponBay *runtime =
             &frontend_upgrade_sim->bay[2u + side];
         u8 option_id = frontend_player_items.sidekick[side];
 
+        if (
+            !initial &&
+            frontend_upgrade_sim->loadout.sidekick[side] == option_id
+        ) {
+            continue;
+        }
         memset(&frontend_upgrade_sim->option[side], 0,
             sizeof(frontend_upgrade_sim->option[side]));
         memset(runtime, 0, sizeof(*runtime));
@@ -464,16 +527,25 @@ static void frontend_upgrade_sim_refresh_loadout(void)
             }
         }
     }
-    memset(&frontend_upgrade_sim->ship, 0,
-        sizeof(frontend_upgrade_sim->ship));
-    if (frontend_player_items.ship != 0) {
-        (void)ot_data_hdt_ship_read(
-            frontend_player_items.ship,
-            &frontend_upgrade_sim->ship
-        );
+    if (
+        initial ||
+        frontend_upgrade_sim->loadout.ship !=
+            frontend_player_items.ship
+    ) {
+        memset(&frontend_upgrade_sim->ship, 0,
+            sizeof(frontend_upgrade_sim->ship));
+        if (frontend_player_items.ship != 0) {
+            (void)ot_data_hdt_ship_read(
+                frontend_player_items.ship,
+                &frontend_upgrade_sim->ship
+            );
+        }
+        frontend_upgrade_sim_build_ship_tile();
     }
-    frontend_upgrade_sim_build_ship_tile();
+    frontend_upgrade_sim->loadout = frontend_player_items;
+    frontend_upgrade_sim->loadout_initialized = 1;
     frontend_upgrade_sim->loadout_dirty = 0;
+    frontend_upgrade_sim->loadout_settle_wait = 0;
 }
 
 static u8 frontend_upgrade_sim_spawn_weapon(
@@ -973,7 +1045,7 @@ static void frontend_upgrade_sim_render_oam(void)
     s16 shot_index;
     u8 star_index;
 
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     oam_count = 0;
 
     /* JE_weaponSimUpdate draws the ship last, in front of shots/stars. */
@@ -1125,9 +1197,21 @@ static void frontend_upgrade_sim_prepare_tick(void)
         sound_channel < sizeof(frontend_upgrade_sim->sound_queue);
         sound_channel++
     ) {
-        source_sound_effect(
-            frontend_upgrade_sim->sound_queue[sound_channel]
-        );
+        u8 source_sound =
+            frontend_upgrade_sim->sound_queue[sound_channel];
+
+        if (source_sound != 0) {
+            mm_sfxhand previous =
+                frontend_upgrade_sim->sound_handle[sound_channel];
+
+            if (previous != 0 && mmEffectActive(previous)) {
+                mmEffectCancel(previous);
+                frontend_upgrade_sim->telemetry_sound_replacements++;
+            }
+            frontend_upgrade_sim->sound_handle[sound_channel] =
+                source_sound_effect_start(source_sound);
+            frontend_upgrade_sim->telemetry_sound_starts++;
+        }
     }
     frontend_upgrade_sim_update_shots();
     frontend_upgrade_sim->power = (u16)(
@@ -1189,6 +1273,7 @@ static void frontend_upgrade_sim_enter_begin(void)
     );
     frontend_upgrade_sim->projectile_epoch = 1;
     frontend_upgrade_sim->active = 1;
+    frontend_upgrade_sim_live = 1;
     frontend_upgrade_sim->loadout_dirty = 1;
     frontend_upgrade_sim->palette_pending = 1;
     frontend_upgrade_sim_build_star_tiles();
@@ -1199,25 +1284,25 @@ static void frontend_upgrade_sim_enter_stars(
     u8 count
 )
 {
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     frontend_upgrade_sim_initialize_starfield(processed, count);
 }
 
 static void frontend_upgrade_sim_enter_loadout(void)
 {
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     frontend_upgrade_sim_refresh_loadout();
 }
 
 static void frontend_upgrade_sim_enter_prepare(void)
 {
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     frontend_upgrade_sim_prepare_tick();
 }
 
 static void frontend_upgrade_sim_enter_finish(void)
 {
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     frontend_upgrade_sim_render_oam();
     frontend_upgrade_sim->frame_wait = 2;
 }
@@ -1225,10 +1310,23 @@ static void frontend_upgrade_sim_enter_finish(void)
 static void frontend_upgrade_sim_update(void)
 {
     if (
-        !frontend_upgrade_sim->active ||
-        game_state != STATE_UPGRADE_SUBMENU ||
-        !frontend_upgrade_sim_category_active()
+        !frontend_upgrade_sim_is_active() ||
+        game_state != STATE_UPGRADE_SUBMENU
     ) {
+        return;
+    }
+    /*
+     * Cursor repeat can change a preview every VBlank.  The PC simulator is
+     * intentionally three-frame paced; wait two physical frames for a stable
+     * choice before decoding the transient loadout, spawning its projectile
+     * burst and replacing mixer handles.  This coalesces intermediate cursor
+     * positions without reducing the menu refresh rate.
+     */
+    if (
+        frontend_upgrade_sim->loadout_dirty &&
+        frontend_upgrade_sim->loadout_settle_wait > 0
+    ) {
+        frontend_upgrade_sim->loadout_settle_wait--;
         return;
     }
     /* Source uses setFrameCount(3) for this exact menu loop. */
@@ -1242,23 +1340,38 @@ static void frontend_upgrade_sim_update(void)
 
 static void frontend_upgrade_sim_mark_loadout_dirty(void)
 {
-    if (!frontend_upgrade_sim->active) return;
+    if (!frontend_upgrade_sim_is_active()) return;
     frontend_upgrade_sim->loadout_dirty = 1;
-    frontend_upgrade_sim->frame_wait = 0;
+    frontend_upgrade_sim->loadout_settle_wait = 2;
+}
+
+static void frontend_upgrade_sim_play_menu_effect(u16 effect)
+{
+    mm_sfxhand previous;
+
+    if (!frontend_upgrade_sim_is_active()) {
+        previous = frontend_upgrade_menu_effect_handle;
+        if (previous != 0 && mmEffectActive(previous)) {
+            mmEffectCancel(previous);
+        }
+        frontend_upgrade_menu_effect_handle =
+            audio_effect_start(effect);
+        return;
+    }
+    previous = frontend_upgrade_sim->menu_effect_handle;
+    if (previous != 0 && mmEffectActive(previous)) {
+        mmEffectCancel(previous);
+        frontend_upgrade_sim->telemetry_sound_replacements++;
+    }
+    frontend_upgrade_sim->menu_effect_handle =
+        audio_effect_start(effect);
 }
 
 static void frontend_upgrade_sim_commit_vblank(void)
 {
     u8 index;
 
-    if (!frontend_upgrade_sim->active) {
-        frontend_upgrade_sim->projectile_pending_mask = 0;
-        frontend_upgrade_sim->palette_pending = 0;
-        frontend_upgrade_sim->star_tiles_pending = 0;
-        frontend_upgrade_sim->ship_tiles_pending = 0;
-        frontend_upgrade_sim->bar_tiles_pending = 0;
-        return;
-    }
+    if (!frontend_upgrade_sim_is_active()) return;
     if (frontend_upgrade_sim->palette_pending) {
         dmaCopy(
             frontend_palette_address(FRONTEND_FRAME_MENU_CHROME),
@@ -1294,43 +1407,82 @@ static void frontend_upgrade_sim_commit_vblank(void)
         );
         frontend_upgrade_sim->bar_tiles_pending = 0;
     }
-    for (
-        index = 0;
-        index < FRONTEND_UPGRADE_SIM_PROJECTILE_CACHE_COUNT;
-        index++
-    ) {
+    index = 0;
+    while (index < FRONTEND_UPGRADE_SIM_PROJECTILE_CACHE_COUNT) {
+        u8 first;
+        u8 count;
+        u32 bytes;
+
         if (
-            (
-                frontend_upgrade_sim->projectile_pending_mask &
-                (1u << index)
-            ) == 0
+            (frontend_upgrade_sim->projectile_pending_mask &
+                (1u << index)) == 0
         ) {
+            index++;
             continue;
         }
+        first = index;
+        do {
+            index++;
+        } while (
+            index < FRONTEND_UPGRADE_SIM_PROJECTILE_CACHE_COUNT &&
+            (frontend_upgrade_sim->projectile_pending_mask &
+                (1u << index)) != 0
+        );
+        count = (u8)(index - first);
+        bytes =
+            (u32)count * FRONTEND_UPGRADE_SIM_PROJECTILE_TILE_BYTES;
         dmaCopy(
-            frontend_upgrade_sim->projectile_tiles[index],
+            frontend_upgrade_sim->projectile_tiles[first],
             FRONTEND_NAV_OBJ_VRAM +
                 FRONTEND_UPGRADE_SIM_PROJECTILE_VRAM_OFFSET +
-                (u16)index *
+                (u16)first *
                     FRONTEND_UPGRADE_SIM_PROJECTILE_TILE_BYTES,
-            FRONTEND_UPGRADE_SIM_PROJECTILE_TILE_BYTES
+            bytes
         );
+        frontend_upgrade_sim->telemetry_projectile_dma_calls++;
+        frontend_upgrade_sim->telemetry_projectile_upload_bytes += bytes;
     }
     frontend_upgrade_sim->projectile_pending_mask = 0;
 }
 
 static void frontend_upgrade_sim_disable(void)
 {
+    u8 channel;
+    u8 was_live = frontend_upgrade_sim_live;
+
+    if (was_live) {
+        for (channel = 0; channel < 6; channel++) {
+            mm_sfxhand handle =
+                frontend_upgrade_sim->sound_handle[channel];
+
+            if (handle != 0 && mmEffectActive(handle)) {
+                mmEffectCancel(handle);
+                frontend_upgrade_sim->telemetry_sound_cancels++;
+            }
+            frontend_upgrade_sim->sound_handle[channel] = 0;
+        }
+        if (
+            frontend_upgrade_sim->menu_effect_handle != 0 &&
+            mmEffectActive(frontend_upgrade_sim->menu_effect_handle)
+        ) {
+            mmEffectCancel(frontend_upgrade_sim->menu_effect_handle);
+            frontend_upgrade_sim->telemetry_sound_cancels++;
+        }
+        frontend_upgrade_sim->menu_effect_handle = 0;
+    }
     if (
-        frontend_upgrade_sim->active ||
+        was_live ||
         previous_oam_count != 0
     ) {
         hide_all_sprites();
     }
-    frontend_upgrade_sim->active = 0;
-    frontend_upgrade_sim->projectile_pending_mask = 0;
-    frontend_upgrade_sim->palette_pending = 0;
-    frontend_upgrade_sim->star_tiles_pending = 0;
-    frontend_upgrade_sim->ship_tiles_pending = 0;
-    frontend_upgrade_sim->bar_tiles_pending = 0;
+    if (was_live) {
+        frontend_upgrade_sim->active = 0;
+        frontend_upgrade_sim->projectile_pending_mask = 0;
+        frontend_upgrade_sim->palette_pending = 0;
+        frontend_upgrade_sim->star_tiles_pending = 0;
+        frontend_upgrade_sim->ship_tiles_pending = 0;
+        frontend_upgrade_sim->bar_tiles_pending = 0;
+    }
+    frontend_upgrade_sim_live = 0;
 }

@@ -64,6 +64,80 @@ source_detail_palette_distance_asm:
 	.section .iwram, "ax", %progbits
 	.align 2
 
+	.global frontend_upgrade_recolour_words_asm
+	.type frontend_upgrade_recolour_words_asm, %function
+/*
+ * void frontend_upgrade_recolour_words_asm(
+ *     u32 *pixels,
+ *     u32 word_count,
+ *     u32 selected
+ * )
+ *
+ * The upgrade list uses two two-colour ramps.  A cursor move changes only
+ * FA/F8 -> FE/FC (selected) or the inverse (unselected).  Process four
+ * pixels per aligned EWRAM access and use ARM conditional execution so the
+ * hot loop has no per-pixel branches.
+ */
+frontend_upgrade_recolour_words_asm:
+	cmp     r1, #0
+	bxeq    lr
+	cmp     r2, #0
+	beq     .Lupgrade_recolour_unselected
+
+.Lupgrade_recolour_selected:
+	ldr     r3, [r0]
+	and     r12, r3, #0xff
+	cmp     r12, #0xfa
+	cmpne   r12, #0xf8
+	orreq   r3, r3, #0x00000004
+	mov     r12, r3, lsr #8
+	and     r12, r12, #0xff
+	cmp     r12, #0xfa
+	cmpne   r12, #0xf8
+	orreq   r3, r3, #0x00000400
+	mov     r12, r3, lsr #16
+	and     r12, r12, #0xff
+	cmp     r12, #0xfa
+	cmpne   r12, #0xf8
+	orreq   r3, r3, #0x00040000
+	mov     r12, r3, lsr #24
+	cmp     r12, #0xfa
+	cmpne   r12, #0xf8
+	orreq   r3, r3, #0x04000000
+	str     r3, [r0], #4
+	subs    r1, r1, #1
+	bne     .Lupgrade_recolour_selected
+	bx      lr
+
+.Lupgrade_recolour_unselected:
+	ldr     r3, [r0]
+	and     r12, r3, #0xff
+	cmp     r12, #0xfe
+	cmpne   r12, #0xfc
+	biceq   r3, r3, #0x00000004
+	mov     r12, r3, lsr #8
+	and     r12, r12, #0xff
+	cmp     r12, #0xfe
+	cmpne   r12, #0xfc
+	biceq   r3, r3, #0x00000400
+	mov     r12, r3, lsr #16
+	and     r12, r12, #0xff
+	cmp     r12, #0xfe
+	cmpne   r12, #0xfc
+	biceq   r3, r3, #0x00040000
+	mov     r12, r3, lsr #24
+	cmp     r12, #0xfe
+	cmpne   r12, #0xfc
+	biceq   r3, r3, #0x04000000
+	str     r3, [r0], #4
+	subs    r1, r1, #1
+	bne     .Lupgrade_recolour_unselected
+	bx      lr
+	.size frontend_upgrade_recolour_words_asm, \
+		.-frontend_upgrade_recolour_words_asm
+
+	.align 2
+
 	.global source_pool_lowest_set_bit_asm
 	.type source_pool_lowest_set_bit_asm, %function
 /* u32 source_pool_lowest_set_bit_asm(u32 bits), zero -> 32. */

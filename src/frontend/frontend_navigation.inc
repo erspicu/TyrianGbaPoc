@@ -871,7 +871,7 @@ static u8 frontend_nav_grid_phase(s16 coordinate)
     return (u8)phase;
 }
 
-static IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+static __attribute__((noinline, noclone)) void
 frontend_nav_copy_bitmap_page(u8 *destination, u16 page)
 {
     const u16 *indices =
