@@ -159,9 +159,33 @@ typedef struct {
     u8 prepared;
 } BackgroundLayerCache;
 
-static BackgroundLayerCache
-    background_layer_cache[BACKGROUND_LAYER_COUNT]
+/*
+ * Mode-4 frontend rendering and tile-mode gameplay cannot run concurrently.
+ * Reuse the larger gameplay layer-cache allocation for the 19.2 KiB frontend
+ * ship-panel cache.  Keeping these as explicit union members makes the shared
+ * lifetime visible and avoids starving Maxmod's EWRAM heap in stress builds.
+ * background_prepare_layer() invalidates the frontend key before changing the
+ * active member; the frontend will then regenerate its cache on demand.
+ */
+typedef union {
+    BackgroundLayerCache gameplay[BACKGROUND_LAYER_COUNT];
+    u8 frontend_ship_panel[FRONTEND_SHIP_PANEL_CACHE_BYTES];
+} BackgroundFrontendCacheArena;
+
+_Static_assert(
+    sizeof(BackgroundLayerCache) * BACKGROUND_LAYER_COUNT >=
+        FRONTEND_SHIP_PANEL_CACHE_BYTES,
+    "gameplay background cache must contain the frontend ship-panel cache"
+);
+
+static BackgroundFrontendCacheArena
+    background_frontend_cache_arena
     EWRAM_BSS __attribute__((aligned(4)));
+
+#define background_layer_cache \
+    (background_frontend_cache_arena.gameplay)
+#define frontend_ship_panel_cache \
+    (background_frontend_cache_arena.frontend_ship_panel)
 static u8 background_pattern_pool
     [BACKGROUND_TOTAL_CACHE_SLOTS][BACKGROUND_TILE_BYTES]
     EWRAM_BSS __attribute__((aligned(4)));
@@ -1439,6 +1463,8 @@ static u8 background_prepare_layer(u8 layer, u16 top_row)
     if (last > background_canvas_rows[layer]) {
         last = background_canvas_rows[layer];
     }
+    /* The shared arena is about to become gameplay storage. */
+    frontend_ship_panel_cache_valid = 0;
     cache = &background_layer_cache[layer];
     memset(cache, 0, sizeof(*cache));
     cache->capacity = background_cache_capacity[layer];

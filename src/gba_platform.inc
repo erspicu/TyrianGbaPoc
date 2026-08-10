@@ -2142,6 +2142,7 @@ static void commit_vblank_work(void)
     ) {
         source_static_atlas_upload_commit();
         source_player_cache_commit();
+        source_boss_compact_cache_commit();
         source_enemy_cache_commit();
         source_projectile_cache_commit();
         source_effect_cache_commit();

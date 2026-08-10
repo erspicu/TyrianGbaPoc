@@ -1418,6 +1418,20 @@ int main(void)
 #endif
 
             telemetry_wall_vblanks += vblank_steps;
+#ifdef AUTOTEST_ROUTE_TIMEOUT_VBLANKS
+            /*
+             * Diagnostic route runs may intentionally avoid the route-smoke
+             * aim adapter.  Stop at a wall-clock deadline and reuse the full
+             * telemetry dump so an authored event loop can be inspected
+             * instead of leaving the emulator running forever.
+             */
+            if (
+                telemetry_wall_vblanks >=
+                    AUTOTEST_ROUTE_TIMEOUT_VBLANKS
+            ) {
+                autotest_finish();
+            }
+#endif
             if (
                 game_state == STATE_PLAY &&
                 (pad_pressed & KEY_START)

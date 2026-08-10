@@ -1191,7 +1191,7 @@ static u8 source_special_option_projectile_sync(void)
 }
 #endif
 
-static u8 source_enemy_cache_slot_reserved(u8 slot)
+static u8 source_enemy_cache_slot_reserved_static(u8 slot)
 {
     if (
         slot >= SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT &&
@@ -1251,6 +1251,13 @@ static u8 source_enemy_cache_slot_reserved(u8 slot)
                 SOURCE_OPTION_PROJECTILE_FRAME_COUNT &&
         slot < SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT;
 #endif
+}
+
+static u8 source_enemy_cache_slot_reserved(u8 slot)
+{
+    return
+        source_boss_compact_owns_enemy_slot(slot) ||
+        source_enemy_cache_slot_reserved_static(slot);
 }
 
 static u8 source_option_projectile_sync(void)

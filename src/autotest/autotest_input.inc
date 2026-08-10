@@ -68,6 +68,7 @@ static u16 autotest_input(void)
      */
     return 0;
 #endif
+#ifndef AUTOTEST_ROUTE_MANUAL_INPUT
     if (source_parity_level.boss_bar_link[0] != 0) {
         for (
             source_index = 0;
@@ -108,12 +109,14 @@ static u16 autotest_input(void)
 #endif
         }
     }
+#endif
 #ifdef AUTOTEST_FRONTEND_ROUTE_SECTION
     /*
      * Generic non-first-level smoke runs must clear authored event-4 stop
      * groups instead of relying on the first-level movement pattern.  This
      * is test input only; release gameplay has no attraction or aim assist.
      */
+#ifndef AUTOTEST_ROUTE_MANUAL_INPUT
     if (source_parity_level.stop_backgrounds) {
         /*
          * Prefer a currently drawn member of the exact source stop pool.
@@ -145,6 +148,7 @@ static u16 autotest_input(void)
             );
         }
     }
+#endif
 #endif
     /*
      * Event-33 data cubes are physical score-item enemies (evalue==1), not

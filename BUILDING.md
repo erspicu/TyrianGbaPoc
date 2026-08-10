@@ -183,6 +183,13 @@ Windows 路徑後仍可建置。
 MUS/SHP/PIC/HDT/LVL 等資料和 OpenTyrian 語意決定。不要為單一關卡建立
 專用表格或手工修補資源；新增關卡支援時應修正共用 loader／adapter。
 
+Boss 的 GBA presentation 身分由獨立工具
+`tools/build_boss_manifest.py` 在每次資源建置時掃描四章全部 `tyrianN.lvl`
+自動產生。它從 Event 79、link alias、spawn cohort 與 group-control event
+導出 `(Episode, LVL, event index)`，不含任何關卡／Boss 專用 runtime
+清單；`res/boss_manifest_audit.json` 會對全部資料做 coverage 稽核。規則與
+生命週期詳見 `MD/Rule/Tyrian-GBA-Boss-Identity-Manifest-Rule.md`。
+
 唯一可人工編輯的劇情 presentation adapter 位於 `TextRes/`。建置器以
 原始 `levelsN.dat` 文字區塊 offset 建立查找表，只覆蓋顯示文字與斷行；
 圖片、音樂、條件分支及 section parser 仍直接讀 stock data。詳細限制與

@@ -319,29 +319,577 @@ static void render_player_sidekicks(u8 priority)
     }
 }
 
-#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
-static void render_player_shots(u8 priority, u8 oam_limit)
+/*
+ * One presentation snapshot feeds OAM budgeting, cache admission and the
+ * eventual draw pass.  Gameplay state remains authoritative; this is only a
+ * compact per-frame directory which prevents each resource tier from
+ * rescanning the same pools and recomputing the same screen coordinates.
+ */
+enum {
+    SOURCE_CANDIDATE_RENDER_VISIBLE = 1u << 0,
+    SOURCE_CANDIDATE_DEMAND_VISIBLE = 1u << 1,
+    SOURCE_ENEMY_CANDIDATE_BOSS_CORE = 1u << 0,
+    SOURCE_ENEMY_CANDIDATE_SELECTED = 1u << 1,
+    SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE = 1u << 2,
+    SOURCE_ENEMY_CANDIDATE_BOSS_COMPACT = 1u << 3,
+    SOURCE_OAM_DEMAND_SATURATION = SPRITE_LIMIT + 1u,
+    SOURCE_BOSS_LINK_WORD_COUNT = 256u / 32u,
+    SOURCE_BOSS_COMPACT_HOLD_FRAMES = 60u,
+};
+
+typedef struct {
+    s16 screen_x;
+    s16 screen_y;
+    u16 tile;
+    u8 index;
+    u8 flags;
+    u8 palette;
+} SourceEnemyOamCandidate;
+
+typedef struct {
+    s16 screen_x;
+    s16 screen_y;
+    u8 index;
+    u8 oam_required;
+    u8 flags;
+    u8 reserved;
+} SourceProjectileOamCandidate;
+
+typedef struct {
+    s16 screen_x;
+    s16 screen_y;
+    u8 index;
+    u8 reserved;
+} SourcePickupOamCandidate;
+
+typedef struct {
+    u8 first;
+    u8 count;
+} SourceEnemyOamRange;
+
+typedef struct {
+    SourceEnemyOamCandidate enemy[OT_ENEMY_COUNT];
+    SourceProjectileOamCandidate player_shot[MAX_PLAYER_SHOTS];
+    SourceProjectileOamCandidate enemy_shot[OT_ENEMY_SHOT_COUNT];
+    SourcePickupOamCandidate pickup[MAX_PICKUP_EXPLOSIONS];
+    u8 effect_index[MAX_EFFECTS];
+    SourceEnemyOamRange sky_enemy;
+    SourceEnemyOamRange top_enemy;
+    SourceEnemyOamRange ground_enemy_75;
+    SourceEnemyOamRange ground_enemy_25;
+    u8 enemy_count;
+    u8 player_shot_count;
+    u8 enemy_shot_count;
+    u8 pickup_count;
+    u8 effect_count;
+    u8 boss_structure_count;
+    u8 boss_compact_count;
+    u8 enemy_full_size_count;
+    u16 player_structural_oam;
+    u16 structural_oam;
+    u16 player_projectile_oam;
+    u16 enemy_projectile_oam;
+    u16 decorative_oam;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    u16 structural_oam_exact;
+    u16 player_projectile_oam_exact;
+    u16 enemy_projectile_oam_exact;
+    u16 decorative_oam_exact;
+#endif
+} SourceFrameOamCandidates;
+
+_Static_assert(
+    OT_ENEMY_COUNT <= UINT8_MAX &&
+        MAX_PLAYER_SHOTS <= UINT8_MAX &&
+        OT_ENEMY_SHOT_COUNT <= UINT8_MAX &&
+        MAX_PICKUP_EXPLOSIONS <= UINT8_MAX &&
+        MAX_EFFECTS <= UINT8_MAX,
+    "OAM candidate indices and counts must fit in u8"
+);
+
+/*
+ * Object type is determined by its owning pool.  Only ordinary enemies and
+ * Boss components share enemy[100], so only that pool needs a persistent
+ * presentation identity.  Membership is keyed by the gameplay-maintained
+ * slot generation; moving a component cannot revoke it, while freeing and
+ * reusing the same slot cannot inherit the old instance accidentally.
+ */
+static u16 source_boss_member_generation[OT_ENEMY_COUNT]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u32 source_boss_confirmed_link_mask[SOURCE_BOSS_LINK_WORD_COUNT]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u8 source_boss_compact_hold_frames EWRAM_BSS;
+
+#include "source_boss_compact_cache.inc"
+
+static SourceFrameOamCandidates source_frame_oam_candidates
+    EWRAM_BSS __attribute__((aligned(4)));
+
+static void source_boss_membership_reset(void)
 {
+    memset(
+        source_boss_member_generation,
+        0,
+        sizeof(source_boss_member_generation)
+    );
+    memset(
+        source_boss_confirmed_link_mask,
+        0,
+        sizeof(source_boss_confirmed_link_mask)
+    );
+    source_boss_compact_hold_frames = 0;
+}
+
+static bool source_boss_link_is_confirmed(u8 link)
+{
+    if (link == 0) return false;
+    return (
+        source_boss_confirmed_link_mask[link >> 5] &
+        (1u << (link & 31u))
+    ) != 0;
+}
+
+static void source_boss_confirm_link(u8 link)
+{
+    if (link == 0) return;
+    source_boss_confirmed_link_mask[link >> 5] |=
+        1u << (link & 31u);
+}
+
+static bool source_boss_member_is_current(u8 index)
+{
+    u16 generation =
+        source_parity_level.enemy_instance_generation[index];
+
+    return
+        generation != 0 &&
+        source_parity_level.enemy_avail[index] != 1 &&
+        source_boss_member_generation[index] == generation;
+}
+
+static bool source_boss_manifest_member_is_current(u8 index)
+{
+    return
+        source_parity_level.enemy_avail[index] != 1 &&
+        ot_level_port_boss_manifest_member(&source_parity_level, index);
+}
+
+static void source_boss_mark_member(u8 index)
+{
+    u16 generation =
+        source_parity_level.enemy_instance_generation[index];
+
+    if (generation == 0 || source_parity_level.enemy_avail[index] == 1) {
+        return;
+    }
+    source_boss_member_generation[index] = generation;
+    /* Event 39 may rename a live link; the instance identity survives. */
+    source_boss_confirm_link(source_parity_level.enemy[index].linknum);
+}
+
+static inline u16 source_oam_demand_add_saturated(
+    u16 total,
+    u16 amount
+)
+{
+    if (
+        total >= SOURCE_OAM_DEMAND_SATURATION ||
+        amount >= SOURCE_OAM_DEMAND_SATURATION - total
+    ) {
+        return SOURCE_OAM_DEMAND_SATURATION;
+    }
+    return (u16)(total + amount);
+}
+
+static bool source_player_shot_demand_visible(
+    u16 frame,
+    s16 screen_x,
+    s16 screen_y
+)
+{
+    if (frame > 60000u) {
+#if !TYRIAN_GBA_STRESS_LOADOUT
+        u16 option_graphic = (u16)(frame - 60001u);
+
+        if (option_graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+            return
+                screen_x > -(s16)SOURCE_SPECIAL_OPTION_BANANA_WIDTH &&
+                screen_x < SCREEN_WIDTH &&
+                screen_y > -(s16)SOURCE_SPECIAL_OPTION_BANANA_HEIGHT &&
+                screen_y < SCREEN_HEIGHT;
+        }
+#endif
+        return
+            screen_x > -64 && screen_x < SCREEN_WIDTH &&
+            screen_y > -64 && screen_y < SCREEN_HEIGHT;
+    }
+    return
+        screen_x > -16 && screen_x < SCREEN_WIDTH &&
+        screen_y > -16 && screen_y < SCREEN_HEIGHT;
+}
+
+static bool source_player_shot_render_visible(
+    u16 frame,
+    s16 screen_x,
+    s16 screen_y
+)
+{
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (frame > 60000u) {
+        u16 option_graphic = (u16)(frame - 60001u);
+
+        if (option_graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC) {
+            return
+                screen_x > -(s16)SOURCE_SPECIAL_OPTION_BANANA_WIDTH &&
+                screen_x < SCREEN_WIDTH &&
+                screen_y > -(s16)SOURCE_SPECIAL_OPTION_BANANA_HEIGHT &&
+                screen_y < SCREEN_HEIGHT;
+        }
+        if (
+            option_graphic >= SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC &&
+            option_graphic <
+                SOURCE_OPTION_PROJECTILE_SOURCE_GRAPHIC +
+                    SOURCE_OPTION_PROJECTILE_FRAME_COUNT
+        ) {
+            return
+                screen_x > -64 && screen_x < SCREEN_WIDTH &&
+                screen_y > -32 && screen_y < SCREEN_HEIGHT;
+        }
+    }
+#endif
+    return source_player_shot_demand_visible(frame, screen_x, screen_y);
+}
+
+static u8 source_player_shot_candidate_oam(u16 frame)
+{
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    if (
+        frame > 60000u &&
+        (u16)(frame - 60001u) ==
+            SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC
+    ) {
+        return 6u;
+    }
+#else
+    (void)frame;
+#endif
+    return 1u;
+}
+
+static void source_collect_player_shot_candidates(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
     s16 index;
+    u8 demand_submitted = 0;
+
+    frame->player_shot_count = 0;
+    frame->player_projectile_oam = 0;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    frame->player_projectile_oam_exact = 0;
+#endif
+    for (index = MAX_PLAYER_SHOTS - 1; index >= 0; index--) {
+        SourceProjectileOamCandidate *candidate;
+        u16 graphic;
+        s16 screen_x;
+        s16 screen_y;
+        u8 flags = 0;
+        u8 required;
+
+        if (!player_shots[index].active) continue;
+        graphic = player_shots[index].render_graphic;
+        screen_x = source_player_shot_screen_x(&player_shots[index]);
+        screen_y = source_player_shot_screen_y(&player_shots[index]);
+        required = source_player_shot_candidate_oam(graphic);
+        if (
+            source_player_shot_render_visible(
+                graphic,
+                screen_x,
+                screen_y
+            )
+        ) {
+            flags |= SOURCE_CANDIDATE_RENDER_VISIBLE;
+        }
+        if (
+            source_player_shot_demand_visible(
+                graphic,
+                screen_x,
+                screen_y
+            )
+        ) {
+            flags |= SOURCE_CANDIDATE_DEMAND_VISIBLE;
+        }
+        candidate = &frame->player_shot[frame->player_shot_count++];
+        candidate->screen_x = screen_x;
+        candidate->screen_y = screen_y;
+        candidate->index = (u8)index;
+        candidate->oam_required = required;
+        candidate->flags = flags;
+        candidate->reserved = 0;
+        if (
+            (flags & SOURCE_CANDIDATE_DEMAND_VISIBLE) != 0 &&
+            demand_submitted < MAX_VISIBLE_PLAYER_SHOTS
+        ) {
+            frame->player_projectile_oam =
+                source_oam_demand_add_saturated(
+                    frame->player_projectile_oam,
+                    required
+                );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            frame->player_projectile_oam_exact = (u16)(
+                frame->player_projectile_oam_exact + required
+            );
+#endif
+            demand_submitted++;
+        }
+    }
+}
+
+static void source_collect_enemy_shot_candidates(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    s16 index;
+    u8 demand_submitted = 0;
+
+    frame->enemy_shot_count = 0;
+    frame->enemy_projectile_oam = 0;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    frame->enemy_projectile_oam_exact = 0;
+#endif
+    for (index = OT_ENEMY_SHOT_COUNT - 1; index >= 0; index--) {
+        const OtEnemyShot *shot = &source_parity_level.enemy_shot[index];
+        SourceProjectileOamCandidate *candidate;
+        s16 screen_x;
+        s16 screen_y;
+        u8 flags = 0;
+
+        if (!shot->active) continue;
+        screen_x = source_enemy_shot_screen_x(shot);
+        screen_y = source_enemy_shot_screen_y(shot);
+        if (
+            screen_x > -16 && screen_x < SCREEN_WIDTH &&
+            screen_y > -16 && screen_y < SCREEN_HEIGHT
+        ) {
+            flags =
+                SOURCE_CANDIDATE_RENDER_VISIBLE |
+                SOURCE_CANDIDATE_DEMAND_VISIBLE;
+        }
+        candidate = &frame->enemy_shot[frame->enemy_shot_count++];
+        candidate->screen_x = screen_x;
+        candidate->screen_y = screen_y;
+        candidate->index = (u8)index;
+        candidate->oam_required = 1u;
+        candidate->flags = flags;
+        candidate->reserved = 0;
+        if (
+            (flags & SOURCE_CANDIDATE_DEMAND_VISIBLE) != 0 &&
+            demand_submitted < MAX_VISIBLE_ENEMY_SHOTS
+        ) {
+            frame->enemy_projectile_oam =
+                source_oam_demand_add_saturated(
+                    frame->enemy_projectile_oam,
+                    1u
+                );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            frame->enemy_projectile_oam_exact++;
+#endif
+            demand_submitted++;
+        }
+    }
+}
+
+static void source_collect_effect_candidates(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    s16 index = (s16)effect_slot_high_water - 1;
+    u8 demand_submitted = 0;
+
+    frame->effect_count = 0;
+    while (index >= 0) {
+        s16 word_first = (s16)(index & ~31);
+
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+        u16 word = (u16)index >> 5;
+        u8 high_bit = (u8)(index & 31);
+        u32 active_bits = effect_active_mask[word];
+
+        if (high_bit < 31u) {
+            active_bits &= (1u << (high_bit + 1u)) - 1u;
+        }
+        if (active_bits == 0) {
+            index = (s16)(word_first - 1);
+            continue;
+        }
+#endif
+        for (; index >= word_first; index--) {
+            if (!effects[index].active) continue;
+            if (
+                effects[index].x <= -16 ||
+                effects[index].x >= SCREEN_WIDTH ||
+                effects[index].y <= -16 ||
+                effects[index].y >= SCREEN_HEIGHT
+            ) {
+                continue;
+            }
+            frame->effect_index[frame->effect_count++] = (u8)index;
+            if (demand_submitted < MAX_VISIBLE_EFFECTS) {
+                frame->decorative_oam =
+                    source_oam_demand_add_saturated(
+                        frame->decorative_oam,
+                        1u
+                    );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+                frame->decorative_oam_exact++;
+#endif
+                demand_submitted++;
+            }
+        }
+    }
+}
+
+static void source_collect_pickup_candidates(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    s16 index = MAX_PICKUP_EXPLOSIONS - 1;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    const u16 candidate_oam = 1u;
+#else
+    const u16 candidate_oam = 2u;
+#endif
+
+    frame->pickup_count = 0;
+    while (index >= 0) {
+        s16 word_first = (s16)(index & ~31);
+
+#if TYRIAN_GBA_EFFECT_ACTIVE_MASK
+        u16 word = (u16)index >> 5;
+        u8 high_bit = (u8)(index & 31);
+        u32 active_bits = pickup_explosion_active_mask[word];
+
+        if (high_bit < 31u) {
+            active_bits &= (1u << (high_bit + 1u)) - 1u;
+        }
+        if (active_bits == 0) {
+            index = (s16)(word_first - 1);
+            continue;
+        }
+#endif
+        for (; index >= word_first; index--) {
+            const PickupExplosion *explosion;
+            SourcePickupOamCandidate *candidate;
+            OtEnemyDrawCommand draw;
+            s16 screen_x;
+            s16 screen_y;
+
+            if (!pickup_explosions[index].active) continue;
+            explosion = &pickup_explosions[index];
+            draw = (OtEnemyDrawCommand){
+                .active = true,
+                .x = explosion->x,
+                .y = explosion->y,
+            };
+            screen_x = source_enemy_draw_screen_x(&draw);
+            screen_y = source_enemy_draw_screen_y(&draw);
+            if (
+                screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
+                screen_y <= -32 || screen_y >= SCREEN_HEIGHT
+            ) {
+                continue;
+            }
+            candidate = &frame->pickup[frame->pickup_count++];
+            candidate->screen_x = screen_x;
+            candidate->screen_y = screen_y;
+            candidate->index = (u8)index;
+            candidate->reserved = 0;
+            frame->decorative_oam = source_oam_demand_add_saturated(
+                frame->decorative_oam,
+                candidate_oam
+            );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+            frame->decorative_oam_exact = (u16)(
+                frame->decorative_oam_exact + candidate_oam
+            );
+#endif
+        }
+    }
+}
+
+static void source_collect_non_enemy_oam_candidates(void)
+{
+    source_frame_oam_candidates.decorative_oam = 0;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    source_frame_oam_candidates.decorative_oam_exact = 0;
+#endif
+    source_collect_player_shot_candidates();
+    source_collect_enemy_shot_candidates();
+    source_collect_pickup_candidates();
+    source_collect_effect_candidates();
+}
+
+#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
+static u8 source_player_shot_oam_cursor EWRAM_BSS;
+
+static void render_player_shots(
+    u8 priority,
+    u8 oam_limit,
+    u8 shadows_allowed,
+    u8 fair_rotate
+)
+{
+    SourceFrameOamCandidates *candidates = &source_frame_oam_candidates;
+    u16 position;
+    u16 range_end;
+    u16 resume;
+    u8 start;
+    u8 wrapped = 0;
     u8 submitted = 0;
 
+    if (candidates->player_shot_count == 0) {
+        source_player_shot_oam_cursor = 0;
+        if (fair_rotate) telemetry_projectile_oam_rotation_frames++;
+        return;
+    }
+    if (
+        source_player_shot_oam_cursor >= candidates->player_shot_count
+    ) {
+        source_player_shot_oam_cursor = 0;
+    }
+    start = fair_rotate ? source_player_shot_oam_cursor : 0u;
+    position = start;
+    range_end = candidates->player_shot_count;
+    resume = start;
+
     /* PC blits ascending slots; later slots must win the GBA OBJ tie. */
-    for (index = MAX_PLAYER_SHOTS - 1; index >= 0; index--) {
-        if (!player_shots[index].active) continue;
-        if (
-            submitted >= MAX_VISIBLE_PLAYER_SHOTS ||
-            oam_count >= oam_limit
-        ) {
-            telemetry_player_shot_oam_culls++;
-            break;
-        }
+    for (;;) {
+        for (; position < range_end; position++) {
+            const SourceProjectileOamCandidate *candidate =
+                &candidates->player_shot[position];
+            u8 index = candidate->index;
+
+            if (
+                submitted >= MAX_VISIBLE_PLAYER_SHOTS ||
+                oam_count >= oam_limit
+            ) {
+                telemetry_player_shot_oam_culls++;
+                goto player_shots_done;
+            }
+            resume = (u16)(position + 1u);
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+            if (
+                (candidate->flags & SOURCE_CANDIDATE_RENDER_VISIBLE) == 0
+            ) {
+#if TYRIAN_GBA_STRESS_LOADOUT
+                telemetry_projectile_culled_offscreen_before_cache++;
+#endif
+                continue;
+            }
+#endif
         {
             u16 frame = player_shots[index].render_graphic;
             u8 shape_table;
             u16 graphic;
             u16 tile;
-            s16 screen_x;
-            s16 screen_y;
+            s16 screen_x = candidate->screen_x;
+            s16 screen_y = candidate->screen_y;
 
             if (frame > 60000) {
 #if TYRIAN_GBA_STRESS_LOADOUT
@@ -355,12 +903,6 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     telemetry_stress_loadout_failures++;
                     continue;
                 }
-                screen_x = source_player_shot_screen_x(
-                    &player_shots[index]
-                );
-                screen_y = source_player_shot_screen_y(
-                    &player_shots[index]
-                );
                 if (
                     screen_x <= -64 || screen_x >= SCREEN_WIDTH ||
                     screen_y <= -64 || screen_y >= SCREEN_HEIGHT
@@ -383,10 +925,7 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     option_graphic == SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC ||
                     option_graphic == SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC
                 ) {
-                    u8 required_oam =
-                        option_graphic ==
-                            SOURCE_SPECIAL_OPTION_BANANA_GRAPHIC ?
-                            6u : 1u;
+                    u8 required_oam = candidate->oam_required;
                     u16 special_tile;
 
                     if (
@@ -398,12 +937,6 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                         telemetry_player_shot_oam_culls++;
                         continue;
                     }
-                    screen_x = source_player_shot_screen_x(
-                        &player_shots[index]
-                    );
-                    screen_y = source_player_shot_screen_y(
-                        &player_shots[index]
-                    );
                     if (
                         option_graphic ==
                             SOURCE_SPECIAL_OPTION_XEGA_GRAPHIC
@@ -514,12 +1047,6 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                 ) {
                     continue;
                 }
-                screen_x = source_player_shot_screen_x(
-                    &player_shots[index]
-                );
-                screen_y = source_player_shot_screen_y(
-                    &player_shots[index]
-                );
                 if (
                     screen_x <= -64 || screen_x >= SCREEN_WIDTH ||
                     screen_y <= -32 || screen_y >= SCREEN_HEIGHT
@@ -547,21 +1074,6 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                     OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
             graphic = frame > 500 ? (u16)(frame - 500) : frame;
 #if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-            screen_x = source_player_shot_screen_x(
-                &player_shots[index]
-            );
-            screen_y = source_player_shot_screen_y(
-                &player_shots[index]
-            );
-            if (
-                screen_x <= -16 || screen_x >= SCREEN_WIDTH ||
-                screen_y <= -16 || screen_y >= SCREEN_HEIGHT
-            ) {
-#if TYRIAN_GBA_STRESS_LOADOUT
-                telemetry_projectile_culled_offscreen_before_cache++;
-#endif
-                continue;
-            }
             tile = source_projectile_cache_acquire(
                 shape_table,
                 graphic,
@@ -573,12 +1085,6 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                 graphic,
                 0
             );
-            screen_x = source_player_shot_screen_x(
-                &player_shots[index]
-            );
-            screen_y = source_player_shot_screen_y(
-                &player_shots[index]
-            );
 #endif
             if (tile == 0xffff) continue;
             put_sprite_8bpp_16(
@@ -588,6 +1094,7 @@ static void render_player_shots(u8 priority, u8 oam_limit)
                 priority
             );
             if (
+                shadows_allowed &&
                 source_detail_shadows_allowed() &&
                 player_shots[index].y + 10 < 190 &&
                 player_shots[index].xm < 100 &&
@@ -602,61 +1109,104 @@ static void render_player_shots(u8 priority, u8 oam_limit)
             }
             submitted++;
         }
+        }
+        if (!fair_rotate || wrapped || start == 0) break;
+        position = 0;
+        range_end = start;
+        wrapped = 1;
+    }
+player_shots_done:
+    if (fair_rotate) {
+        if (resume >= candidates->player_shot_count) {
+            resume = (u16)(resume - candidates->player_shot_count);
+        }
+        source_player_shot_oam_cursor = (u8)resume;
+        telemetry_projectile_oam_rotation_frames++;
     }
 }
 #endif
 
-static void render_effect_sprites(u8 priority, u8 oam_limit)
+static u16 source_effect_oam_cursor EWRAM_BSS;
+
+static void render_effect_sprites(
+    u8 priority,
+    u8 oam_limit,
+    u8 fair_rotate
+)
 {
-    s16 index;
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u16 position;
+    u16 range_end;
+    u16 resume;
+    u16 start;
+    u8 wrapped = 0;
     u8 submitted = 0;
 
-    for (index = (s16)effect_slot_high_water - 1; index >= 0; index--) {
-        u16 tile;
+    if (frame->effect_count == 0) {
+        source_effect_oam_cursor = 0;
+        if (fair_rotate) telemetry_effect_oam_rotation_frames++;
+        return;
+    }
+    if (source_effect_oam_cursor >= frame->effect_count) {
+        source_effect_oam_cursor = 0;
+    }
+    start = fair_rotate ? source_effect_oam_cursor : 0u;
+    position = start;
+    range_end = frame->effect_count;
+    resume = start;
+    for (;;) {
+        for (; position < range_end; position++) {
+            u8 index = frame->effect_index[position];
+            u16 tile;
 
-        if (!effects[index].active) continue;
-        if (
-            submitted >= MAX_VISIBLE_EFFECTS ||
-            oam_count >= oam_limit
-        ) {
-            telemetry_effect_oam_culls++;
-            break;
-        }
-        if (
-            effects[index].x <= -16 ||
-            effects[index].x >= SCREEN_WIDTH ||
-            effects[index].y <= -16 ||
-            effects[index].y >= SCREEN_HEIGHT
-        ) {
-            continue;
-        }
-        /*
-         * Keep OpenTyrian's full 200-entry allocator and lifecycle, then
-         * apply a presentation-only GBA budget. Newer (later PC blits)
-         * survive first, while the 128-entry hardware OAM remains available
-         * for enemies, projectiles, HUD and the GAME OVER overlay.
-         */
-        tile = source_effect_cache_acquire(
-            effects[index].sequence,
-            effects[index].frame
-        );
-        if (tile == 0xffff) continue;
-        submitted++;
+            if (
+                submitted >= MAX_VISIBLE_EFFECTS ||
+                oam_count >= oam_limit
+            ) {
+                telemetry_effect_oam_culls++;
+                goto effects_done;
+            }
+            resume = (u16)(position + 1u);
+            /*
+             * Keep OpenTyrian's full 200-entry allocator and lifecycle,
+             * then apply a presentation-only GBA budget.  The candidate
+             * list already contains only active, on-screen entries in the
+             * original reverse-PC order.
+             */
+            tile = source_effect_cache_acquire(
+                effects[index].sequence,
+                effects[index].frame
+            );
+            if (tile == 0xffff) continue;
+            submitted++;
 #if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
-        put_sprite(
-            effects[index].x, effects[index].y,
-            tile,
-            OBJ_PAL_EXPLOSION,
-            ATTR1_SIZE_16, priority
-        );
+            put_sprite(
+                effects[index].x, effects[index].y,
+                tile,
+                OBJ_PAL_EXPLOSION,
+                ATTR1_SIZE_16, priority
+            );
 #else
-        put_sprite_blended(
-            effects[index].x, effects[index].y,
-            tile,
-            OBJ_PAL_EXPLOSION,
-            ATTR1_SIZE_16, priority
-        );
+            put_sprite_blended(
+                effects[index].x, effects[index].y,
+                tile,
+                OBJ_PAL_EXPLOSION,
+                ATTR1_SIZE_16, priority
+            );
 #endif
+        }
+        if (!fair_rotate || wrapped || start == 0) break;
+        position = 0;
+        range_end = start;
+        wrapped = 1;
+    }
+effects_done:
+    if (fair_rotate) {
+        if (resume >= frame->effect_count) {
+            resume = (u16)(resume - frame->effect_count);
+        }
+        source_effect_oam_cursor = resume;
+        telemetry_effect_oam_rotation_frames++;
     }
 }
 
@@ -865,198 +1415,297 @@ static void render_source_enemy_cached_sprite_blended(
 }
 #endif
 
-static void render_source_pickup_explosions(u8 priority, u8 oam_limit)
-{
-    s16 index;
+static u16 source_pickup_explosion_oam_cursor EWRAM_BSS;
 
-    for (index = MAX_PICKUP_EXPLOSIONS - 1; index >= 0; index--) {
-        const PickupExplosion *explosion =
-            &pickup_explosions[index];
-        OtEnemyDrawCommand draw;
-        u16 tile;
-        s16 screen_x;
-        s16 screen_y;
-        u8 oam_required;
-
-        if (!explosion->active) continue;
-        if (oam_count >= oam_limit) {
-            telemetry_effect_oam_culls++;
-            break;
-        }
-        draw = (OtEnemyDrawCommand){
-            .active = true,
-            .x = explosion->x,
-            .y = explosion->y,
-            .graphic = (u16)(explosion->graphic + 1),
-            .shape_table = OT_COMP_SHAPE_TABLE_EXPLOSION,
-            .size = 0,
-            .filter = 0,
-            .pool = 0,
-        };
-        screen_x = source_enemy_draw_screen_x(&draw);
-        screen_y = source_enemy_draw_screen_y(&draw);
-        if (
-            screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
-            screen_y <= -32 || screen_y >= SCREEN_HEIGHT
-        ) {
-            continue;
-        }
-        tile = source_enemy_cache_acquire(&draw);
-        if (tile == 0xffff) continue;
-        oam_required = source_enemy_cache_tile_is_split(tile) ? 2u : 1u;
-        if (oam_count + oam_required > oam_limit) {
-            telemetry_effect_oam_culls++;
-            continue;
-        }
-#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
-        render_source_enemy_cached_sprite(
-            screen_x,
-            screen_y,
-            tile,
-            priority
-        );
-#else
-        render_source_enemy_cached_sprite_blended(
-            screen_x,
-            screen_y,
-            tile,
-            priority
-        );
-#endif
-    }
-}
-
-static void render_source_enemy_pool(
-    u8 pool,
-    u8 draw_stage,
-    u8 *visible_source_enemies
+static void render_source_pickup_explosions(
+    u8 priority,
+    u8 oam_limit,
+    u8 fair_rotate
 )
 {
-    s16 slot;
-    u8 priority = source_object_priority(draw_stage);
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u16 position;
+    u16 range_end;
+    u16 resume;
+    u16 start;
+    u8 wrapped = 0;
 
-    /*
-     * JE_drawEnemy() blits ascending slots.  Lower GBA OAM indices win an
-     * equal-priority OBJ tie, so consume the source pool in reverse.
-     */
-    for (slot = OT_ENEMY_POOL_SIZE - 1; slot >= 0; slot--) {
-        u8 index = (u8)(pool + slot);
-        const OtEnemyDrawCommand *draw =
-            &source_parity_level.enemy_draw[index];
-        s16 screen_x;
-        s16 screen_y;
-        u16 tile;
-
-        if (!draw->active) continue;
-        screen_x = source_enemy_draw_screen_x(draw);
-        screen_y = source_enemy_draw_screen_y(draw);
-        if (
-            screen_x <= -32 || screen_x >= SCREEN_WIDTH ||
-            screen_y <= -32 || screen_y >= SCREEN_HEIGHT
-        ) {
-            continue;
-        }
-        (*visible_source_enemies)++;
-        tile = source_enemy_cache_acquire(draw);
-        if (tile == 0xffff) continue;
-        render_source_enemy_cached_sprite(
-            screen_x,
-            screen_y,
-            tile,
-            priority
-        );
+    if (frame->pickup_count == 0) {
+        source_pickup_explosion_oam_cursor = 0;
+        if (fair_rotate) telemetry_effect_oam_rotation_frames++;
+        return;
     }
-}
+    if (source_pickup_explosion_oam_cursor >= frame->pickup_count) {
+        source_pickup_explosion_oam_cursor = 0;
+    }
+    start = fair_rotate ? source_pickup_explosion_oam_cursor : 0u;
+    position = start;
+    range_end = frame->pickup_count;
+    resume = start;
+    for (;;) {
+        for (; position < range_end; position++) {
+            const SourcePickupOamCandidate *candidate =
+                &frame->pickup[position];
+            u8 index = candidate->index;
+            const PickupExplosion *explosion = &pickup_explosions[index];
+            OtEnemyDrawCommand draw;
+            u16 tile;
+            u8 oam_required;
 
-static void render_source_enemy_shots(u8 priority, u8 oam_limit)
-{
-    s16 index;
-    u8 submitted = 0;
-
-    for (index = OT_ENEMY_SHOT_COUNT - 1; index >= 0; index--) {
-        const OtEnemyShot *source_shot =
-            &source_parity_level.enemy_shot[index];
-        u8 shape_table;
-        u16 graphic;
-        u16 tile;
-        s16 screen_x;
-        s16 screen_y;
-
-        if (!source_shot->active) continue;
-#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-        if (
-            submitted >= MAX_VISIBLE_ENEMY_SHOTS ||
-            oam_count >= oam_limit
-        ) {
-            telemetry_enemy_shot_oam_culls++;
-#if TYRIAN_GBA_STRESS_LOADOUT
-            telemetry_projectile_culled_oam_full_before_cache++;
-#endif
-            break;
-        }
-        screen_x = source_enemy_shot_screen_x(source_shot);
-        screen_y = source_enemy_shot_screen_y(source_shot);
-        if (
-            screen_x <= -16 || screen_x >= SCREEN_WIDTH ||
-            screen_y <= -16 || screen_y >= SCREEN_HEIGHT
-        ) {
-#if TYRIAN_GBA_STRESS_LOADOUT
-            telemetry_projectile_culled_offscreen_before_cache++;
-#endif
-            continue;
-        }
-#endif
-        shape_table =
-            source_shot->sgr >= 500 ?
-                OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
-                OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
-        graphic = (u16)(
-            (
-                source_shot->sgr >= 500 ?
-                    source_shot->sgr - 500 :
-                    source_shot->sgr
-            ) + source_shot->animate
-        );
-        tile = source_projectile_cache_acquire(
-            shape_table,
-            graphic,
-#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-            1
+            if (oam_count >= oam_limit) {
+                telemetry_effect_oam_culls++;
+                goto pickup_explosions_done;
+            }
+            resume = (u16)(position + 1u);
+            draw = (OtEnemyDrawCommand){
+                .active = true,
+                .x = explosion->x,
+                .y = explosion->y,
+                .graphic = (u16)(explosion->graphic + 1),
+                .shape_table = OT_COMP_SHAPE_TABLE_EXPLOSION,
+                .size = 0,
+                .filter = 0,
+                .pool = 0,
+            };
+            tile = source_enemy_cache_acquire(&draw);
+            if (tile == 0xffff) continue;
+            oam_required =
+                source_enemy_cache_tile_is_split(tile) ? 2u : 1u;
+            if (oam_count + oam_required > oam_limit) {
+                telemetry_effect_oam_culls++;
+                continue;
+            }
+#if TYRIAN_GBA_DETAIL_LEVEL == TYRIAN_GBA_DETAIL_LOW
+            render_source_enemy_cached_sprite(
+                candidate->screen_x,
+                candidate->screen_y,
+                tile,
+                priority
+            );
 #else
-            0
+            render_source_enemy_cached_sprite_blended(
+                candidate->screen_x,
+                candidate->screen_y,
+                tile,
+                priority
+            );
 #endif
-        );
-        if (tile == 0xffff) continue;
-#if !TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-        screen_x = source_enemy_shot_screen_x(source_shot);
-        screen_y = source_enemy_shot_screen_y(source_shot);
-#endif
-        put_sprite_8bpp_16(
-            screen_x,
-            screen_y,
-            tile,
-            priority
-        );
-        submitted++;
+        }
+        if (!fair_rotate || wrapped || start == 0) break;
+        position = 0;
+        range_end = start;
+        wrapped = 1;
+    }
+pickup_explosions_done:
+    if (fair_rotate) {
+        if (resume >= frame->pickup_count) {
+            resume = (u16)(resume - frame->pickup_count);
+        }
+        source_pickup_explosion_oam_cursor = resume;
+        telemetry_effect_oam_rotation_frames++;
     }
 }
 
 /*
- * Count the OAM entries that must survive presentation pressure.  The PC
- * renderer has no object-count ceiling, while GBA has exactly 128 entries.
- * A streamed Sprite2 frame can occupy two 32x16 entries when it lands in the
- * fragmented cache slot, so reserve two entries per visible authored object.
- * This is deliberately conservative: unused reserve becomes headroom, never
- * a missing player, enemy, or Boss component.
+ * Explosions and authored enemies share the Sprite2 L1 canvas cache.  The PC
+ * draw order emits explosions first, but that must not let decorative frames
+ * pin every physical GBA slot before an enemy or Boss requests its canvas.
+ * Prime only visible structural draw commands, then let the ordinary reverse
+ * draw pass reuse these stable tiles.  Effects may consume whatever remains.
  */
-static u8 source_structural_oam_required(void)
+static u8 source_enemy_rotation_start EWRAM_BSS;
+
+static u16 source_player_structural_oam_required(void)
 {
     u16 required = 0;
+#if !TYRIAN_GBA_STRESS_LOADOUT
     u8 index;
+#endif
 
-    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+    if (!player_alive) return 0;
+    if (
+        source_parity_level.end_level &&
+        source_parity_level.level_end != 0
+    ) {
+        /* JE_playerMovement() can emit at most nineteen exit copies. */
+        return 19u;
+    }
+
+    required++;
+    if (source_detail_shadows_allowed()) required++;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    if (stress_loadout_valid) required += 2u;
+#else
+    for (index = 0; index < 2; index++) {
+        const SourceSidekickRuntime *runtime = &source_sidekick[index];
+
+        if (
+            runtime->valid &&
+            runtime->option.option != 0 &&
+            runtime->option.animation_count != 0 &&
+            runtime->animation_frame < runtime->option.animation_count
+        ) {
+            required += 2u;
+        }
+    }
+#endif
+    return required;
+}
+
+static bool source_enemy_is_boss_core_component(u8 index)
+{
+    u8 link = source_parity_level.enemy[index].linknum;
+
+    return
+        link != 0 &&
+        (
+            link == source_parity_level.boss_bar_link[0] ||
+            link == source_parity_level.boss_bar_link[1]
+        );
+}
+
+static bool source_enemy_boss_structure_overlaps(
+    const SourceEnemyOamCandidate *left,
+    const SourceEnemyOamCandidate *right
+)
+{
+    /*
+     * JE_drawEnemy's largest authored canvas is 32x32.  Touching canvases
+     * are part of the same visual assembly; a four-pixel tolerance bridges
+     * the deliberate seams between adjacent SAVARA/DREAD-NOT components.
+     */
+    return
+        left->screen_x < right->screen_x + 36 &&
+        right->screen_x < left->screen_x + 36 &&
+        left->screen_y < right->screen_y + 36 &&
+        right->screen_y < left->screen_y + 36;
+}
+
+static __attribute__((noinline, noclone)) void
+source_enemy_mark_boss_structure(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u8 changed;
+    u16 position;
+
+    frame->boss_structure_count = 0;
+    frame->boss_compact_count = 0;
+    frame->enemy_full_size_count = 0;
+    for (position = 0; position < frame->enemy_count; position++) {
+        SourceEnemyOamCandidate *candidate = &frame->enemy[position];
+        u8 index = candidate->index;
+        u16 generation =
+            source_parity_level.enemy_instance_generation[index];
+
+        if (
+            source_boss_member_generation[index] != 0 &&
+            source_boss_member_generation[index] != generation
+        ) {
+            /* The pool slot now belongs to a different enemy instance. */
+            source_boss_member_generation[index] = 0;
+        }
+        if (
+            (candidate->flags & SOURCE_ENEMY_CANDIDATE_BOSS_CORE) != 0 ||
+            source_boss_manifest_member_is_current(index) ||
+            source_boss_member_is_current(index)
+        ) {
+            candidate->flags |= SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE;
+            source_boss_mark_member(index);
+        }
+    }
+
+    /*
+     * The build-time LVL manifest seeds pre-intro components at their spawn
+     * event, before Event 79 exists.  Event 79 remains the authoritative
+     * damage/bar link and runtime fallback.  Stock bosses can surround
+     * that seed with many invulnerable link groups (SAVARA uses 14..19 plus
+     * transformed 121/141/161/181 groups).  A visible assembled frame is a
+     * useful bootstrap, but current coordinates are not identity: the LVL
+     * script deliberately moves those link groups apart.  Every discovered
+     * member is therefore pinned to its slot generation and confirms its
+     * link for the remainder of this level.  Later frames first inherit by
+     * that persistent identity/link and only then extend the bootstrap walk.
+     */
+    do {
+        changed = 0;
+        for (position = 0; position < frame->enemy_count; position++) {
+            SourceEnemyOamCandidate *candidate = &frame->enemy[position];
+            const OtEnemy *enemy =
+                &source_parity_level.enemy[candidate->index];
+            u16 seed_position;
+
+            if (
+                (candidate->flags &
+                    SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE) != 0 ||
+                enemy->linknum == 0
+            ) {
+                continue;
+            }
+            if (source_boss_link_is_confirmed(enemy->linknum)) {
+                candidate->flags |=
+                    SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE;
+                source_boss_mark_member(candidate->index);
+                changed = 1;
+                continue;
+            }
+            if (!enemy->enemyground || enemy->armorleft != 255) continue;
+            for (
+                seed_position = 0;
+                seed_position < frame->enemy_count;
+                seed_position++
+            ) {
+                const SourceEnemyOamCandidate *seed =
+                    &frame->enemy[seed_position];
+
+                if (
+                    (seed->flags &
+                        SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE) == 0 ||
+                    !source_enemy_boss_structure_overlaps(candidate, seed)
+                ) {
+                    continue;
+                }
+                candidate->flags |=
+                    SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE;
+                source_boss_mark_member(candidate->index);
+                changed = 1;
+                break;
+            }
+        }
+    } while (changed);
+
+    for (position = 0; position < frame->enemy_count; position++) {
+        const SourceEnemyOamCandidate *candidate = &frame->enemy[position];
+        bool full_size =
+            source_parity_level.enemy_draw[candidate->index].size == 1;
+
+        if (full_size) frame->enemy_full_size_count++;
+
+        if (
+            (candidate->flags &
+                SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE) == 0
+        ) {
+            continue;
+        }
+        frame->boss_structure_count++;
+        if (full_size) frame->boss_compact_count++;
+    }
+}
+
+static void source_enemy_collect_visible_pool(
+    u8 pool,
+    SourceEnemyOamRange *range
+)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    s16 slot;
+
+    range->first = frame->enemy_count;
+    range->count = 0;
+    for (slot = OT_ENEMY_POOL_SIZE - 1; slot >= 0; slot--) {
+        u8 index = (u8)(pool + slot);
         const OtEnemyDrawCommand *draw =
             &source_parity_level.enemy_draw[index];
+        SourceEnemyOamCandidate *candidate;
         s16 screen_x;
         s16 screen_y;
 
@@ -1069,49 +1718,379 @@ static u8 source_structural_oam_required(void)
         ) {
             continue;
         }
-#if TYRIAN_GBA_STRESS_LOADOUT
-        required++;
-#else
-        required += 2u;
-#endif
+        if (frame->enemy_count >= OT_ENEMY_COUNT) break;
+        candidate = &frame->enemy[frame->enemy_count++];
+        candidate->screen_x = screen_x;
+        candidate->screen_y = screen_y;
+        candidate->tile = 0xffff;
+        candidate->index = index;
+        candidate->flags = source_enemy_is_boss_core_component(index) ?
+            SOURCE_ENEMY_CANDIDATE_BOSS_CORE : 0u;
+        candidate->palette = 0;
+        range->count++;
     }
+}
 
-    if (player_alive) {
-        if (
-            source_parity_level.end_level &&
-            source_parity_level.level_end != 0
-        ) {
-            /* JE_playerMovement() can emit at most nineteen exit copies. */
-            required += 19u;
-        } else {
-            required++;
-            if (source_detail_shadows_allowed()) required++;
+static void source_collect_enemy_oam_candidates(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
 #if TYRIAN_GBA_STRESS_LOADOUT
-            if (stress_loadout_valid) required += 2u;
+    const u16 object_cost = 1u;
 #else
-            for (index = 0; index < 2; index++) {
-                const SourceSidekickRuntime *runtime =
-                    &source_sidekick[index];
+    /* Fragmented Sprite2 canvases can require two 32x16 OBJ entries. */
+    const u16 object_cost = 2u;
+#endif
+    u16 enemy_oam;
+
+    frame->enemy_count = 0;
+    if (source_parity_level.sky_enemy_over_all) {
+        source_enemy_collect_visible_pool(0, &frame->sky_enemy);
+    }
+    if (source_parity_level.top_enemy_over) {
+        source_enemy_collect_visible_pool(50, &frame->top_enemy);
+    }
+    if (!source_parity_level.top_enemy_over) {
+        source_enemy_collect_visible_pool(50, &frame->top_enemy);
+    }
+    if (!source_parity_level.sky_enemy_over_all) {
+        source_enemy_collect_visible_pool(0, &frame->sky_enemy);
+    }
+    source_enemy_collect_visible_pool(75, &frame->ground_enemy_75);
+    source_enemy_collect_visible_pool(25, &frame->ground_enemy_25);
+    source_enemy_mark_boss_structure();
+
+    frame->player_structural_oam =
+        source_player_structural_oam_required();
+    enemy_oam = (u16)(frame->enemy_count * object_cost);
+    frame->structural_oam = source_oam_demand_add_saturated(
+        frame->player_structural_oam,
+        enemy_oam
+    );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    frame->structural_oam_exact = (u16)(
+        frame->player_structural_oam + enemy_oam
+    );
+    if (
+        frame->structural_oam_exact >
+        telemetry_structural_oam_required_max
+    ) {
+        telemetry_structural_oam_required_max =
+            frame->structural_oam_exact;
+    }
+#else
+    if (frame->structural_oam > telemetry_structural_oam_required_max) {
+        telemetry_structural_oam_required_max = frame->structural_oam;
+    }
+#endif
+}
+
+/*
+ * OAM is a presentation resource, not gameplay state.  Reserve it by class:
+ * player/authored enemies first, live projectiles second, and explosions or
+ * shadows last.  If authored enemies alone exceed the remaining hardware
+ * entries, rotate the admitted window once per presented frame.  A crowded
+ * object therefore flickers fairly instead of the same pool disappearing
+ * forever.  The source enemy pool, collision and update order are unchanged.
+ */
+static void source_enemy_select_and_prime(void)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u16 non_enemy_required;
+    u16 available;
+    u16 object_cost;
+    u16 selected_capacity;
+    u16 selected_count = 0;
+    u16 resume;
+    u16 frame_prime_failures = 0;
+    u8 priority_pass;
+
+    if (frame->enemy_count == 0) {
+        source_enemy_rotation_start = 0;
+        return;
+    }
+    if (source_enemy_rotation_start >= frame->enemy_count) {
+        source_enemy_rotation_start = 0;
+    }
+    non_enemy_required = frame->player_structural_oam;
+    available = oam_count < SPRITE_LIMIT ?
+        (u16)(SPRITE_LIMIT - oam_count) : 0u;
+    available = available > non_enemy_required ?
+        (u16)(available - non_enemy_required) : 0u;
+#if TYRIAN_GBA_STRESS_LOADOUT
+    object_cost = 1u;
+#else
+    /* Fragmented Sprite2 canvases can require two 32x16 OBJ entries. */
+    object_cost = 2u;
+#endif
+    selected_capacity = available / object_cost;
+    if (selected_capacity > frame->enemy_count) {
+        selected_capacity = frame->enemy_count;
+    }
+    if (selected_capacity < frame->enemy_count) {
+        telemetry_enemy_oam_rotation_frames++;
+    }
+    resume = source_enemy_rotation_start;
+    /*
+     * The direct boss-bar core wins first, its connected multi-link assembly
+     * second, and unrelated enemies third. Each pass is split at the cursor,
+     * so no candidate pays a wrap/modulo test. Cache admission happens at
+     * selection time and cannot be polluted by low-priority explosions.
+     */
+    for (
+        priority_pass = 0;
+        priority_pass < 3 && selected_count < selected_capacity;
+        priority_pass++
+    ) {
+        u8 segment;
+
+        for (
+            segment = 0;
+            segment < 2 && selected_count < selected_capacity;
+            segment++
+        ) {
+            u16 position = segment == 0 ?
+                source_enemy_rotation_start : 0u;
+            u16 range_end = segment == 0 ?
+                frame->enemy_count : source_enemy_rotation_start;
+
+            for (
+                ;
+                position < range_end &&
+                    selected_count < selected_capacity;
+                position++
+            ) {
+                SourceEnemyOamCandidate *candidate =
+                    &frame->enemy[position];
+                const OtEnemyDrawCommand *draw =
+                    &source_parity_level.enemy_draw[candidate->index];
+                bool boss_core =
+                    (candidate->flags &
+                        SOURCE_ENEMY_CANDIDATE_BOSS_CORE) != 0;
+                bool boss_structure =
+                    (candidate->flags &
+                        SOURCE_ENEMY_CANDIDATE_BOSS_STRUCTURE) != 0;
 
                 if (
-                    runtime->valid &&
-                    runtime->option.option != 0 &&
-                    runtime->option.animation_count != 0 &&
-                    runtime->animation_frame <
-                        runtime->option.animation_count
+                    (priority_pass == 0 && !boss_core) ||
+                    (
+                        priority_pass == 1 &&
+                        (boss_core || !boss_structure)
+                    ) ||
+                    (priority_pass == 2 && boss_structure)
                 ) {
-                    required += 2u;
+                    continue;
                 }
+                candidate->flags |= SOURCE_ENEMY_CANDIDATE_SELECTED;
+                telemetry_enemy_cache_prime_attempts++;
+                candidate->palette = 0;
+                /*
+                 * Once a large boss owns the compact presentation cache,
+                 * admit every visible 32x32 authored enemy to it.  Priority
+                 * passes still guarantee boss parts first; spare canvases
+                 * prevent unrelated enemies from disappearing merely
+                 * because the boss reserved the ordinary 8bpp slots.
+                 */
+                if (draw->size == 1) {
+                    candidate->tile = source_boss_compact_acquire(
+                        draw,
+                        &candidate->palette
+                    );
+                    if (candidate->tile != 0xffff) {
+                        candidate->flags |=
+                            SOURCE_ENEMY_CANDIDATE_BOSS_COMPACT;
+                    }
+                } else {
+                    candidate->tile = 0xffff;
+                }
+                if (candidate->tile == 0xffff) {
+                    candidate->tile = source_enemy_cache_acquire(draw);
+                }
+                if (candidate->tile == 0xffff) {
+                    telemetry_enemy_cache_prime_failures++;
+                    frame_prime_failures++;
+                }
+                selected_count++;
+                resume = (u16)(position + 1u);
             }
-#endif
         }
     }
-
-    if (required > SPRITE_LIMIT) required = SPRITE_LIMIT;
-    if (required > telemetry_structural_oam_required_max) {
-        telemetry_structural_oam_required_max = required;
+    if (resume >= frame->enemy_count) {
+        resume = (u16)(resume - frame->enemy_count);
     }
-    return (u8)required;
+    if (selected_capacity < frame->enemy_count) {
+        source_enemy_rotation_start = (u8)resume;
+    } else if (frame_prime_failures != 0) {
+        /* Preserve cache-admission fairness if every OAM candidate fit. */
+        source_enemy_rotation_start++;
+        if (source_enemy_rotation_start >= frame->enemy_count) {
+            source_enemy_rotation_start = 0;
+        }
+    }
+}
+
+static void render_source_enemy_range(
+    const SourceEnemyOamRange *range,
+    u8 draw_stage
+)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u16 position;
+    u16 range_end = (u16)(range->first + range->count);
+    u8 priority = source_object_priority(draw_stage);
+
+    for (position = range->first; position < range_end; position++) {
+        const SourceEnemyOamCandidate *candidate =
+            &frame->enemy[position];
+        u8 oam_required;
+
+        if (
+            (candidate->flags & SOURCE_ENEMY_CANDIDATE_SELECTED) == 0
+        ) {
+            telemetry_enemy_oam_culls++;
+            continue;
+        }
+        if (candidate->tile == 0xffff) continue;
+        oam_required =
+            source_enemy_cache_tile_is_split(candidate->tile) ? 2u : 1u;
+        if (oam_count + oam_required > SPRITE_LIMIT) {
+            telemetry_enemy_oam_culls++;
+            continue;
+        }
+        if (
+            (candidate->flags &
+                SOURCE_ENEMY_CANDIDATE_BOSS_COMPACT) != 0
+        ) {
+            put_sprite(
+                candidate->screen_x,
+                candidate->screen_y,
+                candidate->tile,
+                candidate->palette,
+                ATTR1_SIZE_32,
+                priority
+            );
+        } else {
+            render_source_enemy_cached_sprite(
+                candidate->screen_x,
+                candidate->screen_y,
+                candidate->tile,
+                priority
+            );
+        }
+    }
+}
+
+static u8 source_enemy_shot_oam_cursor EWRAM_BSS;
+
+static void render_source_enemy_shots(
+    u8 priority,
+    u8 oam_limit,
+    u8 fair_rotate
+)
+{
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u16 position;
+    u16 range_end;
+    u16 resume;
+    u8 start;
+    u8 wrapped = 0;
+    u8 submitted = 0;
+
+    if (frame->enemy_shot_count == 0) {
+        source_enemy_shot_oam_cursor = 0;
+        if (fair_rotate) telemetry_projectile_oam_rotation_frames++;
+        return;
+    }
+    if (source_enemy_shot_oam_cursor >= frame->enemy_shot_count) {
+        source_enemy_shot_oam_cursor = 0;
+    }
+    start = fair_rotate ? source_enemy_shot_oam_cursor : 0u;
+    position = start;
+    range_end = frame->enemy_shot_count;
+    resume = start;
+    for (;;) {
+        for (; position < range_end; position++) {
+            const SourceProjectileOamCandidate *candidate =
+                &frame->enemy_shot[position];
+            const OtEnemyShot *source_shot =
+                &source_parity_level.enemy_shot[candidate->index];
+            u8 shape_table;
+            u16 graphic;
+            u16 tile;
+
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+            if (
+                submitted >= MAX_VISIBLE_ENEMY_SHOTS ||
+                oam_count >= oam_limit
+            ) {
+                telemetry_enemy_shot_oam_culls++;
+#if TYRIAN_GBA_STRESS_LOADOUT
+                telemetry_projectile_culled_oam_full_before_cache++;
+#endif
+                goto enemy_shots_done;
+            }
+            resume = (u16)(position + 1u);
+            if (
+                (candidate->flags & SOURCE_CANDIDATE_RENDER_VISIBLE) == 0
+            ) {
+#if TYRIAN_GBA_STRESS_LOADOUT
+                telemetry_projectile_culled_offscreen_before_cache++;
+#endif
+                continue;
+            }
+#else
+            resume = (u16)(position + 1u);
+#endif
+            shape_table =
+                source_shot->sgr >= 500 ?
+                    OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
+                    OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
+            graphic = (u16)(
+                (
+                    source_shot->sgr >= 500 ?
+                        source_shot->sgr - 500 :
+                        source_shot->sgr
+                ) + source_shot->animate
+            );
+            tile = source_projectile_cache_acquire(
+                shape_table,
+                graphic,
+#if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
+                1
+#else
+                0
+#endif
+            );
+            if (tile == 0xffff) continue;
+            put_sprite_8bpp_16(
+                candidate->screen_x,
+                candidate->screen_y,
+                tile,
+                priority
+            );
+            submitted++;
+        }
+        if (!fair_rotate || wrapped || start == 0) break;
+        position = 0;
+        range_end = start;
+        wrapped = 1;
+    }
+enemy_shots_done:
+    if (fair_rotate) {
+        if (resume >= frame->enemy_shot_count) {
+            resume = (u16)(resume - frame->enemy_shot_count);
+        }
+        source_enemy_shot_oam_cursor = (u8)resume;
+        telemetry_projectile_oam_rotation_frames++;
+    }
+}
+
+/* Convert a saturated per-tier demand into the last usable OAM index. */
+static u8 source_oam_limit_after_reserve(u16 required)
+{
+    u16 available = (u16)(SPRITE_LIMIT - oam_count);
+
+    if (required >= available) return oam_count;
+    return (u8)(SPRITE_LIMIT - required);
 }
 
 static u8 source_detail_oam_height(u16 attr0, u16 attr1)
@@ -1149,113 +2128,316 @@ static void source_detail_transform_world_oam(u8 first, u8 last)
     }
 }
 
+/*
+ * Enemy and player projectiles share one presentation tier.  Rendering the
+ * enemy pool first must not let it consume the player's entire OAM window.
+ * Split a contended window fairly, alternate the odd entry, and let either
+ * side borrow every slot the other side does not request.
+ */
+static u16 source_enemy_projectile_fair_budget(
+    u16 capacity,
+    u16 enemy_demand,
+    u16 player_demand
+)
+{
+    u16 enemy_share;
+    u16 player_share;
+
+    if (capacity == 0 || enemy_demand == 0) return 0;
+    if (player_demand == 0) {
+        return enemy_demand < capacity ? enemy_demand : capacity;
+    }
+    if (enemy_demand + player_demand <= capacity) {
+        return enemy_demand;
+    }
+
+    enemy_share = (u16)(capacity >> 1);
+    if (
+        (capacity & 1u) != 0 &&
+        (telemetry_display_frames & 1u) == 0
+    ) {
+        enemy_share++;
+    }
+    player_share = (u16)(capacity - enemy_share);
+
+    if (player_demand < player_share) {
+        u16 available = (u16)(capacity - player_demand);
+
+        return enemy_demand < available ? enemy_demand : available;
+    }
+    if (enemy_demand < enemy_share) return enemy_demand;
+    return enemy_share;
+}
+
 static void render_source_play_scene(void)
 {
-    u8 visible_source_enemies = 0;
+    SourceFrameOamCandidates *frame = &source_frame_oam_candidates;
+    u8 visible_source_enemies;
     u8 nonstructural_oam_limit = SPRITE_LIMIT;
     u8 effect_oam_limit;
+    u8 player_shadows_allowed = 1;
+    u8 presentation_pressure;
+    u16 structural_oam;
+    u16 enemy_projectile_oam;
+    u16 player_projectile_oam;
+    u16 projectile_oam;
+    u16 decorative_oam;
+    u16 cosmetic_oam_floor = 0;
+    u16 projectile_oam_capacity = 0;
+    u16 enemy_projectile_budget = 0;
+    u16 scene_oam_demand;
 
     source_sprite2_l2_begin_frame();
     source_enemy_cache_begin_frame();
     source_projectile_cache_begin_frame();
-    render_source_inventory_hud();
     render_source_boss_bars();
-#if !TYRIAN_GBA_STRESS_LOADOUT
+    source_collect_enemy_oam_candidates();
+    (void)source_boss_compact_prepare(frame);
+    /* Boss cache ownership is known before HUD Sprite2 admission. */
+    render_source_inventory_hud();
+    source_collect_non_enemy_oam_candidates();
+    source_enemy_select_and_prime();
+    visible_source_enemies = frame->enemy_count;
+    structural_oam = frame->structural_oam;
+    enemy_projectile_oam = frame->enemy_projectile_oam;
+    player_projectile_oam = frame->player_projectile_oam;
+    projectile_oam = source_oam_demand_add_saturated(
+        enemy_projectile_oam,
+        player_projectile_oam
+    );
+    decorative_oam = frame->decorative_oam;
+    scene_oam_demand = source_oam_demand_add_saturated(
+        oam_count,
+        structural_oam
+    );
+    scene_oam_demand = source_oam_demand_add_saturated(
+        scene_oam_demand,
+        projectile_oam
+    );
+    scene_oam_demand = source_oam_demand_add_saturated(
+        scene_oam_demand,
+        decorative_oam
+    );
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
     {
-        u8 structural_oam = source_structural_oam_required();
+        u16 exact_scene_oam_demand = (u16)(
+            oam_count +
+            frame->structural_oam_exact +
+            frame->enemy_projectile_oam_exact +
+            frame->player_projectile_oam_exact +
+            frame->decorative_oam_exact
+        );
 
-        nonstructural_oam_limit =
-            structural_oam >= SPRITE_LIMIT - oam_count ?
-                oam_count :
-                (u8)(SPRITE_LIMIT - structural_oam);
+        if (exact_scene_oam_demand > telemetry_scene_oam_demand_max) {
+            telemetry_scene_oam_demand_max = exact_scene_oam_demand;
+        }
     }
 #else
-    (void)source_structural_oam_required();
+    if (scene_oam_demand > telemetry_scene_oam_demand_max) {
+        telemetry_scene_oam_demand_max = scene_oam_demand;
+    }
 #endif
-
-    /*
-     * PC is a software renderer: the last blit is in front.  GBA resolves
-     * equal-priority OBJ overlap in favour of the lower OAM index, so emit
-     * the complete JE_main() sequence in reverse.
-     */
-    render_source_pickup_explosions(
-        source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
-        nonstructural_oam_limit
+    nonstructural_oam_limit =
+        source_oam_limit_after_reserve(structural_oam);
+    effect_oam_limit = source_oam_limit_after_reserve(
+        source_oam_demand_add_saturated(
+            structural_oam,
+            projectile_oam
+        )
     );
-    effect_oam_limit = nonstructural_oam_limit;
+    presentation_pressure = scene_oam_demand > SPRITE_LIMIT;
+    if (presentation_pressure) {
+        u16 available = oam_count < SPRITE_LIMIT ?
+            (u16)(SPRITE_LIMIT - oam_count) : 0u;
+        u16 reserved;
+
+        /* Projectile shadows are decorative and yield before primaries. */
+        player_shadows_allowed = 0;
+        /*
+         * Keep a tiny, deliberately flickery cosmetic window. Structural
+         * objects still own their full reserve; only overflowing projectiles
+         * rotate around these eight entries.
+         */
+        cosmetic_oam_floor = decorative_oam < 8u ?
+            decorative_oam : 8u;
+        reserved = source_oam_demand_add_saturated(
+            structural_oam,
+            cosmetic_oam_floor
+        );
+        projectile_oam_capacity = available > reserved ?
+            (u16)(available - reserved) : 0u;
+        enemy_projectile_budget =
+            source_enemy_projectile_fair_budget(
+                projectile_oam_capacity,
+                enemy_projectile_oam,
+                player_projectile_oam
+            );
+        nonstructural_oam_limit = source_oam_limit_after_reserve(
+            reserved
+        );
+    }
+
+    if (!presentation_pressure && !source_boss_compact_active) {
+        /* Preserve the exact reverse-PC OBJ order when no culling is needed. */
+        render_source_pickup_explosions(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+            effect_oam_limit,
+            0
+        );
 #if !TYRIAN_GBA_STRESS_LOADOUT
+        {
+            u8 available = source_effect_cache_available_slots();
+            u8 budget = available < MAX_VISIBLE_EFFECTS ?
+                available : MAX_VISIBLE_EFFECTS;
+
+            if (budget < effect_oam_limit - oam_count) {
+                effect_oam_limit = (u8)(oam_count + budget);
+            }
+        }
+#endif
+        render_effect_sprites(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+            effect_oam_limit,
+            0
+        );
+        render_legacy_rewards(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
+        );
+    }
+    if (source_parity_level.sky_enemy_over_all) {
+        render_source_enemy_range(
+            &frame->sky_enemy,
+            SOURCE_DRAW_STAGE_SKY_ENEMY_OVER
+        );
+    }
+    if (source_parity_level.top_enemy_over) {
+        render_source_enemy_range(
+            &frame->top_enemy,
+            SOURCE_DRAW_STAGE_TOP_ENEMY_OVER
+        );
+    }
     {
+        u8 enemy_projectile_oam_start = oam_count;
+        u8 enemy_projectile_oam_limit = nonstructural_oam_limit;
+        u16 enemy_projectile_oam_used;
+
+        if (presentation_pressure) {
+            u16 limit = (u16)oam_count + enemy_projectile_budget;
+
+            enemy_projectile_oam_limit = (u8)(
+                limit < SPRITE_LIMIT ? limit : SPRITE_LIMIT
+            );
+        }
+        render_source_enemy_shots(
+            source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT),
+            enemy_projectile_oam_limit,
+            presentation_pressure &&
+                enemy_projectile_oam > enemy_projectile_budget
+        );
+        enemy_projectile_oam_used =
+            (u16)(oam_count - enemy_projectile_oam_start);
+        render_player_sidekicks(
+            source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
+        );
+        render_player_sprite(
+            source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
+        );
+#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
+        {
+            u8 player_projectile_oam_limit = nonstructural_oam_limit;
+            u16 player_projectile_capacity = player_projectile_oam;
+
+            if (presentation_pressure) {
+                u16 limit;
+
+                player_projectile_capacity =
+                    projectile_oam_capacity >
+                        enemy_projectile_oam_used ?
+                    (u16)(
+                        projectile_oam_capacity -
+                        enemy_projectile_oam_used
+                    ) : 0u;
+                limit = (u16)oam_count + player_projectile_capacity;
+                player_projectile_oam_limit = (u8)(
+                    limit < SPRITE_LIMIT ? limit : SPRITE_LIMIT
+                );
+            }
+            render_player_shots(
+                source_object_priority(SOURCE_DRAW_STAGE_PLAYER_SHOT),
+                player_projectile_oam_limit,
+                player_shadows_allowed,
+                presentation_pressure &&
+                    player_projectile_oam >
+                        player_projectile_capacity
+            );
+        }
+#endif
+    }
+    if (!source_parity_level.top_enemy_over) {
+        render_source_enemy_range(
+            &frame->top_enemy,
+            SOURCE_DRAW_STAGE_TOP_ENEMY
+        );
+    }
+    if (!source_parity_level.sky_enemy_over_all) {
+        render_source_enemy_range(
+            &frame->sky_enemy,
+            SOURCE_DRAW_STAGE_SKY_ENEMY
+        );
+    }
+    /* PC draws ground2 after ground, hence reverse OAM order is 75 then 25. */
+    render_source_enemy_range(
+        &frame->ground_enemy_75,
+        SOURCE_DRAW_STAGE_GROUND_ENEMY
+    );
+    render_source_enemy_range(
+        &frame->ground_enemy_25,
+        SOURCE_DRAW_STAGE_GROUND_ENEMY
+    );
+    if (presentation_pressure && !source_boss_compact_active) {
+        u8 first_effect_limit = (u8)(
+            oam_count + ((SPRITE_LIMIT - oam_count + 1u) >> 1)
+        );
+
+#if !TYRIAN_GBA_STRESS_LOADOUT
         u8 available = source_effect_cache_available_slots();
         u8 budget = available < MAX_VISIBLE_EFFECTS ?
             available : MAX_VISIBLE_EFFECTS;
 
-        if (budget < effect_oam_limit - oam_count) {
-            effect_oam_limit = (u8)(oam_count + budget);
+        if (budget < first_effect_limit - oam_count) {
+            first_effect_limit = (u8)(oam_count + budget);
         }
-    }
 #endif
-    render_effect_sprites(
-        source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
-        effect_oam_limit
-    );
-    render_legacy_rewards(
-        source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
-    );
-    if (source_parity_level.sky_enemy_over_all) {
-        render_source_enemy_pool(
-            0,
-            SOURCE_DRAW_STAGE_SKY_ENEMY_OVER,
-            &visible_source_enemies
+        /*
+         * Gameplay OBJ now own the early OAM indices. Give each explosion
+         * implementation a rotating share of the remaining tail; the pickup
+         * pool borrows any unused general-effect share.
+         */
+        render_effect_sprites(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+            first_effect_limit,
+            1
         );
-    }
-    if (source_parity_level.top_enemy_over) {
-        render_source_enemy_pool(
-            50,
-            SOURCE_DRAW_STAGE_TOP_ENEMY_OVER,
-            &visible_source_enemies
+        render_source_pickup_explosions(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT),
+            SPRITE_LIMIT,
+            1
         );
-    }
-    render_source_enemy_shots(
-        source_object_priority(SOURCE_DRAW_STAGE_ENEMY_SHOT),
-        nonstructural_oam_limit
-    );
-    render_player_sidekicks(
-        source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
-    );
-    render_player_sprite(
-        source_object_priority(SOURCE_DRAW_STAGE_PLAYER)
-    );
-#if !TYRIAN_GBA_STRESS_SKIP_PLAYER_PROJECTILE_RENDER
-    render_player_shots(
-        source_object_priority(SOURCE_DRAW_STAGE_PLAYER_SHOT),
-        nonstructural_oam_limit
-    );
-#endif
-    if (!source_parity_level.top_enemy_over) {
-        render_source_enemy_pool(
-            50,
-            SOURCE_DRAW_STAGE_TOP_ENEMY,
-            &visible_source_enemies
+        render_legacy_rewards(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
         );
-    }
-    if (!source_parity_level.sky_enemy_over_all) {
-        render_source_enemy_pool(
-            0,
-            SOURCE_DRAW_STAGE_SKY_ENEMY,
-            &visible_source_enemies
+        telemetry_critical_oam_promotions++;
+    } else if (source_boss_compact_active) {
+        /*
+         * Palette bank 7 and most Sprite2 VRAM belong to the compressed
+         * boss during this exceptional scene. Keep collectable legacy
+         * rewards, but sacrifice transient explosion presentation first.
+         */
+        render_legacy_rewards(
+            source_object_priority(SOURCE_DRAW_STAGE_EFFECT)
         );
+        telemetry_critical_oam_promotions++;
     }
-    /* PC draws ground2 after ground, hence reverse OAM order is 75 then 25. */
-    render_source_enemy_pool(
-        75,
-        SOURCE_DRAW_STAGE_GROUND_ENEMY,
-        &visible_source_enemies
-    );
-    render_source_enemy_pool(
-        25,
-        SOURCE_DRAW_STAGE_GROUND_ENEMY,
-        &visible_source_enemies
-    );
     source_enemy_cache_end_frame();
     source_projectile_cache_end_frame();
     source_sprite2_l2_end_frame();

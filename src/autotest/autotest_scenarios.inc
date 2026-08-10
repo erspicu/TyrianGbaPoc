@@ -64,6 +64,10 @@ static u32 autotest_collision_kill_group_visits_snapshot EWRAM_BSS;
 static u32 autotest_collision_damaged_transition_visits_snapshot EWRAM_BSS;
 static u32 autotest_collision_player_contact_visits_snapshot EWRAM_BSS;
 static u32 autotest_collision_zinglon_visits_snapshot EWRAM_BSS;
+static u32 autotest_boss_manifest_spawn_count_snapshot EWRAM_BSS;
+static u32 autotest_boss_manifest_active_count_snapshot EWRAM_BSS;
+static u32 autotest_boss_manifest_episode_snapshot EWRAM_BSS;
+static u32 autotest_boss_manifest_lvl_snapshot EWRAM_BSS;
 
 static u32 autotest_enemy_pool_mask_consistency(void)
 {
@@ -1283,6 +1287,14 @@ static void autotest_full_loadout_stress_finish(void)
         source_parity_level.collision_player_contact_visits;
     autotest_collision_zinglon_visits_snapshot =
         source_parity_level.collision_zinglon_visits;
+    autotest_boss_manifest_spawn_count_snapshot =
+        ot_level_port_boss_manifest_spawn_count(&source_parity_level);
+    autotest_boss_manifest_active_count_snapshot =
+        ot_level_port_boss_manifest_active_count(&source_parity_level);
+    autotest_boss_manifest_episode_snapshot =
+        ot_level_port_boss_manifest_episode(&source_parity_level);
+    autotest_boss_manifest_lvl_snapshot =
+        ot_level_port_boss_manifest_lvl_file_number(&source_parity_level);
 
     for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
         if (player_shots[index].active) active_shots++;
@@ -1295,6 +1307,8 @@ static void autotest_full_loadout_stress_finish(void)
     sram[5] =
         stress_loadout_valid &&
         telemetry_stress_loadout_failures == 0;
+    sram[6] = game_state;
+    sram[7] = mmActive() ? 1 : 0;
     sram_write_u32(8, TYRIAN_GBA_DETAIL_LEVEL);
     sram_write_u32(12, TYRIAN_GBA_GAME_SPEED);
     sram_write_u32(16, telemetry_display_frames);
@@ -1631,6 +1645,18 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(676, telemetry_sprite2_exact_lookup_hits);
     sram_write_u32(680, TYRIAN_GBA_SPRITE2_EXACT_LOOKUP_ASM);
     sram_write_u32(684, TYRIAN_GBA_HOTPATH_ASM);
+    /*
+     * Audio is heap-backed in Maxmod.  Keep its liveness and actual heap
+     * high-water in the stress schema so a linkable-but-silent build caused
+     * by EWRAM exhaustion cannot pass the automated runtime check again.
+     */
+#ifdef AUTOTEST_STACK_CANARY
+    sram_write_u32(688, autotest_ewram_heap_used());
+    sram_write_u32(692, autotest_ewram_heap_remaining());
+#else
+    sram_write_u32(688, UINT32_MAX);
+    sram_write_u32(692, UINT32_MAX);
+#endif
     /* Additive v82 starfield batch differential and same-ROM microbench. */
     sram_write_u32(9000, autotest_starfield_differential_result);
     sram_write_u32(9004, autotest_starfield_divmod_c_cycles);
@@ -1769,6 +1795,36 @@ static void autotest_full_loadout_stress_finish(void)
     sram_write_u32(9388, telemetry_boss_perf_damaged_transition_visits);
     sram_write_u32(9392, telemetry_boss_perf_player_contact_visits);
     sram_write_u32(9396, telemetry_boss_perf_zinglon_visits);
+    /* Additive structural-first OAM/cache scheduling diagnostics. */
+    sram_write_u32(9400, telemetry_structural_oam_required_max);
+    sram_write_u32(9404, telemetry_scene_oam_demand_max);
+    sram_write_u32(9408, telemetry_effect_oam_culls);
+    sram_write_u32(9412, telemetry_enemy_shot_oam_culls);
+    sram_write_u32(9416, telemetry_player_shot_oam_culls);
+    sram_write_u32(9420, telemetry_enemy_oam_culls);
+    sram_write_u32(9424, telemetry_enemy_oam_rotation_frames);
+    sram_write_u32(9428, telemetry_enemy_cache_prime_attempts);
+    sram_write_u32(9432, telemetry_enemy_cache_prime_failures);
+    sram_write_u32(9436, telemetry_projectile_oam_rotation_frames);
+    sram_write_u32(9440, telemetry_effect_oam_rotation_frames);
+    sram_write_u32(9444, telemetry_critical_oam_promotions);
+    /* Additive build-time Boss manifest diagnostics. */
+    sram_write_u32(
+        9448,
+        autotest_boss_manifest_spawn_count_snapshot
+    );
+    sram_write_u32(
+        9452,
+        autotest_boss_manifest_active_count_snapshot
+    );
+    sram_write_u32(
+        9456,
+        autotest_boss_manifest_episode_snapshot
+    );
+    sram_write_u32(
+        9460,
+        autotest_boss_manifest_lvl_snapshot
+    );
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

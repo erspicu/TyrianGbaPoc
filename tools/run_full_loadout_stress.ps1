@@ -463,6 +463,22 @@ $telemetry = [ordered]@{
     boss_damaged_transition_visits = Read-U32 9388
     boss_player_contact_visits = Read-U32 9392
     boss_zinglon_visits = Read-U32 9396
+    structural_oam_required_max = Read-U32 9400
+    scene_oam_demand_max = Read-U32 9404
+    effect_oam_culls = Read-U32 9408
+    enemy_shot_oam_culls = Read-U32 9412
+    player_shot_oam_culls = Read-U32 9416
+    enemy_oam_culls = Read-U32 9420
+    enemy_oam_rotation_frames = Read-U32 9424
+    enemy_cache_prime_attempts = Read-U32 9428
+    enemy_cache_prime_failures = Read-U32 9432
+    projectile_oam_rotation_frames = Read-U32 9436
+    effect_oam_rotation_frames = Read-U32 9440
+    critical_oam_promotions = Read-U32 9444
+    boss_manifest_spawns = Read-U32 9448
+    boss_manifest_active_at_finish = Read-U32 9452
+    boss_manifest_episode = Read-U32 9456
+    boss_manifest_lvl_file_number = Read-U32 9460
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -545,6 +561,9 @@ $telemetry = [ordered]@{
     detail_wave_benchmark_calls = Read-U32 628
     detail_effect_asm_enabled = Read-U32 632
     detail_effect_benchmark_sink = Read-U32 636
+    music_active = [bool]$bytes[7]
+    ewram_heap_used = Read-U32 688
+    ewram_heap_remaining = Read-U32 692
     screenshot = $screenshot
     rng_benchmark_cycles_per_call = [math]::Round(
         (Read-U32 360) / (Read-U32 368),
@@ -664,6 +683,10 @@ if (
     $telemetry.enemy_mask_consistency -ne $expectedEnemyMaskConsistency -or
     $telemetry.player_shot_update_mask -ne $expectedPlayerShotUpdateMask -or
     $telemetry.hotpath_benchmark_calls -ne 16384 -or
+    -not $telemetry.music_active -or
+    $telemetry.ewram_heap_used -eq [uint32]::MaxValue -or
+    $telemetry.ewram_heap_remaining -eq [uint32]::MaxValue -or
+    $telemetry.ewram_heap_remaining -eq 0 -or
     $telemetry.route_episode -ne $Episode -or
     $telemetry.route_section -ne $Section -or
     $telemetry.stop_end_position -ne $EndPosition -or

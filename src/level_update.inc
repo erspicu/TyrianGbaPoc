@@ -680,6 +680,21 @@ static void update_logic(void)
     }
     source_update_secret_level_display();
     ot_level_port_update_level_timer(&source_parity_level);
+    if (
+        source_parity_level.event_jump_count !=
+            event_jump_count_after_advance
+    ) {
+        /*
+         * The PC owns a single curLoc.  The GBA adapter also mirrors that
+         * value in level_position for background streaming, so a timer jump
+         * made in this tail phase must be committed after the timer update.
+         * Synchronising only before this call stranded the event cursor at
+         * its destination while the next tick restored the old location
+         * (ICESECRET's slow path: 3337 -> 60000), making event 11
+         * permanently unreachable.
+         */
+        level_position = source_parity_level.cur_loc;
+    }
     ot_level_port_update_filter_fade(&source_parity_level);
     source_update_boss_bar_colour();
     source_play_frame_weapon_sounds();

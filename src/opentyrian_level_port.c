@@ -10,6 +10,7 @@
  * small enough to review independently.
  */
 #include "opentyrian_level_port.h"
+#include "res/boss_manifest.h"
 
 #include "level_port/level_port_spawn.inc"
 #include "level_port/level_port_events.inc"

@@ -17,6 +17,127 @@ _Static_assert(
 );
 _Static_assert(OT_ENEMY_COUNT == 100, "OpenTyrian enemy pool size changed");
 _Static_assert(OT_ENEMY_POOL_SIZE == 25, "OpenTyrian pool group size changed");
+_Static_assert(
+    OT_BOSS_MANIFEST_ENTRY_COUNT <= UINT16_MAX,
+    "Boss manifest binary-search indices must fit in u16"
+);
+
+static uint8_t ot_boss_manifest_event_spawn_mask(
+    const OtLevelPortState *state
+)
+{
+    uint32_t key;
+    uint16_t low = 0;
+    uint16_t high = (uint16_t)OT_BOSS_MANIFEST_ENTRY_COUNT;
+
+    if (
+        state == 0 ||
+        state->selected_episode == 0 ||
+        state->selected_lvl_file_number == 0
+    ) {
+        return 0;
+    }
+    key = OT_BOSS_MANIFEST_KEY(
+        state->selected_episode,
+        state->selected_lvl_file_number,
+        state->event_index
+    );
+    while (low < high) {
+        uint16_t middle = (uint16_t)(low + (high - low) / 2u);
+        uint32_t candidate = ot_boss_manifest_keys[middle];
+
+        if (candidate < key) {
+            low = (uint16_t)(middle + 1u);
+        } else {
+            high = middle;
+        }
+    }
+    if (
+        low < OT_BOSS_MANIFEST_ENTRY_COUNT &&
+        ot_boss_manifest_keys[low] == key
+    ) {
+        return ot_boss_manifest_spawn_masks[low];
+    }
+    return 0;
+}
+
+static void ot_boss_manifest_mark_event_spawn(
+    OtLevelPortState *state,
+    uint8_t enemy_index,
+    uint8_t enemy_type_offset
+)
+{
+    uint8_t spawn_mask;
+
+    if (
+        state == 0 ||
+        enemy_index >= OT_ENEMY_COUNT ||
+        enemy_type_offset >= 4
+    ) {
+        return;
+    }
+    spawn_mask = ot_boss_manifest_event_spawn_mask(state);
+    if ((spawn_mask & (1u << enemy_type_offset)) == 0) return;
+    state->boss_manifest_active_mask[enemy_index >> 5] |=
+        1u << (enemy_index & 31u);
+    state->boss_manifest_spawn_count++;
+}
+
+void ot_level_port_set_boss_manifest_identity(
+    OtLevelPortState *state,
+    uint8_t episode,
+    uint16_t lvl_file_number
+)
+{
+    if (state == 0) return;
+    state->selected_episode = episode;
+    state->selected_lvl_file_number = lvl_file_number;
+}
+
+bool ot_level_port_boss_manifest_member(
+    const OtLevelPortState *state,
+    uint8_t enemy_index
+)
+{
+    if (state == 0 || enemy_index >= OT_ENEMY_COUNT) return false;
+    return (
+        state->boss_manifest_active_mask[enemy_index >> 5] &
+        (1u << (enemy_index & 31u))
+    ) != 0;
+}
+
+uint32_t ot_level_port_boss_manifest_spawn_count(
+    const OtLevelPortState *state
+)
+{
+    return state != 0 ? state->boss_manifest_spawn_count : 0;
+}
+
+uint32_t ot_level_port_boss_manifest_active_count(
+    const OtLevelPortState *state
+)
+{
+    if (state == 0) return 0;
+    return
+        (uint32_t)__builtin_popcount(state->boss_manifest_active_mask[0]) +
+        (uint32_t)__builtin_popcount(state->boss_manifest_active_mask[1]) +
+        (uint32_t)__builtin_popcount(state->boss_manifest_active_mask[2]) +
+        (uint32_t)__builtin_popcount(state->boss_manifest_active_mask[3]);
+}
+
+uint8_t ot_level_port_boss_manifest_episode(
+    const OtLevelPortState *state
+)
+{
+    return state != 0 ? state->selected_episode : 0;
+}
+
+uint16_t ot_level_port_boss_manifest_lvl_file_number(
+    const OtLevelPortState *state
+)
+{
+    return state != 0 ? state->selected_lvl_file_number : 0;
+}
 
 bool ot_level_event_read(uint16_t index, OtEventRecord *event)
 {
@@ -666,7 +787,24 @@ void ot_level_port_set_enemy_avail(
     uint8_t avail
 )
 {
+    uint8_t previous;
+
     if (state == 0 || enemy_index >= OT_ENEMY_COUNT) return;
+    previous = state->enemy_avail[enemy_index];
+    if (avail == 1 || (previous == 1 && avail != 1)) {
+        /* A freed/reused pool slot must not inherit an old Boss identity. */
+        state->boss_manifest_active_mask[enemy_index >> 5] &=
+            ~(1u << (enemy_index & 31u));
+    }
+    if (previous == 1 && avail != 1) {
+        uint16_t generation = (uint16_t)(
+            state->enemy_instance_generation[enemy_index] + 1u
+        );
+
+        /* Zero is reserved for "no instance has occupied this slot". */
+        if (generation == 0) generation = 1;
+        state->enemy_instance_generation[enemy_index] = generation;
+    }
     state->enemy_avail[enemy_index] = avail;
 #if TYRIAN_GBA_ENEMY_ACTIVE_MASK
     if (avail != 1) {
@@ -959,6 +1097,11 @@ static uint8_t ot_create_new_event_enemy_with_definition(
     enemy->eyc = (int8_t)(enemy->eyc + event->eventdat3);
     enemy->linknum = event->eventdat4;
     enemy->fixedmovey = event->eventdat6;
+    ot_boss_manifest_mark_event_spawn(
+        state,
+        (uint8_t)(created - 1u),
+        enemy_type_offset
+    );
     return state->last_created_slot;
 }
 
@@ -1108,4 +1251,8 @@ void ot_level_port_init(
         );
     state->event_count =
         state->assets_valid ? level_info.event_count : 0;
+    if (state->assets_valid) {
+        state->selected_episode = level_info.episode;
+        state->selected_lvl_file_number = level_info.lvl_file_number;
+    }
 }

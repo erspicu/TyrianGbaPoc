@@ -1008,6 +1008,15 @@ static void autotest_finish(void)
     sram_write_u32(8804, telemetry_projectile_hint_probes);
     sram_write_u32(8808, telemetry_projectile_hint_hits);
     sram_write_u32(8812, telemetry_projectile_hint_fallback_scans);
+    /* Additive structural-first OAM/cache scheduling diagnostics. */
+    sram_write_u32(8816, telemetry_scene_oam_demand_max);
+    sram_write_u32(8820, telemetry_enemy_oam_culls);
+    sram_write_u32(8824, telemetry_enemy_oam_rotation_frames);
+    sram_write_u32(8828, telemetry_enemy_cache_prime_attempts);
+    sram_write_u32(8832, telemetry_enemy_cache_prime_failures);
+    sram_write_u32(8836, telemetry_projectile_oam_rotation_frames);
+    sram_write_u32(8840, telemetry_effect_oam_rotation_frames);
+    sram_write_u32(8844, telemetry_critical_oam_promotions);
 #ifdef AUTOTEST_CAMPAIGN_LEVEL_COUNT
     {
         u32 record_index;

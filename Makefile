@@ -30,6 +30,9 @@ STRESS_FAST_FORWARD_POSITION ?= 0
 STRESS_FAST_FORWARD_TICKS ?= 8
 STRESS_BOSS_WINDOW_VBLANKS ?= 0
 STRESS_FIRE ?= 1
+# Playable stress ROMs must retain the normal Maxmod music/effect path.
+# Set to 1 only for the isolated PSG audio diagnostic used by benchmarks.
+PLAYABLE_STRESS_PSG_AUDIO ?= 0
 CAPTURE_STATE ?= 7
 CAPTURE_EPISODE ?= 1
 CAPTURE_SELECTION ?=
@@ -366,12 +369,17 @@ STRESS_INPUT_FLAG := -DAUTOTEST_NO_FIRE=1
 else
 $(error STRESS_FIRE must be 0 or 1)
 endif
+ifneq ($(PLAYABLE_STRESS_PSG_AUDIO),0)
+ifneq ($(PLAYABLE_STRESS_PSG_AUDIO),1)
+$(error PLAYABLE_STRESS_PSG_AUDIO must be 0 or 1)
+endif
+endif
 STRESS_FAST_FORWARD_TAG := $(if $(filter-out 0,$(STRESS_FAST_FORWARD_POSITION)),_ff$(STRESS_FAST_FORWARD_POSITION)x$(STRESS_FAST_FORWARD_TICKS),)
 STRESS_BOSS_TAG := $(if $(filter-out 0,$(STRESS_BOSS_WINDOW_VBLANKS)),_boss$(STRESS_BOSS_WINDOW_VBLANKS),)
 STRESS_RUN_TAG := ep$(STRESS_EPISODE)_s$(STRESS_SECTION)_$(STRESS_STOP_TAG)$(STRESS_FAST_FORWARD_TAG)$(STRESS_BOSS_TAG)$(STRESS_INPUT_TAG)
 # Keep diagnostic paths below Win32 MAX_PATH; these are private test artefacts.
 STRESS_TARGET := tgw8_$(STRESS_RUN_TAG)_v88_$(STRESS_DIAGNOSTIC)_h$(HOTPATH_ASM)_$(CONFIG_SUFFIX)_x$(SPRITE2_EXACT_LOOKUP_ASM)_s$(STARFIELD_BATCH_ASM)_ph$(PROJECTILE_CACHE_HINT)_pa$(PROJECTILE_HINT_ASM)_fx$(EFFECT_ACTIVE_MASK)_bs$(POOL_BIT_SCAN_ASM)_sf$(PLAYER_SHOT_FREE_MASK)_su$(PLAYER_SHOT_UPDATE_MASK)_em$(ENEMY_ACTIVE_MASK)_cs$(COLLISION_SNAPSHOT)_cd$(COLLISION_ACTIVE_DIRECTORY)
-PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_$(CONFIG_SUFFIX)
+PLAYABLE_STRESS_TARGET := tyrian_gba_full_loadout_playable_v36_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX)
 ifneq ($(strip $(CAPTURE_SELECTION)),)
 FRONTEND_CAPTURE_SELECTION_TAG := _sel$(CAPTURE_SELECTION)
 FRONTEND_CAPTURE_SELECTION_FLAG := \
@@ -464,6 +472,13 @@ VFS_INPUTS := \
 	tools/build_romfs.py \
 	$(VFS_MANIFEST) \
 	$(wildcard $(VFS_SOURCE_ROOT)/*)
+
+BOSS_MANIFEST_HEADER := $(RES)/boss_manifest.h
+BOSS_MANIFEST_AUDIT := $(RES)/boss_manifest_audit.json
+BOSS_MANIFEST_OUTPUTS := $(BOSS_MANIFEST_HEADER) $(BOSS_MANIFEST_AUDIT)
+BOSS_MANIFEST_INPUTS := \
+	tools/build_boss_manifest.py \
+	$(wildcard vendor/tyrian/data/tyrian*.lvl)
 
 TEXTRES_ROOT := TextRes
 TEXTRES_IMAGE := $(RES)/textres_scene.bin
@@ -664,7 +679,8 @@ frontend-nav-camera-stress: $(BUILD)/$(FRONTEND_NAV_CAMERA_STRESS_TARGET).gba
 
 frontend-transition-stress: $(BUILD)/$(FRONTEND_TRANSITION_STRESS_TARGET).gba
 
-assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS)
+assets: $(RES)/soundbank.bin $(RES)/soundbank.h $(VFS_OUTPUTS) \
+	$(BOSS_MANIFEST_OUTPUTS)
 
 $(BUILD) $(BUILD)/preview $(RES):
 	mkdir -p $@
@@ -701,6 +717,12 @@ $(VFS_OUTPUTS) &: $(VFS_INPUTS) | $(RES)
 		--output "$(VFS_IMAGE)" \
 		--meta-header "$(VFS_META)" \
 		--audit "$(VFS_AUDIT)"
+
+$(BOSS_MANIFEST_OUTPUTS) &: $(BOSS_MANIFEST_INPUTS) | $(RES)
+	$(PYTHON) tools/build_boss_manifest.py \
+		--data-root "$(VFS_SOURCE_ROOT)" \
+		--output-header "$(BOSS_MANIFEST_HEADER)" \
+		--audit "$(BOSS_MANIFEST_AUDIT)"
 
 $(TEXTRES_IMAGE): $(TEXTRES_INPUTS) | $(RES)
 	$(PYTHON) tools/build_textres.py build \
@@ -864,7 +886,7 @@ $(STRESS_MAIN_OBJECT): \
 		$(STRESS_DIAGNOSTIC_FLAGS) \
 		-MMD -MP -c $< -o $@
 
-$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o: \
+$(BUILD)/main_full_loadout_playable_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX).o: \
 		main.c $(MAIN_INCLUDES) \
 		src/opentyrian_data.h src/opentyrian_level_port.h \
 		src/opentyrian_rom_io.h src/opentyrian_sprite2.h src/port_config.h \
@@ -872,6 +894,7 @@ $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o: \
 		$(RES)/soundbank.h $(VFS_META) | $(BUILD)
 	$(CC) $(CFLAGS) \
 		-DTYRIAN_GBA_STRESS_LOADOUT=1 \
+		-DTYRIAN_GBA_STRESS_PSG_AUDIO=$(PLAYABLE_STRESS_PSG_AUDIO) \
 		-DTYRIAN_GBA_DYNAMIC_FRAME_DROP=1 \
 		-DTYRIAN_GBA_WALL_CLOCK_LOGIC=1 \
 		-MMD -MP -c $< -o $@
@@ -944,11 +967,13 @@ $(BUILD)/opentyrian_data.o: src/opentyrian_data.c \
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(BUILD)/opentyrian_level_port.o: src/opentyrian_level_port.c \
-		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
+		src/opentyrian_level_port.h src/opentyrian_data.h \
+		$(BOSS_MANIFEST_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(STRESS_LEVEL_OBJECT): src/opentyrian_level_port.c \
-		src/opentyrian_level_port.h src/opentyrian_data.h | $(BUILD)
+		src/opentyrian_level_port.h src/opentyrian_data.h \
+		$(BOSS_MANIFEST_HEADER) | $(BUILD)
 	$(CC) $(CFLAGS) -DAUTOTEST_FULL_LOADOUT_STRESS \
 		-DTYRIAN_GBA_ENEMY_ACTIVE_MASK=$(ENEMY_ACTIVE_MASK) \
 		-DTYRIAN_GBA_COLLISION_SNAPSHOT=$(COLLISION_SNAPSHOT) \
@@ -1076,7 +1101,7 @@ $(BUILD)/$(STRESS_TARGET).elf: \
 	$(SIZE) $@
 
 $(BUILD)/$(PLAYABLE_STRESS_TARGET).elf: \
-		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_full_loadout_playable_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX).o \
 		$(COMMON_OBJECTS)
 	$(CC) $(LINKFLAGS) -Wl,-Map,$(BUILD)/$(PLAYABLE_STRESS_TARGET).map $^ \
 	-lmm -lgba -o $@
@@ -1233,8 +1258,8 @@ clean:
 		$(STRESS_MAIN_OBJECT:.o=.d) \
 		$(STRESS_LEVEL_OBJECT) \
 		$(STRESS_LEVEL_OBJECT:.o=.d) \
-		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).o \
-		$(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d \
+		$(BUILD)/main_full_loadout_playable_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX).o \
+		$(BUILD)/main_full_loadout_playable_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_$(CONFIG_SUFFIX).o \
 		$(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_$(CONFIG_SUFFIX).d \
 		$(BUILD)/main_frontend_menu_stress_$(CONFIG_SUFFIX).o \
@@ -1336,7 +1361,7 @@ distclean: clean
 -include $(BUILD)/main_campaign_test_ep$(CAMPAIGN_EPISODE)_section$(CAMPAIGN_SECTION)_levels$(CAMPAIGN_LEVELS)_$(CONFIG_SUFFIX).d
 -include $(STRESS_MAIN_OBJECT:.o=.d)
 -include $(STRESS_LEVEL_OBJECT:.o=.d)
--include $(BUILD)/main_full_loadout_playable_$(CONFIG_SUFFIX).d
+-include $(BUILD)/main_full_loadout_playable_psg$(PLAYABLE_STRESS_PSG_AUDIO)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/main_frontend_capture_state$(CAPTURE_STATE)$(FRONTEND_CAPTURE_VARIANT)_$(CONFIG_SUFFIX).d
 -include $(BUILD)/gba_heap.d
 -include $(BUILD)/opentyrian_data.d

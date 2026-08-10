@@ -1397,6 +1397,8 @@ static void source_runtime_reset(void)
     u32 layer_passed_checks;
     u32 layer_failed_checks;
 
+    source_boss_compact_cache_reset();
+    source_boss_membership_reset();
     source_static_atlas_cancel(SOURCE_STATIC_ATLAS_OWNER_NONE);
     memset(
         &source_static_atlas_upload,

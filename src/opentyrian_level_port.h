@@ -609,6 +609,15 @@ typedef struct {
     /* Runtime-only directory; enemy_avail[] remains authoritative. */
     uint32_t enemy_active_mask[4];
 #endif
+    /*
+     * GBA presentation identity only.  A pool slot can be released and
+     * reused within one logic tick, so a renderer that merely compares
+     * enemy_avail[] once per frame cannot distinguish the two instances.
+     * The centralized availability setter advances this generation on each
+     * free -> active transition.  It is reset at level initialization and
+     * never participates in PC gameplay, collision, event or save data.
+     */
+    uint16_t enemy_instance_generation[OT_ENEMY_COUNT];
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
     uint32_t enemy_pool_active_visits;
     uint32_t enemy_pool_linear_visits;
@@ -621,12 +630,49 @@ typedef struct {
     uint32_t collision_player_contact_visits;
     uint32_t collision_zinglon_visits;
 #endif
+    /*
+     * Build-time LVL analysis marks authored Boss component spawn events
+     * before Event 79 exposes their health-bar links.  Keep this cold,
+     * presentation-only state after every assembly-addressed hot field so
+     * adding the manifest cannot perturb the ARM collision layout.
+     */
+    uint8_t selected_episode;
+    uint16_t selected_lvl_file_number;
+    uint32_t boss_manifest_active_mask[4];
+    uint32_t boss_manifest_spawn_count;
 } OtLevelPortState;
 
 void ot_level_port_set_enemy_avail(
     OtLevelPortState *state,
     uint8_t enemy_index,
     uint8_t avail
+);
+
+void ot_level_port_set_boss_manifest_identity(
+    OtLevelPortState *state,
+    uint8_t episode,
+    uint16_t lvl_file_number
+);
+
+bool ot_level_port_boss_manifest_member(
+    const OtLevelPortState *state,
+    uint8_t enemy_index
+);
+
+uint32_t ot_level_port_boss_manifest_spawn_count(
+    const OtLevelPortState *state
+);
+
+uint32_t ot_level_port_boss_manifest_active_count(
+    const OtLevelPortState *state
+);
+
+uint8_t ot_level_port_boss_manifest_episode(
+    const OtLevelPortState *state
+);
+
+uint16_t ot_level_port_boss_manifest_lvl_file_number(
+    const OtLevelPortState *state
 );
 
 void ot_level_port_init(

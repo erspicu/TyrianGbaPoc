@@ -1600,14 +1600,12 @@ static u16 frontend_level_entry_section EWRAM_BSS;
         FRONTEND_SHIP_PANEL_CACHE_HEIGHT \
     )
 /*
- * Next Level and Upgrade submenus overwrite the shared Mode-4 frame.  Keep
- * the configuration-dependent left ship panel in a compact packed cache so
- * returning to Game Menu never replays source art.  This costs 19.2 KiB of
- * the measured EWRAM margin and remains inactive during gameplay.
+ * Next Level and Upgrade submenus overwrite the shared Mode-4 frame.  The
+ * configuration-dependent left ship panel therefore needs a compact packed
+ * cache.  Its storage is declared in background_runtime.inc, where it shares
+ * one EWRAM arena with the gameplay-only BackgroundLayerCache array.  The two
+ * users have disjoint lifetimes; sharing them preserves Maxmod's heap margin.
  */
-static u8 frontend_ship_panel_cache[
-    FRONTEND_SHIP_PANEL_CACHE_BYTES
-] EWRAM_BSS __attribute__((aligned(4)));
 static FrontendPlayerItems
     frontend_ship_panel_cache_items EWRAM_BSS;
 static u32 frontend_ship_panel_cache_cash EWRAM_BSS;
@@ -2250,9 +2248,17 @@ volatile u32 telemetry_projectile_hint_hits EWRAM_BSS;
 volatile u32 telemetry_projectile_hint_fallback_scans EWRAM_BSS;
 volatile u32 telemetry_projectile_visible_capacity_drops;
 volatile u32 telemetry_structural_oam_required_max;
+volatile u32 telemetry_scene_oam_demand_max EWRAM_BSS;
 volatile u32 telemetry_effect_oam_culls;
 volatile u32 telemetry_enemy_shot_oam_culls;
 volatile u32 telemetry_player_shot_oam_culls;
+volatile u32 telemetry_enemy_oam_culls EWRAM_BSS;
+volatile u32 telemetry_enemy_oam_rotation_frames EWRAM_BSS;
+volatile u32 telemetry_projectile_oam_rotation_frames EWRAM_BSS;
+volatile u32 telemetry_effect_oam_rotation_frames EWRAM_BSS;
+volatile u32 telemetry_critical_oam_promotions EWRAM_BSS;
+volatile u32 telemetry_enemy_cache_prime_attempts EWRAM_BSS;
+volatile u32 telemetry_enemy_cache_prime_failures EWRAM_BSS;
 volatile u32 telemetry_player_shot_spawns;
 volatile u32 telemetry_player_shot_drops;
 volatile u32 telemetry_player_shot_max_active;
@@ -2756,6 +2762,10 @@ static void gameplay_overlay_show_pickup(u8 message_type, u8 item_id);
 static void gameplay_overlay_prepare_frame(void);
 static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
+static void source_boss_compact_cache_commit(void);
+static void source_boss_compact_cache_reset(void);
+static void source_boss_membership_reset(void);
+static u8 source_boss_compact_owns_enemy_slot(u8 slot);
 static void source_projectile_cache_commit(void);
 static void source_static_atlas_upload_commit(void);
 static void source_effect_cache_commit(void);

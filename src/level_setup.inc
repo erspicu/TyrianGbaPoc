@@ -585,6 +585,19 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     );
 #endif
 #endif
+    /*
+     * The selected route is the authoritative identity for presentation
+     * metadata derived from levelsN.dat/tyrianN.lvl.  Copy it after every
+     * AUTOTEST reinitialization as well as the normal initializer so a
+     * build-time manifest can never inherit a stale catalog selection.
+     * This is deliberately generic: every Episode/LVL pair uses the same
+     * key and there is no Boss- or level-specific runtime table here.
+     */
+    ot_level_port_set_boss_manifest_identity(
+        &source_parity_level,
+        selected_level->episode,
+        selected_level->lvl_file_number
+    );
     source_parity_level.engage_mode = selected_level->engage_mode;
     source_parity_level.galaga_mode = selected_level->galaga_mode;
     if (source_parity_level.galaga_mode) {
@@ -780,9 +793,17 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_projectile_hint_hits = 0;
     telemetry_projectile_hint_fallback_scans = 0;
     telemetry_structural_oam_required_max = 0;
+    telemetry_scene_oam_demand_max = 0;
     telemetry_effect_oam_culls = 0;
     telemetry_enemy_shot_oam_culls = 0;
     telemetry_player_shot_oam_culls = 0;
+    telemetry_enemy_oam_culls = 0;
+    telemetry_enemy_oam_rotation_frames = 0;
+    telemetry_projectile_oam_rotation_frames = 0;
+    telemetry_effect_oam_rotation_frames = 0;
+    telemetry_critical_oam_promotions = 0;
+    telemetry_enemy_cache_prime_attempts = 0;
+    telemetry_enemy_cache_prime_failures = 0;
     telemetry_player_shot_spawns = 0;
     telemetry_player_shot_drops = 0;
     telemetry_player_shot_max_active = 0;
