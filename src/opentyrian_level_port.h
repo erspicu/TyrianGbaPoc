@@ -639,7 +639,24 @@ typedef struct {
     uint8_t selected_episode;
     uint16_t selected_lvl_file_number;
     uint32_t boss_manifest_active_mask[4];
+    uint8_t boss_manifest_cohort[OT_ENEMY_COUNT];
     uint32_t boss_manifest_spawn_count;
+    /*
+     * GBA-only collision-phase memoization.  A multi-part Boss can receive
+     * hundreds of projectile hits in one phase while every component shares
+     * one link.  Keep the last propagated (filter, iced) tuple per link so
+     * identical hits do not repeatedly scan the same active enemy group.
+     * The validity bitmap is cleared at phase start and whenever the pool is
+     * mutated; no value participates in source gameplay or save data.
+     */
+    uint32_t player_shot_link_status_valid[8];
+    uint16_t player_shot_link_status_value[256];
+    /* Conservative union of every collidable snapshot for cheap misses. */
+    int32_t player_shot_collision_min_x;
+    int32_t player_shot_collision_max_x;
+    int32_t player_shot_collision_min_y;
+    int32_t player_shot_collision_max_y;
+    bool player_shot_collision_bounds_valid;
 } OtLevelPortState;
 
 void ot_level_port_set_enemy_avail(
@@ -657,6 +674,18 @@ void ot_level_port_set_boss_manifest_identity(
 bool ot_level_port_boss_manifest_member(
     const OtLevelPortState *state,
     uint8_t enemy_index
+);
+
+uint8_t ot_level_port_boss_manifest_member_cohort(
+    const OtLevelPortState *state,
+    uint8_t enemy_index
+);
+
+uint8_t ot_level_port_boss_manifest_event_info(
+    uint8_t episode,
+    uint16_t lvl_file_number,
+    uint16_t event_index,
+    uint8_t *cohort
 );
 
 uint32_t ot_level_port_boss_manifest_spawn_count(
@@ -713,6 +742,11 @@ void ot_level_port_update_enemy_shots(
     void *impact_context
 );
 uint32_t ot_level_port_random(OtLevelPortState *state);
+uint32_t ot_level_port_random3(
+    OtLevelPortState *state,
+    uint32_t *second,
+    uint32_t *third
+);
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
 uint32_t ot_level_port_stress_round_ratio_call_count(void);
 #endif
@@ -804,19 +838,22 @@ ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm(
     OtShotCollisionResult *result,
     uint32_t damage_and_radii
 );
+IWRAM_CODE ARM_CODE void
+ot_level_port_collide_player_shot_packed_snapshot_bounded(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+);
 #if \
     TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK && \
     TYRIAN_GBA_COLLISION_MASK_FAST_PATH && \
     TYRIAN_GBA_COLLISION_LAZY_RESULT && \
     !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
 #if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
-#ifdef AUTOTEST_FULL_LOADOUT_STRESS
 #define ot_level_port_collide_player_shot_packed \
-    ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
-#else
-#define ot_level_port_collide_player_shot_packed \
-    ot_level_port_collide_player_shot_packed_snapshot_asm
-#endif
+    ot_level_port_collide_player_shot_packed_snapshot_bounded
 #else
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
 #define ot_level_port_collide_player_shot_packed \

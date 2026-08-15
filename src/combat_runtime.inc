@@ -1230,8 +1230,17 @@ static void source_sidekick_positions_update(void)
     if (right->valid) {
         switch (right->option.style) {
         case 0:
+            /*
+             * The GBA raw frames expose the real opaque bounds: the common
+             * 12x14 option body is centred at x+5.5, while the neutral
+             * converted player silhouette is centred at player_x+6.  A
+             * +15 right anchor therefore matches the left -14 anchor at an
+             * equal 14.5-pixel visible-centre distance.  OpenTyrian's +16
+             * uses the nominal 24-pixel player frame rather than its opaque
+             * silhouette and remains one pixel wider on this presentation.
+             */
             right->x = (s16)(
-                player_source_x - source_player_delta_x + 16
+                player_source_x - source_player_delta_x + 15
             );
             right->y = (s16)(
                 player_source_y - source_player_delta_y
@@ -2501,17 +2510,23 @@ static void source_superpixel_spawn(
 
     /* Direct fixed-point translation of varz.c::JE_doSP(). */
     for (index = 0; index < count; index++) {
+        u32 random_y;
+        u32 random_x;
         u8 phase = (u8)(
-            ot_level_port_random(&source_parity_level) >> 24
+            ot_level_port_random3(
+                &source_parity_level,
+                &random_y,
+                &random_x
+            ) >> 24
         );
         s16 delta_y = source_superpixel_vector_component(
             (u8)(phase + 64u),
-            ot_level_port_random(&source_parity_level),
+            random_y,
             width
         );
         s16 delta_x = source_superpixel_vector_component(
             phase,
-            ot_level_port_random(&source_parity_level),
+            random_x,
             width
         );
         SourceSuperpixel *pixel;

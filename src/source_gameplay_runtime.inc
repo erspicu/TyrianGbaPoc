@@ -70,6 +70,24 @@ static void source_camera_reset(void)
     source_camera_offset_y_q8 = 0;
     source_camera_offset_x = 0;
     source_camera_offset_y = 0;
+    source_camera_presentation_offset_y = 0;
+}
+
+static s8 source_camera_clamp_presentation_y(s8 requested_offset_y)
+{
+    s16 base_scroll = (s16)background_presentation_scroll_pixel(0, 0);
+    s16 requested_scroll = (s16)background_presentation_scroll_pixel(
+        0,
+        requested_offset_y
+    );
+
+    /*
+     * BG1 is the authoritative gameplay plane.  At the top/bottom of its
+     * canvas the requested soft-camera motion may be only partly possible.
+     * Returning the actual BG1 delta keeps every OBJ and parallax layer on
+     * the same camera instead of letting map-attached objects drift.
+     */
+    return (s8)(requested_scroll - base_scroll);
 }
 
 static void source_camera_update(void)
@@ -107,6 +125,8 @@ static void source_camera_update(void)
      */
     source_camera_offset_y_q8 = next_y_q8;
     source_camera_offset_y = next_y;
+    source_camera_presentation_offset_y =
+        source_camera_clamp_presentation_y(next_y);
     if (
         (u32)(u16)source_camera_origin_x() <
             telemetry_camera_min_origin_x
@@ -150,7 +170,8 @@ static s16 source_camera_origin_x(void)
 static s16 source_camera_origin_y(void)
 {
     return (s16)(
-        SOURCE_PRESENTATION_Y_ORIGIN + source_camera_offset_y
+        SOURCE_PRESENTATION_Y_ORIGIN +
+            source_camera_presentation_offset_y
     );
 }
 
@@ -229,7 +250,7 @@ static u16 source_background_vofs(u8 layer)
 {
     u16 scroll = background_presentation_scroll_pixel(
         layer,
-        source_camera_offset_y
+        source_camera_presentation_offset_y
     );
 
     if (source_detail_vertical_flip) {
@@ -278,6 +299,114 @@ static s16 source_enemy_draw_screen_y(
         source_world_to_screen_y((s16)(draw->y + 7)) - 16
     );
 }
+
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+/*
+ * A ground-pool object with no authored motion is map-attached.  In the PC
+ * renderer JE_drawEnemy() advances its Y by the same effective backMove used
+ * by background 1, while mapoffset is the exact BG1 parallax offset.  Track
+ * those two invariants across live route ticks; the soft crop camera must
+ * cancel algebraically and therefore cannot change either anchor.
+ */
+static void source_autotest_track_ground_attachment(void)
+{
+    static s16 previous_anchor_x[OT_ENEMY_COUNT] EWRAM_BSS;
+    static s16 previous_anchor_y[OT_ENEMY_COUNT] EWRAM_BSS;
+    static u16 previous_definition[OT_ENEMY_COUNT] EWRAM_BSS;
+    static u8 previous_link[OT_ENEMY_COUNT] EWRAM_BSS;
+    static u8 previous_valid[OT_ENEMY_COUNT] EWRAM_BSS;
+    static s8 previous_camera_x EWRAM_BSS;
+    static s8 previous_camera_y EWRAM_BSS;
+    static u8 camera_valid EWRAM_BSS;
+    u8 camera_changed = (u8)(
+        camera_valid &&
+        (
+            previous_camera_x != source_camera_offset_x ||
+            previous_camera_y != source_camera_presentation_offset_y
+        )
+    );
+    u8 index;
+
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemyDrawCommand *draw =
+            &source_parity_level.enemy_draw[index];
+        const OtEnemy *enemy = &source_parity_level.enemy[index];
+        s16 anchor_x;
+        s16 anchor_y;
+        u16 delta_x;
+        u16 delta_y;
+
+        if (
+            !draw->active ||
+            (draw->pool != 25u && draw->pool != 75u) ||
+            source_parity_level.enemy_avail[index] != 0 ||
+            enemy->scoreitem ||
+            enemy->fixedmovey != 0 ||
+            enemy->exc != 0 ||
+            enemy->eyc != 0 ||
+            enemy->excc != 0 ||
+            enemy->eycc != 0 ||
+            enemy->xaccel != 0 ||
+            enemy->yaccel != 0
+        ) {
+            previous_valid[index] = 0;
+            continue;
+        }
+        anchor_x = (s16)(
+            draw->x - source_parity_level.presentation_map_x_offset
+        );
+        /* Actual displayed OBJ position plus actual displayed BG1 scroll. */
+        anchor_y = (s16)(
+            source_enemy_draw_screen_y(draw) +
+            (s16)background_presentation_scroll_pixel(
+                0,
+                source_camera_presentation_offset_y
+            )
+        );
+        if (
+            previous_valid[index] &&
+            previous_definition[index] == draw->enemy_definition_id &&
+            previous_link[index] == enemy->linknum
+        ) {
+            delta_x = (u16)(
+                anchor_x >= previous_anchor_x[index] ?
+                    anchor_x - previous_anchor_x[index] :
+                    previous_anchor_x[index] - anchor_x
+            );
+            delta_y = (u16)(
+                anchor_y >= previous_anchor_y[index] ?
+                    anchor_y - previous_anchor_y[index] :
+                    previous_anchor_y[index] - anchor_y
+            );
+            telemetry_ground_attachment_samples++;
+            if (camera_changed) {
+                telemetry_ground_attachment_camera_samples++;
+            }
+            if (
+                delta_x > telemetry_ground_attachment_max_delta_x
+            ) {
+                telemetry_ground_attachment_max_delta_x = delta_x;
+            }
+            if (
+                delta_y > telemetry_ground_attachment_max_delta_y
+            ) {
+                telemetry_ground_attachment_max_delta_y = delta_y;
+            }
+            if (delta_x != 0 || delta_y != 0) {
+                telemetry_ground_attachment_failures++;
+            }
+        }
+        previous_anchor_x[index] = anchor_x;
+        previous_anchor_y[index] = anchor_y;
+        previous_definition[index] = draw->enemy_definition_id;
+        previous_link[index] = enemy->linknum;
+        previous_valid[index] = 1;
+    }
+    previous_camera_x = source_camera_offset_x;
+    previous_camera_y = source_camera_presentation_offset_y;
+    camera_valid = 1;
+}
+#endif
 
 #ifdef AUTOTEST
 /*
@@ -773,8 +902,82 @@ static void source_sync_runtime_telemetry(void)
         source_parity_level.death_assignment_count;
 }
 
+static u16 source_background2_pointer_scroll(u16 pointer_offset)
+{
+    u32 map_row = ((u32)pointer_offset + 1u) /
+        OT_LEVEL_MAP2_COLUMNS;
+    u32 scroll;
+    u32 maximum =
+        (u32)background_canvas_rows[1] * 8u - SCREEN_HEIGHT;
+
+    scroll =
+        (map_row - OT_LEVEL_MAP2_FIRST_SOURCE_ROW) *
+            OT_LEVEL_MAP_CELL_HEIGHT +
+        SOURCE_VIEW_CROP_Y;
+    return (u16)(scroll < maximum ? scroll : maximum);
+}
+
+static void source_apply_background2_pointer_wrap(void)
+{
+    if (source_parity_level.background2_wrap_pending) {
+        /*
+         * Literal event 81 mapping from tyrian2.c:
+         *
+         *   BKwrap2   = map2 + eventdat  / 2;
+         *   BKwrap2to = map2 + eventdat2 / 2;
+         *
+         * The GBA raster uses an absolute pixel cursor instead of a C
+         * pointer.  Convert both cell offsets once when the event fires.
+         */
+        source_background2_wrap_threshold_scroll =
+            source_background2_pointer_scroll(
+                source_parity_level.background2_wrap_offset
+            );
+        source_background2_wrap_to_scroll =
+            source_background2_pointer_scroll(
+                source_parity_level.background2_wrap_to_offset
+            );
+        source_background2_wrap_active =
+            source_background2_wrap_to_scroll >
+            source_background2_wrap_threshold_scroll;
+    }
+    if (
+        source_background2_wrap_active &&
+        bg2_scroll_pixel <= source_background2_wrap_threshold_scroll
+    ) {
+        u16 scroll_phase = (u16)(
+            bg2_scroll_pixel % OT_LEVEL_MAP_CELL_HEIGHT
+        );
+        u16 back_pos = (u16)(
+            (
+                SOURCE_VIEW_CROP_Y +
+                OT_LEVEL_MAP_CELL_HEIGHT -
+                scroll_phase
+            ) % OT_LEVEL_MAP_CELL_HEIGHT
+        );
+        u16 wrapped_scroll =
+            source_background2_wrap_to_scroll > back_pos ?
+            (u16)(source_background2_wrap_to_scroll - back_pos) :
+            0;
+
+        if (wrapped_scroll > bg2_scroll_pixel) {
+            /*
+             * PC performs the pointer wrap before draw_background_2(), while
+             * retaining backPos2.  Publish the same destination/phase before
+             * advance_backgrounds() snapshots the presentation cursor.
+             */
+            bg2_scroll_pixel = wrapped_scroll;
+            background_pending_rows[1].count = 0;
+            background_layer_cache[1].prefetch_active = 0;
+            source_background2_wrap_count++;
+        }
+    }
+}
+
 static void source_apply_background_state(void)
 {
+    source_apply_background2_pointer_wrap();
+
     /*
      * PC Low detail starts with background2=false.  Its special
      * background2over==3 draw path both draws layer 2 and permanently flips
@@ -788,7 +991,7 @@ static void source_apply_background_state(void)
                 1,
                 background_presentation_scroll_pixel(
                     1,
-                    source_camera_offset_y
+                    source_camera_presentation_offset_y
                 ) >> 3
             )) {
             source_background2_enabled = 1;
@@ -800,10 +1003,20 @@ static void source_apply_background_state(void)
     bg3_scroll_speed = (u8)source_parity_level.back_move3;
     bg1_scroll_delay_max =
         source_parity_level.map1_y_delay_max ?
-        source_parity_level.map1_y_delay_max : 1;
+            source_parity_level.map1_y_delay_max : 1;
     bg2_scroll_delay_max =
         source_parity_level.map2_y_delay_max ?
-        source_parity_level.map2_y_delay_max : 1;
+            source_parity_level.map2_y_delay_max : 1;
+    /*
+     * The source event interpreter owns both the period and its current
+     * phase.  Event 2/3 resets map?YDelay immediately; copying only the max
+     * left the GBA scroll on an older phase while JE_drawEnemy used the new
+     * one.  advance_backgrounds() writes the consumed phase back each tick.
+     */
+    bg1_scroll_delay = source_parity_level.map1_y_delay ?
+        source_parity_level.map1_y_delay : 1;
+    bg2_scroll_delay = source_parity_level.map2_y_delay ?
+        source_parity_level.map2_y_delay : 1;
     if (bg1_scroll_delay > bg1_scroll_delay_max) {
         bg1_scroll_delay = bg1_scroll_delay_max;
     }
@@ -812,7 +1025,8 @@ static void source_apply_background_state(void)
     }
 }
 
-static __attribute__((unused)) void source_apply_player_shot_result(
+static __attribute__((unused, noinline, noclone)) void
+source_apply_player_shot_result(
     PlayerShot *shot,
     OtShotCollisionResult *result
 )
@@ -1201,7 +1415,9 @@ source_process_player_collisions(bool collide_player)
             }
         }
 #endif
-        source_apply_player_shot_result(shot, &result);
+        if (result.collided) {
+            source_apply_player_shot_result(shot, &result);
+        }
     }
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
     if (collision_phase_started) {

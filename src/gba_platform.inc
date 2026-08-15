@@ -810,7 +810,7 @@ static void source_detail_set_wild_dither_active(u8 active)
     top_row = (u16)(
         background_presentation_scroll_pixel(
             1,
-            source_camera_offset_y
+            source_camera_presentation_offset_y
         ) >> 3
     );
     if (background_prepare_layer(1, top_row)) {
@@ -1210,17 +1210,17 @@ static void gameplay_presentation_capture_registers(void)
     gameplay_presentation.full_scroll_pixel[0] =
         background_presentation_scroll_pixel(
             0,
-            source_camera_offset_y
+            source_camera_presentation_offset_y
         );
     gameplay_presentation.full_scroll_pixel[1] =
         background_presentation_scroll_pixel(
             1,
-            source_camera_offset_y
+            source_camera_presentation_offset_y
         );
     gameplay_presentation.full_scroll_pixel[2] =
         background_presentation_scroll_pixel(
             2,
-            source_camera_offset_y
+            source_camera_presentation_offset_y
         );
     gameplay_presentation.bg0cnt =
         BG_PRIORITY(3) |
@@ -1819,7 +1819,7 @@ static void commit_vblank_work(void)
             1,
             background_presentation_scroll_pixel(
                 1,
-                source_camera_offset_y
+                source_camera_presentation_offset_y
             ) >> 3,
             BG1_SCREEN_BLOCK
         );
@@ -2148,20 +2148,6 @@ static void commit_vblank_work(void)
         source_effect_cache_commit();
         source_effect_restore_shared_tiles_if_needed();
     }
-#if !TYRIAN_GBA_STRESS_LOADOUT
-    if (game_paused) {
-        /*
-         * The split Sprite2 overflow slot time-shares characters 598..613.
-         * Restore the six authored PAUSED glyphs after all gameplay cache
-         * DMAs, before the shadow OAM that references them becomes visible.
-         */
-        dmaCopy(
-            obj_tiles + OBJ_TILE_PAUSE_TEXT * 32u,
-            (u8 *)OBJ_BASE_ADR + OBJ_TILE_PAUSE_TEXT * 32u,
-            OBJ_PAUSE_GLYPH_COUNT * 2u * 32u
-        );
-    }
-#endif
     if (oam_dirty) {
         dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
         oam_dirty = 0;

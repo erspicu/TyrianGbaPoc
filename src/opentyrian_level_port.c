@@ -9,6 +9,8 @@
  * static linkage and source-parity execution order while making each concern
  * small enough to review independently.
  */
+#include <string.h>
+
 #include "opentyrian_level_port.h"
 #include "res/boss_manifest.h"
 

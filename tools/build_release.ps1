@@ -41,7 +41,9 @@ $buildDir = Join-Path $projectRoot "build"
 $backupDir = Join-Path $projectRoot "Backup"
 $stageRoot = Join-Path $toolchainRoot "release-staging"
 $stageRom = Join-Path $stageRoot "TyrianGBA.gba"
+$stageSave = Join-Path $stageRoot "TyrianGBA.sav"
 $finalRom = Join-Path $buildDir "TyrianGBA.gba"
+$finalSave = Join-Path $buildDir "TyrianGBA.sav"
 $generatedName =
     "tyrian_gba_level1_pc_flow_mode4_romfs_v40_" +
     "detail_${DetailLevel}_speed_${GameSpeed}_detailasm1.gba"
@@ -112,6 +114,17 @@ New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 New-Item -ItemType Directory -Force -Path $backupDir | Out-Null
 New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
 
+# A tester's SRAM is not a reproducible build product.  Protect it from the
+# final build-directory cleanup and restore the exact bytes beside the ROM.
+$preserveSave = Test-Path -LiteralPath $finalSave -PathType Leaf
+if (Test-Path -LiteralPath $stageSave) {
+    Assert-ChildPath -Path $stageSave -Parent $toolchainRoot
+    Remove-Item -LiteralPath $stageSave -Force
+}
+if ($preserveSave) {
+    Copy-Item -LiteralPath $finalSave -Destination $stageSave
+}
+
 # Preserve all prior playable ROMs before producing the new one.
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $ordinal = 0
@@ -179,6 +192,9 @@ foreach ($entry in Get-ChildItem -LiteralPath $buildDir -Force) {
     Remove-Item -LiteralPath $entry.FullName -Recurse -Force
 }
 Move-Item -LiteralPath $stageRom -Destination $finalRom
+if ($preserveSave) {
+    Move-Item -LiteralPath $stageSave -Destination $finalSave
+}
 
 $hash = Get-Sha256Hex $finalRom
 $sizeMiB = [math]::Round((Get-Item -LiteralPath $finalRom).Length / 1MB, 2)

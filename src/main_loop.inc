@@ -1442,18 +1442,55 @@ int main(void)
                 (pad_pressed & KEY_START)
             ) {
                 toggle_pause();
+                /*
+                 * PAUSED is a sparse BG3 overlay.  Rebuild only that tiny
+                 * layer at the input edge and keep the already presented
+                 * world/OAM frozen.  Re-rendering the complete scene every
+                 * paused LCD frame can itself miss VBlank in heavy levels;
+                 * the pending BG3 DMA would then never reach a safe commit
+                 * and Maxmod would be starved by the needless render work.
+                 */
+                gameplay_overlay_prepare_frame();
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+                if (gameplay_overlay_active) {
+                    gameplay_presentation.dispcnt |= BG3_ON;
+                } else {
+                    gameplay_presentation.dispcnt &= (u16)~BG3_ON;
+                }
+#endif
+#if TYRIAN_GBA_RECOVER_MISSED_VBLANK
+                if (game_paused) {
+                    u32 pause_vblank = telemetry_vblank_irqs;
+
+                    /*
+                     * Pausing freezes authoritative logic, so stale display
+                     * recovery periods have nothing left to catch up.  Drain
+                     * the BIOS latch and rebase the presentation clock; the
+                     * following loop then waits for a genuinely safe VBlank
+                     * and commits PAUSED immediately instead of replaying a
+                     * heavy pre-pause render backlog first.  Do not advance
+                     * audio_vblank_seen: the newest physical mix still runs
+                     * normally at the top of the following loop.
+                     */
+                    if (pause_vblank > vblank_irq_latch_consumed) {
+                        IntrWait(0, IRQ_VBLANK);
+                        pause_vblank = telemetry_vblank_irqs;
+                    }
+                    last_vblank_seen = pause_vblank;
+                    vblank_irq_latch_consumed = pause_vblank;
+                }
+#endif
             }
             if (game_paused) {
                 telemetry_paused_frames++;
-                render_game();
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
                 presentation_render_pending = 0;
                 presentation_pending_logic_ticks = 0;
 #endif
-                rendered_this_loop = 1;
 #ifdef AUTOTEST_SCREENSHOT_PAUSE
                 if (!autotest_screenshot_delay) {
-                    autotest_screenshot_delay = 2;
+                    autotest_screenshot_delay =
+                        AUTOTEST_SCREENSHOT_PAUSE_DELAY;
                 }
 #endif
             } else {
@@ -1752,7 +1789,7 @@ int main(void)
                 }
 #endif
             }
-            if (game_state == STATE_PLAY) {
+            if (game_state == STATE_PLAY && !game_paused) {
 #if TYRIAN_GBA_PERF_TIMER
                 perf_prefetch_start = stress_cycle_counter_read();
 #endif

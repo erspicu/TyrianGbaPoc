@@ -337,8 +337,8 @@ _Static_assert(
 
 static const u16 background_map_first_row[BACKGROUND_LAYER_COUNT] = {
     OT_LEVEL_MAP1_FIRST_SOURCE_ROW,
-    OT_LEVEL_MAP23_FIRST_SOURCE_ROW,
-    OT_LEVEL_MAP23_FIRST_SOURCE_ROW,
+    OT_LEVEL_MAP2_FIRST_SOURCE_ROW,
+    OT_LEVEL_MAP3_FIRST_SOURCE_ROW,
 };
 
 static const u16 background_map_rows[BACKGROUND_LAYER_COUNT] = {
@@ -380,13 +380,13 @@ static const u16 background_canvas_rows[BACKGROUND_LAYER_COUNT] = {
     (
         (
             OT_LEVEL_MAP2_ROWS -
-            OT_LEVEL_MAP23_FIRST_SOURCE_ROW
+            OT_LEVEL_MAP2_FIRST_SOURCE_ROW
         ) * BACKGROUND_SHAPE_HEIGHT + 7
     ) / 8,
     (
         (
             OT_LEVEL_MAP3_ROWS -
-            OT_LEVEL_MAP23_FIRST_SOURCE_ROW
+            OT_LEVEL_MAP3_FIRST_SOURCE_ROW
         ) * BACKGROUND_SHAPE_HEIGHT + 7
     ) / 8,
 };
@@ -1962,24 +1962,24 @@ static IWRAM_CODE ARM_CODE void background_prefetch_step(u8 miss_budget)
         if (layer == 0) {
             row = background_presentation_scroll_pixel(
                 0,
-                source_camera_offset_y
+                source_camera_presentation_offset_y
             ) >> 3;
             speed = bg1_scroll_speed;
             active = speed != 0;
         } else if (layer == 1) {
             row = background_presentation_scroll_pixel(
                 1,
-                source_camera_offset_y
+                source_camera_presentation_offset_y
             ) >> 3;
             speed = bg2_scroll_speed;
             active =
-                source_background2_enabled &&
+                source_background2_present() &&
                 !source_background2_upload_pending &&
                 speed != 0;
         } else {
             row = background_presentation_scroll_pixel(
                 2,
-                source_camera_offset_y
+                source_camera_presentation_offset_y
             ) >> 3;
             speed = bg3_scroll_speed;
             active = speed != 0;

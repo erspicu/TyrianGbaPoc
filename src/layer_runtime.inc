@@ -31,6 +31,18 @@ enum {
     SOURCE_DRAW_STAGE_HUD = 160,
 };
 
+static bool source_background2_draw_order_valid(u8 background2_over)
+{
+    /*
+     * tyrian2.c has four separate draw_background_2() sites, selected only
+     * by background2over values 0, 1, 2 and 3.  Episode 4 uses 254/255 as
+     * authored sentinels which intentionally match none of those sites and
+     * therefore suppress BG2.  Treating an unknown value as the back stage
+     * leaves a stale parallax plane visible behind MAP1-attached structures.
+     */
+    return background2_over <= 3u;
+}
+
 static u8 source_background2_draw_stage_for(u8 background2_over)
 {
     switch (background2_over) {
@@ -118,6 +130,17 @@ static u8 source_background3_priority(void)
 static bool source_background2_present(void)
 {
     if (!source_background2_enabled) return false;
+    if (!source_background2_draw_order_valid(
+            source_parity_level.background2_over
+        )) {
+        return false;
+    }
+    /*
+     * The source's background2over==3 site is outside both processor/detail
+     * smoothie gates.  It always draws BG2 and also turns background2 back
+     * on, including in the 386/LOW profile.
+     */
+    if (source_parity_level.background2_over == 3u) return true;
     /*
      * Direct processorType gates around draw_background_2() in tyrian2.c:
      * smoothie 2 suppresses the layer without the Pentium wild pass, while
@@ -196,6 +219,21 @@ static bool source_layer_priority_self_test(
 
     *passed_checks = 0;
     *failed_checks = 0;
+    for (background2_over = 0; background2_over <= 3; background2_over++) {
+        if (source_background2_draw_order_valid(background2_over)) {
+            (*passed_checks)++;
+        } else {
+            (*failed_checks)++;
+        }
+    }
+    if (
+        !source_background2_draw_order_valid(254u) &&
+        !source_background2_draw_order_valid(255u)
+    ) {
+        (*passed_checks) += 2;
+    } else {
+        (*failed_checks)++;
+    }
     for (background2_over = 0; background2_over <= 3; background2_over++) {
         u8 background3_over;
 

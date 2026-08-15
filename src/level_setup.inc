@@ -444,6 +444,10 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_background2_enabled =
         TYRIAN_GBA_DETAIL_LEVEL != TYRIAN_GBA_DETAIL_LOW;
     source_background2_upload_pending = 0;
+    source_background2_wrap_active = 0;
+    source_background2_wrap_threshold_scroll = 0;
+    source_background2_wrap_to_scroll = 0;
+    source_background2_wrap_count = 0;
     game_over_tile_upload_pending = 0;
     secret_level_tile_upload_pending = 0;
     insert_coin_tile_upload_pending = frontend_demo_active ? 1 : 0;
@@ -653,6 +657,30 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     } else {
         frontend_campaign_apply_to_level();
     }
+#if defined(AUTOTEST_RELEASE_LOADOUT) && !TYRIAN_GBA_STRESS_LOADOUT
+    /*
+     * A focused performance ROM can exercise the real campaign weapon,
+     * Sprite2 and OAM paths instead of the synthetic stress renderer.  Every
+     * value is supplied by the host harness from a decoded save; release ROMs
+     * never compile this block.
+     */
+    source_parity_level.player_front_weapon_id =
+        AUTOTEST_RELEASE_FRONT_ID;
+    source_parity_level.player_front_weapon_power =
+        AUTOTEST_RELEASE_FRONT_POWER;
+    source_parity_level.player_rear_weapon_id =
+        AUTOTEST_RELEASE_REAR_ID;
+    source_parity_level.player_rear_weapon_power =
+        AUTOTEST_RELEASE_REAR_POWER;
+    source_parity_level.player_sidekick[0] =
+        AUTOTEST_RELEASE_LEFT_SIDEKICK;
+    source_parity_level.player_sidekick[1] =
+        AUTOTEST_RELEASE_RIGHT_SIDEKICK;
+    source_parity_level.player_special = AUTOTEST_RELEASE_SPECIAL;
+    source_parity_level.player_generator = AUTOTEST_RELEASE_GENERATOR;
+    source_parity_level.player_shield_item = AUTOTEST_RELEASE_SHIELD;
+    source_parity_level.player_ship = AUTOTEST_RELEASE_SHIP;
+#endif
     frontend_route_state.player_alive = true;
     frontend_route_state.level_timer_expired = false;
     frontend_route_state.player_ship =
@@ -679,6 +707,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     source_front_weapon_init();
 #endif
     source_runtime_reset();
+    /*
+     * Prepare each authored Boss cohort while LCD output is blank and before
+     * audio_load_level_song_fade_in().  Compact-mode activation can then use
+     * the complete LVL/HDT/Sprite2 colour range without an in-battle cache
+     * flush or audio/VBlank spike.
+     */
+    source_boss_compact_prepare_level_palettes();
 #if defined(AUTOTEST) && defined(AUTOTEST_SPECIAL_WEAPON_ID) && \
     !TYRIAN_GBA_STRESS_LOADOUT
     /* Focused source-Special visual capture; never compiled into release. */
@@ -804,6 +839,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_critical_oam_promotions = 0;
     telemetry_enemy_cache_prime_attempts = 0;
     telemetry_enemy_cache_prime_failures = 0;
+    telemetry_boss_compact_context_frames = 0;
+    telemetry_boss_compact_pressure_frames = 0;
+    telemetry_boss_compact_active_frames = 0;
+    telemetry_boss_compact_activations = 0;
+    telemetry_boss_compact_boss_count_max = 0;
+    telemetry_boss_compact_full_size_count_max = 0;
+    telemetry_boss_compact_rendered_objects = 0;
     telemetry_player_shot_spawns = 0;
     telemetry_player_shot_drops = 0;
     telemetry_player_shot_max_active = 0;
@@ -839,11 +881,9 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     telemetry_vblank_recovery_loops = 0;
     telemetry_audio_frames = 0;
     telemetry_projectile_visible_capacity_drops = 0;
-#if TYRIAN_GBA_STRESS_LOADOUT
     telemetry_projectile_culled_offscreen_before_cache = 0;
     telemetry_projectile_culled_oam_full_before_cache = 0;
     telemetry_projectile_post_visibility_acquires = 0;
-#endif
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
     telemetry_stress_logic_cycles_total = 0;
     telemetry_stress_logic_cycles_max = 0;

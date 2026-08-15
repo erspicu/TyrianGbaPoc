@@ -201,6 +201,11 @@ _Static_assert(
     defined(AUTOTEST_SCREENSHOT_PAUSE)
 #define AUTOTEST_SCREENSHOT_ENABLED
 #endif
+#if defined(AUTOTEST_SCREENSHOT_PAUSE) && \
+    !defined(AUTOTEST_SCREENSHOT_PAUSE_DELAY)
+/* The pause path must reach a committed PAUSED overlay by the next frame. */
+#define AUTOTEST_SCREENSHOT_PAUSE_DELAY 2
+#endif
 
 #ifdef AUTOTEST_SPECIAL_WEAPON_ID
 #ifndef AUTOTEST_SPECIAL_SHIELD
@@ -418,16 +423,22 @@ enum {
             OT_LEVEL_MAP1_FIRST_SOURCE_ROW \
         ) * OT_LEVEL_MAP_CELL_HEIGHT + SOURCE_VIEW_CROP_Y \
     )
-#define BG23_INITIAL_SCROLL \
+#define BG2_INITIAL_SCROLL \
     ( \
         ( \
             OT_LEVEL_MAP2_ROWS - \
             OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS - \
-            OT_LEVEL_MAP23_FIRST_SOURCE_ROW \
+            OT_LEVEL_MAP2_FIRST_SOURCE_ROW \
         ) * OT_LEVEL_MAP_CELL_HEIGHT + SOURCE_VIEW_CROP_Y \
     )
-#define BG2_INITIAL_SCROLL BG23_INITIAL_SCROLL
-#define BG3_INITIAL_SCROLL BG23_INITIAL_SCROLL
+#define BG3_INITIAL_SCROLL \
+    ( \
+        ( \
+            OT_LEVEL_MAP3_ROWS - \
+            OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS - \
+            OT_LEVEL_MAP3_FIRST_SOURCE_ROW \
+        ) * OT_LEVEL_MAP_CELL_HEIGHT + SOURCE_VIEW_CROP_Y \
+    )
 #define BG12_INITIAL_HOFS \
     ( \
         OT_LEVEL_MAP_CELL_WIDTH + \
@@ -503,7 +514,26 @@ enum {
 #define SOURCE_HUD_SUPERBOMB_GRAPHIC 304
 #define SOURCE_HUD_SUPERBOMB_LIMIT 10
 #define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT 8
-#define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT 8
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_0 1u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_1 2u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_2 3u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_3 4u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_4 5u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_5 8u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_6 13u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_7 15u
+#define SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_MASK ( \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_0) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_1) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_2) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_3) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_4) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_5) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_6) | \
+    (1u << SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_7) \
+)
+#define SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT \
+    SPRITE2_PALETTE_BRIGHTNESS_SAMPLE_COUNT
 #define SOURCE_ENEMY_FRAME_BYTES 1024
 #define SOURCE_ENEMY_TILES_PER_SLOT 32
 #define SOURCE_PLAYER_CACHE_TILE_BASE OBJ_TILE_PLAYER_0
@@ -713,8 +743,9 @@ enum {
  * in one presentation scene.  OBJ VRAM has no free contiguous 1 KiB bank,
  * so present the 24th full canvas as two hardware-native 32x16 wide OBJs.
  * Its top half occupies the released explosion-cache tail; its bottom half
- * time-shares PAUSED plus the unused legacy player-shot characters.  Pause
- * reserves this slot and restores its glyph bank during VBlank.
+ * starts at the former PAUSED OBJ characters plus unused legacy player-shot
+ * characters.  PAUSED now reads its cartridge glyph source into sparse BG3,
+ * so gameplay owns both split halves continuously, including while paused.
  */
 #define SOURCE_ENEMY_CACHE_SPLIT_HALF_TILES 16
 #define SOURCE_ENEMY_CACHE_SPLIT_HALF_BYTES \
@@ -1020,6 +1051,11 @@ _Static_assert(
     "dynamic OBJ palette must provide eight shades for every PC hue"
 );
 _Static_assert(
+    (SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_MASK &
+        (1u << OBJ_PAL_BOSS_BAR)) == 0,
+    "Boss bar palette must not overwrite the 8bpp Sprite2 palette"
+);
+_Static_assert(
     OT_GAME_VIEW_WIDTH - SCREEN_WIDTH == 24,
     "GBA viewport must crop 24 source pixels horizontally"
 );
@@ -1051,7 +1087,7 @@ _Static_assert(
 );
 _Static_assert(
     BG1_INITIAL_SCROLL == 8104 &&
-        BG2_INITIAL_SCROLL == 16196 &&
+        BG2_INITIAL_SCROLL == 16588 &&
         BG3_INITIAL_SCROLL == 16196,
     "runtime background phase no longer matches OpenTyrian mapY setup"
 );
@@ -1819,6 +1855,11 @@ static s16 source_camera_offset_x_q8;
 static s16 source_camera_offset_y_q8;
 static s8 source_camera_offset_x;
 static s8 source_camera_offset_y;
+/*
+ * Vertical camera motion after BG1 has applied its map-edge clamp.  Every
+ * presented world object and background layer must consume this same value.
+ */
+static s8 source_camera_presentation_offset_y;
 /* OpenTyrian Player.x_velocity/y_velocity are int, then clamp to +/-4. */
 static s32 player_source_velocity_x;
 static s32 player_source_velocity_y;
@@ -1997,6 +2038,10 @@ static u8 bg2_step;
 static u8 bg3_step;
 static u8 source_background2_enabled;
 static u8 source_background2_upload_pending;
+static u8 source_background2_wrap_active;
+static u16 source_background2_wrap_threshold_scroll;
+static u16 source_background2_wrap_to_scroll;
+static u32 source_background2_wrap_count;
 /*
  * Source detail presentation state.  The PC writes its final 264x184
  * framebuffer after all gameplay blits; Mode 0 needs explicit hardware
@@ -2118,6 +2163,8 @@ static u8 gameplay_overlay_superpixel_nibble[16][16];
 static u8 gameplay_overlay_star_bank;
 static u8 gameplay_overlay_event_bank;
 static u8 gameplay_overlay_event_nibble[2];
+static u8 gameplay_overlay_pause_bank;
+static u8 gameplay_overlay_pause_nibble[16];
 static u8 gameplay_overlay_tile_count;
 static u8 gameplay_overlay_active;
 static u8 gameplay_overlay_upload_pending;
@@ -2306,6 +2353,13 @@ volatile u32 telemetry_effect_oam_rotation_frames EWRAM_BSS;
 volatile u32 telemetry_critical_oam_promotions EWRAM_BSS;
 volatile u32 telemetry_enemy_cache_prime_attempts EWRAM_BSS;
 volatile u32 telemetry_enemy_cache_prime_failures EWRAM_BSS;
+volatile u32 telemetry_boss_compact_context_frames EWRAM_BSS;
+volatile u32 telemetry_boss_compact_pressure_frames EWRAM_BSS;
+volatile u32 telemetry_boss_compact_active_frames EWRAM_BSS;
+volatile u32 telemetry_boss_compact_activations EWRAM_BSS;
+volatile u32 telemetry_boss_compact_boss_count_max EWRAM_BSS;
+volatile u32 telemetry_boss_compact_full_size_count_max EWRAM_BSS;
+volatile u32 telemetry_boss_compact_rendered_objects EWRAM_BSS;
 volatile u32 telemetry_player_shot_spawns;
 volatile u32 telemetry_player_shot_drops;
 volatile u32 telemetry_player_shot_max_active;
@@ -2314,11 +2368,9 @@ volatile u32 telemetry_upgrade_loadout_pass;
 volatile u32 telemetry_stress_loadout_failures;
 volatile u32 telemetry_stress_option_blend_draws;
 volatile u32 telemetry_stress_psg_triggers;
-#if TYRIAN_GBA_STRESS_LOADOUT
 volatile u32 telemetry_projectile_culled_offscreen_before_cache;
 volatile u32 telemetry_projectile_culled_oam_full_before_cache;
 volatile u32 telemetry_projectile_post_visibility_acquires;
-#endif
 volatile u32 telemetry_detail_lava_frames;
 volatile u32 telemetry_detail_water_frames;
 volatile u32 telemetry_detail_iced_frames;
@@ -2531,6 +2583,11 @@ volatile u32 telemetry_boss_perf_l2_evictions STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_l2_raw_builds STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_l2_fallbacks STRESS_COLD_BSS;
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
+volatile u32 telemetry_ground_attachment_samples STRESS_COLD_BSS;
+volatile u32 telemetry_ground_attachment_camera_samples STRESS_COLD_BSS;
+volatile u32 telemetry_ground_attachment_failures STRESS_COLD_BSS;
+volatile u32 telemetry_ground_attachment_max_delta_x STRESS_COLD_BSS;
+volatile u32 telemetry_ground_attachment_max_delta_y STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_logic_updates STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_logic_cycles STRESS_COLD_BSS;
 volatile u32 telemetry_boss_perf_render_cycles STRESS_COLD_BSS;
@@ -2795,6 +2852,7 @@ static s16 source_player_screen_x(void);
 static s16 source_player_screen_y(void);
 static s16 source_camera_origin_x(void);
 static s16 source_camera_origin_y(void);
+static s8 source_camera_clamp_presentation_y(s8 requested_offset_y);
 static void source_camera_reset(void);
 static void source_camera_update(void);
 static u16 background_presentation_scroll_pixel(
@@ -2808,6 +2866,7 @@ static u16 source_background_vofs(u8 layer);
 static s16 source_world_to_screen_x(s16 source_x);
 static s16 source_world_to_screen_y(s16 source_y);
 static u16 source_background_hofs(u8 layer);
+static bool source_background2_present(void);
 static void source_runtime_reset(void);
 static void gameplay_overlay_reset(void);
 static void gameplay_overlay_prepare_palette(void);
@@ -2820,6 +2879,7 @@ static void source_player_cache_commit(void);
 static void source_enemy_cache_commit(void);
 static void source_boss_compact_cache_commit(void);
 static void source_boss_compact_cache_reset(void);
+static void source_boss_compact_prepare_level_palettes(void);
 static void source_boss_membership_reset(void);
 static u8 source_boss_compact_owns_enemy_slot(u8 slot);
 static void source_projectile_cache_commit(void);

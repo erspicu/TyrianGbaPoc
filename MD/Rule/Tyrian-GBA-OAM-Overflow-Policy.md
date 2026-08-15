@@ -113,6 +113,14 @@ OAM 裁切只影響該顯示幀是否看得到物件，不影響：
 `render_source_enemy_cached_sprite_blended()` 與
 `render_source_pickup_explosions()`。
 
+2026-08-11 補充：所有直接使用通用 Sprite2 L1 cache 的繪製路徑，都必須
+透過上述 common renderer 解讀 tile ownership，不能只用
+`source_enemy_cache_tile_is_compact()` 後把其餘 tile 一律視為連續 32×32。
+`render_player_sidekicks()` 曾漏掉這條規則，使合法取得 split tile 160 的
+Sidekick 把 projectile tiles 176..191 誤當下半圖；現已改為與 enemy 共用
+ordinary／compact／split 三路呈現，AUTOTEST 亦會驗證 split 的 shadow 與
+hardware OAM 上下半必須分別指向 tile 160／598。
+
 ## 5. 最後一道硬體安全限制
 
 所有底層 `put_sprite*()` 函式都會先檢查：

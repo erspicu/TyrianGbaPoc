@@ -1,6 +1,6 @@
 # TyrianGbaPoc Detail Level 畫面效果累加規則
 
-日期：2026-08-07
+最後更新：2026-08-13
 狀態：目前正式實作規則
 適用選項：`LOW`、`NORMAL`、`HIGH`、`PENTIUM`、`CUSTOM`
 
@@ -69,7 +69,7 @@ PC 的四組初始化並非所有旗標都做位元式繼承。例如 High 會�
 | `background2over==3` 事件恢復 BG2 | 是 | 是 | 是 | 是 | 是 |
 | PC 背景 draw-stage／前後層次 | 事件啟用後使用 | 完整 | 完整 | 完整 | 完整 |
 | 一般爆炸與 pickup 爆炸半透明 | 不透明 | 8:8 Alpha | 8:8 Alpha | 8:8 Alpha | 8:8 Alpha |
-| 主角／玩家子彈的 BG2 視差陰影 | BG2 被事件恢復後可用 | 可用 | 可用 | wild 時讓位 | wild 時讓位 |
+| 主角／玩家子彈的 BG2 視差陰影 | 關閉（事件恢復 BG2 後也不開） | 可用 | 可用 | wild 時讓位 | wild 時讓位 |
 | 關卡 brightness fade | 關閉 | GBA BLDY | GBA BLDY | palette brightness | palette brightness |
 | iced 藍色色相 pass | 關閉 | palette adapter | 同 Normal | 同 Normal | 同 Normal |
 | blur 事件 gate／時序 | 關閉 | 保留 | 保留 | 保留 | 保留 |
@@ -98,12 +98,13 @@ LOW 以 PC 386 profile 為基準，目標是減少背景 tile cache、OAM、調�
   `VFLIP` 與 world OBJ 一起反轉，HUD 保持可讀。
 - 關卡若觸發 `background2over==3`，仍會依 PC 規則準備並恢復第二背景層，
   而且之後 `background2` 會保持啟用。
-- BG2 被事件恢復且沒有其他硬體效果衝突時，主角和玩家子彈陰影也可恢復。
 
 ### LOW 關閉的畫面功能
 
 - 關卡開始時不建立／顯示第二背景層。
 - 爆炸使用不透明 OBJ。
+- 主角、玩家子彈及其他共用此裝飾陰影 gate 的影子一律關閉；即使來源
+  `background2over==3` 事件稍後恢復 BG2，也不得連帶恢復影子。
 - 不執行 brightness、iced、blur、特殊 code 2 聚光。
 - 不執行 lava、water、wild 或 final hue filtration。
 
@@ -414,7 +415,8 @@ make DETAIL_LEVEL=high DETAIL_EFFECT_ASM=1 all
    只依畫面印象自創效果。
 2. 新增效果必須放入正確的功能 gate；禁止再以 `CUSTOM > PENTIUM` 的數值
    關係推論 High 功能，否則會誤開 lava／water。
-3. LOW 的 `background2over==3`、全畫面上下反轉等來源例外不得誤刪。
+3. LOW 的 `background2over==3`、全畫面上下反轉等來源例外不得誤刪；但
+   `background2over==3` 只能恢復來源背景層，不能繞過 LOW 的影子 hard gate。
 4. Blur 沒有像素等價前，不可再用 Mosaic 冒充已完成效果。
 5. PENTIUM／CUSTOM wild 正常路徑必須維持平滑 Alpha；checkerboard 只可
    作硬體衝突 fallback。CUSTOM 已關閉 spotlight，因此不得再為 spotlight

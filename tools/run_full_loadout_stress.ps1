@@ -68,6 +68,7 @@ param(
     [double]$MaxAudioFrameLossPercent = 1.0,
     [string]$ScreenshotPath = "",
     [switch]$NoFire,
+    [switch]$ReleaseRuntime,
     [switch]$NoBuild
 )
 
@@ -104,9 +105,12 @@ $bossTag = if ($BossWindowVBlanks -gt 0) {
     ""
 }
 $inputTag = if ($NoFire) { "_nofire" } else { "" }
+$runtimeTag = if ($ReleaseRuntime) { "_release" } else { "" }
+$releaseRuntimeValue = if ($ReleaseRuntime) { 1 } else { 0 }
+$expectedStressLoadout = if ($ReleaseRuntime) { 0 } else { 1 }
 $stressFire = if ($NoFire) { 0 } else { 1 }
 $name = (
-    "tgw8_ep${Episode}_s${Section}_${stopTag}${fastForwardTag}${bossTag}${inputTag}_v88_" +
+    "tgw8_ep${Episode}_s${Section}_${stopTag}${fastForwardTag}${bossTag}${inputTag}${runtimeTag}_v88_" +
     "${Variant}_h${HotpathAsm}_detail_${DetailLevel}_speed_normal_" +
     "detailasm${DetailEffectAsm}_x${Sprite2ExactLookupAsm}_" +
     "s${StarfieldBatchAsm}_ph${ProjectileCacheHint}_" +
@@ -174,6 +178,7 @@ if (-not $NoBuild) {
         "STRESS_FAST_FORWARD_TICKS=$FastForwardTicks " +
         "STRESS_BOSS_WINDOW_VBLANKS=$BossWindowVBlanks " +
         "STRESS_FIRE=$stressFire " +
+        "STRESS_RELEASE_RUNTIME=$releaseRuntimeValue " +
         "STRESS_DIAGNOSTIC=$Variant full-loadout-stress"
     )
     & $bash -lc $command
@@ -479,6 +484,100 @@ $telemetry = [ordered]@{
     boss_manifest_active_at_finish = Read-U32 9452
     boss_manifest_episode = Read-U32 9456
     boss_manifest_lvl_file_number = Read-U32 9460
+    boss_compact_context_frames = Read-U32 9464
+    boss_compact_pressure_frames = Read-U32 9468
+    boss_compact_active_frames = Read-U32 9472
+    boss_compact_activations = Read-U32 9476
+    boss_compact_boss_count_max = Read-U32 9480
+    boss_compact_full_size_count_max = Read-U32 9484
+    boss_compact_rendered_objects = Read-U32 9488
+    sidekick_left_graphic = Read-U32 9492
+    sidekick_right_graphic = Read-U32 9496
+    sidekick_left_cache_tile = Read-U32 9500
+    sidekick_right_cache_tile = Read-U32 9504
+    sidekick_left_oam_index = Read-U32 9508
+    sidekick_right_oam_index = Read-U32 9512
+    sidekick_left_shadow_attr2 = Read-U32 9516
+    sidekick_right_shadow_attr2 = Read-U32 9520
+    sidekick_left_hardware_attr2 = Read-U32 9524
+    sidekick_right_hardware_attr2 = Read-U32 9528
+    sidekick_left_shadow_bottom_attr2 = Read-U32 9532
+    sidekick_right_shadow_bottom_attr2 = Read-U32 9536
+    sidekick_left_hardware_bottom_attr2 = Read-U32 9540
+    sidekick_right_hardware_bottom_attr2 = Read-U32 9544
+    sidekick_split_bottom_tile = Read-U32 9548
+    sidekick_split_layout_pass = Read-U32 9552
+    boss_compact_palette_valid = Read-U32 9556
+    boss_compact_primary_table = Read-U32 9560
+    boss_compact_palette0_indices = @(
+        for ($index = 0; $index -lt 15; $index++) {
+            Read-U32 (9564 + $index * 4)
+        }
+    )
+    boss_compact_palette1_indices = @(
+        for ($index = 0; $index -lt 15; $index++) {
+            Read-U32 (9624 + $index * 4)
+        }
+    )
+    boss_compact_hardware_palette0 = @(
+        for ($index = 0; $index -lt 16; $index++) {
+            Read-U32 (9684 + $index * 4)
+        }
+    )
+    boss_compact_hardware_palette1 = @(
+        for ($index = 0; $index -lt 16; $index++) {
+            Read-U32 (9748 + $index * 4)
+        }
+    )
+    boss_compact_training_position = Read-U32 9812
+    boss_compact_training_enemy_count = Read-U32 9816
+    boss_compact_training_boss_count = Read-U32 9820
+    boss_compact_training_full_size_count = Read-U32 9824
+    boss_compact_palette_retrains = Read-U32 9828
+    boss_compact_trained_boss_count = Read-U32 9832
+    boss_compact_palette_refresh_pending = Read-U32 9836
+    boss_compact_palette_error_total_max = Read-U32 9840
+    boss_compact_palette_error_pixels_at_max = Read-U32 9844
+    boss_compact_palette_train_epoch = Read-U32 9848
+    background2_enabled = Read-U32 9852
+    background2_wrap_active = Read-U32 9856
+    background2_present = Read-U32 9860
+    background2_upload_pending = Read-U32 9864
+    back_move = Read-U32 9868
+    back_move2 = Read-U32 9872
+    bg1_scroll_speed = Read-U32 9876
+    bg2_scroll_speed = Read-U32 9880
+    bg1_scroll_pixel = Read-U32 9884
+    bg2_scroll_pixel = Read-U32 9888
+    background2_wrap_threshold_scroll = Read-U32 9892
+    background2_wrap_to_scroll = Read-U32 9896
+    background2_wrap_count = Read-U32 9900
+    ground_attachment_samples = Read-U32 9904
+    ground_attachment_camera_samples = Read-U32 9908
+    ground_attachment_failures = Read-U32 9912
+    ground_attachment_max_delta_x = Read-U32 9916
+    ground_attachment_max_delta_y = Read-U32 9920
+    camera_offset_x_at_finish = Read-U32 9924
+    camera_offset_y_at_finish = Read-U32 9928
+    map_x_offset_at_finish = Read-U32 9932
+    map_x2_offset_at_finish = Read-U32 9936
+    bg1_hofs_at_finish = Read-U32 9940
+    bg2_hofs_at_finish = Read-U32 9944
+    bg1_presentation_scroll_at_finish = Read-U32 9948
+    bg2_presentation_scroll_at_finish = Read-U32 9952
+    bg1_camera_scroll_at_finish = Read-U32 9956
+    bg2_camera_scroll_at_finish = Read-U32 9960
+    bg1_vofs_at_finish = Read-U32 9964
+    bg2_vofs_at_finish = Read-U32 9968
+    definition_130_count_at_finish = Read-U32 9972
+    definition_130_pool_mask_at_finish = Read-U32 9976
+    definition_130_ground_count_at_finish = Read-U32 9980
+    definition_132_count_at_finish = Read-U32 9984
+    definition_132_pool_mask_at_finish = Read-U32 9988
+    definition_132_ground_count_at_finish = Read-U32 9992
+    background2_over_at_finish = Read-U32 9996
+    background3_over_at_finish = Read-U32 10000
+    freeze_background_on_defer = Read-U32 10004
     audio_frame_loss = $audioFrameLoss
     audio_frame_loss_percent = if ($displayFrames) {
         [math]::Round(100.0 * $audioFrameLoss / $displayFrames, 4)
@@ -654,10 +753,12 @@ if (
     $telemetry.loadout_failures -ne 0 -or
     $telemetry.source_assets_valid -ne 1 -or
     $telemetry.invincible_enabled -ne 1 -or
-    $telemetry.stress_loadout_enabled -ne 1 -or
+    $telemetry.stress_loadout_enabled -ne $expectedStressLoadout -or
     $telemetry.adaptive_dispatch_enabled -ne $expectedAdaptive -or
     $telemetry.detail_adapter_self_test -ne 1 -or
     $telemetry.hotpath_asm_self_test -ne 1 -or
+    $telemetry.sidekick_split_layout_pass -ne 1 -or
+    $telemetry.ground_attachment_failures -ne 0 -or
     $telemetry.level_port_asm_differential -ne 3 -or
     $telemetry.colour_distance_asm_differential -ne 3 -or
     $telemetry.starfield_differential -ne 3 -or

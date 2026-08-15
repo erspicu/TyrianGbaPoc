@@ -12,9 +12,11 @@ static void render_cash_counter(void)
      * PC JE_inGameDisplays() renders player.cash at (30,175) on 320x200
      * using TINY_FONT, hue 2, brightness 4 and FULL_SHADE.  That point falls
      * below the 1:1 gameplay crop.  With the old bottom banner removed, the
-     * retained minimal GBA HUD places it at (22,148), eight pixels below
-     * the prior adapter position. Gameplay/world coordinates never use this
-     * exception. There is no pickup icon or five-digit cap in the source.
+     * retained minimal GBA HUD places it at (22,144).  Keeping its eight-pixel
+     * glyph row above y=152 reserves the final scanline row for gameplay
+     * notices, so the two independent overlays cannot cover one another.
+     * Gameplay/world coordinates never use this exception. There is no
+     * pickup icon or five-digit cap in the source.
      */
     do {
         digits[count++] = value % 10;
@@ -190,29 +192,6 @@ static void render_player_energy_status(void)
         TYRIAN_GBA_LAYOUT_GENERATOR_Y,
         OBJ_PAL_HUD_GENERATOR
     );
-}
-
-static void render_pause_text(void)
-{
-    u8 index;
-    s16 x = TYRIAN_GBA_LAYOUT_PAUSED_X;
-    s16 y = TYRIAN_GBA_LAYOUT_PAUSED_Y;
-
-    /*
-     * PC JE_pauseGame draws FONT_SHAPES at (120,90) on game_screen.  Apply
-     * the same final 1:1 crop as world objects: (84,78).  Generated 8x12
-     * glyphs retain the original hue-15, brightness -3 JE_dString palette.
-     */
-    for (index = 0; index < OBJ_PAUSE_GLYPH_COUNT; index++) {
-        put_sprite_shaped(
-            x, y,
-            OBJ_TILE_PAUSE_TEXT + index * 2,
-            OBJ_PAL_PAUSE_TEXT,
-            ATTR0_TALL, ATTR1_SIZE_8,
-            8, 16, 0
-        );
-        x += pause_glyph_advances[index];
-    }
 }
 
 static void render_game_over_text(void)

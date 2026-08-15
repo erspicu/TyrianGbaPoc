@@ -30,7 +30,13 @@ enum {
     OT_LEVEL_MAP_CELL_WIDTH = 24,
     OT_LEVEL_MAP_CELL_HEIGHT = 28,
     OT_LEVEL_MAP1_FIRST_SOURCE_ROW = 3,
-    OT_LEVEL_MAP23_FIRST_SOURCE_ROW = 14,
+    /*
+     * Episode 4 ICESECRET installs event 81 at level entry and wraps MAP2
+     * through source row 7. MAP2 must retain its leading rows; MAP3 has no
+     * such pointer-wrap event and keeps the smaller original GBA window.
+     */
+    OT_LEVEL_MAP2_FIRST_SOURCE_ROW = 0,
+    OT_LEVEL_MAP3_FIRST_SOURCE_ROW = 14,
     OT_LEVEL_INITIAL_BOTTOM_MARGIN_ROWS = 8,
     OT_HDT_WEAPON_COUNT = 781,
     OT_HDT_WEAPON_RECORD_BYTES = 80,

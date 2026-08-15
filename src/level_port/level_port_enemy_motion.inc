@@ -732,6 +732,27 @@ static void ot_spawn_continual_enemy(OtLevelPortState *state)
     ot_new_enemy(state, 0, enemy_id, 0, OT_SPAWN_RANDOM);
 }
 
+/*
+ * tyrian2.c rewrites backMove from map1YDelay immediately before drawing
+ * background 1, then passes that same per-frame value to both ground enemy
+ * pools.  Event 3 therefore advances map-attached OBJ only on the one tick
+ * where its delayed BG1 advances.  Keep the authored speed in back_move and
+ * derive the transient value instead of letting the GBA presentation delay
+ * and the source enemy runtime drift apart.
+ */
+static uint16_t ot_effective_ground_back_move(
+    const OtLevelPortState *state
+)
+{
+    if (
+        state->map1_y_delay_max > 1u &&
+        state->back_move < 2u
+    ) {
+        return state->map1_y_delay == 1u ? 1u : 0u;
+    }
+    return state->back_move;
+}
+
 static void ot_mark_stopped_enemy_group_clear(
     OtLevelPortState *state,
     uint8_t group
@@ -748,6 +769,9 @@ static void ot_mark_stopped_enemy_group_clear(
 
 static void ot_advance_enemies_before_player(OtLevelPortState *state)
 {
+    int16_t ground_back_move = (int16_t)
+        ot_effective_ground_back_move(state);
+
     /*
      * Direct JE_main() phase order before player shots/movement:
      * ground, ground2, continual, then only the sky/top layers which are
@@ -757,13 +781,13 @@ static void ot_advance_enemies_before_player(OtLevelPortState *state)
     ot_draw_enemy_pool(
         state,
         25,
-        (int16_t)state->back_move,
+        ground_back_move,
         state->presentation_map_x_offset
     );
     ot_draw_enemy_pool(
         state,
         75,
-        (int16_t)state->back_move,
+        ground_back_move,
         state->presentation_map_x_offset
     );
     ot_mark_stopped_enemy_group_clear(state, 1);

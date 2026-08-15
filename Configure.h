@@ -138,10 +138,11 @@
  * This is a compile-time choice: unused detail branches are removed by the
  * compiler and therefore add no per-frame runtime switch cost.
  *
- *   LOW     : PC 386 profile.  Disables the normal second background layer
- *             and brightness/translucency-class presentation work.  Authored
- *             background2over==3 events may still restore layer 2, exactly as
- *             in the PC source.
+ *   LOW     : PC 386 profile.  Disables the normal second background layer,
+ *             all player/projectile shadows, and brightness/translucency-
+ *             class presentation work.  Authored background2over==3 events
+ *             may still restore layer 2, exactly as in the PC source, but the
+ *             GBA LOW profile deliberately keeps decorative shadows disabled.
  *   NORMAL  : PC 486 profile.  Keeps BG2, translucent explosions, shadows,
  *             brightness, iced and special-light presentation through GBA
  *             hardware adapters; this is the recommended balance.  Source
@@ -165,8 +166,9 @@
  * 「編譯期」選項，未使用的細節分支會被編譯器移除，不會在每幀增加
  * 動態切換判斷成本。
  *
- *   LOW     ：PC 386 等級；通常關閉第二背景層與亮度／半透明類效果。
- *             原始關卡的 background2over==3 事件仍可照 PC 規則恢復 BG2。
+ *   LOW     ：PC 386 等級；關閉一般第二背景層、主角／武器等所有裝飾性
+ *             投影，以及亮度／半透明類效果。原始關卡的 background2over==3
+ *             事件仍可照 PC 規則恢復 BG2，但 GBA LOW 不會因此恢復投影。
  *   NORMAL  ：PC 486 等級；以 GBA 硬體方式保留 BG2、透明爆炸、陰影、
  *             亮暗、iced 與特殊光照，建議作為正式版平衡值。原始 blur
  *             事件仍照時序執行與記錄，但 PC 的跨影格 framebuffer 平均
@@ -381,7 +383,7 @@
 #define TYRIAN_GBA_LAYOUT_CASH_X 22
 #endif
 #ifndef TYRIAN_GBA_LAYOUT_CASH_Y
-#define TYRIAN_GBA_LAYOUT_CASH_Y 148
+#define TYRIAN_GBA_LAYOUT_CASH_Y 144
 #endif
 
 /*

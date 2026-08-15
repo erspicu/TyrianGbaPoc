@@ -121,18 +121,82 @@ static u8 gameplay_overlay_best_shared_bank(
     return best_bank;
 }
 
+static u8 gameplay_overlay_pause_coherent_nibble(u8 bank, u8 nibble)
+{
+    u16 colour = BG_PALETTE[(u16)bank * 16u + nibble];
+    u8 red = (u8)(colour & 31u);
+    u8 green = (u8)((colour >> 5) & 31u);
+    u8 blue = (u8)((colour >> 10) & 31u);
+    u16 target_luma;
+    u16 best_delta = UINT16_MAX;
+    u8 best = nibble;
+    u8 candidate;
+
+    /*
+     * JE_dString() deliberately calls blit_sprite_hv_unsafe() with value -3.
+     * Very dark FONT_SHAPES pixels therefore wrap through 0xfe/0xff in the
+     * original 8-bit palette.  On the PC this is a tiny hue-15 accent, but a
+     * trained mixed-material GBA BG bank can turn those few pixels into vivid
+     * red dots inside otherwise brown PAUSED lettering.
+     *
+     * Keep the selected bank and its accepted brown appearance.  Only when a
+     * mapped slot is a strongly red outlier, replace it with a warm-neutral
+     * slot of similar luminance from that same bank.  No palette RAM is
+     * overwritten, so the world background remains completely untouched.
+     */
+    if (red <= (u8)(green * 2u)) return nibble;
+
+    target_luma = (u16)(red * 3u + green * 6u + blue);
+    for (candidate = 1; candidate < 16u; candidate++) {
+        u16 candidate_colour =
+            BG_PALETTE[(u16)bank * 16u + candidate];
+        u8 candidate_red = (u8)(candidate_colour & 31u);
+        u8 candidate_green =
+            (u8)((candidate_colour >> 5) & 31u);
+        u8 candidate_blue =
+            (u8)((candidate_colour >> 10) & 31u);
+        u16 candidate_luma;
+        u16 delta;
+
+        if (
+            candidate_red < candidate_green ||
+            candidate_green < candidate_blue ||
+            candidate_red > (u8)(candidate_green * 2u)
+        ) {
+            continue;
+        }
+        candidate_luma = (u16)(
+            candidate_red * 3u +
+            candidate_green * 6u +
+            candidate_blue
+        );
+        delta = candidate_luma > target_luma ?
+            (u16)(candidate_luma - target_luma) :
+            (u16)(target_luma - candidate_luma);
+        if (delta < best_delta) {
+            best_delta = delta;
+            best = candidate;
+        }
+    }
+    return best;
+}
+
 static void gameplay_overlay_prepare_palette(void)
 {
     OtDataView palette;
     u16 star_source[16];
     u16 event_source[2];
+    u16 pause_source[15];
     u16 superpixel_source[16];
     u8 index;
 
     gameplay_overlay_star_bank = 0;
     gameplay_overlay_event_bank = 0;
+    gameplay_overlay_pause_bank = 0;
     memset(gameplay_overlay_star_nibble, 1, 16);
     memset(gameplay_overlay_warning_colour, 1, 16);
+    memset(gameplay_overlay_pause_nibble, 1, 16);
+    gameplay_overlay_pause_nibble[0] = 0;
     memset(gameplay_overlay_superpixel_bank, 0, 16);
     memset(
         gameplay_overlay_superpixel_nibble,
@@ -171,9 +235,13 @@ static void gameplay_overlay_prepare_palette(void)
             );
     }
 
-    /* JE_drawTextWindow(..., hue 0, brightness 4), plus '~' +4. */
-    event_source[0] = title_palette_colour(&palette, 0x04);
-    event_source[1] = title_palette_colour(&palette, 0x08);
+    /*
+     * GBA crop adaptation: the bottom notice shares the left edge with the
+     * compact HUD, so use Tyrian's own clear-red hue ramp rather than the PC
+     * window's low-contrast grey.  '~' markup keeps its brighter emphasis.
+     */
+    event_source[0] = title_palette_colour(&palette, 0x77);
+    event_source[1] = title_palette_colour(&palette, 0x7b);
     gameplay_overlay_event_bank = gameplay_overlay_best_shared_bank(
         event_source,
         2
@@ -190,6 +258,35 @@ static void gameplay_overlay_prepare_palette(void)
             gameplay_overlay_event_bank,
             0
         );
+
+    /*
+     * PAUSED used to be a 4bpp OBJ in bank 14.  The large-boss compact cache
+     * legitimately time-shares that bank for its second trained palette, so
+     * restoring the glyph tiles could not restore both palettes at once.
+     * Keep the authored FONT_SHAPES colours, but map them into one existing
+     * BG bank and draw the glyphs through the palette-independent BG3 overlay.
+     */
+    for (index = 1; index < 16; index++) {
+        pause_source[index - 1u] =
+            ((const u16 *)(const void *)obj_palette)[
+                OBJ_PAL_PAUSE_TEXT * 16u + index
+            ];
+    }
+    gameplay_overlay_pause_bank = gameplay_overlay_best_shared_bank(
+        pause_source,
+        15
+    );
+    for (index = 1; index < 16; index++) {
+        gameplay_overlay_pause_nibble[index] =
+            gameplay_overlay_pause_coherent_nibble(
+                gameplay_overlay_pause_bank,
+                gameplay_overlay_best_nibble(
+                pause_source[index - 1u],
+                gameplay_overlay_pause_bank,
+                0
+                )
+            );
+    }
 
     /*
      * JE_drawSP replaces the destination hue with color's high nibble and
@@ -376,6 +473,46 @@ static void gameplay_overlay_set_pixel(
         pixels[pixel_offset] = (u8)(
             (pixels[pixel_offset] & 0xf0u) | nibble
         );
+    }
+}
+
+static void gameplay_overlay_draw_pause(void)
+{
+    s16 glyph_x = TYRIAN_GBA_LAYOUT_PAUSED_X;
+    u8 glyph;
+
+    if (!game_paused) return;
+#ifdef AUTOTEST_SCREENSHOT_REWARD
+    if (autotest_screenshot_delay) return;
+#endif
+    for (glyph = 0; glyph < OBJ_PAUSE_GLYPH_COUNT; glyph++) {
+        const u8 *tiles = obj_tiles +
+            (u32)(OBJ_TILE_PAUSE_TEXT + glyph * 2u) * 32u;
+        u8 row;
+
+        for (row = 0; row < 16u; row++) {
+            const u8 *tile_row = tiles +
+                (u16)(row >> 3) * 32u +
+                (u16)(row & 7u) * 4u;
+            u8 column;
+
+            for (column = 0; column < 8u; column++) {
+                u8 packed = tile_row[column >> 1];
+                u8 source_nibble = (column & 1u) ?
+                    (u8)(packed >> 4) :
+                    (u8)(packed & 0x0fu);
+
+                if (source_nibble != 0) {
+                    gameplay_overlay_set_pixel(
+                        (s16)(glyph_x + column),
+                        (s16)(TYRIAN_GBA_LAYOUT_PAUSED_Y + row),
+                        gameplay_overlay_pause_bank,
+                        gameplay_overlay_pause_nibble[source_nibble]
+                    );
+                }
+            }
+        }
+        glyph_x = (s16)(glyph_x + pause_glyph_advances[glyph]);
     }
 }
 
@@ -885,7 +1022,10 @@ static void gameplay_overlay_set_superpixel(
     cell = (u16)((y >> 3) * 32 + (x >> 3));
     if (
         gameplay_overlay_cell_occupied(cell) &&
-        (u8)(gameplay_overlay_map[cell] >> 12) != bank
+        (
+            game_paused ||
+            (u8)(gameplay_overlay_map[cell] >> 12) != bank
+        )
     ) {
         /* Text keeps priority; a 4bpp cell cannot select two banks. */
         return;
@@ -903,8 +1043,21 @@ static void gameplay_overlay_set_superpixel(
 static void gameplay_overlay_draw_superpixels(void)
 {
     s16 index;
+    u8 presentation_budget = MAX_SUPERPIXELS;
 
     if (source_active_superpixels == 0) return;
+    /*
+     * JE_doSP state and its shared RNG stream remain exact.  At a saturated
+     * projectile pool, limiting only the sparse BG3 presentation prevents
+     * 101 particles x five pixel writes from competing with Boss/projectile
+     * rendering.  Hit feedback remains dense; normal loads stay uncapped.
+     */
+    if (
+        active_player_shot_count > 48u &&
+        source_active_superpixels > 48u
+    ) {
+        presentation_budget = 48u;
+    }
     for (index = MAX_SUPERPIXELS - 1; index >= 0; index--) {
         const SourceSuperpixel *pixel = &source_superpixels[index];
         s16 x;
@@ -925,6 +1078,7 @@ static void gameplay_overlay_draw_superpixels(void)
         gameplay_overlay_set_superpixel((s16)(x + 1), y, hue, edge);
         gameplay_overlay_set_superpixel(x, (s16)(y - 1), hue, edge);
         gameplay_overlay_set_superpixel(x, (s16)(y + 1), hue, edge);
+        if (--presentation_budget == 0) break;
     }
 }
 
@@ -1122,6 +1276,7 @@ static void gameplay_overlay_prepare_frame(void)
         source_parity_level.star_active ||
         source_special_astral_visual_active ||
         source_active_superpixels != 0 ||
+        game_paused ||
         source_parity_level.warning_active ||
         gameplay_overlay_message_ticks != 0 ||
         (
@@ -1140,6 +1295,7 @@ static void gameplay_overlay_prepare_frame(void)
     gameplay_overlay_draw_event_message();
     gameplay_overlay_draw_warning();
     gameplay_overlay_draw_level_timer();
+    gameplay_overlay_draw_pause();
     gameplay_overlay_draw_superpixels();
     gameplay_overlay_draw_starfield();
     gameplay_overlay_upload_pending = 1;

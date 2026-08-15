@@ -1255,9 +1255,90 @@ static void autotest_full_loadout_stress_finish(void)
     u16 rng_benchmark_index;
     u8 active_shots = 0;
     u8 index;
+    u8 background2_enabled_snapshot;
+    u8 background2_wrap_active_snapshot;
+    u8 background2_present_snapshot;
+    u8 background2_upload_pending_snapshot;
+    u16 back_move_snapshot;
+    u16 back_move2_snapshot;
+    u8 bg1_scroll_speed_snapshot;
+    u8 bg2_scroll_speed_snapshot;
+    u16 bg1_scroll_pixel_snapshot;
+    u16 bg2_scroll_pixel_snapshot;
+    s8 camera_offset_x_snapshot;
+    s8 camera_offset_y_snapshot;
+    u16 map_x_offset_snapshot;
+    u16 map_x2_offset_snapshot;
+    u16 bg1_hofs_snapshot;
+    u16 bg2_hofs_snapshot;
+    u16 bg1_presentation_scroll_snapshot;
+    u16 bg2_presentation_scroll_snapshot;
+    u16 bg1_camera_scroll_snapshot;
+    u16 bg2_camera_scroll_snapshot;
+    u16 bg1_vofs_snapshot;
+    u16 bg2_vofs_snapshot;
+    u8 background2_over_snapshot;
+    u8 background3_over_snapshot;
+    u8 definition_130_count_snapshot = 0;
+    u8 definition_130_pool_mask_snapshot = 0;
+    u8 definition_130_ground_count_snapshot = 0;
+    u8 definition_132_count_snapshot = 0;
+    u8 definition_132_pool_mask_snapshot = 0;
+    u8 definition_132_ground_count_snapshot = 0;
 
     /* Capture an in-progress Boss window at an exact stress stop point. */
     source_boss_perf_capture_interval();
+    background2_enabled_snapshot = source_background2_enabled;
+    background2_wrap_active_snapshot = source_background2_wrap_active;
+    background2_present_snapshot = source_background2_present();
+    background2_upload_pending_snapshot =
+        source_background2_upload_pending;
+    back_move_snapshot = source_parity_level.back_move;
+    back_move2_snapshot = source_parity_level.back_move2;
+    bg1_scroll_speed_snapshot = bg1_scroll_speed;
+    bg2_scroll_speed_snapshot = bg2_scroll_speed;
+    bg1_scroll_pixel_snapshot = bg1_scroll_pixel;
+    bg2_scroll_pixel_snapshot = bg2_scroll_pixel;
+    camera_offset_x_snapshot = source_camera_offset_x;
+    camera_offset_y_snapshot = source_camera_offset_y;
+    map_x_offset_snapshot = source_parity_level.presentation_map_x_offset;
+    map_x2_offset_snapshot = source_parity_level.presentation_map_x2_offset;
+    bg1_hofs_snapshot = source_background_hofs(0);
+    bg2_hofs_snapshot = source_background_hofs(1);
+    bg1_presentation_scroll_snapshot = bg1_presentation_scroll_pixel;
+    bg2_presentation_scroll_snapshot = bg2_presentation_scroll_pixel;
+    bg1_camera_scroll_snapshot = background_presentation_scroll_pixel(
+        0,
+        source_camera_presentation_offset_y
+    );
+    bg2_camera_scroll_snapshot = background_presentation_scroll_pixel(
+        1,
+        source_camera_presentation_offset_y
+    );
+    bg1_vofs_snapshot = source_background_vofs(0);
+    bg2_vofs_snapshot = source_background_vofs(1);
+    background2_over_snapshot = source_parity_level.background2_over;
+    background3_over_snapshot = source_parity_level.background3_over;
+    for (index = 0; index < OT_ENEMY_COUNT; index++) {
+        const OtEnemy *enemy = &source_parity_level.enemy[index];
+        u8 pool_bit;
+
+        if (source_parity_level.enemy_avail[index] == 1) continue;
+        pool_bit = (u8)(1u << (index / OT_ENEMY_POOL_SIZE));
+        if (enemy->enemy_definition_id == 130u) {
+            definition_130_count_snapshot++;
+            definition_130_pool_mask_snapshot |= pool_bit;
+            if (enemy->enemyground) {
+                definition_130_ground_count_snapshot++;
+            }
+        } else if (enemy->enemy_definition_id == 132u) {
+            definition_132_count_snapshot++;
+            definition_132_pool_mask_snapshot |= pool_bit;
+            if (enemy->enemyground) {
+                definition_132_ground_count_snapshot++;
+            }
+        }
+    }
 
     /*
      * The packed-collision differential test below deliberately reuses and
@@ -1304,9 +1385,15 @@ static void autotest_full_loadout_stress_finish(void)
     sram[2] = 'W';
     sram[3] = '8';
     sram[4] = 1;
+#if TYRIAN_GBA_STRESS_LOADOUT
     sram[5] =
         stress_loadout_valid &&
         telemetry_stress_loadout_failures == 0;
+#else
+    sram[5] =
+        source_parity_level.assets_valid &&
+        telemetry_stress_loadout_failures == 0;
+#endif
     sram[6] = game_state;
     sram[7] = mmActive() ? 1 : 0;
     sram_write_u32(8, TYRIAN_GBA_DETAIL_LEVEL);
@@ -1825,6 +1912,178 @@ static void autotest_full_loadout_stress_finish(void)
         9460,
         autotest_boss_manifest_lvl_snapshot
     );
+    /* Additive release-path compact Boss cache diagnostics. */
+    sram_write_u32(9464, telemetry_boss_compact_context_frames);
+    sram_write_u32(9468, telemetry_boss_compact_pressure_frames);
+    sram_write_u32(9472, telemetry_boss_compact_active_frames);
+    sram_write_u32(9476, telemetry_boss_compact_activations);
+    sram_write_u32(9480, telemetry_boss_compact_boss_count_max);
+    sram_write_u32(9484, telemetry_boss_compact_full_size_count_max);
+    sram_write_u32(9488, telemetry_boss_compact_rendered_objects);
+    sram_write_u32(9492, autotest_sidekick_graphic[0]);
+    sram_write_u32(9496, autotest_sidekick_graphic[1]);
+    sram_write_u32(9500, autotest_sidekick_cache_tile[0]);
+    sram_write_u32(9504, autotest_sidekick_cache_tile[1]);
+    sram_write_u32(9508, autotest_sidekick_oam_index[0]);
+    sram_write_u32(9512, autotest_sidekick_oam_index[1]);
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    {
+        u8 left = autotest_sidekick_oam_index[0];
+        u8 right = autotest_sidekick_oam_index[1];
+        u8 split_layout_pass = 1;
+        u8 side;
+        u16 left_shadow_bottom = left + 1u < HARDWARE_OAM_ENTRIES ?
+            oam_shadow[left + 1u].attr2 : 0xffffu;
+        u16 right_shadow_bottom = right + 1u < HARDWARE_OAM_ENTRIES ?
+            oam_shadow[right + 1u].attr2 : 0xffffu;
+        u16 left_hardware_bottom = left + 1u < HARDWARE_OAM_ENTRIES ?
+            OAM[left + 1u].attr2 : 0xffffu;
+        u16 right_hardware_bottom = right + 1u < HARDWARE_OAM_ENTRIES ?
+            OAM[right + 1u].attr2 : 0xffffu;
+
+        sram_write_u32(9516, oam_shadow[left].attr2);
+        sram_write_u32(9520, oam_shadow[right].attr2);
+        sram_write_u32(9524, OAM[left].attr2);
+        sram_write_u32(9528, OAM[right].attr2);
+        sram_write_u32(9532, left_shadow_bottom);
+        sram_write_u32(9536, right_shadow_bottom);
+        sram_write_u32(9540, left_hardware_bottom);
+        sram_write_u32(9544, right_hardware_bottom);
+        sram_write_u32(9548, SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE);
+        for (side = 0; side < 2u; side++) {
+            u8 oam_index = autotest_sidekick_oam_index[side];
+
+            if (!source_enemy_cache_tile_is_split(
+                    autotest_sidekick_cache_tile[side]
+                )) {
+                continue;
+            }
+            if (
+                oam_index + 1u >= HARDWARE_OAM_ENTRIES ||
+                (oam_shadow[oam_index].attr2 & 0x03ffu) !=
+                    SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE ||
+                (oam_shadow[oam_index + 1u].attr2 & 0x03ffu) !=
+                    SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE ||
+                (OAM[oam_index].attr2 & 0x03ffu) !=
+                    SOURCE_ENEMY_CACHE_SPLIT_TOP_TILE_BASE ||
+                (OAM[oam_index + 1u].attr2 & 0x03ffu) !=
+                    SOURCE_ENEMY_CACHE_SPLIT_BOTTOM_TILE_BASE
+            ) {
+                split_layout_pass = 0;
+            }
+        }
+        sram_write_u32(9552, split_layout_pass);
+    }
+#else
+    /*
+     * The split release slot does not exist in the synthetic stress VRAM
+     * layout.  Keep the additive telemetry schema readable without making
+     * that unrelated build depend on release-only tile constants.
+     */
+    sram_write_u32(9516, 0);
+    sram_write_u32(9520, 0);
+    sram_write_u32(9524, 0);
+    sram_write_u32(9528, 0);
+    sram_write_u32(9532, 0);
+    sram_write_u32(9536, 0);
+    sram_write_u32(9540, 0);
+    sram_write_u32(9544, 0);
+    sram_write_u32(9548, 0);
+    sram_write_u32(9552, 1);
+#endif
+#if !TYRIAN_GBA_STRESS_LOADOUT
+    /* Additive compact-palette ownership/training diagnostics. */
+    sram_write_u32(9556, source_boss_compact_palette_valid);
+    sram_write_u32(9560, source_boss_compact_primary_table);
+    {
+        u8 group;
+        u8 colour;
+
+        for (group = 0; group < SOURCE_BOSS_COMPACT_PALETTE_COUNT; group++) {
+            u16 bank = (u16)(source_boss_compact_palette_bank(group) * 16u);
+
+            for (colour = 0; colour < 15u; colour++) {
+                sram_write_u32(
+                    9564u + ((u32)group * 15u + colour) * 4u,
+                    source_boss_compact_palette_colour[group][colour]
+                );
+            }
+            for (colour = 0; colour < 16u; colour++) {
+                sram_write_u32(
+                    9684u + ((u32)group * 16u + colour) * 4u,
+                    SPRITE_PALETTE[bank + colour]
+                );
+            }
+        }
+    }
+    sram_write_u32(9812, source_boss_compact_training_position);
+    sram_write_u32(9816, source_boss_compact_training_enemy_count);
+    sram_write_u32(9820, source_boss_compact_training_boss_count);
+    sram_write_u32(9824, source_boss_compact_training_full_size_count);
+    sram_write_u32(9828, source_boss_compact_palette_retrain_count);
+    sram_write_u32(9832, source_boss_compact_trained_boss_count);
+    sram_write_u32(9836, source_boss_compact_palette_refresh_pending);
+    sram_write_u32(9840, source_boss_compact_palette_error_total_max);
+    sram_write_u32(
+        9844,
+        source_boss_compact_palette_error_pixels_at_max
+    );
+    sram_write_u32(9848, source_boss_compact_palette_train_epoch);
+#else
+    sram_write_u32(9556, 0);
+    sram_write_u32(9560, 0);
+    sram_write_u32(9812, 0);
+    sram_write_u32(9816, 0);
+    sram_write_u32(9820, 0);
+    sram_write_u32(9824, 0);
+    sram_write_u32(9828, 0);
+    sram_write_u32(9832, 0);
+    sram_write_u32(9836, 0);
+    sram_write_u32(9840, 0);
+    sram_write_u32(9844, 0);
+    sram_write_u32(9848, 0);
+#endif
+    /* Detail-dispatch/background-motion parity diagnostics. */
+    sram_write_u32(9852, background2_enabled_snapshot);
+    sram_write_u32(9856, background2_wrap_active_snapshot);
+    sram_write_u32(9860, background2_present_snapshot);
+    sram_write_u32(9864, background2_upload_pending_snapshot);
+    sram_write_u32(9868, back_move_snapshot);
+    sram_write_u32(9872, back_move2_snapshot);
+    sram_write_u32(9876, bg1_scroll_speed_snapshot);
+    sram_write_u32(9880, bg2_scroll_speed_snapshot);
+    sram_write_u32(9884, bg1_scroll_pixel_snapshot);
+    sram_write_u32(9888, bg2_scroll_pixel_snapshot);
+    sram_write_u32(9892, source_background2_wrap_threshold_scroll);
+    sram_write_u32(9896, source_background2_wrap_to_scroll);
+    sram_write_u32(9900, source_background2_wrap_count);
+    sram_write_u32(9904, telemetry_ground_attachment_samples);
+    sram_write_u32(9908, telemetry_ground_attachment_camera_samples);
+    sram_write_u32(9912, telemetry_ground_attachment_failures);
+    sram_write_u32(9916, telemetry_ground_attachment_max_delta_x);
+    sram_write_u32(9920, telemetry_ground_attachment_max_delta_y);
+    /* Additive ICESECRET layer/camera diagnostics. */
+    sram_write_u32(9924, (u16)camera_offset_x_snapshot);
+    sram_write_u32(9928, (u16)camera_offset_y_snapshot);
+    sram_write_u32(9932, map_x_offset_snapshot);
+    sram_write_u32(9936, map_x2_offset_snapshot);
+    sram_write_u32(9940, bg1_hofs_snapshot);
+    sram_write_u32(9944, bg2_hofs_snapshot);
+    sram_write_u32(9948, bg1_presentation_scroll_snapshot);
+    sram_write_u32(9952, bg2_presentation_scroll_snapshot);
+    sram_write_u32(9956, bg1_camera_scroll_snapshot);
+    sram_write_u32(9960, bg2_camera_scroll_snapshot);
+    sram_write_u32(9964, bg1_vofs_snapshot);
+    sram_write_u32(9968, bg2_vofs_snapshot);
+    sram_write_u32(9972, definition_130_count_snapshot);
+    sram_write_u32(9976, definition_130_pool_mask_snapshot);
+    sram_write_u32(9980, definition_130_ground_count_snapshot);
+    sram_write_u32(9984, definition_132_count_snapshot);
+    sram_write_u32(9988, definition_132_pool_mask_snapshot);
+    sram_write_u32(9992, definition_132_ground_count_snapshot);
+    sram_write_u32(9996, background2_over_snapshot);
+    sram_write_u32(10000, background3_over_snapshot);
+    sram_write_u32(10004, TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER);
     sram[124] = *(volatile const u8 *)save_type_marker;
     __asm__ volatile("swi 3");
     for (;;) {

@@ -313,7 +313,7 @@ static void autotest_finish(void)
 #if !TYRIAN_GBA_STRESS_LOADOUT
         telemetry_upgrade_loadout_pass == 1 &&
 #endif
-        telemetry_layer_rule_checks == 252 &&
+        telemetry_layer_rule_checks == 258 &&
         telemetry_layer_rule_failures == 0
     );
 #endif

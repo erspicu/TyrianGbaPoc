@@ -440,6 +440,10 @@ ot_apply_damaged_transition(
     uint32_t visits = 0;
 #endif
 
+    if (state->player_shot_collision_mask_active) {
+        state->player_shot_collision_bounds_valid = false;
+    }
+
 #if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
     while (ot_next_active_enemy_for_collision(state, &cursor, &index)) {
 #else
@@ -561,6 +565,8 @@ ot_level_port_begin_player_shot_collision_phase(
 #endif
 
     if (state == 0) return;
+    ot_level_port_invalidate_player_shot_link_status(state);
+    state->player_shot_collision_bounds_valid = false;
 #if !TYRIAN_GBA_ENEMY_ACTIVE_MASK
     state->player_shot_collision_active_mask[0] = 0;
     state->player_shot_collision_active_mask[1] = 0;
@@ -590,6 +596,38 @@ ot_level_port_begin_player_shot_collision_phase(
                 state,
                 index
             );
+            {
+                const OtPlayerShotCollisionSnapshot *snapshot =
+                    &state->player_shot_collision_snapshot[index];
+                int32_t min_x = (int32_t)snapshot->x -
+                    snapshot->radius_x + 1;
+                int32_t max_x = (int32_t)snapshot->x +
+                    snapshot->radius_x - 1;
+                int32_t min_y = (int32_t)snapshot->y -
+                    snapshot->radius_y + 1;
+                int32_t max_y = (int32_t)snapshot->y +
+                    snapshot->radius_y - 1;
+                if (!state->player_shot_collision_bounds_valid) {
+                    state->player_shot_collision_min_x = min_x;
+                    state->player_shot_collision_max_x = max_x;
+                    state->player_shot_collision_min_y = min_y;
+                    state->player_shot_collision_max_y = max_y;
+                    state->player_shot_collision_bounds_valid = true;
+                } else {
+                    if (min_x < state->player_shot_collision_min_x) {
+                        state->player_shot_collision_min_x = min_x;
+                    }
+                    if (max_x > state->player_shot_collision_max_x) {
+                        state->player_shot_collision_max_x = max_x;
+                    }
+                    if (min_y < state->player_shot_collision_min_y) {
+                        state->player_shot_collision_min_y = min_y;
+                    }
+                    if (max_y > state->player_shot_collision_max_y) {
+                        state->player_shot_collision_max_y = max_y;
+                    }
+                }
+            }
             candidates &= candidates - 1u;
         }
     }
@@ -606,6 +644,7 @@ void ot_level_port_end_player_shot_collision_phase(
 {
     if (state == 0) return;
     state->player_shot_collision_mask_active = false;
+    state->player_shot_collision_bounds_valid = false;
 }
 
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
@@ -682,6 +721,17 @@ ot_level_port_player_shot_overlaps(
 #endif
 
     if (state == 0) return false;
+    if (
+        state->player_shot_collision_bounds_valid &&
+        (
+            shot_x < state->player_shot_collision_min_x ||
+            shot_x > state->player_shot_collision_max_x ||
+            shot_y < state->player_shot_collision_min_y ||
+            shot_y > state->player_shot_collision_max_y
+        )
+    ) {
+        return false;
+    }
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
     while (
         ot_next_player_shot_collision_candidate(
@@ -809,6 +859,12 @@ static void ot_apply_player_shot_status(
     if (iced) enemy->iced = 40;
     if (enemy->enemyground) enemy->filter = blast_filter;
     if (target_link != 255) {
+        u32 valid_bit = 1u << (target_link & 31u);
+        u32 *valid_word =
+            &state->player_shot_link_status_valid[target_link >> 5];
+        u16 status_value = (u16)(
+            blast_filter | (iced ? 0x100u : 0u)
+        );
         uint8_t linked_index;
 #if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
         uint8_t cursor = 0;
@@ -816,6 +872,17 @@ static void ot_apply_player_shot_status(
 #ifdef AUTOTEST_FULL_LOADOUT_STRESS
         uint32_t visits = 0;
 #endif
+
+        if (
+            (*valid_word & valid_bit) != 0 &&
+            state->player_shot_link_status_value[target_link] ==
+                status_value
+        ) {
+            /* The directly hit component was refreshed above. */
+            return;
+        }
+        *valid_word |= valid_bit;
+        state->player_shot_link_status_value[target_link] = status_value;
 
 #if TYRIAN_GBA_COLLISION_ACTIVE_DIRECTORY_ENABLED
         while (
@@ -1020,6 +1087,23 @@ OT_PACKED_C_REFERENCE_NAME(
     (void)damage;
 #endif
     if (state == 0) return;
+#if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
+    if (state->player_shot_collision_bounds_valid) {
+        int32_t shot_max_x = (int32_t)shot_x +
+            (int32_t)radius_w * 2;
+        int32_t shot_max_y = (int32_t)shot_y +
+            (int32_t)radius_h * 2;
+
+        if (
+            shot_max_x < state->player_shot_collision_min_x ||
+            shot_x > state->player_shot_collision_max_x ||
+            shot_max_y < state->player_shot_collision_min_y ||
+            shot_y > state->player_shot_collision_max_y
+        ) {
+            return;
+        }
+    }
+#endif
 
 #if TYRIAN_GBA_PLAYER_SHOT_ACTIVE_MASK
     while (
@@ -1097,6 +1181,54 @@ OT_PACKED_C_REFERENCE_NAME(
 }
 #endif
 
+IWRAM_CODE ARM_CODE __attribute__((noinline, noclone)) void
+ot_level_port_collide_player_shot_packed_snapshot_bounded(
+    OtLevelPortState *state,
+    int16_t shot_x,
+    int16_t shot_y,
+    OtShotCollisionResult *result,
+    uint32_t damage_and_radii
+)
+{
+#if TYRIAN_GBA_COLLISION_LAZY_RESULT
+    if (result == 0) return;
+    if (state != 0 && state->player_shot_collision_bounds_valid) {
+        int32_t shot_max_x = (int32_t)shot_x +
+            (int32_t)((damage_and_radii >> 8) & 0xffu) * 2;
+        int32_t shot_max_y = (int32_t)shot_y +
+            (int32_t)((damage_and_radii >> 16) & 0xffu) * 2;
+
+        if (
+            shot_max_x < state->player_shot_collision_min_x ||
+            shot_x > state->player_shot_collision_max_x ||
+            shot_max_y < state->player_shot_collision_min_y ||
+            shot_y > state->player_shot_collision_max_y
+        ) {
+            /* Lazy-result contract: a miss promises only collided=false. */
+            result->collided = false;
+            return;
+        }
+    }
+#endif
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm(
+        state,
+        shot_x,
+        shot_y,
+        result,
+        damage_and_radii
+    );
+#else
+    ot_level_port_collide_player_shot_packed_snapshot_asm(
+        state,
+        shot_x,
+        shot_y,
+        result,
+        damage_and_radii
+    );
+#endif
+}
+
 #undef OT_BUILD_PACKED_C_REFERENCE
 #undef OT_PACKED_C_REFERENCE_ATTRIBUTES
 #undef OT_PACKED_C_REFERENCE_NAME
@@ -1165,7 +1297,7 @@ ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm(
     !TYRIAN_GBA_COLLISION_UNSIGNED_RANGE
 #if TYRIAN_GBA_COLLISION_SNAPSHOT_ENABLED
 #define OT_COLLISION_TEST_PACKED_ASM \
-    ot_level_port_collide_player_shot_packed_snapshot_instrumented_asm
+    ot_level_port_collide_player_shot_packed_snapshot_bounded
 #else
 #define OT_COLLISION_TEST_PACKED_ASM \
     ot_level_port_collide_player_shot_packed_instrumented_asm

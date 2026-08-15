@@ -22,25 +22,25 @@ _Static_assert(
     "Boss manifest binary-search indices must fit in u16"
 );
 
-static uint8_t ot_boss_manifest_event_spawn_mask(
-    const OtLevelPortState *state
+uint8_t ot_level_port_boss_manifest_event_info(
+    uint8_t episode,
+    uint16_t lvl_file_number,
+    uint16_t event_index,
+    uint8_t *cohort
 )
 {
     uint32_t key;
     uint16_t low = 0;
     uint16_t high = (uint16_t)OT_BOSS_MANIFEST_ENTRY_COUNT;
 
-    if (
-        state == 0 ||
-        state->selected_episode == 0 ||
-        state->selected_lvl_file_number == 0
-    ) {
+    if (cohort != 0) *cohort = 0;
+    if (episode == 0 || lvl_file_number == 0) {
         return 0;
     }
     key = OT_BOSS_MANIFEST_KEY(
-        state->selected_episode,
-        state->selected_lvl_file_number,
-        state->event_index
+        episode,
+        lvl_file_number,
+        event_index
     );
     while (low < high) {
         uint16_t middle = (uint16_t)(low + (high - low) / 2u);
@@ -56,6 +56,7 @@ static uint8_t ot_boss_manifest_event_spawn_mask(
         low < OT_BOSS_MANIFEST_ENTRY_COUNT &&
         ot_boss_manifest_keys[low] == key
     ) {
+        if (cohort != 0) *cohort = ot_boss_manifest_cohorts[low];
         return ot_boss_manifest_spawn_masks[low];
     }
     return 0;
@@ -68,6 +69,7 @@ static void ot_boss_manifest_mark_event_spawn(
 )
 {
     uint8_t spawn_mask;
+    uint8_t cohort;
 
     if (
         state == 0 ||
@@ -76,10 +78,16 @@ static void ot_boss_manifest_mark_event_spawn(
     ) {
         return;
     }
-    spawn_mask = ot_boss_manifest_event_spawn_mask(state);
+    spawn_mask = ot_level_port_boss_manifest_event_info(
+        state->selected_episode,
+        state->selected_lvl_file_number,
+        state->event_index,
+        &cohort
+    );
     if ((spawn_mask & (1u << enemy_type_offset)) == 0) return;
     state->boss_manifest_active_mask[enemy_index >> 5] |=
         1u << (enemy_index & 31u);
+    state->boss_manifest_cohort[enemy_index] = cohort;
     state->boss_manifest_spawn_count++;
 }
 
@@ -104,6 +112,19 @@ bool ot_level_port_boss_manifest_member(
         state->boss_manifest_active_mask[enemy_index >> 5] &
         (1u << (enemy_index & 31u))
     ) != 0;
+}
+
+uint8_t ot_level_port_boss_manifest_member_cohort(
+    const OtLevelPortState *state,
+    uint8_t enemy_index
+)
+{
+    if (
+        !ot_level_port_boss_manifest_member(state, enemy_index)
+    ) {
+        return 0;
+    }
+    return state->boss_manifest_cohort[enemy_index];
 }
 
 uint32_t ot_level_port_boss_manifest_spawn_count(
@@ -246,6 +267,29 @@ uint32_t ot_level_port_random(OtLevelPortState *state)
      * GBA player adapter instead of introducing a second death-only RNG.
      */
     return ot_mt_rand(state);
+}
+
+ARM_CODE __attribute__((noinline, noclone)) uint32_t
+ot_level_port_random3(
+    OtLevelPortState *state,
+    uint32_t *second,
+    uint32_t *third
+)
+{
+#if TYRIAN_GBA_HOTPATH_ASM
+    uint32_t first = ot_mt_rand_core_asm(&state->rng);
+
+    *second = ot_mt_rand_core_asm(&state->rng);
+    *third = ot_mt_rand_core_asm(&state->rng);
+    state->rng_call_count += 3u;
+    return first;
+#else
+    uint32_t first = ot_mt_rand(state);
+
+    *second = ot_mt_rand(state);
+    *third = ot_mt_rand(state);
+    return first;
+#endif
 }
 
 static int8_t ot_abs_s8(int16_t value)
@@ -781,6 +825,17 @@ static inline void ot_level_port_refresh_player_shot_collision_snapshot(
 }
 #endif
 
+static inline void ot_level_port_invalidate_player_shot_link_status(
+    OtLevelPortState *state
+)
+{
+    memset(
+        state->player_shot_link_status_valid,
+        0,
+        sizeof(state->player_shot_link_status_valid)
+    );
+}
+
 void ot_level_port_set_enemy_avail(
     OtLevelPortState *state,
     uint8_t enemy_index,
@@ -791,10 +846,22 @@ void ot_level_port_set_enemy_avail(
 
     if (state == 0 || enemy_index >= OT_ENEMY_COUNT) return;
     previous = state->enemy_avail[enemy_index];
+    if (state->player_shot_collision_mask_active) {
+        /* Geometry or membership may have changed behind this setter. */
+        state->player_shot_collision_bounds_valid = false;
+    }
+    if (
+        previous != avail &&
+        state->player_shot_collision_mask_active
+    ) {
+        /* A new/released linked component invalidates phase memoization. */
+        ot_level_port_invalidate_player_shot_link_status(state);
+    }
     if (avail == 1 || (previous == 1 && avail != 1)) {
         /* A freed/reused pool slot must not inherit an old Boss identity. */
         state->boss_manifest_active_mask[enemy_index >> 5] &=
             ~(1u << (enemy_index & 31u));
+        state->boss_manifest_cohort[enemy_index] = 0;
     }
     if (previous == 1 && avail != 1) {
         uint16_t generation = (uint16_t)(

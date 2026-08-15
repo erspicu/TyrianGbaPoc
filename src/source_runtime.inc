@@ -467,14 +467,50 @@ static u8 source_autotest_unreachable_stop_ticks;
 static const u8 source_enemy_dynamic_palette_banks[
     SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_COUNT
 ] = {
-    1, 2, 3, 4, 5, 8, 13, 15,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_0,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_1,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_2,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_3,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_4,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_5,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_6,
+    SOURCE_ENEMY_DYNAMIC_PALETTE_BANK_7,
 };
 
+/*
+ * Build-time RGB medoids over every normal and Christmas Sprite2 component.
+ * Hue-specific ramps improve ordinary actors and keep the opaque ice/ground
+ * pixels embedded in destructible structures closer to their 4bpp MAP peers.
+ */
 static const u8 source_enemy_brightness_samples[
-    SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT
-] = {
-    0, 2, 4, 6, 8, 10, 12, 15,
+    16
+][SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT] = {
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_0,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_1,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_2,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_3,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_4,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_5,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_6,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_7,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_8,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_9,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_A,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_B,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_C,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_D,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_E,
+    SPRITE2_PALETTE_BRIGHTNESS_HUE_F,
 };
+
+_Static_assert(
+    SOURCE_ENEMY_BRIGHTNESS_SAMPLE_COUNT == 8,
+    "Sprite2 palette bank layout requires eight samples per hue"
+);
+_Static_assert(
+    SPRITE2_PALETTE_IMPROVEMENT_BASIS_POINTS > 0,
+    "trained Sprite2 palette must improve the uniform baseline"
+);
 
 static u32 source_palette_distance(
     const u8 *left,
@@ -530,7 +566,7 @@ static u8 source_enemy_palette_setup(u8 palette_index)
             );
             u8 source_index = (u8)(
                 hue * 16 +
-                source_enemy_brightness_samples[brightness]
+                source_enemy_brightness_samples[hue][brightness]
             );
             u8 destination =
                 source_enemy_palette_destination(logical);
@@ -558,7 +594,7 @@ static u8 source_enemy_palette_setup(u8 palette_index)
             ) {
                 u8 candidate_index = (u8)(
                     hue * 16 +
-                    source_enemy_brightness_samples[candidate]
+                    source_enemy_brightness_samples[hue][candidate]
                 );
                 u32 distance = source_palette_distance(
                     source_rgb,
@@ -1213,15 +1249,6 @@ static u8 source_enemy_cache_slot_reserved_static(u8 slot)
          */
         return 1;
     }
-#if !TYRIAN_GBA_STRESS_LOADOUT
-    if (
-        slot == SOURCE_ENEMY_CACHE_SPLIT_SLOT &&
-        game_paused
-    ) {
-        /* The lower 32x16 half time-shares the PAUSED glyph bank. */
-        return 1;
-    }
-#endif
 #if TYRIAN_GBA_STRESS_LOADOUT
     (void)slot;
     return 0;
@@ -1885,13 +1912,6 @@ static void source_enemy_cache_begin_frame(void)
             SOURCE_ENEMY_CACHE_FULL_SLOT_COUNT + 1u
         );
     }
-#if !TYRIAN_GBA_STRESS_LOADOUT
-    if (game_paused) {
-        source_enemy_cache_invalidate_slot(
-            SOURCE_ENEMY_CACHE_SPLIT_SLOT
-        );
-    }
-#endif
     if (source_enemy_cache_epoch == 0) {
         u8 index;
 

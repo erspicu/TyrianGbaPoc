@@ -7,6 +7,7 @@ import argparse
 import collections
 import hashlib
 import importlib.util
+import itertools
 import json
 import re
 import struct
@@ -34,7 +35,8 @@ PC_MAP_CELL_HEIGHT = 28
 PC_BG1_FIRST_ROW = 3
 PC_BG1_LAST_ROW = 299
 PC_BG1_INITIAL_ROW = 292
-PC_BG23_FIRST_ROW = 14
+PC_BG2_FIRST_ROW = 0
+PC_BG3_FIRST_ROW = 14
 PC_BG23_LAST_ROW = 599
 PC_BG23_INITIAL_ROW = 592
 GBA_VIEW_CROP_X = (PC_GAME_VIEW_WIDTH - SCREEN_WIDTH) // 2
@@ -45,17 +47,25 @@ GBA_BG1_SOURCE_HEIGHT = (
     (PC_BG1_LAST_ROW - PC_BG1_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
 )
 GBA_BG1_PACK_HEIGHT = (GBA_BG1_SOURCE_HEIGHT + 7) // 8 * 8
-GBA_BG23_PACK_HEIGHT = (
-    (PC_BG23_LAST_ROW - PC_BG23_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
+GBA_BG2_PACK_HEIGHT = (
+    (PC_BG23_LAST_ROW - PC_BG2_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
+)
+GBA_BG3_PACK_HEIGHT = (
+    (PC_BG23_LAST_ROW - PC_BG3_FIRST_ROW + 1) * PC_MAP_CELL_HEIGHT
 )
 GBA_BG1_ROWS = GBA_BG1_PACK_HEIGHT // 8
-GBA_BG23_ROWS = GBA_BG23_PACK_HEIGHT // 8
+GBA_BG2_ROWS = GBA_BG2_PACK_HEIGHT // 8
+GBA_BG3_ROWS = GBA_BG3_PACK_HEIGHT // 8
 GBA_BG1_INITIAL_SCROLL = (
     (PC_BG1_INITIAL_ROW - PC_BG1_FIRST_ROW) * PC_MAP_CELL_HEIGHT
     + GBA_VIEW_CROP_Y
 )
-GBA_BG23_INITIAL_SCROLL = (
-    (PC_BG23_INITIAL_ROW - PC_BG23_FIRST_ROW) * PC_MAP_CELL_HEIGHT
+GBA_BG2_INITIAL_SCROLL = (
+    (PC_BG23_INITIAL_ROW - PC_BG2_FIRST_ROW) * PC_MAP_CELL_HEIGHT
+    + GBA_VIEW_CROP_Y
+)
+GBA_BG3_INITIAL_SCROLL = (
+    (PC_BG23_INITIAL_ROW - PC_BG3_FIRST_ROW) * PC_MAP_CELL_HEIGHT
     + GBA_VIEW_CROP_Y
 )
 # Before the first JE_mainGamePlayerFunctions() call, OpenTyrian leaves all
@@ -260,9 +270,11 @@ assert GBA_VIEW_CROP_Y == 12
 assert GBA_BG_MAP_COLUMNS == 64
 assert GBA_BG1_SOURCE_HEIGHT == 8316
 assert GBA_BG1_ROWS == 1040
-assert GBA_BG23_ROWS == 2051
+assert GBA_BG2_ROWS == 2100
+assert GBA_BG3_ROWS == 2051
 assert GBA_BG1_INITIAL_SCROLL == 8104
-assert GBA_BG23_INITIAL_SCROLL == 16196
+assert GBA_BG2_INITIAL_SCROLL == 16588
+assert GBA_BG3_INITIAL_SCROLL == 16196
 assert GBA_BG12_INITIAL_HOFS == 60
 assert GBA_BG3_INITIAL_HOFS == 84
 
@@ -846,10 +858,86 @@ def build_sprite2_xmas_raw_components(
     return bytes(output), report
 
 
+def train_sprite2_palette_brightness_samples(
+    data_root: Path,
+    sprite2_raw: bytes,
+    sprite2_xmas_raw: bytes,
+) -> tuple[tuple[tuple[int, ...], ...], dict[str, int]]:
+    """Choose the best eight source brightnesses independently per hue.
+
+    GBA 8bpp OBJ pixels share palette memory with the player's 4bpp actors,
+    HUD, effects and compact Boss cache.  The Sprite2 runtime consequently
+    owns 128 entries: eight colours for each of Tyrian's sixteen hue ramps.
+    Train those eight medoids from the complete normal and Christmas raw
+    catalogs instead of assuming one evenly spaced ramp fits every hue.
+    """
+    sample_count = 8
+    source = np.frombuffer(
+        sprite2_raw + sprite2_xmas_raw,
+        dtype=np.uint8,
+    )
+    histogram = np.bincount(
+        source[source != 0],
+        minlength=256,
+    ).reshape(16, 16).astype(np.int64)
+    palette_bytes = (data_root / "palette.dat").read_bytes()
+    palette_count = len(palette_bytes) // (256 * 3)
+    palette = np.frombuffer(
+        palette_bytes,
+        dtype=np.uint8,
+    ).reshape(palette_count, 256, 3)[5].astype(np.int32)
+    candidates = np.asarray(
+        list(itertools.combinations(range(16), sample_count)),
+        dtype=np.intp,
+    )
+    baseline = np.asarray((0, 2, 4, 6, 8, 10, 12, 15), dtype=np.intp)
+    trained: list[tuple[int, ...]] = []
+    baseline_error = 0
+    trained_error = 0
+
+    for hue in range(16):
+        colours = palette[hue * 16 : hue * 16 + 16]
+        distance = (
+            (colours[:, None, :] - colours[None, :, :]) ** 2
+        ).sum(axis=2)
+        baseline_error += int(
+            (
+                histogram[hue] *
+                distance[:, baseline].min(axis=1)
+            ).sum()
+        )
+        errors = (
+            histogram[hue, None, :] *
+            distance[:, candidates].min(axis=2).T
+        ).sum(axis=1)
+        best_index = int(errors.argmin())
+        trained.append(
+            tuple(int(value) for value in candidates[best_index])
+        )
+        trained_error += int(errors[best_index])
+
+    if trained_error >= baseline_error:
+        raise ValueError(
+            "Sprite2 brightness training did not improve the baseline: "
+            f"{baseline_error=} {trained_error=}"
+        )
+    improvement_basis_points = (
+        (baseline_error - trained_error) * 10000 // baseline_error
+    )
+    return tuple(trained), {
+        "sample_count": sample_count,
+        "baseline_error": baseline_error,
+        "trained_error": trained_error,
+        "improvement_basis_points": improvement_basis_points,
+    }
+
+
 def write_sprite2_raw_header(
     output: Path,
     report: dict[str, int | str],
     xmas_report: dict[str, int | str],
+    brightness_samples: tuple[tuple[int, ...], ...],
+    palette_report: dict[str, int],
 ) -> None:
     lines = [
         "#ifndef TYRIAN_GBA_SPRITE2_RAW_META_H",
@@ -904,9 +992,35 @@ def write_sprite2_raw_header(
             f"{xmas_report['roundtrip_components']}u"
         ),
         "",
-        "#endif",
+        (
+            "#define SPRITE2_PALETTE_BRIGHTNESS_SAMPLE_COUNT "
+            f"{palette_report['sample_count']}u"
+        ),
+        (
+            "#define SPRITE2_PALETTE_BASELINE_ERROR "
+            f"{palette_report['baseline_error']}u"
+        ),
+        (
+            "#define SPRITE2_PALETTE_TRAINED_ERROR "
+            f"{palette_report['trained_error']}u"
+        ),
+        (
+            "#define SPRITE2_PALETTE_IMPROVEMENT_BASIS_POINTS "
+            f"{palette_report['improvement_basis_points']}u"
+        ),
         "",
     ]
+    for hue, samples in enumerate(brightness_samples):
+        values = ", ".join(f"{value}u" for value in samples)
+        lines.append(
+            f"#define SPRITE2_PALETTE_BRIGHTNESS_HUE_{hue:X} "
+            f"{{ {values} }}"
+        )
+    lines.extend([
+        "",
+        "#endif",
+        "",
+    ])
     (output / "sprite2_raw_meta.h").write_text(
         "\n".join(lines),
         encoding="ascii",
@@ -6573,7 +6687,11 @@ def repack_obj_tiles(
     if len(boss_bar_tiles) != 4 * 32:
         raise ValueError("PC-style boss bar must occupy exactly four OBJ tiles")
     metadata["OBJ_TILE_BOSS_BAR"] = len(output) // 32
-    metadata["OBJ_PAL_BOSS_BAR"] = 13
+    # Bank 13 is part of the runtime 8bpp Sprite2 palette (PC hues 12/13).
+    # The old assignment let Boss-bar flash colours overwrite deep-green
+    # enemy/projectile shades.  Bank 6 is reserved by the retired static
+    # PLAYER_SHOT atlas and is not used by the source-parity renderer.
+    metadata["OBJ_PAL_BOSS_BAR"] = 6
     output.extend(boss_bar_tiles)
 
     static_tile_count = len(output) // 32
@@ -7325,6 +7443,14 @@ def main() -> None:
     sprite2_xmas_raw, sprite2_xmas_raw_report = (
         build_sprite2_xmas_raw_components(data_root)
     )
+    (
+        sprite2_palette_brightness_samples,
+        sprite2_palette_report,
+    ) = train_sprite2_palette_brightness_samples(
+        data_root,
+        sprite2_raw,
+        sprite2_xmas_raw,
+    )
     (output / "sprite2_raw_components.bin").write_bytes(sprite2_raw)
     (output / "sprite2_xmas_raw_components.bin").write_bytes(
         sprite2_xmas_raw
@@ -7333,6 +7459,8 @@ def main() -> None:
         output,
         sprite2_raw_report,
         sprite2_xmas_raw_report,
+        sprite2_palette_brightness_samples,
+        sprite2_palette_report,
     )
     (output / "sprite2_raw_audit.txt").write_text(
         "\n".join(
@@ -7341,6 +7469,9 @@ def main() -> None:
         ) + "\n" + "\n".join(
             f"xmas_{key}={value}"
             for key, value in sprite2_xmas_raw_report.items()
+        ) + "\n" + "\n".join(
+            f"palette_{key}={value}"
+            for key, value in sprite2_palette_report.items()
         ) + "\n",
         encoding="utf-8",
     )
@@ -7457,7 +7588,7 @@ def main() -> None:
     obj_palette[10 * 32 : 11 * 32] = hud_shield_palette
     obj_palette[11 * 32 : 12 * 32] = hud_armor_palette
     obj_palette[12 * 32 : 13 * 32] = hud_generator_palette
-    obj_palette[13 * 32 : 14 * 32] = boss_bar_palette
+    obj_palette[6 * 32 : 7 * 32] = boss_bar_palette
     obj_palette[14 * 32 : 15 * 32] = pause_palette
     obj_tiles, obj_metadata = repack_obj_tiles(
         gba_obj_tiles,

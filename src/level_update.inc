@@ -157,7 +157,7 @@ static u8 background_schedule_presentation_window(
     u8 active[BACKGROUND_LAYER_COUNT] = {
         1,
         (
-            source_background2_enabled &&
+            source_background2_present() &&
             !source_background2_upload_pending
         ),
         1,
@@ -250,18 +250,26 @@ static void advance_backgrounds(void)
         bg1_step = (u8)bg1_scroll_pixel;
         bg1_scroll_pixel = 0;
     }
-    if (bg2_scroll_delay > 1) {
-        bg2_scroll_delay--;
-    } else {
-        bg2_scroll_delay = bg2_scroll_delay_max;
-        move2 = bg2_scroll_speed;
-    }
-    if (bg2_scroll_pixel >= move2) {
-        bg2_scroll_pixel -= move2;
-        bg2_step = move2;
-    } else {
-        bg2_step = (u8)bg2_scroll_pixel;
-        bg2_scroll_pixel = 0;
+    /*
+     * backgrnd.c advances backPos2/map2YDelay inside draw_background_2().
+     * A smoothie processor gate or an authored over=254/255 sentinel means
+     * that no BG2 draw site runs, so its source cursor must remain frozen as
+     * well as hidden.  This also keeps a later re-enable on the PC phase.
+     */
+    if (source_background2_present()) {
+        if (bg2_scroll_delay > 1) {
+            bg2_scroll_delay--;
+        } else {
+            bg2_scroll_delay = bg2_scroll_delay_max;
+            move2 = bg2_scroll_speed;
+        }
+        if (bg2_scroll_pixel >= move2) {
+            bg2_scroll_pixel -= move2;
+            bg2_step = move2;
+        } else {
+            bg2_step = (u8)bg2_scroll_pixel;
+            bg2_scroll_pixel = 0;
+        }
     }
     if (bg3_scroll_pixel >= bg3_scroll_speed) {
         bg3_scroll_pixel -= bg3_scroll_speed;
@@ -270,6 +278,9 @@ static void advance_backgrounds(void)
         bg3_step = (u8)bg3_scroll_pixel;
         bg3_scroll_pixel = 0;
     }
+    /* Keep the next source tick on the exact phase consumed above. */
+    source_parity_level.map1_y_delay = bg1_scroll_delay;
+    source_parity_level.map2_y_delay = bg2_scroll_delay;
     /* draw_background_3 advances backPos3 before it blits. */
     bg3_presentation_scroll_pixel = bg3_scroll_pixel;
 }
@@ -621,6 +632,9 @@ static void update_logic(void)
     route_stage_start = stress_cycle_counter_read();
 #endif
     update_player();
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+    source_autotest_track_ground_attachment();
+#endif
 #ifdef AUTOTEST_ROUTE_PERF
     route_perf_current_logic_stage[
         ROUTE_PERF_LOGIC_STAGE_PLAYER_UPDATE

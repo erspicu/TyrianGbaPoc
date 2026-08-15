@@ -1,5 +1,23 @@
 /* Scene-to-OAM renderer; contains no gameplay updates. */
 
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+/*
+ * Last submitted Sidekick references.  These diagnostics distinguish a
+ * wrong source graphic from an OAM/OBJ-VRAM ownership mismatch at the exact
+ * screenshot stop point; release builds carry no storage or writes.
+ */
+static u16 autotest_sidekick_graphic[2] EWRAM_BSS;
+static u16 autotest_sidekick_cache_tile[2] EWRAM_BSS;
+static u8 autotest_sidekick_oam_index[2] EWRAM_BSS;
+#endif
+
+static void render_source_enemy_cached_sprite(
+    s16 screen_x,
+    s16 screen_y,
+    u16 tile,
+    u8 priority
+);
+
 static void render_player_at_source_y(
     s16 source_y,
     u8 priority,
@@ -98,6 +116,15 @@ static void render_player_at_source_y(
 
 static bool source_detail_shadows_allowed(void)
 {
+#if !TYRIAN_GBA_DETAIL_HAS_SHADOWS
+    /*
+     * A source background2over==3 event can re-enable BG2 even in the PC 386
+     * profile.  LOW is the GBA performance profile, so that authored layer
+     * transition must not accidentally re-enable decorative OBJ-window
+     * shadows for the player and projectiles.
+     */
+    return false;
+#else
     return
         source_background2_enabled &&
         !source_detail_spotlight_requested &&
@@ -106,6 +133,7 @@ static bool source_detail_shadows_allowed(void)
         !source_detail_wild_active &&
 #endif
         gameplay_filter_brightness_level() == 0;
+#endif
 }
 
 static void render_player_shadow_at_source_y(
@@ -277,6 +305,11 @@ static void render_player_sidekicks(u8 priority)
         };
         tile = source_enemy_cache_acquire(&draw);
         if (tile == 0xffff) continue;
+#ifdef AUTOTEST_FULL_LOADOUT_STRESS
+        autotest_sidekick_graphic[side] = graphic;
+        autotest_sidekick_cache_tile[side] = tile;
+        autotest_sidekick_oam_index[side] = oam_count;
+#endif
         if (draw.size != 0) {
             /*
              * blit_sprite2x2(x - 6, y) places its first 12x14 component at
@@ -288,34 +321,37 @@ static void render_player_sidekicks(u8 priority)
             screen_y = source_world_to_screen_y(
                 (s16)(source_y - 2)
             );
-            put_sprite_8bpp_32(
-                screen_x,
-                screen_y,
-                tile,
-                priority
-            );
-        } else if (source_enemy_cache_tile_is_compact(tile)) {
-            put_sprite_8bpp_16(
-                source_world_to_screen_x(source_x),
-                source_world_to_screen_y(source_y),
-                tile,
-                priority
-            );
         } else {
             /*
-             * A size-0 Sprite2 occupies (8,8)..(23,23) in a full L2 frame.
+             * source_sprite2_l2_build() packs an ordinary size-0 Sprite2 at
+             * (10,9) in its 32x32 L2 frame.  Compensate those exact offsets
+             * so the component's top-left remains at the PC blit_sprite2()
+             * coordinate.  The former -8/-8 compensation shifted both
+             * sidekicks two pixels right and one pixel down.  The runtime's
+             * one-pixel opaque-bound correction then centres the 12-pixel
+             * option art around the converted neutral player silhouette.
              */
-            put_sprite_8bpp_32(
-                source_world_to_screen_x(
-                    (s16)(source_x - 8)
-                ),
-                source_world_to_screen_y(
-                    (s16)(source_y - 8)
-                ),
-                tile,
-                priority
+            screen_x = source_world_to_screen_x(
+                (s16)(source_x - 10)
+            );
+            screen_y = source_world_to_screen_y(
+                (s16)(source_y - 9)
             );
         }
+        /*
+         * Sidekicks share the Sprite2 L1 allocator with authored enemies.
+         * Under Boss pressure that allocator can legally return the
+         * fragmented 32x32 slot (top 32x16 at tile 160, bottom 32x16 at
+         * tile 598).  Use the common renderer so split, compact and ordinary
+         * ownership are all interpreted identically; treating tile 160 as a
+         * contiguous 32x32 OBJ reads unrelated projectile tiles 176..191.
+         */
+        render_source_enemy_cached_sprite(
+            screen_x,
+            screen_y,
+            tile,
+            priority
+        );
     }
 }
 
@@ -842,6 +878,10 @@ static void render_player_shots(
     u8 start;
     u8 wrapped = 0;
     u8 submitted = 0;
+    u8 last_cache_valid = 0;
+    u8 last_shape_table = 0;
+    u16 last_graphic = 0;
+    u16 last_tile = 0xffff;
 
     if (candidates->player_shot_count == 0) {
         source_player_shot_oam_cursor = 0;
@@ -1073,19 +1113,37 @@ static void render_player_shots(
                     OT_COMP_SHAPE_TABLE_SHOTS_SECONDARY :
                     OT_COMP_SHAPE_TABLE_SHOTS_PRIMARY;
             graphic = frame > 500 ? (u16)(frame - 500) : frame;
+            if (
+                last_cache_valid &&
+                shape_table == last_shape_table &&
+                graphic == last_graphic
+            ) {
+                /* Consecutive volley members share one frame.  No cache
+                 * operation can evict this tile between adjacent shots. */
+                tile = last_tile;
+            } else {
 #if TYRIAN_GBA_PROJECTILE_PRECACHE_CULL
-            tile = source_projectile_cache_acquire(
-                shape_table,
-                graphic,
-                1
-            );
+                tile = source_projectile_cache_acquire(
+                    shape_table,
+                    graphic,
+                    1
+                );
 #else
-            tile = source_projectile_cache_acquire(
-                shape_table,
-                graphic,
-                0
-            );
+                tile = source_projectile_cache_acquire(
+                    shape_table,
+                    graphic,
+                    0
+                );
 #endif
+                if (tile != 0xffff) {
+                    last_cache_valid = 1;
+                    last_shape_table = shape_table;
+                    last_graphic = graphic;
+                    last_tile = tile;
+                } else {
+                    last_cache_valid = 0;
+                }
+            }
             if (tile == 0xffff) continue;
             put_sprite_8bpp_16(
                 screen_x,
@@ -2479,7 +2537,7 @@ static void render_game(void)
     presentation_release_held_window = 1;
 #endif
     (void)background_schedule_presentation_window(
-        source_camera_offset_y
+        source_camera_presentation_offset_y
     );
     source_effect_cache_begin_frame();
     oam_count = 0;
@@ -2503,14 +2561,6 @@ static void render_game(void)
         source_parity_level.display_time == 0
     ) {
         render_insert_coin_text();
-    }
-    if (
-        game_paused
-#ifdef AUTOTEST_SCREENSHOT_REWARD
-        && !autotest_screenshot_delay
-#endif
-    ) {
-        render_pause_text();
     }
     render_cash_counter();
     render_player_energy_status();
