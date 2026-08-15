@@ -42,8 +42,8 @@
             span，避免把整個檔案搬到 RAM。
           </p>
           <div class="metric-grid">
-            <div class="metric"><strong>32</strong><span>current ROMFS entries</span></div>
-            <div class="metric"><strong>4.89 MiB</strong><span>ROMFS image</span></div>
+            <div class="metric"><strong>30</strong><span>current ROMFS entries</span></div>
+            <div class="metric"><strong>4.285 MiB</strong><span>ROMFS image</span></div>
             <div class="metric"><strong>0 copies</strong><span>whole-file staging</span></div>
           </div>
 
@@ -82,8 +82,8 @@
           <p>
             ROMFS 不以「目前沒有呼叫」為刪除條件。只有另一份 cartridge
             payload 已完整承接，且 build 能做無損 round-trip 時，才排除重複
-            原始流。目前 SND、TYREND.ANM 與 34 份 <code>newsh*.shp</code>
-            共省下 4,787,313 bytes 的重複 payload；原始檔仍保留在
+            原始流。目前 SND、Christmas SND/SHP、TYREND.ANM 與 34 份
+            <code>newsh*.shp</code> 共省下 5,420,450 bytes 的重複 payload；原始檔仍保留在
             <code>vendor/</code> 作為可重建來源。
           </p>
           <p>

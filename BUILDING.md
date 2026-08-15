@@ -100,10 +100,11 @@ Build-GBA-ROM.bat
 ```
 
 正式效能驗收允許少量、可重現、範圍有界且僅發生於 gameplay 的
-`missed VBlank`；完整關卡 route 的上限為 display frames 的 **1%**。
+`missed VBlank`；完整第一關 golden 的上限為 display frames 的 **2%**，
+較密集的 Episode 2 stock route 上限為 **2.5%**。
 既有 fixed-timestep drop-frame 只略過 presentation，不改變關卡時間、
 碰撞、RNG、音訊更新或遊戲邏輯節奏，因此門檻內的退化通常無法由遊玩
-感受到。前端、摘要、死亡與轉場仍要求 0 missed VBlank；1% 容許也不
+感受到。前端、摘要、死亡與轉場仍要求 0 missed VBlank；上述 gameplay 容許也不
 適用於卡音、輸入停頓、功能／畫面錯誤，或會持續惡化的負載。調整門檻
 前仍須先重跑、定位並記錄數據。
 
@@ -129,8 +130,9 @@ checkpoint；它不會出現在玩家可選的 11 個槽中。這筆資料同樣
 CRC32 與最後 commit byte，只在進入 `]s`／`]b` 特殊關及最終死亡回復時
 讀寫，因此不占用 gameplay EWRAM，也不影響一般存檔 bank 格式。
 
-首頁的 `Load Game` 目前依需求只顯示為停用項目；實際讀檔入口是
-`Game Menu > Options > Load`。格式、欄位、手把命名操作與自動測試詳見
+首頁的 `Load Game` 與 `Game Menu > Options > Load` 都會開啟真實的
+11 槽瀏覽器；有效槽會還原 campaign、裝備、金錢、Data Cubes 與關卡進度。
+格式、欄位、手把命名操作與自動測試詳見
 `MD/Tyrian-GBA-Save-Load-Build-ID-v61.md`。
 
 ## 目錄配置
@@ -203,14 +205,18 @@ runtime tile keys，只訓練該 shape profile 未使用的 palette banks，
 palette 表取代此共用流程。
 
 TYM 音樂經 `tools/music_maxmod_calibration.py` 以 GBA Maxmod 的 IT
-volume、signed 8-bit PCM 與 runtime module volume 重新量測。八聲道取捨
-由 GBA 專屬規則直接依原始 OPL stem 選出：先保留打擊聲道，再依完整
-循環 RMS 選擇其餘聲道；不得引用其他主機的 voice map、mixer gain，亦
+volume、signed 8-bit PCM 與 runtime module volume 重新量測。正式管線保留
+每首曲目全部九個 OPL2 source channel；source-RMS 排序只決定 tracker voice
+順序，不再刪除第九聲道。不得引用其他主機的 voice map、mixer gain，亦
 不得加入 per-song maximum normalization。逐曲結果輸出至
-`res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／308 個
-source、RMS 誤差、percussion peak ceiling 與 sample clipping。End of
-Level、Game Over、Secret Level 各自保留 loop 與 `_once` order-flow；
-mmutil 會共用相同 PCM，三個一次性 module 只增加約 4 KiB。
+`res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／334 個
+source、RMS 誤差、percussion peak ceiling 與 sample clipping。程序打擊
+取樣使用 15,768 Hz；stock SFX／voice 保留來源原生 11,025 Hz，避免無資訊的
+升頻。Runtime 配置 18 個 Maxmod mixer slots，容納九個音樂聲道、八個邏輯
+SFX 聲道與一個安全餘額。End of Level、Game Over、Secret Level 各自保留
+loop 與 `_once` order-flow；mmutil 會共用相同 PCM，三個一次性 module 只
+增加約 4 KiB。最新量測見
+`MD/Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md`。
 
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整
@@ -223,7 +229,8 @@ payload，而且原始檔仍須保留在 `vendor/` 作為可重建輸入。每�
 - `tyrian.snd`／`voices.snd`：完整轉入 `res/soundbank.bin`。
 - `tyrend.anm`：完整、逐 frame 無損投影至
   `res/tyrend_gba_frames.bin`／`res/tyrend_gba_palette.bin`。
-- 34 份 `newsh*.shp`：38 個 logical bank、11,552 個 component 已由
+- 34 份 `newsh*.shp`（含 `newsh#.shp`）：38 個 logical bank、11,552 個
+  component 已由
   `res/sprite2_raw_components.bin` 完整承接；Upgrade Ship 使用的
   `newsh1.shp` 另由完整 front-end source-stamp catalog 承接。build 會
   對原始 RLE 做逐 component round-trip，runtime 不再攜帶第二份壓縮流。

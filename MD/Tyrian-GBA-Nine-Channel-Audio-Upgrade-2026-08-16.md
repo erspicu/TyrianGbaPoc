@@ -46,7 +46,9 @@ Tyrian 的 TYM／OPL2 音樂最多同時描述九個來源聲道。舊版為控�
 
 - bytes：27,090,252（25.835 MiB）；
 - SHA-256：
-  `af4ac2f7557ba303ca682669e453f503eb4f60d2a5395ffd6082724bbd8a5ddb`；
+  `e2440d9b393723b31735c58e343f4465863e4c5188348156990db7a4bf08f7b0`；
+- 建置來源 commit：`52b960bf6232d5ae5ea6d324c0f28eb983e50b8d`；
+- 正式 GitHub Release：`v89`；
 - 相較八聲道參考 ROM 增加 154,432 bytes；
 - 距 32 MiB cartridge 上限仍約有 6.16 MiB。
 

@@ -1,5 +1,9 @@
 # TyrianGbaPoc
 
+[Official website](https://erspicu.github.io/TyrianGbaPoc/) ·
+[Latest release (v89)](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v89) ·
+[Build guide](BUILDING.md)
+
 TyrianGbaPoc is an in-progress Game Boy Advance port of Tyrian, driven by the
 original Tyrian 2.1 data and OpenTyrian source behaviour.
 
@@ -11,9 +15,24 @@ problems, the answer proved to be yes. The project therefore changed direction
 from a one-level proof of concept to an effort to build a broadly complete,
 maintainable and source-faithful GBA port.
 
-It is still under active development. Some menus, campaign paths and less
-common gameplay behaviours remain work in progress, but the project is no
-longer designed as a throwaway demo.
+It remains an active fan project rather than an official release. The main
+frontend, save/load, campaign and combat flows are connected, all 62 playable
+stock sections participate in data regression, and uncommon routes and
+equipment combinations continue to receive source-parity QA.
+
+## Current LOW-detail build
+
+All images below are unmodified 240x160 captures from the current GBA ROM in
+mGBA. The public v89 build uses the production **LOW Detail / Normal Speed**
+profile, normal damage, and normal campaign equipment.
+
+| Live combat | Multi-part boss stress |
+|---|---|
+| ![Episode 4 SURFACE gameplay in the current LOW build](Website/assets/images/gallery/episode4-surface-current.png) | ![Multi-part boss and dense weapon effects in the current LOW build](Website/assets/images/gallery/boss-stress-current.png) |
+
+| Source-driven Game Menu | Upgrade Ship |
+|---|---|
+| ![Current Game Menu](Website/assets/images/gallery/game-menu-current.png) | ![Current Upgrade Ship equipment interface](Website/assets/images/gallery/upgrade-ship-current.png) |
 
 ## What already works
 
@@ -28,7 +47,8 @@ longer designed as a throwaway demo.
   source coordinates and the GBA performs only the final 240x160 crop.
 - All 128 GBA OAM entries, palette-aware Sprite2 caching and build-time
   lossless expansion of the stock shape banks.
-- Tracker music, sound effects and voices through Maxmod.
+- All 41 music tracks with all nine authored OPL2 source channels retained,
+  plus stock sound effects and voices through an 18-slot Maxmod mixer.
 - Fixed-timestep gameplay with controlled frame dropping under unusually heavy
   scenes, without slowing the game clock.
 - Automated mGBA regressions for gameplay, episodes, menus, Demo, JukeBox,
@@ -103,10 +123,14 @@ the highlighted title item. The same load browser remains available through
 
 ## Downloads
 
-Playable milestone ROMs are published as GitHub Release assets rather than
-committed to the source tree:
+The current formal release is
+[v89 — Full 9-Channel Audio Release](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v89).
+Its LOW-detail ROM is published as a GitHub Release asset rather than committed
+to the source tree:
 
-<https://github.com/erspicu/TyrianGbaPoc/releases>
+- [Download `TyrianGBA-v89-low.gba`](https://github.com/erspicu/TyrianGbaPoc/releases/download/v89/TyrianGBA-v89-low.gba)
+- Size: 27,090,252 bytes (25.835 MiB)
+- SHA-256: `e2440d9b393723b31735c58e343f4465863e4c5188348156990db7a4bf08f7b0`
 
 Use legally obtained Tyrian data and an emulator or hardware environment
 appropriate for your jurisdiction.
@@ -118,7 +142,8 @@ appropriate for your jurisdiction.
 - `tools/`: reproducible asset/build/test scripts.
 - `TyrianSaveEditor/`: source-data-backed WinForms and CLI SRAM editor.
 - `MD/`: detailed parity, architecture and performance research notes.
-- `Website/`: local project website source.
+- `Website/`: bilingual official project website source and current capture
+  gallery.
 
 Third-party licenses and upstream locations are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). This project is based in

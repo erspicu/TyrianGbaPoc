@@ -124,9 +124,10 @@
             <div class="metric"><strong>41 = 41</strong><span>Episode 2 soft／fixed missed VBlank</span></div>
           </div>
           <p>
-            Episode 2 的 High／Normal 壓力路線中，25-row 柔性鏡頭與固定 crop
+            原始 Episode 2 High／Normal A/B 中，25-row 柔性鏡頭與固定 crop
             都是 41 missed VBlanks；也就是增加視野活動範圍後，背景換列成本仍回到
-            固定鏡頭基線。dynamic frame drop 保存的 held window 也使用
+            固定鏡頭基線。v89 LOW 正式版沿用相同 camera 與 ownership band；
+            dynamic frame drop 保存的 held window 也使用
             camera-adjusted scroll，延後 presentation 時不會提前釋放仍在畫面上的 row。
           </p>
 

@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 如何用確定物件身分、Boss manifest、單一候選快照與公平輪替，在 GBA 的 128 OAM 與有限 OBJ VRAM 內保住玩法物件。">
+  <meta name="theme-color" content="#05070c">
+  <title>OAM 與圖形快取的可靠資源排程 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/i18n.js" defer></script>
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="../assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a>
+        <a href="index.html" aria-current="page">研究筆記</a>
+        <a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>OAM scheduling</span></nav>
+        <p class="eyebrow">Research 09 / Presentation ownership</p>
+        <h1>先確定「它是誰」，再分配 128 個 OAM。</h1>
+        <p class="lede">
+          高負荷畫面不能讓先被迴圈走到的爆炸拿走所有 OBJ。可靠的排程必須讓
+          物件分類、OAM admission 與圖形快取共享同一份事實，先保住會影響玩法
+          的內容，再讓裝飾效果公平使用剩餘硬體。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="failure">真正的失效不只一種</h2>
+          <p>
+            GBA 全畫面最多提交 128 個 OBJ，同一掃描線還有更小的像素預算；
+            Tyrian 的多部件 Boss、玩家與敵方彈幕、Sidekick、獎賞及爆炸可能同時
+            超過兩者。更隱蔽的是 OBJ VRAM 快取：敵人仍存在、仍可碰撞，卻可能
+            因低優先動畫先占滿圖形格而成為透明物件。
+          </p>
+          <div class="callout warning">
+            單純把爆炸排到 OAM 尾端仍不夠。如果它已先污染共享圖形快取，
+            後面的 Boss 即使取得 OAM，也沒有正確 tile 可以顯示。
+          </div>
+
+          <h2 id="identity">物件身分不能靠座標或圖號猜</h2>
+          <p>
+            玩家、玩家子彈、敵方子彈與效果分屬固定 owning pool，可直接取得確定
+            類別。Boss components 與一般敵人共用 enemy pool，則由 build 工具掃描
+            四章全部 LVL 的 Event 79、link alias、spawn cohort 與 group-control
+            event，產生通用 Boss identity manifest。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>62</strong><span>scanned playable sections</span></div>
+            <div class="metric"><strong>36</strong><span>Boss levels discovered</span></div>
+            <div class="metric"><strong>726</strong><span>Boss spawn events</span></div>
+          </div>
+          <p>
+            Runtime 在 spawn 當下以 <code>(slot, generation)</code> 綁定身分；零件在
+            登場動畫中分離或移動，仍是同一個 Boss。slot 釋放後 generation 改變，
+            新敵人不會繼承舊身分。這也讓血條尚未出現的前置登場階段就能取得
+            Boss 優先權，而不必為個別關卡寫死 link 清單。
+          </p>
+
+          <h2 id="snapshot">一張候選快照，貫穿三個決策</h2>
+          <p>
+            每個 presentation frame 只建立一次候選目錄，預先保存 screen coordinate、
+            可見性、OAM 成本、draw stage 與 owning class。需求計數、圖形快取預鎖、
+            OAM admission 與最後 render 都讀同一份 snapshot，不會在四次 pool 掃描間
+            得到彼此矛盾的分類。
+          </p>
+          <ol class="process-list">
+            <li><strong>Gameplay first.</strong> 玩家、Boss 結構、一般敵人及主要敵我子彈先取得 OAM 與 cache。</li>
+            <li><strong>Cosmetic remainder.</strong> 爆炸、短命效果與陰影只使用剩餘額度。</li>
+            <li><strong>Fair rotation.</strong> 超額候選從上次停止位置續跑，不讓固定低索引永遠顯示、其他物件永遠消失。</li>
+            <li><strong>Atomic upload.</strong> Pending upload 帶 ownership generation；資源被重用後，舊 DMA 工作不能覆寫新 tile。</li>
+          </ol>
+
+          <h2 id="pressure">超過硬體上限時，退化也要可預期</h2>
+          <p>
+            最壞壓力研究曾量到同一場景提出 223 個 OAM 需求。排程仍只提交硬體允許
+            的 128 個：敵人淘汰為 0、敵人快取預鎖失敗為 0，低優先爆炸承擔主要
+            裁切；若連結構物本身都超量，結構物 admission 也會跨 presentation frame
+            輪替。更新、碰撞、傷害與原始 pool 順序完全不變。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>223 → 128</strong><span>requested / committed OAM</span></div>
+            <div class="metric"><strong>0</strong><span>enemy OAM culls</span></div>
+            <div class="metric"><strong>149</strong><span>cosmetic culls under stress</span></div>
+          </div>
+          <p>
+            候選快照、合併 prime、飽和需求計數、稀疏／密集混合掃描與無 modulo
+            的兩段輪替，讓同一壓力測試 render cycles 再下降 3.86%，完成一張畫面的
+            平均成本下降 6.01%。這類分支繁多、資料導向的排程保留在最佳化 C；
+            實測 ARM 化 bit-scan 反而較慢，沒有為「用了組語」犧牲 IWRAM。
+          </p>
+
+          <h2 id="cache">Cache ownership 是同一套規則的另一半</h2>
+          <p>
+            Boss compact cache 將 32×32 Sprite2 從 1 KiB 8bpp 格轉成 512-byte 4bpp
+            畫布，並以關卡 palette 訓練兩組可見色，讓大型 Boss 的 40 個以上部件
+            可同時存在。一般 L1/L2、projectile cache、split Sidekick 與 compact
+            cache 都驗證 generation 及 layout；例如 fragmented 32×32 Sidekick 必須
+            以兩個 32×16 OBJ 拼接，不能把相鄰 cache 的 tile 當成下半部。
+          </p>
+          <figure class="gallery-item">
+            <div class="screenshot-card">
+              <img src="../assets/images/gallery/boss-stress-current.png" alt="v89 LOW 正式管線中的多部件 Boss、玩家彈幕與爆炸壓力畫面" width="240" height="160" loading="lazy">
+            </div>
+            <figcaption><span>v89 · LOW Detail</span><span>Boss / projectile / effect admission</span></figcaption>
+          </figure>
+
+          <h2 id="rule">最終原則</h2>
+          <p>
+            128 OAM 是硬限制，但「哪個物件先消失」是軟體設計。當分類來自資料
+            ownership、Boss 身分在 build 與 runtime 都可驗證、OAM 與 cache 共用
+            admission snapshot，超載就能退化成可控的低優先閃爍，而不是偶發的
+            透明敵人、Boss 缺件或玩家武器被錯圖污染。
+          </p>
+        </article>
+
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul>
+            <li><a href="#failure">失效類型</a></li>
+            <li><a href="#identity">確定物件身分</a></li>
+            <li><a href="#snapshot">候選快照</a></li>
+            <li><a href="#pressure">超載退化</a></li>
+            <li><a href="#cache">Cache ownership</a></li>
+            <li><a href="#rule">最終原則</a></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>TyrianGbaPoc 技術研究 · <span data-year></span></div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="audio.html">上一篇：Audio pipeline</a>
+        <a href="index.html">全部研究</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

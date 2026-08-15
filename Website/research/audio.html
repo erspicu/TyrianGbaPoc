@@ -36,8 +36,8 @@
         <h1>不只把聲音放大，而是保留原曲內部的關係。</h1>
         <p class="lede">
           PC 原版的 OPL2 音樂不能原封不動交給 GBA 播放。本專案將事件、音色與
-          聲道關係轉成 Maxmod 可負擔的 tracker／PCM 表示，並以離線量測修正聲道
-          響度、鼓聲瞬態、有限提示曲與場景切換。
+          聲道關係轉成 Maxmod 可負擔的 tracker／PCM 表示，完整保留九個 OPL2
+          source channel，並以離線量測修正聲道響度、鼓聲瞬態、有限提示曲與場景切換。
         </p>
       </div>
     </section>
@@ -49,14 +49,15 @@
           <p>
             音樂仍由 ROMFS 的 <code>music.mus</code> 與原始 song ID 決定流程；
             build 端使用 41 首 TYM 表示保存 LDS／OPL2 pattern、patch、note、
-            channel volume 與 carrier total-level，再轉成 Maxmod 的 IT modules。
+            channel volume 與 carrier total-level，再轉成 Maxmod 的 IT modules；
+            41 首中實際使用第九聲道的 26 首不再刪除最低能量聲部。
             音效則直接由 <code>tyrian.snd</code> 與 <code>voices.snd</code>
             拆出原始 8-bit PCM。最後由 <code>mmutil</code> 組成同一份
             <code>soundbank.bin</code>。
           </p>
           <div class="metric-grid">
             <div class="metric"><strong>41</strong><span>music modules</span></div>
-            <div class="metric"><strong>308</strong><span>calibrated OPL sources</span></div>
+            <div class="metric"><strong>334</strong><span>calibrated OPL sources</span></div>
             <div class="metric"><strong>29 + 9</strong><span>SFX + voice samples</span></div>
           </div>
           <div class="callout">
@@ -86,8 +87,8 @@
             <li>8-bit 量化後重新量測，clipping 或缺少 target 會讓 build 失敗。</li>
           </ul>
           <div class="metric-grid">
-            <div class="metric"><strong>8.572 dB</strong><span>legacy mean absolute error</span></div>
-            <div class="metric"><strong>0.154 dB</strong><span>calibrated mean absolute error</span></div>
+            <div class="metric"><strong>14.062 dB</strong><span>legacy mean absolute error</span></div>
+            <div class="metric"><strong>0.160 dB</strong><span>calibrated mean absolute error</span></div>
             <div class="metric"><strong>0</strong><span>clipped samples</span></div>
           </div>
 
@@ -99,7 +100,8 @@
             RMS target，也不製造刺耳爆點。
           </p>
           <p>
-            程序鼓聲依類型使用不同 sample length，不再共用同一段 46 ms noise。
+            程序鼓聲以 GBA mixer 原生 15,768 Hz 產生，並依類型使用不同 sample
+            length，不再共用同一段 46 ms noise。
             每個 one-shot 使用 1.5 ms smoothstep attack 與 5 ms release，並只移除
             極低頻 DC；沒有對全部曲目強套 120 Hz high-pass 或 8 kHz shelf，
             避免把不同 Tyrian 音色 EQ 成同一種聲音。
@@ -153,9 +155,10 @@
           <h2 id="verification">把聽感變成可重建的證據</h2>
           <p>
             Build 會輸出逐曲、逐 source 的 gain、RMS error、peak ceiling、
-            clipping 與 track mapping 報告；回歸另驗證 41 首 catalog、三首
-            finite cues、場景淡出／靜音／淡入步數、自然停止次數與所有 source
-            SFX ID。人耳 A/B 仍不可取代，但每次修改不必再從零猜測「哪個聲道變大」。
+            clipping 與 track mapping 報告；回歸另驗證 41 首／334 個 OPL sources、
+            三首 finite cues、18 個 mixer slots、場景淡出／靜音／淡入步數、自然
+            停止次數與所有 source SFX ID。人耳 A/B 仍不可取代，但每次修改不必
+            再從零猜測「哪個聲道變大」。
           </p>
           <div class="callout warning">
             離線量測不是宣稱已取得實機 LUFS 真值。它提供固定、可重現的比較基準；
@@ -184,7 +187,7 @@
       <div>TyrianGbaPoc 技術研究 · <span data-year></span></div>
       <nav class="footer-links" aria-label="頁尾導覽">
         <a href="palette-training.html">上一篇：Palette training</a>
-        <a href="lava-water-wave-pressure.html">下一篇：Wave pressure</a>
+        <a href="oam-resource-scheduling.html">下一篇：OAM scheduling</a>
         <a href="index.html">全部研究</a>
         <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
       </nav>

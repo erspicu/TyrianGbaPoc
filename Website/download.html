@@ -48,10 +48,17 @@
         <div class="release-panel reveal">
           <div>
             <p class="eyebrow">Latest published milestone</p>
-            <h2>GitHub Releases</h2>
-            <p>選擇最新版本，下載附加的 <code>.gba</code> 檔與閱讀該版本的變更、測試結果及已知限制。</p>
+            <h2>v89 · Full 9-Channel Audio Release</h2>
+            <p>
+              正式 LOW／Normal 版本，正常傷害、一般劇情裝備，包含 41 首完整
+              九聲道 OPL2 轉換音樂。ROM 為 27,090,252 bytes（25.835 MiB）。
+            </p>
+            <p><strong>SHA-256：</strong><code>e2440d9b393723b31735c58e343f4465863e4c5188348156990db7a4bf08f7b0</code></p>
           </div>
-          <a class="button button-primary" href="https://github.com/erspicu/TyrianGbaPoc/releases/latest" rel="external">開啟最新 Release <span aria-hidden="true">↗</span></a>
+          <div class="button-row">
+            <a class="button button-primary" href="https://github.com/erspicu/TyrianGbaPoc/releases/download/v89/TyrianGBA-v89-low.gba" rel="external">下載 v89 LOW ROM <span aria-hidden="true">↓</span></a>
+            <a class="button" href="https://github.com/erspicu/TyrianGbaPoc/releases/tag/v89" rel="external">版本說明與校驗碼 <span aria-hidden="true">↗</span></a>
+          </div>
         </div>
 
         <div class="callout warning">
@@ -96,8 +103,9 @@
           <h2 id="profiles">可調整設定</h2>
           <p>
             根目錄 <code>Configure.h</code> 集中管理開發用無敵模式、極限武器負荷、
-            HUD 與選單座標。Detail Level 可選 Low、Normal、High、Pentium；
-            Game Speed 提供 Low、Normal。Release 預設值以每版說明為準。
+            HUD 與選單座標。Detail Level 可選 Low、Normal、High、Pentium、
+            Custom；Game Speed 提供 Low、Normal。正式發佈預設固定使用
+            <strong>LOW Detail／Normal Speed</strong>，其他等級保留給研究與比較。
           </p>
 
           <h2 id="legal">資料與權利</h2>

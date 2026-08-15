@@ -59,7 +59,7 @@
             <div class="hardware-stat"><strong>240×160</strong><span>1:1 final crop</span></div>
             <div class="hardware-stat"><strong>128</strong><span>OAM entries</span></div>
             <div class="hardware-stat"><strong>3 layers</strong><span>independent BG</span></div>
-            <div class="hardware-stat"><strong>32 MiB</strong><span>ROM address space</span></div>
+            <div class="hardware-stat"><strong>9 voices</strong><span>complete OPL2 score</span></div>
           </div>
         </div>
       </div>
@@ -105,7 +105,7 @@
               <li><span>關卡事件</span><strong>Source-driven</strong></li>
               <li><span>圖層</span><strong>3 scrolling BG</strong></li>
               <li><span>Sprite</span><strong>128 OAM + L1/L2 cache</strong></li>
-              <li><span>音訊</span><strong>Tracker / SFX / voices</strong></li>
+              <li><span>音訊</span><strong>9 OPL / SFX / voices</strong></li>
               <li><span>時序</span><strong>Fixed tick + frame drop</strong></li>
               <li><span>驗證</span><strong>mGBA regression suite</strong></li>
             </ul>
@@ -122,9 +122,9 @@
             <h2>不只是一張能動的畫面。</h2>
           </div>
           <p>
-            目前已打通開頭、設定選單、Game Menu、Upgrade Ship、Next Level、
-            Demo、JukeBox、關卡、死亡與破關統計等主要流程；campaign 與少見分支
-            仍持續往完整版本推進。
+            目前已打通開頭、設定選單、存讀檔、Game Menu、Upgrade Ship、
+            Next Level、Demo、JukeBox、關卡、死亡與破關統計等主要流程；四章
+            62 個 playable sections 都納入資料回歸，少見路線與裝備組合持續 QA。
           </p>
         </div>
         <div class="card-grid">
@@ -151,7 +151,7 @@
           <article class="card reveal">
             <span class="card-index">05 / AUDIO</span>
             <h3>音樂、音效與語音</h3>
-            <p>原版曲目轉入 tracker soundbank，關卡歌曲、爆炸與打擊音效、Boss／Data Cube 等語音依流程播放。</p>
+            <p>41 首曲目完整保留九個 OPL2 source channel；關卡歌曲、爆炸與打擊音效、Boss／Data Cube 語音仍依原版 ID 播放。</p>
           </article>
           <article class="card reveal">
             <span class="card-index">06 / FRONTEND</span>
@@ -201,6 +201,11 @@
             <h3>資料不能每關手工補</h3>
             <p>原版 ROMFS 是單一真實來源。通用 loader、section offset index 與完整 bank 轉換取代 per-level Python 對照表，才能把同一套方法延伸到後續章節。</p>
           </article>
+          <article class="engineering-item reveal">
+            <span class="number">06</span>
+            <h3>128 個 OAM 必須分配，而非搶先者全拿</h3>
+            <p>由 owning pool 與 Boss manifest 確定物件身分，先保障玩家、Boss、敵人與玩法子彈；爆炸以公平輪替使用餘額，cache admission 也沿用同一份 presentation snapshot。</p>
+          </article>
         </div>
       </div>
     </section>
@@ -239,7 +244,7 @@
         <div class="gallery">
           <figure class="gallery-item reveal">
             <div class="screenshot-card"><img src="assets/images/gallery/episode1-multilayer-current.png" alt="目前版本第一章第一關的多圖層岩地與冰層場景" width="240" height="160" loading="lazy"></div>
-            <figcaption><span>Episode 1 多圖層場景</span><span>High detail / soft crop</span></figcaption>
+            <figcaption><span>Episode 1 多圖層場景</span><span>LOW detail / soft crop</span></figcaption>
           </figure>
           <figure class="gallery-item reveal">
             <div class="screenshot-card"><img src="assets/images/gallery/episode4-surface-current.png" alt="目前版本第四章 SURFACE 關卡的沙地與樹木場景" width="240" height="160" loading="lazy"></div>
@@ -294,8 +299,8 @@
           </p>
         </div>
         <div class="research-grid">
-          <a class="research-link reveal" href="research/lava-water-wave-pressure.html">
-            <span><strong>Lava／Water 波紋壓力控制</strong><p>同時保留完整彈幕與正常波紋，讓極限負載不再放大成水平橫帶。</p></span>
+          <a class="research-link reveal" href="research/oam-resource-scheduling.html">
+            <span><strong>OAM 與圖形快取的可靠資源排程</strong><p>確定分類、Boss 預先身分、玩法物件優先與低優先特效公平輪替。</p></span>
             <span class="arrow" aria-hidden="true">↗</span>
           </a>
           <a class="research-link reveal" href="research/palette-training.html">
@@ -335,8 +340,9 @@
           <p class="eyebrow">Try the current build</p>
           <h2>在模擬器或真實硬體上試玩。</h2>
           <p>
-            ROM 以 GitHub Release 資產提供，不存進原始碼 Git。專案仍在開發，
-            請先閱讀版本說明與已知限制；也可以直接從獨立建置環境自行產生 ROM。
+            v89 正式版採 LOW Detail、Normal Speed、正常傷害與一般劇情裝備，
+            並包含完整九聲道音訊。ROM 以 GitHub Release 資產提供，不存進
+            原始碼 Git；也可以直接從獨立建置環境自行產生。
           </p>
           <div class="button-row">
             <a class="button button-primary" href="download.html">前往下載與建置</a>

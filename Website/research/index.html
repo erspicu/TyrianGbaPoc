@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="TyrianGbaPoc 技術研究：GBA 受限色盤訓練、多圖層、Sprite2 快取、ROMFS、固定時序與靜態選單最佳化。">
+  <meta name="description" content="TyrianGbaPoc 技術研究：GBA 受限色盤、多圖層、Sprite2／OAM 資源排程、ROMFS、固定時序、音訊與靜態選單最佳化。">
   <meta name="theme-color" content="#05070c">
   <title>技術研究 — TyrianGbaPoc</title>
   <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
@@ -79,8 +79,8 @@
             <span><strong>音樂與音效的生成及校準</strong><p>把 TYM／SND 轉為 Maxmod soundbank，校準聲道與鼓聲，並讓有限提示曲及切歌行為符合來源流程。</p></span>
             <span class="arrow" aria-hidden="true">08 ↗</span>
           </a>
-          <a class="research-link reveal" href="lava-water-wave-pressure.html">
-            <span><strong>Lava／Water 波紋壓力控制</strong><p>用 source-derived 空間低通與負載遲滯，保留正常波紋並消除極限連射橫帶。</p></span>
+          <a class="research-link reveal" href="oam-resource-scheduling.html">
+            <span><strong>OAM 與圖形快取的可靠資源排程</strong><p>以確定身分、單一候選快照、Boss 預先 manifest 與公平輪替，讓玩法物件不被低優先特效擠掉。</p></span>
             <span class="arrow" aria-hidden="true">09 ↗</span>
           </a>
         </div>

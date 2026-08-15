@@ -48,7 +48,7 @@
           <h2 id="coverage">不是一支超長測試</h2>
           <div class="engineering-list">
             <div class="engineering-item"><span class="number">A</span><h3>完整第一關</h3><p>來源事件、Boss、獎賞、聲音、破關飛行、一次性歌曲、統計與回 Game Menu。</p></div>
-            <div class="engineering-item"><span class="number">B</span><h3>Episode routes</h3><p>Episode 2／3／4 第一關與 Episode 1 四關 campaign，驗證 script 轉場與不同資產 bank。</p></div>
+            <div class="engineering-item"><span class="number">B</span><h3>Episode routes</h3><p>Episode 1 campaign、Episode 2／3／4 routes 與存檔續關案例，驗證 script 轉場、Boss exit 與不同資產 bank。</p></div>
             <div class="engineering-item"><span class="number">C</span><h3>ROMFS matrix</h3><p>四個 Episode 共 62 個 playable sections，讀事件、enemy pool、背景與 Sprite2 catalog。</p></div>
             <div class="engineering-item"><span class="number">D</span><h3>Focused flows</h3><p>Death、Demo、JukeBox、Arcade equipment、frontend、Next Level camera 與 960 次靜態轉場。</p></div>
           </div>
@@ -69,12 +69,12 @@
           <h2 id="performance">效能也要有狀態來源</h2>
           <p>
             Missed VBlank 分為 gameplay、stats、game over、transition 與 frontend
-            other。High／Normal 現行完整 route：
+            other。v89 LOW 正式版的發佈驗證另固定檢查：
           </p>
           <div class="metric-grid">
-            <div class="metric"><strong>8 / 29</strong><span>Episode 1 / 2 gameplay misses</span></div>
-            <div class="metric"><strong>13 / 22</strong><span>Episode 3 / 4 gameplay misses</span></div>
-            <div class="metric"><strong>0</strong><span>all frontend deterministic misses</span></div>
+            <div class="metric"><strong>62 / 62</strong><span>ROMFS playable sections</span></div>
+            <div class="metric"><strong>44</strong><span>JukeBox modules</span></div>
+            <div class="metric"><strong>0</strong><span>LOW stress audio frame loss</span></div>
           </div>
           <p>
             這些數字不是宣稱任何情境永不 drop frame；它們是固定輸入下的 regression

@@ -26,6 +26,29 @@ relative-link and browser-security behaviour.
 The website intentionally links ROM downloads to GitHub Releases. ROM files
 are release artifacts and must not be committed into this directory.
 
+The six front-end screenshots are regenerated from the production LOW-detail
+ROM with:
+
+```powershell
+.\tools\capture_website_gallery.ps1
+```
+
+The three gameplay captures use the existing deterministic stress harness:
+
+```powershell
+.\tools\run_full_loadout_stress.ps1 -DetailLevel low -Episode 1 -Section 1 -DurationVBlanks 1600 -ReleaseRuntime -ScreenshotPath Website\assets\images\gallery\episode1-multilayer-current.png
+.\tools\run_full_loadout_stress.ps1 -DetailLevel low -Episode 4 -Section 1 -DurationVBlanks 1000 -ReleaseRuntime -ScreenshotPath Website\assets\images\gallery\episode4-surface-current.png
+.\tools\run_full_loadout_stress.ps1 -DetailLevel low -Episode 1 -Section 1 -EndPosition 5405 -FastForwardPosition 5360 -FastForwardTicks 8 -ScreenshotPath Website\assets\images\gallery\boss-stress-current.png
+```
+
+All gallery images must remain native 240x160 PNG captures. Validate local
+links, fragments, bilingual catalog coverage, retired-page removal, and image
+dimensions before publishing:
+
+```powershell
+python .\tools\audit_website.py
+```
+
 `.github/workflows/deploy-pages.yml` publishes this directory as the official
 GitHub Pages site. A push to `main` that changes `Website/**` automatically
 deploys a new version; `workflow_dispatch` also permits a manual redeploy.
