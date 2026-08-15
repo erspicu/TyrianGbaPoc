@@ -2,10 +2,10 @@
 """Calibrate Tyrian's TYM voices for the GBA Maxmod IT adapter.
 
 The project-local GBA OPL reference measures every original OPL2 stem over
-one complete loop.  This module independently selects the eight voices that
-fit Maxmod's GBA budget, preserving authored percussion first and then the
-highest-energy active tonal sources.  No other console's voice map or mixer
-gain is used as an input.
+one complete loop.  This module retains all nine original voices and orders
+them by authored percussion priority and source RMS solely for stable tracker
+channel placement.  No other console's voice map or mixer gain is used as an
+input.
 
 This module measures the actual synthesized PCM/IT event model, solves one
 fixed gain per selected OPL source, and verifies the quantized 8-bit result.
@@ -29,8 +29,8 @@ PROFILE_DESCRIPTION = (
     "GBA Maxmod 15.768 kHz IT adapter; exact TYM event-volume timeline, "
     "quantized signed 8-bit synthesized samples, fixed OPL stem RMS target, "
     "mono L+R reference, one catalog-wide +3 dB presentation gain, and no "
-    "per-song maximum-gain normalization; GBA-owned eight-voice selection "
-    "preserves percussion then ranks active tonal stems by source RMS"
+    "per-song maximum-gain normalization; all nine original OPL2 source "
+    "channels retained, with source-RMS ordering used only for tracker voices"
 )
 MAXMOD_OUTPUT_RATE = 15_768
 MAXMOD_MODULE_VOLUME = 896
@@ -41,7 +41,8 @@ MAXMOD_MODULE_SCALE = MAXMOD_MODULE_VOLUME / MAXMOD_NORMAL_VOLUME
 # drift.  It is part of the declared target, not normalization.
 PLAYBACK_REFERENCE_GAIN_DB = 3.0
 PLAYBACK_REFERENCE_GAIN = 10.0 ** (PLAYBACK_REFERENCE_GAIN_DB / 20.0)
-IT_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32)
+IT_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
+MAX_GBA_MUSIC_VOICES = 9
 MAX_SAMPLE_GAIN = 1.075
 GAIN_REFINEMENT_PASSES = 3
 ERROR_LIMIT_DB = 1.0
@@ -253,20 +254,23 @@ def calibrate_track(
         active_sources.intersection(percussion_sources),
         key=lambda source: (-reference_rms[source], source),
     )
-    if len(required) > 8:
-        required = required[:8]
+    if len(required) > MAX_GBA_MUSIC_VOICES:
+        required = required[:MAX_GBA_MUSIC_VOICES]
     tonal = sorted(
         active_sources.difference(required),
         key=lambda source: (-reference_rms[source], source),
     )
-    selected = set(required + tonal[: 8 - len(required)])
+    selected = set(
+        required +
+        tonal[: MAX_GBA_MUSIC_VOICES - len(required)]
+    )
     sources = sorted(
         selected,
         key=lambda source: (-reference_rms[source], source),
     )
-    if not 1 <= len(sources) <= 8:
+    if not 1 <= len(sources) <= MAX_GBA_MUSIC_VOICES:
         raise ValueError(
-            f"track {track_number} has no usable eight-voice mapping"
+            f"track {track_number} has no usable nine-voice mapping"
         )
     # The comparison baseline is the former GBA Maxmod unity adapter, not a
     # profile, gain table, or mixer model from another console.

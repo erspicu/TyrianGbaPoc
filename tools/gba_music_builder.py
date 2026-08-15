@@ -18,6 +18,10 @@ import numpy as np
 TRACKER_TEMPO = 174
 TRACKER_SPEED = 1
 TRACKER_C5_SPEED = 16_744
+MAX_GBA_MUSIC_VOICES = 9
+PROCEDURAL_PERCUSSION_RATE = 15_768
+PROCEDURAL_PERCUSSION_SOURCE_RATE = 11_025
+TRACKER_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
 
 
 def read_it_templates(workspace: Path) -> tuple[bytearray, bytearray, bytes]:
@@ -45,6 +49,15 @@ def build_it_module(
     channel_pans: list[int] | None = None,
 ) -> bytes:
     header, instrument_template, sample_template = read_it_templates(workspace)
+    active_channel_count = (
+        len(channel_pans)
+        if channel_pans is not None
+        else MAX_GBA_MUSIC_VOICES
+    )
+    if not 1 <= active_channel_count <= 64:
+        raise ValueError(
+            f"IT active channel count out of range: {active_channel_count}"
+        )
     count = len(samples)
     if not count or count > 255:
         raise ValueError(f"IT sample count out of range: {count}")
@@ -72,9 +85,11 @@ def build_it_module(
         header[64 + channel] = (
             channel_pans[channel]
             if channel_pans is not None and channel < len(channel_pans)
-            else (32 if channel < 8 else 128)
+            else (32 if channel < active_channel_count else 128)
         )
-        header[128 + channel] = 64 if channel < 8 else 0
+        header[128 + channel] = (
+            64 if channel < active_channel_count else 0
+        )
 
     table_size = (
         len(orders) +
@@ -257,14 +272,21 @@ def synthesize_tym_sample(
     midi_instrument = instrument[40]
     percussion = midi_instrument >= 128 or source in percussion_sources
     if percussion:
+        def percussion_length(source_length: int) -> int:
+            return int(round(
+                source_length *
+                PROCEDURAL_PERCUSSION_RATE /
+                PROCEDURAL_PERCUSSION_SOURCE_RATE
+            ))
+
         drum_note = (
             midi_instrument - 128
             if midi_instrument >= 128
             else 35 + (instrument_index % 3) * 3
         )
         if drum_note in (35, 36):
-            length = 1024
-            rate = 11_025
+            length = percussion_length(1024)
+            rate = PROCEDURAL_PERCUSSION_RATE
             time = np.arange(length, dtype=np.float64) / rate
             phase = 2.0 * np.pi * (
                 115.0 * time -
@@ -280,8 +302,8 @@ def synthesize_tym_sample(
                 0.16
             )
         elif drum_note in (38, 40):
-            length = 1536
-            rate = 11_025
+            length = percussion_length(1536)
+            rate = PROCEDURAL_PERCUSSION_RATE
             time = np.arange(length, dtype=np.float64) / rate
             rng = np.random.default_rng(
                 0x534E52 + source * 257 + instrument_index
@@ -295,13 +317,13 @@ def synthesize_tym_sample(
                 0.28
             )
         else:
-            rate = 11_025
+            rate = PROCEDURAL_PERCUSSION_RATE
             if drum_note in (42, 44):
-                length = 768
+                length = percussion_length(768)
                 decay = 48.0
                 difference = 0.78
             elif drum_note == 46:
-                length = 2048
+                length = percussion_length(2048)
                 decay = 16.0
                 difference = 0.70
             else:
@@ -309,7 +331,7 @@ def synthesize_tym_sample(
                 # long events.  Treating every one as a 46 ms closed hat
                 # forced RMS calibration to amplify its transient by several
                 # times (most visibly source 7 in track 41).
-                length = 4096
+                length = percussion_length(4096)
                 decay = 8.5
                 difference = 0.62
             time = np.arange(length, dtype=np.float64) / rate
@@ -418,11 +440,14 @@ def build_tym_tracker_it(
     module_builder: Callable[..., bytes] | None = None,
 ) -> tuple[bytes, dict[str, object]]:
     if (
-        not 1 <= len(sources) <= 8
+        not 1 <= len(sources) <= MAX_GBA_MUSIC_VOICES
         or len(sources) != len(voice_gains)
         or len(set(sources)) != len(sources)
     ):
-        raise ValueError("GBA Maxmod voice map must contain 1..8 unique sources")
+        raise ValueError(
+            "GBA Maxmod voice map must contain "
+            f"1..{MAX_GBA_MUSIC_VOICES} unique sources"
+        )
     song = parse_tym(tym_path)
     metadata = song["metadata"]
     if not isinstance(metadata, dict):
@@ -543,7 +568,7 @@ def build_tym_tracker_it(
             pack_it_pattern(end - start, local_cells),
         ))
     orders = list(range(len(patterns)))
-    pans = [23, 41, 28, 36, 26, 38, 32, 32]
+    pans = list(TRACKER_CHANNEL_PANS[:len(sources)])
     if module_builder is None:
         module_builder = build_it_module
     module = module_builder(

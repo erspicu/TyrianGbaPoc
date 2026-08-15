@@ -78,6 +78,9 @@ static u16 source_player_cache_graphic;
 static u8 source_player_cache_valid;
 static u8 source_player_cache_resident;
 static u8 source_player_cache_visible;
+static u8 source_nort_player_requested_frame;
+static u8 source_nort_player_resident_frame;
+static u8 source_nort_player_resident;
 static u8 source_player_upload_pending;
 static u32 source_player_cache_generation;
 static u32 source_player_upload_cache_generation;
@@ -1688,6 +1691,20 @@ static u8 source_sprite2_l2_acquire(
     return selected;
 }
 
+static u8 source_nort_player_frame(s8 banking)
+{
+    if (banking < -2) banking = -2;
+    if (banking > 2) banking = 2;
+    return (u8)(banking + NORT_SHIP_NEUTRAL_FRAME);
+}
+
+static void source_nort_player_request(s8 banking)
+{
+    source_player_cache_visible = 1;
+    source_nort_player_requested_frame =
+        source_nort_player_frame(banking);
+}
+
 /*
  * Ordinary player ships are spriteSheet9 Sprite2 frames in the PC renderer,
  * but they must not consume an enemy-cache slot.  Episode 1's third routed
@@ -1778,6 +1795,31 @@ static u16 source_player_cache_acquire(u16 graphic)
 static void source_player_cache_commit(void)
 {
     u8 valid;
+
+    if (player_ship_graphic == NORT_SHIP_SOURCE_GRAPHIC) {
+        if (
+            source_nort_player_requested_frame <
+                NORT_SHIP_FRAME_COUNT &&
+            (
+                !source_nort_player_resident ||
+                source_nort_player_resident_frame !=
+                    source_nort_player_requested_frame
+            )
+        ) {
+            dmaCopy(
+                player_nort_tiles +
+                    (u32)source_nort_player_requested_frame *
+                        NORT_SHIP_FRAME_BYTES,
+                (u8 *)OBJ_BASE_ADR +
+                    SOURCE_PLAYER_CACHE_TILE_BASE * 32u,
+                NORT_SHIP_FRAME_BYTES
+            );
+            source_nort_player_resident_frame =
+                source_nort_player_requested_frame;
+            source_nort_player_resident = 1;
+        }
+        return;
+    }
 
     if (!source_player_upload_pending) return;
     valid =

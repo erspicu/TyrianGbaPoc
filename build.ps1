@@ -333,7 +333,7 @@ if (
     $musicCalibration.maxmodModuleVolume -ne 896 -or
     [double]$musicCalibration.playbackReferenceGainDb -ne 3.0 -or
     $musicCalibration.summary.trackCount -ne 41 -or
-    $musicCalibration.summary.sourceCount -ne 308 -or
+    $musicCalibration.summary.sourceCount -ne 334 -or
     [double]$musicCalibration.summary.gainMin -le 0.0 -or
     [double]$musicCalibration.summary.gainMax -gt 1.075 -or
     [double]$musicCalibration.summary.legacyMeanAbsoluteErrorDb -lt 5.0 -or
@@ -355,8 +355,8 @@ foreach ($line in Get-Content -LiteralPath $assetReportPath) {
 }
 if (
     $assetReport.music_catalog_profile -ne
-        "GbaMaxmod fixed-reference tracker adapter" -or
-    $assetReport.music_calibration_source_count -ne "308" -or
+        "GbaMaxmod nine-channel fixed-reference tracker adapter" -or
+    $assetReport.music_calibration_source_count -ne "334" -or
     [double]$assetReport.music_calibration_gain_min -le 0.0 -or
     [double]$assetReport.music_calibration_gain_max -gt 1.075 -or
     [double]$assetReport.music_calibration_legacy_mean_abs_error_db -lt 5.0 -or
@@ -368,6 +368,9 @@ if (
     $assetReport.music_calibration_reference_gain_db -ne "3.000" -or
     $assetReport.music_calibration_per_song_maximum_normalization -ne "0" -or
     $assetReport.music_calibration_reference_fold_down -ne "mono_L_plus_R" -or
+    $assetReport.music_opl_source_channels -ne "9_complete" -or
+    $assetReport.music_procedural_percussion_rate_hz -ne "15768" -or
+    $assetReport.audio_source_sfx_rate_hz -ne "11025_source_native" -or
     $assetReport.finite_music_cues -ne "9,10,30" -or
     $assetReport.finite_music_09_disabled_position_jumps -ne "1" -or
     $assetReport.finite_music_10_disabled_position_jumps -ne "1" -or
@@ -2978,7 +2981,7 @@ if (-not (Test-Path -LiteralPath $episodeWrapTestSave)) {
 }
 $episodeWrapSaveBytes = [IO.File]::ReadAllBytes($episodeWrapTestSave)
 if (
-    $episodeWrapSaveBytes.Length -lt 56 -or
+    $episodeWrapSaveBytes.Length -lt 128 -or
     [Text.Encoding]::ASCII.GetString(
         $episodeWrapSaveBytes,
         0,
@@ -3017,6 +3020,18 @@ $episodeWrapTelemetry = [ordered]@{
         $episodeWrapSaveBytes,
         52
     )
+    reward_ship = [BitConverter]::ToUInt32($episodeWrapSaveBytes, 104)
+    reward_front = [BitConverter]::ToUInt32($episodeWrapSaveBytes, 108)
+    reward_front_power = [BitConverter]::ToUInt32(
+        $episodeWrapSaveBytes,
+        112
+    )
+    reward_rear = [BitConverter]::ToUInt32($episodeWrapSaveBytes, 116)
+    reward_rear_power = [BitConverter]::ToUInt32(
+        $episodeWrapSaveBytes,
+        120
+    )
+    route_ship = [BitConverter]::ToUInt32($episodeWrapSaveBytes, 124)
 }
 if (
     $episodeWrapTelemetry.schema -ne 1 -or
@@ -3032,7 +3047,13 @@ if (
     $episodeWrapTelemetry.invincible -ne 1 -or
     $episodeWrapTelemetry.music_active -ne 1 -or
     $episodeWrapTelemetry.story_seen -ne 1 -or
-    $episodeWrapTelemetry.announcement_seen -ne 1
+    $episodeWrapTelemetry.announcement_seen -ne 1 -or
+    $episodeWrapTelemetry.reward_ship -ne 2 -or
+    $episodeWrapTelemetry.reward_front -ne 23 -or
+    $episodeWrapTelemetry.reward_front_power -ne 1 -or
+    $episodeWrapTelemetry.reward_rear -ne 24 -or
+    $episodeWrapTelemetry.reward_rear_power -ne 1 -or
+    $episodeWrapTelemetry.route_ship -ne 2
 ) {
     throw (
         "Episode-wrap auto-test failed invariant(s): " +

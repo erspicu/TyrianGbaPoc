@@ -1639,6 +1639,9 @@ static void source_runtime_reset(void)
     source_player_cache_valid = 0;
     source_player_cache_resident = 0;
     source_player_cache_visible = 0;
+    source_nort_player_requested_frame = NORT_SHIP_NEUTRAL_FRAME;
+    source_nort_player_resident_frame = NORT_SHIP_NEUTRAL_FRAME;
+    source_nort_player_resident = 0;
     source_player_upload_pending = 0;
     source_player_upload_l2_slot = 0;
     source_player_cache_generation = 0;
@@ -1692,6 +1695,27 @@ static void source_runtime_reset(void)
     telemetry_sprite2_l2_max_visible_unique = 0;
     if (!source_enemy_palette_setup(SOURCE_LEVEL_PALETTE_INDEX)) {
         source_parity_level.assets_valid = false;
+    }
+    if (player_ship_graphic == NORT_SHIP_SOURCE_GRAPHIC) {
+        /*
+         * Level entry is still under the black presentation handoff, so the
+         * neutral PC Nort frame and its dedicated 4bpp palette can be made
+         * resident without consuming a gameplay VBlank or an enemy-cache
+         * slot.  Later banking changes replace the same 1 KiB player window.
+         */
+        dmaCopy(
+            player_nort_tiles +
+                NORT_SHIP_NEUTRAL_FRAME * NORT_SHIP_FRAME_BYTES,
+            (u8 *)OBJ_BASE_ADR +
+                SOURCE_PLAYER_CACHE_TILE_BASE * 32u,
+            NORT_SHIP_FRAME_BYTES
+        );
+        dmaCopy(
+            player_nort_palette,
+            SPRITE_PALETTE,
+            16u * sizeof(u16)
+        );
+        source_nort_player_resident = 1;
     }
     if (!source_option_projectile_sync()) {
         source_parity_level.assets_valid = false;

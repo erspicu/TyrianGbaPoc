@@ -144,9 +144,11 @@ FRONTEND_FRAME_HEIGHT = 160
 FRONTEND_FRAME_BYTES = FRONTEND_FRAME_WIDTH * FRONTEND_FRAME_HEIGHT
 FRONTEND_MENU_SOURCE_CROP_X = 0
 FRONTEND_MENU_SOURCE_WIDTH = 300
-FRONTEND_GLYPH_WIDTH = 8
-FRONTEND_GLYPH_HEIGHT = 8
-FRONTEND_GLYPH_CHARACTERS = "0123456789%"
+# The 300-pixel crop deliberately keeps the PC menu's left equipment panel,
+# but it also removes the bevel at source x=311..316.  Re-composite that
+# narrow, palette-native strip at the final GBA edge so static menus retain a
+# visually closed right border without changing their established layout.
+FRONTEND_MENU_RIGHT_BORDER_SOURCE_X = (311, 312, 313, 314, 315, 316)
 FRONTEND_PCX_PALETTES = (0, 7, 5, 8, 10, 5, 18, 19, 19, 20, 21, 22, 5)
 FRONTEND_NAV_OBJ_SCALE_PHASES = 5
 FRONTEND_NAV_OBJ_PHASE_COUNT = (
@@ -313,7 +315,6 @@ SPRITE2_RAW_COMPONENT_BYTES = (
 SPRITE2_XMAS_RAW_TABLES = (26, 36, 38)
 JUKEBOX_MUSIC_COUNT = 41
 JUKEBOX_TITLE_BYTES = 48
-JUKEBOX_FONT_CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%"
 JUKEBOX_BACKDROP_TILE_COUNT = 16
 JUKEBOX_STAR_TILE_COUNT = 3
 JUKEBOX_RECIPROCAL_MAX_Z = 500
@@ -1313,7 +1314,15 @@ class FrontendSourceRenderer:
             200 //
             FRONTEND_FRAME_HEIGHT
         )
-        return picture[np.ix_(source_y, source_x)].copy()
+        frame = picture[np.ix_(source_y, source_x)].copy()
+        right_border_x = np.asarray(
+            FRONTEND_MENU_RIGHT_BORDER_SOURCE_X,
+            dtype=np.intp,
+        )
+        frame[:, -right_border_x.size:] = picture[
+            np.ix_(source_y, right_border_x)
+        ]
+        return frame
 
     def sprite(self, table: int, sprite_index: int) -> np.ndarray | None:
         key = (table, sprite_index)
@@ -1954,7 +1963,6 @@ def build_frontend_nav_obj_assets(
     source: FrontendSourceRenderer,
     preview: Path,
 ) -> tuple[
-    bytes,
     bytes,
     bytes,
     bytes,
@@ -3902,9 +3910,6 @@ def build_frontend_mode4_assets(
     names: list[str] = []
     metadata: dict[str, int] = {
         "FRONTEND_FRAME_BYTES": FRONTEND_FRAME_BYTES,
-        "FRONTEND_GLYPH_BYTES":
-            FRONTEND_GLYPH_WIDTH * FRONTEND_GLYPH_HEIGHT,
-        "FRONTEND_GLYPH_COUNT": len(FRONTEND_GLYPH_CHARACTERS),
     }
     frontend_preview = preview / "frontend_mode4"
     frontend_preview.mkdir(parents=True, exist_ok=True)
@@ -4198,23 +4203,6 @@ def build_frontend_mode4_assets(
     )
     add("game_over", game_over, 1)
 
-    glyphs = bytearray()
-    for character_index, character in enumerate(FRONTEND_GLYPH_CHARACTERS):
-        glyph = source.sprite(2, frontend_glyph_id(character))
-        if glyph is None:
-            raise ValueError(f"front-end dynamic glyph is empty: {character!r}")
-        canvas = np.full(
-            (FRONTEND_GLYPH_HEIGHT, FRONTEND_GLYPH_WIDTH),
-            0xFF,
-            dtype=np.uint8,
-        )
-        source.draw_glyph(canvas, glyph, 0, 0, 15, 2)
-        glyphs.extend(canvas.tobytes())
-        metadata[f"FRONTEND_GLYPH_{character_index}_ADVANCE"] = max(
-            1,
-            source.scale_x(glyph.shape[1] + 1),
-        )
-
     # JE_drawCube() draws OPTION_SHAPES sprite 25 twice as a dark offset
     # shadow, followed by its hue-9 foreground.  Store one transparent
     # Mode-4 stamp so runtime can reveal the PC cube sprites one by one.
@@ -4257,12 +4245,65 @@ def build_frontend_mode4_assets(
     ).save(frontend_preview / "stats_data_cube_option_shape_25.png")
 
     metadata["FRONTEND_FRAME_COUNT"] = len(frames)
-    frame_bytes = b"".join(frame.tobytes() for frame in frames)
-    palette_bytes = b"".join(palettes)
-    if len(frame_bytes) != len(frames) * FRONTEND_FRAME_BYTES:
+    design_frame_bytes = b"".join(frame.tobytes() for frame in frames)
+    design_palette_bytes = b"".join(palettes)
+    if len(design_frame_bytes) != len(frames) * FRONTEND_FRAME_BYTES:
         raise AssertionError("Mode 4 front-end frame packing changed")
-    if len(palette_bytes) != len(frames) * 512:
+    if len(design_palette_bytes) != len(frames) * 512:
         raise AssertionError("Mode 4 front-end palette packing changed")
+
+    # The current runtime composes every interactive menu from one of the
+    # three chrome frames plus smaller static panels.  Keeping the superseded
+    # per-selection and statistics canvases in the cartridge duplicated 29
+    # complete 240x160 surfaces.  They remain above for previews and dirty-
+    # rectangle validation, but only the six frames with a live full-frame
+    # consumer are emitted to ROM.
+    runtime_frame_indices = (
+        metadata["FRONTEND_FRAME_INTRO_LOGO_1"],
+        metadata["FRONTEND_FRAME_INTRO_LOGO_2"],
+        metadata["FRONTEND_FRAME_MENU_CHROME"],
+        metadata["FRONTEND_FRAME_TITLE_CHROME"],
+        metadata["FRONTEND_FRAME_SELECT_CHROME"],
+        metadata["FRONTEND_FRAME_GAME_OVER"],
+    )
+    frame_bytes = b"".join(
+        frames[index].tobytes()
+        for index in runtime_frame_indices
+    )
+    metadata["FRONTEND_RUNTIME_FRAME_COUNT"] = len(runtime_frame_indices)
+    for slot, index in enumerate(runtime_frame_indices):
+        metadata[
+            f"FRONTEND_RUNTIME_FRAME_{names[index].upper()}_SLOT"
+        ] = slot
+
+    # Thirty-five logical screens use only six exact palettes.  Preserve the
+    # first-occurrence order so the C adapter can map semantic frame groups to
+    # compact slots without a generated lookup blob.
+    runtime_palettes: list[bytes] = []
+    palette_slots: list[int] = []
+    for palette in palettes:
+        try:
+            slot = runtime_palettes.index(palette)
+        except ValueError:
+            slot = len(runtime_palettes)
+            runtime_palettes.append(palette)
+        palette_slots.append(slot)
+    palette_bytes = b"".join(runtime_palettes)
+    metadata["FRONTEND_RUNTIME_PALETTE_COUNT"] = len(runtime_palettes)
+    for name in (
+        "INTRO_LOGO_1",
+        "INTRO_LOGO_2",
+        "MENU_CHROME",
+        "TITLE_CHROME",
+        "SELECT_CHROME",
+        "NEXT_LEVEL_0",
+    ):
+        frame_index = metadata[f"FRONTEND_FRAME_{name}"]
+        metadata[f"FRONTEND_RUNTIME_PALETTE_{name}_SLOT"] = (
+            palette_slots[frame_index]
+        )
+    if len(runtime_frame_indices) != 6 or len(runtime_palettes) != 6:
+        raise AssertionError("front-end runtime compaction contract changed")
 
     unique_counts: list[int] = []
     tile_mode_bytes: list[int] = []
@@ -4363,10 +4404,20 @@ def build_frontend_mode4_assets(
             "+ selection-row patches"
         ),
         f"frontend_frame_count={len(frames)}",
+        f"frontend_runtime_frame_count={len(runtime_frame_indices)}",
         f"frontend_frame_bytes={FRONTEND_FRAME_BYTES}",
-        f"frontend_frames_raw_bytes={len(frame_bytes)}",
+        f"frontend_frames_design_raw_bytes={len(design_frame_bytes)}",
+        f"frontend_frames_runtime_bytes={len(frame_bytes)}",
+        (
+            "frontend_frames_omitted_duplicate_bytes="
+            f"{len(design_frame_bytes) - len(frame_bytes)}"
+        ),
+        f"frontend_palettes_design_bytes={len(design_palette_bytes)}",
         f"frontend_palettes_bytes={len(palette_bytes)}",
-        f"frontend_dynamic_glyph_bytes={len(glyphs)}",
+        (
+            "frontend_palettes_omitted_duplicate_bytes="
+            f"{len(design_palette_bytes) - len(palette_bytes)}"
+        ),
         f"frontend_data_cube_stamp_bytes={cube_stamp.size}",
         (
             "frontend_menu_crop="
@@ -4375,7 +4426,10 @@ def build_frontend_mode4_assets(
         ),
         "frontend_next_level_palette_index=17",
         f"frontend_full_state_transfer_bytes={FRONTEND_FRAME_BYTES + 512}",
-        f"frontend_zlib_reference_bytes={len(zlib.compress(frame_bytes, 9))}",
+        (
+            "frontend_zlib_reference_bytes="
+            f"{len(zlib.compress(design_frame_bytes, 9))}"
+        ),
         f"frontend_tile_unique_min={min(unique_counts)}",
         f"frontend_tile_unique_max={max(unique_counts)}",
         (
@@ -4405,7 +4459,6 @@ def build_frontend_mode4_assets(
     return (
         frame_bytes,
         palette_bytes,
-        bytes(glyphs),
         cube_stamp.tobytes(),
         native_font.tobytes(),
         pregame_font.tobytes(),
@@ -4484,45 +4537,13 @@ def parse_opentyrian_music_titles(path: Path) -> list[str]:
 
 
 def build_jukebox_assets(
-    data_root: Path,
     opentyrian_root: Path,
     preview: Path,
 ) -> tuple[dict[str, bytes], dict[str, int], list[str]]:
     """Build a tile/OAM adapter for OpenTyrian's Jukebox and starlib."""
-    source = FrontendSourceRenderer(data_root)
     titles = parse_opentyrian_music_titles(
         opentyrian_root / "src" / "musmast.c"
     )
-
-    # Tile zero is the blank glyph used to clear dynamic text map cells.
-    font_tiles = bytearray(32)
-    for character in JUKEBOX_FONT_CHARACTERS:
-        glyph = source.sprite(1, frontend_glyph_id(character))
-        if glyph is None:
-            raise ValueError(f"Jukebox font glyph is empty: {character!r}")
-        glyph_height, glyph_width = glyph.shape
-        output_width = max(
-            1,
-            min(8, (glyph_width * 8 + glyph_height // 2) // glyph_height),
-        )
-        x_offset = (8 - output_width) // 2
-        values = np.zeros((8, 8), dtype=np.uint8)
-        for output_y in range(8):
-            source_y = min(
-                glyph_height - 1,
-                output_y * glyph_height // 8,
-            )
-            for output_x in range(output_width):
-                source_x = min(
-                    glyph_width - 1,
-                    output_x * glyph_width // output_width,
-                )
-                pixel = int(glyph[source_y, source_x])
-                if pixel != 0xFF:
-                    values[output_y, x_offset + output_x] = (
-                        10 + min(5, pixel & 7)
-                    )
-        font_tiles.extend(encode_gba_4bpp(values))
 
     random = np.random.default_rng(0x4A554B45)
     backdrop_tiles = bytearray()
@@ -4617,27 +4638,7 @@ def build_jukebox_assets(
         32767.0
     ).astype("<i2")
 
-    font_preview = np.zeros(
-        (8, (len(JUKEBOX_FONT_CHARACTERS) + 1) * 8),
-        dtype=np.uint8,
-    )
-    for index in range(len(JUKEBOX_FONT_CHARACTERS) + 1):
-        tile = font_tiles[index * 32 : (index + 1) * 32]
-        for y in range(8):
-            for pair in range(4):
-                packed = tile[y * 4 + pair]
-                font_preview[y, index * 8 + pair * 2] = packed & 15
-                font_preview[y, index * 8 + pair * 2 + 1] = packed >> 4
-    Image.fromarray(
-        (font_preview * 17).astype(np.uint8),
-        "L",
-    ).resize(
-        (font_preview.shape[1] * 2, 16),
-        Image.Resampling.NEAREST,
-    ).save(preview / "jukebox_pc_font_tiles.png")
-
     assets = {
-        "jukebox_font_tiles.bin": bytes(font_tiles),
         "jukebox_backdrop_tiles.bin": bytes(backdrop_tiles),
         "jukebox_backdrop_map.bin": bytes(backdrop_map),
         "jukebox_bg_palette.bin": pack_gba_palette(bg_banks),
@@ -4650,8 +4651,6 @@ def build_jukebox_assets(
     metadata = {
         "JUKEBOX_MUSIC_COUNT": JUKEBOX_MUSIC_COUNT,
         "JUKEBOX_TITLE_BYTES": JUKEBOX_TITLE_BYTES,
-        "JUKEBOX_FONT_TILE_COUNT":
-            len(JUKEBOX_FONT_CHARACTERS) + 1,
         "JUKEBOX_BACKDROP_TILE_COUNT": JUKEBOX_BACKDROP_TILE_COUNT,
         "JUKEBOX_STAR_TILE_COUNT": JUKEBOX_STAR_TILE_COUNT,
         "JUKEBOX_RECIPROCAL_MAX_Z": JUKEBOX_RECIPROCAL_MAX_Z,
@@ -4660,10 +4659,7 @@ def build_jukebox_assets(
     report = [
         "jukebox_source=OpenTyrian jukebox.c/starlib.c/musmast.c",
         f"jukebox_music_titles={len(titles)}",
-        (
-            "jukebox_font_characters="
-            f"{len(JUKEBOX_FONT_CHARACTERS)}"
-        ),
+        "jukebox_font=shared gameplay fine 4x8 proportional compositor",
         f"jukebox_backdrop_tiles={JUKEBOX_BACKDROP_TILE_COUNT}",
         f"jukebox_star_tiles={JUKEBOX_STAR_TILE_COUNT}",
         "jukebox_presentation=Mode0 BG tile text + parallax BG + OBJ stars",
@@ -7111,7 +7107,7 @@ def build_sparse_tym_tracker_it(
 ) -> tuple[bytes, dict[str, object]]:
     """Build a GBA Maxmod module with the measured per-track calibration.
 
-    The tracker writer accepts up to eight sources.  Short Tyrian cues
+    The tracker writer accepts all nine OPL2 sources.  Short Tyrian cues
     legitimately use fewer, so append inaudible sentinels while preserving
     every measured GBA source/gain pair.
     """
@@ -7120,7 +7116,7 @@ def build_sparse_tym_tracker_it(
     sources = [int(source) for source in calibration["sourceChannels"]]
     gains = [float(gain) for gain in calibration["gains"]]
     if (
-        not 1 <= len(sources) <= 8
+        not 1 <= len(sources) <= music.MAX_GBA_MUSIC_VOICES
         or len(sources) != len(gains)
         or len(set(sources)) != len(sources)
     ):
@@ -7128,7 +7124,7 @@ def build_sparse_tym_tracker_it(
             f"track {calibration['trackNumber']} has invalid Maxmod calibration"
         )
     sentinel = 0x100
-    while len(sources) < 8:
+    while len(sources) < music.MAX_GBA_MUSIC_VOICES:
         sources.append(sentinel)
         gains.append(1.0)
         sentinel += 1
@@ -7284,10 +7280,24 @@ def main() -> None:
     preview = args.preview_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
     preview.mkdir(parents=True, exist_ok=True)
-    # v53 replaced the 3.8 MiB dense navigation page blob with a lossless
-    # block dictionary.  Remove the obsolete generated output so an
-    # incremental build tree cannot misleadingly retain both representations.
-    (output / "frontend_nav_bitmap_pages.bin").unlink(missing_ok=True)
+    # Purge outputs retired by newer runtime adapters.  These files are
+    # generated or historical build products, never source inputs.  Removing
+    # them here keeps an incremental res/ tree from looking as if both the old
+    # and current cartridge representations are still required.
+    obsolete_outputs = (
+        "frontend_nav_bitmap_pages.bin",
+        "frontend_glyphs.bin",
+        "frontend_cube.bin",
+        "bg_palette.bin",
+        "bg1_map.bin",
+        "bg1_tiles.bin",
+        "bg2_map.bin",
+        "bg2_tiles.bin",
+        "bg3_map.bin",
+        "bg3_tiles.bin",
+    )
+    for name in obsolete_outputs:
+        (output / name).unlink(missing_ok=True)
 
     gba = gba_assets
     image_root = workspace / "vendor" / "tyrian" / "image"
@@ -7312,7 +7322,6 @@ def main() -> None:
     (
         frontend_frames,
         frontend_palettes,
-        frontend_glyphs,
         frontend_cube,
         frontend_native_font,
         frontend_pregame_font,
@@ -7349,8 +7358,6 @@ def main() -> None:
     )
     (output / "frontend_frames.bin").write_bytes(frontend_frames)
     (output / "frontend_palettes.bin").write_bytes(frontend_palettes)
-    (output / "frontend_glyphs.bin").write_bytes(frontend_glyphs)
-    (output / "frontend_cube.bin").write_bytes(frontend_cube)
     (
         frontend_stats_tiles,
         frontend_stats_widths,
@@ -7430,7 +7437,7 @@ def main() -> None:
         jukebox_assets,
         jukebox_metadata,
         jukebox_report,
-    ) = build_jukebox_assets(data_root, opentyrian_root, preview)
+    ) = build_jukebox_assets(opentyrian_root, preview)
     for name, data in jukebox_assets.items():
         (output / name).write_bytes(data)
 
@@ -7500,6 +7507,11 @@ def main() -> None:
     gba_obj_tiles, obj_palette, source_metadata, obj_preview = (
         gba.build_obj_assets(image_root, player_shot_source)
     )
+    (
+        nort_ship_tiles,
+        nort_ship_palette,
+        nort_ship_preview,
+    ) = gba.build_nort_ship_assets(image_root)
     (
         explosion_tiles,
         explosion_palette,
@@ -7610,11 +7622,17 @@ def main() -> None:
     obj_metadata.update(frontend_metadata)
     obj_metadata.update(jukebox_metadata)
     obj_metadata.update(tyrend_gba_metadata)
+    obj_metadata["NORT_SHIP_SOURCE_GRAPHIC"] = 1
+    obj_metadata["NORT_SHIP_FRAME_COUNT"] = 5
+    obj_metadata["NORT_SHIP_NEUTRAL_FRAME"] = 2
+    obj_metadata["NORT_SHIP_FRAME_TILES"] = 32
+    obj_metadata["NORT_SHIP_FRAME_BYTES"] = 1024
     for flash, (bottom, middle, top) in enumerate(boss_bar_flash_colours):
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_BOTTOM"] = bottom
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_MIDDLE"] = middle
         obj_metadata[f"BOSS_BAR_FLASH_{flash}_TOP"] = top
     for obsolete in (
+        output / "jukebox_font_tiles.bin",
         output / "enemy_structure_palette.bin",
         output / "enemy_frame_tiles.bin",
         output / "enemy_frame_catalog.bin",
@@ -7624,11 +7642,14 @@ def main() -> None:
         output / "reward_event33_audit.csv",
         output / "enemy_projectile_audit.txt",
         output / "sprite_mapping_audit.txt",
+        preview / "jukebox_pc_font_tiles.png",
         preview / "enemy_frames_exact_catalog.png",
     ):
         obsolete.unlink(missing_ok=True)
     (output / "obj_tiles.bin").write_bytes(obj_tiles)
     (output / "obj_palette.bin").write_bytes(obj_palette)
+    (output / "player_nort_tiles.bin").write_bytes(nort_ship_tiles)
+    (output / "player_nort_palette.bin").write_bytes(nort_ship_palette)
     (output / "secret_level_palettes.bin").write_bytes(
         secret_level_palettes
     )
@@ -7638,6 +7659,13 @@ def main() -> None:
     obj_preview.resize((256, 512), Image.Resampling.NEAREST).save(
         preview / "obj_gba_source_atlas.png"
     )
+    nort_ship_preview.resize(
+        (
+            nort_ship_preview.width * 4,
+            nort_ship_preview.height * 4,
+        ),
+        Image.Resampling.NEAREST,
+    ).save(preview / "nort_ship_source_banking.png")
     explosion_preview.resize((384, 288), Image.Resampling.NEAREST).save(
         preview / "explosion_animations_small_air_ground.png"
     )
@@ -7862,6 +7890,9 @@ def main() -> None:
         "spawn_coordinate_mode=PC initial Y + HDT motion + source pool scroll",
         "reward_source=runtime HDT evalue/eenemydie plus LVL event33",
         f"obj_tiles={len(obj_tiles) // 32}",
+        "nort_ship_source=Sprite2 220/222 + banking 39/40/58/59",
+        f"nort_ship_frames={len(nort_ship_tiles) // 1024}",
+        f"nort_ship_tile_bytes={len(nort_ship_tiles)}",
         "obj_enemy_archetypes=0 (removed; no gameplay ID aliases)",
         "obj_enemy_preconverted_frames=0",
         (
@@ -7935,7 +7966,7 @@ def main() -> None:
         f"player_shot_animation_frames={player_shot_report['animation_frames']}",
         f"music_catalog_modules={len(music_modules)}",
         f"music_catalog_it_bytes={sum(map(len, music_modules))}",
-        "music_catalog_profile=GbaMaxmod fixed-reference tracker adapter",
+        "music_catalog_profile=GbaMaxmod nine-channel fixed-reference tracker adapter",
         (
             "music_calibration_source_count="
             f"{maxmod_catalog['summary']['sourceCount']}"
@@ -7979,6 +8010,9 @@ def main() -> None:
         "music_calibration_per_song_maximum_normalization=0",
         "music_calibration_reference_fold_down=mono_L_plus_R",
         "music_percussion_boundary=1.5ms_attack_5ms_release_DC_blocked",
+        "music_opl_source_channels=9_complete",
+        "music_procedural_percussion_rate_hz=15768",
+        "audio_source_sfx_rate_hz=11025_source_native",
         f"title_music_it_bytes={len(title_music)}",
         f"title_music_seconds={title_report['tracker_duration_seconds']:.6f}",
         f"level_music_it_bytes={len(level_music)}",

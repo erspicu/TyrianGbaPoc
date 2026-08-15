@@ -475,7 +475,7 @@ GBA 顯示更新率為約 59.72750057 Hz。遊戲邏輯使用 fixed-step accumul
 Tyrian TYM
     → 保留 tracker event 的 IT module
     → mmutil soundbank
-    → GBA Maxmod 16-channel mixer
+    → GBA Maxmod 18-slot mixer
     → Direct Sound stereo
 ```
 
@@ -491,8 +491,11 @@ Tyrian TYM
 不是先轉成單一長 PCM，因此 ROM 容量很小，且各 tracker channel 仍可
 由 Maxmod 獨立混音。
 
-Maxmod 使用約 15.768 kHz 的 GBA stereo mixer 模式、16 個 mixer channel，
-module 與 effects volume 都設為 896/1024。
+目前 Maxmod 使用約 15.768 kHz 的 GBA stereo mixer 模式與 18 個 mixer
+slots：九個完整 OPL 音樂聲道、八個邏輯 SFX 聲道及一個安全餘額。
+module 與 effects volume 都設為 896/1024。早期本技術示範使用 16 slots；
+完整九聲道升級詳見
+[Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md](Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md)。
 
 暫停時依 PC `JE_pauseGame()` 只把 module volume 降為 448/1024；音樂
 時間軸繼續播放，遊戲世界則完全凍結。再按 `Start` 後恢復 896/1024。

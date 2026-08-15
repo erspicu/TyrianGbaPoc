@@ -16,8 +16,15 @@ enum {
     JUKEBOX_TEXT_PALETTE_BODY = 9,
     JUKEBOX_TEXT_PALETTE_TRACK = 10,
     JUKEBOX_TEXT_PALETTE_DIM = 11,
-    JUKEBOX_VISIBLE_COLUMNS = 30,
     JUKEBOX_VISIBLE_ROWS = 20,
+    JUKEBOX_TEXT_TILE_COLUMNS = 30,
+    JUKEBOX_TEXT_LINE_COUNT = 7,
+    JUKEBOX_TEXT_TILE_BASE = 1,
+    JUKEBOX_TEXT_TILE_COUNT =
+        JUKEBOX_TEXT_TILE_BASE +
+        JUKEBOX_TEXT_TILE_COLUMNS * JUKEBOX_TEXT_LINE_COUNT,
+    JUKEBOX_TEXT_MAX_CHARACTERS = JUKEBOX_TITLE_BYTES,
+    JUKEBOX_TEXT_NIBBLE = 15,
     JUKEBOX_SOURCE_VOLUME = 255,
     JUKEBOX_FADE_STEPS = 16,
     JUKEBOX_STAR_SPEED = 2,
@@ -30,8 +37,6 @@ typedef struct {
     u8 hue;
 } JukeboxStar;
 
-static const char jukebox_font_characters[] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?'/:-%";
 static const u8 jukebox_setup_choices[] = {0, 2, 3, 6, 8};
 
 /*
@@ -45,9 +50,12 @@ enum {
     JUKEBOX_TEXT_MAP_OFFSET =
         JUKEBOX_STARS_OFFSET +
         sizeof(JukeboxStar) * JUKEBOX_STAR_COUNT,
-    JUKEBOX_BG_PALETTE_OFFSET =
+    JUKEBOX_TEXT_TILES_OFFSET =
         JUKEBOX_TEXT_MAP_OFFSET +
         sizeof(u16) * 32 * 32,
+    JUKEBOX_BG_PALETTE_OFFSET =
+        JUKEBOX_TEXT_TILES_OFFSET +
+        JUKEBOX_TEXT_TILE_COUNT * 32,
     JUKEBOX_OBJ_PALETTE_OFFSET =
         JUKEBOX_BG_PALETTE_OFFSET +
         sizeof(u16) * 256,
@@ -68,6 +76,10 @@ enum {
 #define jukebox_bg_palette_shadow \
     (*(u16 (*)[256])(void *)( \
         JUKEBOX_SHARED_BASE + JUKEBOX_BG_PALETTE_OFFSET \
+    ))
+#define jukebox_text_tiles \
+    (*(u8 (*)[JUKEBOX_TEXT_TILE_COUNT * 32])(void *)( \
+        JUKEBOX_SHARED_BASE + JUKEBOX_TEXT_TILES_OFFSET \
     ))
 #define jukebox_obj_palette_shadow \
     (*(u16 (*)[256])(void *)( \
@@ -92,6 +104,7 @@ static u8 jukebox_fade_level EWRAM_BSS;
 static u8 jukebox_palette_phase EWRAM_BSS;
 static u8 jukebox_text_map_dirty EWRAM_BSS;
 static u8 jukebox_palette_dirty EWRAM_BSS;
+static u8 jukebox_text_line_count EWRAM_BSS;
 
 volatile u32 telemetry_jukebox_frames EWRAM_BSS;
 volatile u32 telemetry_jukebox_track_changes EWRAM_BSS;
@@ -109,9 +122,8 @@ _Static_assert(
     "Jukebox must leave spare hardware OAM entries"
 );
 _Static_assert(
-    sizeof(jukebox_font_characters) - 1 ==
-        JUKEBOX_FONT_TILE_COUNT - 1,
-    "Jukebox runtime font order changed"
+    JUKEBOX_TEXT_TILE_COUNT <= 512,
+    "Jukebox proportional text tiles must fit character base zero"
 );
 _Static_assert(
     JUKEBOX_RECIPROCAL_MAX_Z == 500 &&
@@ -224,33 +236,108 @@ static void jukebox_change_setup(void)
     jukebox_phase = 0;
 }
 
-static u8 jukebox_font_tile(char character)
+static u8 jukebox_text_glyph_width(char character, u8 *tile_out)
 {
-    u8 index;
+    u8 tile;
 
-    if (character >= 'a' && character <= 'z') {
-        character = (char)(character - 'a' + 'A');
+    if (character == ' ') {
+        *tile_out = 0;
+        return 0;
     }
-    if (character == ' ') return 0;
-    for (
-        index = 0;
-        index < sizeof(jukebox_font_characters) - 1;
-        index++
+    tile = frontend_pregame_font_tile(character);
+    *tile_out = tile;
+    return frontend_small_mixed_font_width(tile);
+}
+
+static u16 jukebox_text_span_width(const char *text, u8 length)
+{
+    u16 width = 0;
+
+    while (length-- != 0) {
+        u8 tile;
+        u8 glyph_width = jukebox_text_glyph_width(*text, &tile);
+
+        width = (u16)(
+            width +
+            (
+                *text == ' ' ?
+                    frontend_small_mixed_font_advance(0) :
+                    glyph_width + 1u
+            )
+        );
+        text++;
+    }
+    return width > 0 ? (u16)(width - 1u) : 0;
+}
+
+static void jukebox_text_set_pixel(
+    u8 line,
+    u16 x,
+    u8 y,
+    u8 nibble
+)
+{
+    u16 tile;
+    u16 offset;
+
+    if (
+        line >= JUKEBOX_TEXT_LINE_COUNT ||
+        x >= SCREEN_WIDTH ||
+        y >= 8
     ) {
-        if (jukebox_font_characters[index] == character) {
-            return (u8)(index + 1);
+        return;
+    }
+    tile = (u16)(
+        JUKEBOX_TEXT_TILE_BASE +
+        (u16)line * JUKEBOX_TEXT_TILE_COLUMNS +
+        (x >> 3)
+    );
+    offset = (u16)(
+        tile * 32u + (u16)y * 4u + ((x & 7u) >> 1)
+    );
+    if (x & 1u) {
+        jukebox_text_tiles[offset] |= (u8)(nibble << 4);
+    } else {
+        jukebox_text_tiles[offset] |= nibble;
+    }
+}
+
+static void jukebox_text_draw_glyph(
+    u8 line,
+    char character,
+    u16 x
+)
+{
+    u8 tile;
+    u8 target_width = jukebox_text_glyph_width(character, &tile);
+    u8 source_width = frontend_pregame_font_width(tile);
+    u8 row;
+
+    if (target_width == 0 || source_width == 0) return;
+    for (row = 0; row < FRONTEND_PREGAME_FONT_HEIGHT; row++) {
+        u8 bits = frontend_pregame_font_row(tile, row);
+        u8 column;
+
+        for (column = 0; column < target_width; column++) {
+            u8 source_column = frontend_small_mixed_source_column(
+                source_width,
+                target_width,
+                column
+            );
+
+            if (
+                bits &
+                    (1u << (source_width - source_column - 1u))
+            ) {
+                jukebox_text_set_pixel(
+                    line,
+                    (u16)(x + column),
+                    row,
+                    JUKEBOX_TEXT_NIBBLE
+                );
+            }
         }
     }
-    for (
-        index = 0;
-        index < sizeof(jukebox_font_characters) - 1;
-        index++
-    ) {
-        if (jukebox_font_characters[index] == '?') {
-            return (u8)(index + 1);
-        }
-    }
-    return 0;
 }
 
 static void jukebox_draw_text_span(
@@ -260,18 +347,39 @@ static void jukebox_draw_text_span(
     u8 length
 )
 {
+    u8 line;
     u8 column;
+    u16 x;
+    u16 width;
 
-    if (row >= JUKEBOX_VISIBLE_ROWS) return;
-    if (length > JUKEBOX_VISIBLE_COLUMNS) {
-        length = JUKEBOX_VISIBLE_COLUMNS;
+    if (
+        row >= JUKEBOX_VISIBLE_ROWS ||
+        jukebox_text_line_count >= JUKEBOX_TEXT_LINE_COUNT
+    ) {
+        return;
     }
-    column = (u8)((JUKEBOX_VISIBLE_COLUMNS - length) / 2u);
+    line = jukebox_text_line_count++;
+    for (column = 0; column < JUKEBOX_TEXT_TILE_COLUMNS; column++) {
+        jukebox_text_map[(u16)row * 32u + column] = (u16)(
+            JUKEBOX_TEXT_TILE_BASE +
+            (u16)line * JUKEBOX_TEXT_TILE_COLUMNS +
+            column
+        ) | (u16)palette << 12;
+    }
+    width = jukebox_text_span_width(text, length);
+    x = width < SCREEN_WIDTH ? (u16)((SCREEN_WIDTH - width) / 2u) : 0;
     while (length-- != 0) {
-        jukebox_text_map[(u16)row * 32u + column] =
-            jukebox_font_tile(*text++) |
-            (u16)palette << 12;
-        column++;
+        u8 tile;
+        u8 glyph_width = jukebox_text_glyph_width(*text, &tile);
+
+        if (*text == ' ') {
+            x = (u16)(x + frontend_small_mixed_font_advance(0));
+        } else {
+            jukebox_text_draw_glyph(line, *text, x);
+            x = (u16)(x + glyph_width + 1u);
+        }
+        text++;
+        if (x >= SCREEN_WIDTH) break;
     }
 }
 
@@ -285,7 +393,7 @@ static void jukebox_draw_text(
 
     while (
         text[length] != '\0' &&
-        length < JUKEBOX_VISIBLE_COLUMNS
+        length < JUKEBOX_TEXT_MAX_CHARACTERS
     ) {
         length++;
     }
@@ -307,6 +415,8 @@ static void jukebox_rebuild_text_map(void)
     for (index = 0; index < 32u * 32u; index++) {
         jukebox_text_map[index] = 0;
     }
+    memset(jukebox_text_tiles, 0, sizeof(jukebox_text_tiles));
+    jukebox_text_line_count = 0;
     if (jukebox_hide_text) {
         jukebox_text_map_dirty = 1;
         return;
@@ -532,9 +642,9 @@ static void jukebox_enter(void)
     dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
     oam_dirty = 0;
     dmaCopy(
-        jukebox_font_tiles,
+        jukebox_text_tiles,
         CHAR_BASE_BLOCK(0),
-        JUKEBOX_FONT_TILE_COUNT * 32u
+        sizeof(jukebox_text_tiles)
     );
     dmaCopy(
         jukebox_backdrop_tiles,
@@ -595,6 +705,11 @@ static void jukebox_commit_vblank(void)
     REG_BG1HOFS = (jukebox_scroll_phase >> 1) & 255u;
     REG_BG1VOFS = (jukebox_scroll_phase >> 2) & 255u;
     if (jukebox_text_map_dirty) {
+        dmaCopy(
+            jukebox_text_tiles,
+            CHAR_BASE_BLOCK(0),
+            sizeof(jukebox_text_tiles)
+        );
         dmaCopy(
             jukebox_text_map,
             SCREEN_BASE_BLOCK(JUKEBOX_TEXT_SCREEN_BLOCK),

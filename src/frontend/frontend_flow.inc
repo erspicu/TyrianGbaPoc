@@ -883,18 +883,56 @@ static u8 frontend_demo_apply_input(void)
     return 1;
 }
 
+static u8 frontend_episode_wrap_reward_roll(void)
+{
+#ifdef AUTOTEST_EPISODE_WRAP_FLOW
+    /* Deterministically cover the PC's successful one-in-six branch. */
+    return 0;
+#else
+    return (u8)(ot_level_port_random(&source_parity_level) % 6u);
+#endif
+}
+
+static void frontend_episode_wrap_apply_supercarrot_reward(void)
+{
+    if (!frontend_player_items_valid || frontend_demo_active) return;
+
+    /*
+     * mainint.c JE_nextEpisode(): the hidden one-in-six reward is the
+     * SuperCarrot carrying Banana Blast in both authored weapon ports.
+     * It is not added to the ordinary Upgrade Ship inventory.
+     */
+    frontend_player_items.ship = 2;
+    frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id = 23;
+    frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id = 24;
+    frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power = 1;
+    frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power = 1;
+    frontend_upgrade_accepted_items = frontend_player_items;
+    frontend_upgrade_preview_cache_valid = 0;
+    frontend_upgrade_ship_preview_cache_valid = 0;
+    frontend_ship_panel_cache_valid = 0;
+}
+
 static void frontend_advance_episode(void)
 {
+    u8 wraps_to_episode_one =
+        frontend_episode + 1u >= OT_EPISODE_COUNT;
+
     /*
      * JE_nextEpisode()/JE_findNextEpisode() is cyclic.  Completing Episode
      * 4 (including its authored "Skip It" destination) wraps to Episode 1,
      * sets mainLevel/saveLevel to FIRST_LEVEL and continues the campaign;
      * it does not return to the title screen.
      */
-    frontend_episode =
-        frontend_episode + 1u >= OT_EPISODE_COUNT ?
-            0 :
-            (u8)(frontend_episode + 1u);
+    if (
+        wraps_to_episode_one &&
+        frontend_episode_wrap_reward_roll() == 0
+    ) {
+        frontend_episode_wrap_apply_supercarrot_reward();
+    }
+    frontend_episode = wraps_to_episode_one ?
+        0 :
+        (u8)(frontend_episode + 1u);
     frontend_main_section = 1;
     frontend_map = (OtEpisodeMap){0};
     frontend_level = (OtEpisodeLevel){0};

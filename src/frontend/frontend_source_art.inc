@@ -1443,137 +1443,183 @@ static void frontend_fill_source_rect(
     }
 }
 
-static void frontend_half_shade_source_rect(
-    u8 *frame,
-    s16 source_x0,
-    s16 source_y0,
-    s16 source_x1,
-    s16 source_y1
-)
-{
-    u16 x0;
-    u16 y0;
-    u16 x1;
-    u16 y1;
-    u16 y;
-
-    frontend_source_rect_bounds(
-        source_x0,
-        source_y0,
-        source_x1,
-        source_y1,
-        &x0,
-        &y0,
-        &x1,
-        &y1
-    );
-    if (x0 >= x1 || y0 >= y1) return;
-    for (y = y0; y < y1; y++) {
-        u16 x;
-        u8 *row = frame + (u32)y * SCREEN_WIDTH;
-
-        for (x = x0; x < x1; x++) {
-            u8 pixel = row[x];
-
-            row[x] = (u8)((pixel & 0xf0u) | ((pixel & 0x0fu) >> 1));
-        }
-    }
-}
-
 /*
- * Line-for-line geometry counterpart of OpenTyrian JE_barDrawShadow().
- * Rectangle primitives are mapped as coherent native GBA rectangles so the
- * 4:5 scale never drops isolated one-pixel rows or columns.
+ * GBA-native presentation of game_menu.c's JE_barDrawShadow() values.
+ *
+ * The PC cells are two pixels wide with a one-pixel gap.  Scaling every
+ * source rectangle independently made some one-pixel gaps vanish, while a
+ * fixed one-pixel cell plus one-pixel gap made the complete gauges 17--18%
+ * too narrow.  Preserve the exact 4/5-scaled end points and reserve one
+ * native pixel between cells, then distribute the remaining pixels evenly
+ * as one/two-pixel cell widths with a Bresenham-style error accumulator.
+ * This keeps every separator visible without changing the source gauge's
+ * total width.  Full cells also retain JE_barDrawShadow's highlight, lower
+ * edge and background shadow; a partial final cell keeps its stock flat
+ * intensity.
  */
-static void frontend_draw_segment_bar_source(
+static void frontend_draw_status_segment_bar_native(
     u8 *frame,
     s16 source_x,
     s16 source_y,
     u8 resolution,
     u8 colour,
     u8 amount,
-    u8 source_width,
     u8 source_height
 )
 {
-    u8 x_size;
-    u8 y_size;
     u8 segment_count;
+    u8 full_segment_count;
     u8 segment;
     u8 remainder;
-    s16 x = source_x;
+    u8 extra_width_pixels;
+    u8 width_error = 0;
+    s16 x;
+    s16 y;
+    s16 bottom;
+    s16 target_right;
+    s16 cell_x;
+    u16 height;
 
     if (
         frame == 0 ||
         resolution == 0 ||
-        source_width == 0 ||
         source_height == 0
     ) {
         return;
     }
-    x_size = (u8)(source_width - 1u);
-    y_size = (u8)(source_height - 1u);
-    segment_count = (u8)(amount / resolution);
-    for (segment = 0; segment < segment_count; segment++) {
-        frontend_half_shade_source_rect(
-            frame,
-            (s16)(x + 2),
-            (s16)(source_y + 2),
-            (s16)(x + x_size + 2),
-            (s16)(source_y + y_size + 2)
-        );
-        frontend_fill_source_rect(
-            frame,
-            x,
-            source_y,
-            (s16)(x + x_size),
-            (s16)(source_y + y_size),
-            (u8)(colour + 12u)
-        );
-        frontend_fill_source_rect(
-            frame,
-            x,
-            source_y,
-            (s16)(x + x_size),
-            source_y,
-            (u8)(colour + 13u)
-        );
-        frontend_fill_source_rect(
-            frame,
-            x,
-            source_y,
-            x,
-            source_y,
-            (u8)(colour + 15u)
-        );
-        frontend_fill_source_rect(
-            frame,
-            x,
-            (s16)(source_y + y_size),
-            (s16)(x + x_size),
-            (s16)(source_y + y_size),
-            (u8)(colour + 11u)
-        );
-        x = (s16)(x + x_size + 2u);
+    x = frontend_source_to_screen_x(source_x);
+    y = frontend_source_to_screen_y(source_y);
+    bottom = frontend_source_to_screen_y(
+        (s16)(source_y + source_height)
+    );
+    if (
+        x < 0 ||
+        x >= SCREEN_WIDTH ||
+        y < 0 ||
+        y >= SCREEN_HEIGHT ||
+        bottom <= y
+    ) {
+        return;
+    }
+    if (bottom > SCREEN_HEIGHT) bottom = SCREEN_HEIGHT;
+    height = (u16)(bottom - y);
+    full_segment_count = (u8)(amount / resolution);
+    segment_count = full_segment_count;
+    remainder = (u8)(amount % resolution);
+    if (remainder != 0) segment_count++;
+    if (segment_count == 0) return;
+
+    /*
+     * The last two-pixel source cell ends at
+     * source_x + (segment_count - 1) * 3 + 2.  Map that exclusive end once
+     * so rounding cannot accumulate across individual cells.
+     */
+    target_right = frontend_source_to_screen_x(
+        (s16)(source_x + (u16)segment_count * 3u - 1u)
+    );
+    if (target_right > SCREEN_WIDTH) target_right = SCREEN_WIDTH;
+    if (target_right <= x) return;
+    {
+        u16 target_width = (u16)(target_right - x);
+        u16 minimum_width = (u16)segment_count * 2u - 1u;
+
+        extra_width_pixels = target_width > minimum_width ?
+            (u8)(target_width - minimum_width) : 0;
+        if (extra_width_pixels > segment_count) {
+            extra_width_pixels = segment_count;
+        }
     }
 
-    remainder = (u8)(amount % resolution);
-    if (remainder != 0) {
-        frontend_half_shade_source_rect(
+    cell_x = x;
+    for (segment = 0; segment < segment_count; segment++) {
+        u8 cell_width = 1;
+        u8 draw_width;
+        u8 cell_colour = (u8)(colour + 12u);
+        s16 shadow_x;
+        s16 shadow_y;
+
+        if (cell_x >= SCREEN_WIDTH) break;
+        width_error = (u8)(width_error + extra_width_pixels);
+        if (width_error >= segment_count) {
+            cell_width++;
+            width_error = (u8)(width_error - segment_count);
+        }
+        draw_width = cell_width;
+        if (cell_x + draw_width > SCREEN_WIDTH) {
+            draw_width = (u8)(SCREEN_WIDTH - cell_x);
+        }
+        if (segment >= full_segment_count) {
+            cell_colour = (u8)(
+                colour + (12u / resolution) * remainder
+            );
+        }
+
+        /* Native counterpart of JE_barShade(x + 2, y + 2, ...). */
+        shadow_x = (s16)(cell_x + 2);
+        shadow_y = (s16)(y + 2);
+        if (shadow_x < SCREEN_WIDTH && shadow_y < SCREEN_HEIGHT) {
+            u16 shadow_width = draw_width;
+            u16 shadow_height = height;
+            u16 shadow_row;
+
+            if (shadow_x + shadow_width > SCREEN_WIDTH) {
+                shadow_width = (u16)(SCREEN_WIDTH - shadow_x);
+            }
+            if (shadow_y + shadow_height > SCREEN_HEIGHT) {
+                shadow_height = (u16)(SCREEN_HEIGHT - shadow_y);
+            }
+            for (shadow_row = 0; shadow_row < shadow_height; shadow_row++) {
+                u8 *shadow =
+                    frame +
+                    (u32)(shadow_y + shadow_row) * SCREEN_WIDTH +
+                    shadow_x;
+                u16 shadow_column;
+
+                for (
+                    shadow_column = 0;
+                    shadow_column < shadow_width;
+                    shadow_column++
+                ) {
+                    u8 pixel = shadow[shadow_column];
+
+                    shadow[shadow_column] = (u8)(
+                        (pixel & 0xf0u) |
+                        ((pixel & 0x0fu) >> 1)
+                    );
+                }
+            }
+        }
+        frontend_fill_rect(
             frame,
-            (s16)(x + 2),
-            (s16)(source_y + 2),
-            (s16)(x + x_size + 2),
-            (s16)(source_y + y_size + 2)
+            (u16)cell_x,
+            (u16)y,
+            draw_width,
+            height,
+            cell_colour
         );
-        frontend_fill_source_rect(
-            frame,
-            x,
-            source_y,
-            (s16)(x + x_size),
-            (s16)(source_y + y_size),
-            (u8)(colour + (12u / resolution) * remainder)
-        );
+        if (segment < full_segment_count) {
+            frontend_fill_rect(
+                frame,
+                (u16)cell_x,
+                (u16)y,
+                draw_width,
+                1,
+                (u8)(colour + 13u)
+            );
+            frame[(u32)y * SCREEN_WIDTH + (u16)cell_x] =
+                (u8)(colour + 15u);
+            if (height > 1u) {
+                frontend_fill_rect(
+                    frame,
+                    (u16)cell_x,
+                    (u16)(y + height - 1u),
+                    draw_width,
+                    1,
+                    (u8)(colour + 11u)
+                );
+            }
+        }
+        cell_x = (s16)(cell_x + cell_width + 1u);
     }
 }
 
@@ -1802,14 +1848,13 @@ static void frontend_draw_ship_illustration_part(
                 &ship
             )
         ) {
-            frontend_draw_segment_bar_source(
+            frontend_draw_status_segment_bar_native(
                 frame,
                 42,
                 152,
                 3,
                 14,
                 ship.damage,
-                2,
                 13
             );
         }
@@ -1819,14 +1864,13 @@ static void frontend_draw_ship_illustration_part(
                 &shield
             )
         ) {
-            frontend_draw_segment_bar_source(
+            frontend_draw_status_segment_bar_native(
                 frame,
                 104,
                 152,
                 2,
                 14,
                 (u8)(shield.max_power * 2u),
-                2,
                 13
             );
         }

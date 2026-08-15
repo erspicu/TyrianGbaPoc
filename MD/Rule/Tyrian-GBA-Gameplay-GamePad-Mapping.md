@@ -1,6 +1,6 @@
 # Tyrian GBA 關卡內 GamePad Mapping 規則
 
-日期：2026-08-05  
+日期：2026-08-16
 適用範圍：正常關卡 gameplay；不改靜態選單，也不改 HUD。
 
 ## 定案配置
@@ -14,6 +14,10 @@
 | R | 消耗一顆已拾取的 Super Bomb |
 | Select | 切換支援多模式的 Rear Weapon |
 | Start | PAUSED／繼續 |
+
+D-Pad 與 A 同時也是 PC 原版的船型 Twiddle 指令輸入；它不占用額外按鍵，
+也不取代上述移動與主砲語意。例如 SuperCarrot 的 `UP, DOWN+A` 會執行
+Hot Dog。完成的指令在 Special bay 忙碌時會保留，待可用後再執行。
 
 這是 GBA 輸入轉接層，不改 `tyrian.hdt` 的 weapon、port、option、special
 定義，也不改 power use、ammo、charge、repeat、multi-position 或效果。
@@ -47,9 +51,9 @@
   自行發明新的移動能力。
 - 不把 A+B 綁成炸彈：玩家自然會同時按主砲與 Sidekick，容易誤耗炸彈。
 - 不把 L+R 當成泛用「最強技」：原版沒有一個可適用所有船型的共同技能。
-- 不把所有 Twiddle code 當成同一招。L 啟動的是玩家目前真正裝備的
-  Special Weapon；原始 `SFExecuted` 指令、支付 Shield／Armor 的路徑
-  仍是另一套規則，不能混在一起。
+- 不把所有 Twiddle code 當成同一招。26 組原始指令與 14 艘船的三組
+  對應表已完整保留；L 啟動的是玩家目前真正裝備的 Special Weapon，
+  D-Pad+A Twiddle 建立的 `SFExecuted` 才走 Shield／Armor 支付路徑。
 - 不加入 Pause 子選單，也不修改 HUD；Start 僅維持既有暫停／繼續。
 
 ## Demo 相容性
@@ -67,5 +71,7 @@ AUTOTEST 必須驗證：
 - B 同時送出左右 Sidekick logical command。
 - Select 能切到 stock Rear port 的第二模式。
 - L 能走既有 Special Weapon 完整效果路徑。
+- D-Pad+A 能依船型解碼原始 Twiddle；完成結果可跨 cooldown tick 保留，
+  且不會錯接到 L 的一般裝備支付規則。
 - Demo 的 bit 4～7 仍保留 main、rear-mode、left-sidekick、right-sidekick
   四種獨立語意。

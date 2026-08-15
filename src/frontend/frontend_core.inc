@@ -106,15 +106,15 @@ _Static_assert(
     "generated front-end state atlas changed"
 );
 _Static_assert(
+    FRONTEND_RUNTIME_FRAME_COUNT == 6 &&
+        FRONTEND_RUNTIME_PALETTE_COUNT == 6,
+    "compacted front-end frame/palette atlas changed"
+);
+_Static_assert(
     FRONTEND_MENU_SOURCE_CROP_X == 0 &&
         FRONTEND_MENU_SOURCE_WIDTH == 300 &&
         FRONTEND_NEXT_LEVEL_PALETTE_INDEX == 17,
     "front-end 300x200 crop or OpenTyrian navigation palette changed"
-);
-_Static_assert(
-    FRONTEND_GLYPH_COUNT == 11 &&
-        FRONTEND_GLYPH_BYTES == 64,
-    "dynamic stats glyph atlas changed"
 );
 _Static_assert(
     FRONTEND_NAV_OBJ_META_BYTES == 12 &&
@@ -1106,11 +1106,6 @@ static const u8 frontend_tiny_font_rows[][5] = {
 
 _Static_assert(
     sizeof(frontend_runtime_font_characters) - 1u ==
-        JUKEBOX_FONT_TILE_COUNT - 1u,
-    "shared runtime font order changed"
-);
-_Static_assert(
-    sizeof(frontend_runtime_font_characters) - 1u ==
         FRONTEND_STATS_FONT_GLYPH_COUNT,
     "source stats glyph count changed"
 );
@@ -1369,12 +1364,65 @@ static const char *frontend_next_choice_label(u8 display_choice)
 
 static const u8 *frontend_frame_address(u8 frame)
 {
-    return frontend_frames + (u32)frame * FRONTEND_FRAME_BYTES;
+    u8 slot = FRONTEND_RUNTIME_FRAME_MENU_CHROME_SLOT;
+
+    if (frame == FRONTEND_FRAME_INTRO_LOGO_1) {
+        slot = FRONTEND_RUNTIME_FRAME_INTRO_LOGO_1_SLOT;
+    } else if (frame == FRONTEND_FRAME_INTRO_LOGO_2) {
+        slot = FRONTEND_RUNTIME_FRAME_INTRO_LOGO_2_SLOT;
+    } else if (
+        frame == FRONTEND_FRAME_TITLE_CHROME ||
+        (
+            frame >= FRONTEND_FRAME_TITLE_BASE &&
+            frame < FRONTEND_FRAME_PLAY_MODE_BASE
+        )
+    ) {
+        slot = FRONTEND_RUNTIME_FRAME_TITLE_CHROME_SLOT;
+    } else if (
+        frame == FRONTEND_FRAME_SELECT_CHROME ||
+        (
+            frame >= FRONTEND_FRAME_PLAY_MODE_BASE &&
+            frame < FRONTEND_FRAME_GAME_MENU_BASE
+        )
+    ) {
+        slot = FRONTEND_RUNTIME_FRAME_SELECT_CHROME_SLOT;
+    } else if (frame == FRONTEND_FRAME_GAME_OVER) {
+        slot = FRONTEND_RUNTIME_FRAME_GAME_OVER_SLOT;
+    }
+    return frontend_frames + (u32)slot * FRONTEND_FRAME_BYTES;
 }
 
 static const u8 *frontend_palette_address(u8 frame)
 {
-    return frontend_palettes + (u32)frame * 512u;
+    u8 slot = FRONTEND_RUNTIME_PALETTE_MENU_CHROME_SLOT;
+
+    if (frame == FRONTEND_FRAME_INTRO_LOGO_1) {
+        slot = FRONTEND_RUNTIME_PALETTE_INTRO_LOGO_1_SLOT;
+    } else if (frame == FRONTEND_FRAME_INTRO_LOGO_2) {
+        slot = FRONTEND_RUNTIME_PALETTE_INTRO_LOGO_2_SLOT;
+    } else if (
+        frame == FRONTEND_FRAME_TITLE_CHROME ||
+        (
+            frame >= FRONTEND_FRAME_TITLE_BASE &&
+            frame < FRONTEND_FRAME_PLAY_MODE_BASE
+        )
+    ) {
+        slot = FRONTEND_RUNTIME_PALETTE_TITLE_CHROME_SLOT;
+    } else if (
+        frame == FRONTEND_FRAME_SELECT_CHROME ||
+        (
+            frame >= FRONTEND_FRAME_PLAY_MODE_BASE &&
+            frame < FRONTEND_FRAME_GAME_MENU_BASE
+        )
+    ) {
+        slot = FRONTEND_RUNTIME_PALETTE_SELECT_CHROME_SLOT;
+    } else if (
+        frame >= FRONTEND_FRAME_NEXT_LEVEL_BASE &&
+        frame < FRONTEND_FRAME_STATS_COMPLETED
+    ) {
+        slot = FRONTEND_RUNTIME_PALETTE_NEXT_LEVEL_0_SLOT;
+    }
+    return frontend_palettes + (u32)slot * 512u;
 }
 
 static void frontend_set_affine_identity(void)

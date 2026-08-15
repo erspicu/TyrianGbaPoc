@@ -1,6 +1,6 @@
 # Tyrian Special Weapon 資料、屬性與 HUD 顯示規則
 
-日期：2026-08-04
+日期：2026-08-04（2026-08-16 更新 Twiddle 與隱藏武器流程）
 適用範圍：PC OpenTyrian 原始規格與 TyrianGbaPoc 目前移植狀態
 
 ## 結論
@@ -171,8 +171,29 @@ PC 每幀有兩個獨立的顯示：
 
 GBA 現有的 gamepad Special 鍵對應 PC 的「目前裝備 Special」路徑，因此不會
 扣 Shield／Armor，也不會把多段武器的 `shotMultiPos` 歸零。`SFExecuted`
-支付 helper 仍依 PC 原碼完整保留並由 autotest 驗證，供日後真正加入 twiddle／
-指令輸入時直接使用；不能把這個 helper 誤接到一般裝備按鍵。
+支付區塊與單人船 Twiddle 解碼器已依 PC 原碼分開接回：GBA 十字鍵代表方向、
+A 代表主射擊，26 組 `keyboardCombos`、14 艘船的三組 `shipCombos`、按住同方向
+不取消、放開鍵 token 9、完成後等待 Special 冷卻再執行等規則均保留。不能把
+這條支付路徑誤接到一般裝備按鍵；L 仍只觸發左上角目前裝備的 Special。
+
+## Banana／Hot Dog 隱藏取得流程
+
+這四個主武器／Special 並不是普通商店庫存。逐一解析四個 `levelsN.dat` 的
+`]I` 清單後，Front／Rear 商品群組都沒有 23–26；GBA 因此不把它們硬塞進
+Upgrade Ship，而是保留 PC 的隱藏流程：
+
+1. Episode 4 完成並循環回 Episode 1 時，`JE_nextEpisode()` 有 **1/6** 機率把
+   玩家改成 SuperCarrot（Ship 2）、Front 23 `Banana Blast`、Rear 24
+   `Banana Blast Rear`，兩門武器 Power 均重設為 1。GBA 現在使用同一個關卡
+   MT 隨機串流執行此分支，並同步更新下一關路線船型與前端圖形快取。
+2. SuperCarrot 的原版 Twiddle 是 **UP，接著 DOWN+A**。完成後執行 Special 25
+   `Hot Dog`（Weapon 711），依 `pwr=101` 支付 1 Armor，且 Armor 必須至少
+   留 1；若 Special 尚在冷卻，完成的指令會保留到可執行時，不會被單幀吃掉。
+3. Episode 3 `SAWBLADES` 路線另有原始敵人掉落 `evalue=-5`。拾取後會直接把
+   Front／Rear 改成 25 `HotDog`／26 `HotDog Rear`；這條既有掉落流程維持不變。
+
+玩家實際持有的隱藏武器仍會由 Upgrade Ship 的「補入目前裝備」規則出現在
+對應子選單，方便保留或換下；這不等於把它永久加入該關商店商品清單。
 
 ## `Super Bomb` 的兩套不同機制
 
@@ -196,8 +217,10 @@ GBA 現有的 gamepad Special 鍵對應 PC 的「目前裝備 Special」路徑�
 | 跨關與 SRAM 保存 | 已保存目前 Special ID |
 | 24 筆有效圖示 | 已使用原始 Sprite2 資料顯示於左上角 |
 | 24 項 HUD Special 的 `stype` 1–12 | 已逐項覆蓋；不以籠統的「1–18 都完成」取代依賴稽核。非 HUD 定義中的 Player 2 type 14 依 GBA 單人規格省略，type 13、16–18 仍保留其資料分派 |
-| 兩條啟動路徑 | 一般裝備按鍵不付款、不重設射擊 phase；`SFExecuted` 才使用支付 helper。兩者已分開測試 |
-| PC Shield／Armor 支付區塊 | `SFExecuted` helper 已完整移植 `pwr` 0、1–97、98、99、100–255 的可負擔判斷、扣除順序與付款後效果值；未錯接到 gamepad 裝備路徑 |
+| 兩條啟動路徑 | 一般裝備 L 鍵不付款、不重設射擊 phase；D-pad+A 的完整單人船 Twiddle 才建立 `SFExecuted` 並使用支付區塊。兩者已分開測試 |
+| PC Twiddle 指令 | 26×8 原始 token 表與 14×3 船型表已移植；完成結果會跨冷卻 tick 保留，SuperCarrot `UP, DOWN+A` 可正確觸發 Hot Dog |
+| PC Shield／Armor 支付區塊 | `SFExecuted` 已完整移植 `pwr` 0、1–97、98、99、100–255 的可負擔判斷、扣除順序與付款後效果值；未錯接到 gamepad 裝備路徑 |
+| Banana／HotDog 取得 | Episode 4 循環的 1/6 SuperCarrot＋Banana 獎勵與 Episode 3 SAWBLADES `evalue=-5` HotDog 掉落均保留；普通商店不偽造 23–26 庫存 |
 | PC graphic 93／94 Ready 狀態燈 | 已使用原始 `spriteSheet9` graphic 94／93 顯示 Ready／冷卻或作用中狀態 |
 | Soul of Zinglon | 已改為硬體視窗實心增亮光柱；寬度、50 tick 生命週期、每 5 tick 傷害脈衝與特殊 Armor 行為同步 PC 原碼 |
 | Xega Ball／Banana Bomb | 從 ROMFS 原始 `tyrian.shp` 精確載入 OptionShapes graphic 21／33；分別保留 55×54 與 80×79 像素、碰撞範圍及多片 OAM 組合 |
@@ -208,13 +231,19 @@ GBA 現有的 gamepad Special 鍵對應 PC 的「目前裝備 Special」路徑�
 | 多段射擊與 pool-full | `shotMultiPos` 跨一般裝備觸發持續推進；彈池滿時不錯誤啟動 cooldown，部分配置失敗也不修改錯誤彈槽 |
 | Sprite2／OptionShapes 快取 | 只掃描各 Weapon 的 live `max` slots，遞迴展開 attack chain；借用 L2 slot 前失效舊 metadata，並依關卡資源需求保留 graphic 21／33 |
 
-Normal 細節 autotest 已覆蓋 `SFExecuted` 的 Shield 直接扣除與不足、
+LOW 細節 autotest 已覆蓋 Twiddle token／取消／跨 tick pending，以及
+`SFExecuted` 的 Shield 直接扣除與不足、
 `pwr=98` 足夠／不足、`pwr=99`、Armor 足夠／不足，以及 Zinglon 寬度／
 五 tick 傷害相位等邊界案例；也直接驗證一般裝備 Xega 不付款且 phase
 由 2 推進到 4，以及 Invulnerability 以目前 Shield 37 取得 370 tick、資源不變。
 SRAM `telemetry_upgrade_loadout_pass=1`。另以無射擊的完整裝備壓力場景
 確認 graphic 94 可見，180 display frames 期間素材、Sprite2 L2、敵機與彈丸
 快取皆無 drop。
+
+Episode-wrap 決定性測試會固定命中 1/6 分支，驗證 Episode 4 Section 44 的
+原始 Skip It／故事／Episode announcement 流程完成後，Episode、section、
+route ship 與實際裝備同步成 Episode 1、Section 1、Ship 2、Front 23 Power 1、
+Rear 24 Power 1；正式 ROM 不固定亂數結果。
 
 GBA 的 superpixel 畫在 sparse 4bpp BG3，避免再消耗已吃緊的 OAM。位置、
 色相、十字形狀與生命週期依 PC 資料；但 GBA 不能在這條 tile 路徑逐像素讀取
@@ -255,10 +284,12 @@ HUD `stype` 都有 runtime 分派。任一資料索引、依賴或支援表退�
 
 - PC 結構與 HDT loader：[`episodes.h`](../../vendor/opentyrian/src/episodes.h)、[`episodes.c`](../../vendor/opentyrian/src/episodes.c)
 - PC Special 行為、成本與 Ready 狀態：[`varz.c`](../../vendor/opentyrian/src/varz.c)
+- PC Twiddle 解碼與 Episode 循環獎勵：[`mainint.c`](../../vendor/opentyrian/src/mainint.c)
 - PC 左上角圖示：[`mainint.c`](../../vendor/opentyrian/src/mainint.c)
 - PC 2×2 Sprite2 拼法：[`sprite.c`](../../vendor/opentyrian/src/sprite.c)
 - GBA HDT reader：[`opentyrian_data.c`](../../src/opentyrian_data.c)
 - GBA Special runtime：[`combat_runtime.inc`](../../src/combat_runtime.inc)
+- GBA Twiddle 解碼器：[`combat_twiddle.inc`](../../src/combat_twiddle.inc)
 - GBA HUD：[`gba_scene.inc`](../../src/gba_scene.inc)
 - 素材導出器：[`export_special_weapon_reference.py`](../../tools/export_special_weapon_reference.py)
 - 24 項 runtime 依賴稽核器：[`audit_special_weapon_runtime.py`](../../tools/audit_special_weapon_runtime.py)

@@ -205,7 +205,13 @@ int main(void)
      * therefore be live before mmInitDefault(), or the first mmFrame() writes
      * through an uninitialized output pointer.
      */
-    mmInitDefault((mm_addr)soundbank, 16);
+    /*
+     * Nine authored OPL2 music voices plus OpenTyrian's eight logical SFX
+     * queues require seventeen live mixer slots.  Keep one spare so a
+     * transition/UI effect cannot steal the newly restored ninth music
+     * voice or the final gameplay effect channel.
+     */
+    mmInitDefault((mm_addr)soundbank, 18);
 
 #if TYRIAN_GBA_PERF_TIMER
     REG_TM2CNT_H = 0;
@@ -295,6 +301,16 @@ int main(void)
     frontend_main_section = AUTOTEST_FRONTEND_ROUTE_SECTION;
 #ifdef AUTOTEST_FRONTEND_ROUTE_ARCADE
     frontend_play_mode = FRONTEND_PLAY_ARCADE;
+#endif
+#ifdef AUTOTEST_EPISODE_WRAP_FLOW
+    /*
+     * A real Episode 4 completion always has a live campaign loadout.
+     * Direct-route tests normally omit it because they only inspect map
+     * parsing; initialize it here so the hidden wrap reward exercises the
+     * same persistent equipment state as production.
+     */
+    frontend_play_mode = FRONTEND_PLAY_FULL_GAME;
+    frontend_campaign_initialize();
 #endif
     if (frontend_prepare_map()) {
         frontend_enter_state(STATE_NEXT_LEVEL_MENU, 0);

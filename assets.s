@@ -11,6 +11,16 @@ obj_palette:
 	.incbin "res/obj_palette.bin"
 
 	.balign 4
+	.global player_nort_tiles
+player_nort_tiles:
+	.incbin "res/player_nort_tiles.bin"
+
+	.balign 4
+	.global player_nort_palette
+player_nort_palette:
+	.incbin "res/player_nort_palette.bin"
+
+	.balign 4
 	.global secret_level_palettes
 secret_level_palettes:
 	.incbin "res/secret_level_palettes.bin"
@@ -44,11 +54,6 @@ frontend_frames:
 	.global frontend_palettes
 frontend_palettes:
 	.incbin "res/frontend_palettes.bin"
-
-	.balign 4
-	.global frontend_glyphs
-frontend_glyphs:
-	.incbin "res/frontend_glyphs.bin"
 
 	.balign 4
 	.global frontend_stats_tiles
@@ -139,11 +144,6 @@ frontend_source_stamp_offsets:
 	.global frontend_source_stamp_data
 frontend_source_stamp_data:
 	.incbin "res/frontend_source_stamp_data.bin"
-
-	.balign 4
-	.global jukebox_font_tiles
-jukebox_font_tiles:
-	.incbin "res/jukebox_font_tiles.bin"
 
 	.balign 4
 	.global jukebox_backdrop_tiles

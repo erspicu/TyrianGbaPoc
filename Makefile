@@ -570,6 +570,8 @@ ASSET_INPUTS := \
 ASSET_BINARIES := \
 	$(RES)/obj_tiles.bin \
 	$(RES)/obj_palette.bin \
+	$(RES)/player_nort_tiles.bin \
+	$(RES)/player_nort_palette.bin \
 	$(RES)/secret_level_palettes.bin \
 	$(RES)/insert_coin_palette.bin \
 	$(RES)/background_gba_palette.bin \
@@ -577,7 +579,6 @@ ASSET_BINARIES := \
 	$(RES)/background_palette_mask_bank.bin \
 	$(RES)/frontend_frames.bin \
 	$(RES)/frontend_palettes.bin \
-	$(RES)/frontend_glyphs.bin \
 	$(RES)/frontend_stats_tiles.bin \
 	$(RES)/frontend_stats_widths.bin \
 	$(RES)/frontend_native_font.bin \
@@ -596,7 +597,6 @@ ASSET_BINARIES := \
 	$(RES)/frontend_nav_bitmap_indices.bin \
 	$(RES)/frontend_source_stamp_offsets.bin \
 	$(RES)/frontend_source_stamp_data.bin \
-	$(RES)/jukebox_font_tiles.bin \
 	$(RES)/jukebox_backdrop_tiles.bin \
 	$(RES)/jukebox_backdrop_map.bin \
 	$(RES)/jukebox_bg_palette.bin \

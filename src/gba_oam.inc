@@ -427,3 +427,33 @@ static void put_sprite_shaped(
                     ATTR2_PALETTE(palette);
     object->dummy = 0;
 }
+
+static void put_sprite_4bpp_64x32_with_type(
+    s16 x,
+    s16 y,
+    u16 tile,
+    u8 palette,
+    u8 priority,
+    u16 type
+)
+{
+    OBJATTR *object;
+
+    if (oam_count >= SPRITE_LIMIT) return;
+    if (
+        x <= -64 || x >= SCREEN_WIDTH ||
+        y <= -32 || y >= SCREEN_HEIGHT
+    ) {
+        return;
+    }
+    object = &oam_shadow[oam_count++];
+    object->attr0 = (y & 0x00ff) | ATTR0_NORMAL | type |
+                    ATTR0_COLOR_16 | ATTR0_WIDE;
+    object->attr1 = (x & 0x01ff) | ATTR1_SIZE_64;
+    object->attr2 = OBJ_CHAR(tile) | ATTR2_PRIORITY(priority) |
+                    ATTR2_PALETTE(palette);
+    object->dummy = 0;
+    if (type == ATTR0_TYPE_WINDOWED) {
+        source_detail_shadow_windows_active = 1;
+    }
+}

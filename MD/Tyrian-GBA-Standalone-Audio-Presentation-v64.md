@@ -1,5 +1,9 @@
 # Tyrian GBA 獨立化、音訊與 Presentation 完整驗證（v64）
 
+> 歷史文件：本頁的音訊數據是 2026-08-01 v64 八聲道基準。正式版已於
+> 2026-08-16 改為完整九聲道；目前規格請見
+> [Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md](Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md)。
+
 日期：2026-08-01
 設定：High Detail／Normal Game Speed／正式 drop-frame scheduler
 

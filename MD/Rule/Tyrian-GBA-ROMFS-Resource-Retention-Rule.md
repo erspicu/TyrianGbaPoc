@@ -28,10 +28,11 @@ LVL／HDT 仍以原始 `shape_table`、`graphic`、`size` 與 `filter` 決定要
 
 | 原始來源 | 檔案數 | bytes | cartridge 替代資料 |
 |---|---:|---:|---|
-| `tyrian.snd`、`voices.snd` | 2 | 397,279 | `res/soundbank.bin` |
+| `tyrian.snd`、`voices.snd`、`voicesc.snd` | 3 | 585,554 | `res/soundbank.bin` |
 | `tyrend.anm` | 1 | 3,315,848 | `res/tyrend_gba_frames.bin` + palette |
 | `newsh*.shp` | 34 | 1,074,186 | Sprite2 raw + front-end source stamps |
-| **合計** | **37** | **4,787,313** | build audit 逐檔記錄 SHA-256 |
+| `tyrianc.shp` | 1 | 444,862 | Christmas Sprite2 raw；共用 table 由 `tyrian.shp` 提供 |
+| **合計** | **39** | **5,420,450** | build audit 逐檔記錄 SHA-256 |
 
 `vfs/manifest.json` 的 `omitted_duplicates` 必須列出每個排除 pattern 與
 替代資源。`tools/build_romfs.py` 仍會讀取原始檔、記錄大小與 SHA-256；
@@ -98,3 +99,13 @@ ROMFS overhead 也因少了 34 筆 path/index 而縮小，所以 image 節省量
 以後若要新增排除項目，必須同時回答三件事：替代 payload 是否完整、
 runtime 是否已沒有原始 reader、以及跨四 Episode／季節模式的驗證如何
 證明沒有 coverage hole。三者任一不成立，就保留原始 ROMFS 檔案。
+
+## 2026-08-16 再稽核
+
+目前 active ROMFS 為 30 files、payload 4,491,366 bytes、image
+4,492,912 bytes，active payload 之間沒有整檔 SHA-256 重複。
+`music.mus`、credits 圖像 `estsc.shp` 與 credits 文字 `tyrian.cdt` 已列入
+`retained_sources`；三者都是唯一來源，不能因目前 UI 尚未完整接通而刪除。
+
+靜態 atlas 與 `res/` 的詳細稽核、1,128,928-byte 正式 ROM 精簡結果見
+[`Tyrian-GBA-Cartridge-Resource-Dedup-Audit-2026-08-16.md`](Tyrian-GBA-Cartridge-Resource-Dedup-Audit-2026-08-16.md)。

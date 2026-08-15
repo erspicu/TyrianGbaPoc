@@ -75,6 +75,11 @@ During play:
 - Select: switch the Rear Weapon mode when the equipped port supports it
 - Start: pause/resume
 
+The original ship-specific Twiddle commands are also recognized through
+D-pad directions plus A, independently of the equipped-Special L button.
+For example, SuperCarrot's Up, then Down+A command fires Hot Dog and pays
+its source-authored Armor cost.
+
 Infinite-ammo Sidekicks retain OpenTyrian's source-authored main-fire link.
 Set `TYRIAN_GBA_GAMEPAD_FULL_AUTO_SIDEKICKS` to `1` in `Configure.h` if A
 should also command ammo-limited Sidekicks. Recorded PC demos retain their

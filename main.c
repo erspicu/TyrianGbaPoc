@@ -309,7 +309,7 @@ _Static_assert(
     "gameplay overlay tiles must fit character base 2 addressing"
 );
 #define FRONTEND_STATS_FONT_GLYPH_COUNT \
-    (JUKEBOX_FONT_TILE_COUNT - 1u)
+    FRONTEND_STATS_PREBAKED_GLYPH_COUNT
 #define FRONTEND_STATS_FONT_TILES_PER_GLYPH 4u
 #define FRONTEND_STATS_TILE_BASE SOURCE_ENEMY_CACHE_LOWER_TILE_BASE
 #define FRONTEND_STATS_CUBE_TILE_BASE \
@@ -895,6 +895,17 @@ _Static_assert(
     "dedicated source-player frame overlaps the enemy Sprite2 cache"
 );
 _Static_assert(
+    NORT_SHIP_SOURCE_GRAPHIC == 1 &&
+        NORT_SHIP_FRAME_COUNT == 5 &&
+        NORT_SHIP_NEUTRAL_FRAME == 2 &&
+        NORT_SHIP_FRAME_BYTES ==
+            NORT_SHIP_FRAME_TILES * 32 &&
+        SOURCE_PLAYER_CACHE_TILE_BASE +
+            NORT_SHIP_FRAME_TILES <=
+            SOURCE_ENEMY_CACHE_RECLAIMED_TILE_BASE,
+    "Nort Ship banking atlas must fit the dedicated player tile window"
+);
+_Static_assert(
     SOURCE_ENEMY_CACHE_LOWER_TILE_BASE +
         SOURCE_ENEMY_CACHE_LOWER_SLOT_COUNT *
             SOURCE_ENEMY_TILES_PER_SLOT <=
@@ -1238,6 +1249,8 @@ typedef struct {
 
 extern const u8 obj_tiles[];
 extern const u8 obj_palette[];
+extern const u8 player_nort_tiles[];
+extern const u8 player_nort_palette[];
 extern const u8 secret_level_palettes[];
 extern const u8 insert_coin_palette[];
 extern const u8 background_gba_palette[];
@@ -1245,7 +1258,6 @@ extern const u8 background_palette_nearest_asset[];
 extern const u8 background_palette_mask_bank[];
 extern const u8 frontend_frames[];
 extern const u8 frontend_palettes[];
-extern const u8 frontend_glyphs[];
 extern const u8 frontend_stats_tiles[];
 extern const u8 frontend_stats_widths[];
 extern const u8 frontend_native_font[];
@@ -1264,7 +1276,6 @@ extern const u8 frontend_nav_bitmap_blocks[];
 extern const u16 frontend_nav_bitmap_indices[];
 extern const u8 frontend_source_stamp_offsets[];
 extern const u8 frontend_source_stamp_data[];
-extern const u8 jukebox_font_tiles[];
 extern const u8 jukebox_backdrop_tiles[];
 extern const u8 jukebox_backdrop_map[];
 extern const u8 jukebox_bg_palette[];

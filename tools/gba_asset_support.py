@@ -306,6 +306,99 @@ def compose_sprite_2x2(directory: Path, start: int) -> Image.Image:
     return canvas
 
 
+def build_nort_ship_assets(
+    image_root: Path,
+) -> tuple[bytes, bytes, Image.Image]:
+    """Build OpenTyrian's special ``shipgraphic == 1`` presentation.
+
+    ``mainint.c::JE_playerMovement()`` does not draw Nort Ship through the
+    ordinary one-frame player path.  It places Sprite2 frames 220 and 222
+    24 pixels apart, then adds one of components 39/40 or 58/59 while the
+    ship banks.  Pack that exact 48x30 authored footprint into one GBA
+    64x32 OBJ.  Five build-time frames retain all banking states while one
+    runtime OAM entry and the existing player tile window are sufficient.
+    """
+    player_dir = image_root / "sheets" / "09_player_ships"
+    frames: list[Image.Image] = []
+    banking_additions = {
+        -2: (59, 36, 16),
+        -1: (58, 36, 16),
+         1: (39, 0, 16),
+         2: (40, 0, 16),
+    }
+
+    for banking in range(-2, 3):
+        frame = Image.new("RGBA", (64, 32), (0, 0, 0, 0))
+        frame.alpha_composite(compose_sprite_2x2(player_dir, 220), (0, 2))
+        frame.alpha_composite(compose_sprite_2x2(player_dir, 222), (24, 2))
+        addition = banking_additions.get(banking)
+        if addition is not None:
+            sprite, x, y = addition
+            frame.alpha_composite(
+                Image.open(player_dir / f"{sprite:03d}.png").convert("RGBA"),
+                (x, y),
+            )
+        frames.append(frame)
+
+    rgba_frames = [np.asarray(frame, dtype=np.uint8) for frame in frames]
+    samples = np.concatenate(
+        [
+            rgba[:, :, :3][rgba[:, :, 3] >= 80]
+            for rgba in rgba_frames
+        ],
+        axis=0,
+    )
+    colours = adaptive_palette(samples)
+    palette = [(0, 0, 0)] + colours
+    palette_array = np.asarray(colours, dtype=np.int32)
+    tile_data = bytearray()
+    preview = Image.new("RGBA", (64 * len(frames), 32), (0, 0, 0, 0))
+
+    for frame_index, (frame, rgba) in enumerate(zip(frames, rgba_frames)):
+        opaque = rgba[:, :, 3] >= 80
+        values = np.zeros((32, 64), dtype=np.uint8)
+        if opaque.any():
+            pixels = rgba[opaque, :3].astype(np.int32)
+            values[opaque] = (
+                (
+                    (pixels[:, None, :] - palette_array[None, :, :]) ** 2
+                )
+                .sum(axis=2)
+                .argmin(axis=1)
+                .astype(np.uint8)
+                + 1
+            )
+        for tile_y in range(4):
+            for tile_x in range(8):
+                tile_data.extend(
+                    encode_gba_4bpp(
+                        values[
+                            tile_y * 8 : tile_y * 8 + 8,
+                            tile_x * 8 : tile_x * 8 + 8,
+                        ]
+                    )
+                )
+
+        # Show the actual quantized result, not the source PNG, in audits.
+        quantized = np.zeros((32, 64, 4), dtype=np.uint8)
+        quantized[opaque, :3] = np.asarray(palette, dtype=np.uint8)[
+            values[opaque]
+        ]
+        quantized[opaque, 3] = 255
+        preview.alpha_composite(
+            Image.fromarray(quantized, "RGBA"),
+            (frame_index * 64, 0),
+        )
+
+    expected_bytes = len(frames) * 64 * 32 // 2
+    if len(tile_data) != expected_bytes:
+        raise AssertionError(
+            "Nort Ship 64x32 banking atlas changed size: "
+            f"{len(tile_data)} != {expected_bytes}"
+        )
+    return bytes(tile_data), gba_palette_bytes([palette]), preview
+
+
 def compose_first_level_boss(
     directory: Path,
     core_start: int = 1,

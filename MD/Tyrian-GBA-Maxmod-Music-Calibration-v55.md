@@ -1,5 +1,9 @@
 # Tyrian GBA v55：TYM → IT / Maxmod 音樂校準
 
+> 歷史文件：本頁記錄 2026-07-30 的 v55 八聲道校準。2026-08-16
+> 正式音訊已升級為完整九個 OPL source channel；目前規格與 A/B 數據請見
+> [Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md](Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md)。
+
 日期：2026-07-30
 分支：`frontend-data-camera-audio-v55`
 

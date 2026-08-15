@@ -24,6 +24,38 @@ static void render_player_at_source_y(
     u8 exit_flight
 )
 {
+    if (player_ship_graphic == NORT_SHIP_SOURCE_GRAPHIC) {
+        s16 screen_y = (s16)(
+            source_world_to_screen_y(
+                (s16)(
+                    source_y + SOURCE_PLAYER_PRESENTATION_CENTRE_Y
+                )
+            ) - 16
+        );
+        u8 blended = (u8)(
+            !exit_flight && source_player_invulnerable_visual_active
+        );
+
+        /*
+         * mainint.c's shipGr_ == 1 path draws Sprite2 220 at x-17 and
+         * Sprite2 222 at x+7.  The build asset keeps that exact 24-pixel
+         * separation in one 64x32 OBJ; its origin is eight pixels left of
+         * the ordinary 32x32 player container.  Invulnerability and the
+         * authored exit trail omit the small banking appendages.
+         */
+        source_nort_player_request(
+            blended || exit_flight ? 0 : player_bank
+        );
+        put_sprite_4bpp_64x32_with_type(
+            (s16)(source_player_screen_x() - 8),
+            screen_y,
+            SOURCE_PLAYER_CACHE_TILE_BASE,
+            OBJ_PAL_PLAYER_0,
+            priority,
+            blended ? ATTR0_TYPE_BLENDED : ATTR0_TYPE_NORMAL
+        );
+        return;
+    }
     if (player_ship_graphic > 1) {
         u16 tile = source_player_cache_acquire(
             (u16)(
@@ -70,12 +102,7 @@ static void render_player_at_source_y(
         }
     }
 
-    /*
-     * Source ship graphics 0 and 1 are special two-body cases.  The current
-     * stock title demos use ordinary graphics; retain the validated USP
-     * Talon presentation as a fail-closed fallback for those rare cases or
-     * a corrupt/missing Sprite2 frame.
-     */
+    /* No stock single-player ship uses graphic 0; keep a fail-closed hull. */
     {
         s16 screen_y = (s16)(
             source_world_to_screen_y(
@@ -152,6 +179,18 @@ static void render_player_shadow_at_source_y(
     );
 
     if (!source_detail_shadows_allowed()) return;
+    if (player_ship_graphic == NORT_SHIP_SOURCE_GRAPHIC) {
+        source_nort_player_request(player_bank);
+        put_sprite_4bpp_64x32_with_type(
+            (s16)(screen_x - 8),
+            screen_y,
+            SOURCE_PLAYER_CACHE_TILE_BASE,
+            OBJ_PAL_PLAYER_0,
+            priority,
+            ATTR0_TYPE_WINDOWED
+        );
+        return;
+    }
     if (player_ship_graphic > 1) {
         u16 tile = source_player_cache_acquire(
             (u16)(

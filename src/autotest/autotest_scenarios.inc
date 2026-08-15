@@ -2158,6 +2158,13 @@ static void autotest_episode_wrap_finish_update(void)
         frontend_map_ready &&
         frontend_map.requested_section == 1 &&
         !frontend_map.episode_complete &&
+        frontend_player_items_valid &&
+        frontend_player_items.ship == 2 &&
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id == 23 &&
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power == 1 &&
+        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id == 24 &&
+        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power == 1 &&
+        frontend_route_state.player_ship == 2 &&
         frontend_selection == 4 &&
         game_state == STATE_GAME_MENU &&
         frontend_mode4_active &&
@@ -2196,6 +2203,24 @@ static void autotest_episode_wrap_finish_update(void)
     sram_write_u32(92, telemetry_missed_vblanks_scene_picture_decode);
     sram_write_u32(96, telemetry_missed_vblanks_scene_picture_scale);
     sram_write_u32(100, telemetry_missed_vblanks_scene_picture_present);
+    sram_write_u32(104, frontend_player_items.ship);
+    sram_write_u32(
+        108,
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].id
+    );
+    sram_write_u32(
+        112,
+        frontend_player_items.weapon[FRONTEND_WEAPON_FRONT].power
+    );
+    sram_write_u32(
+        116,
+        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].id
+    );
+    sram_write_u32(
+        120,
+        frontend_player_items.weapon[FRONTEND_WEAPON_REAR].power
+    );
+    sram_write_u32(124, frontend_route_state.player_ship);
     __asm__ volatile("swi 3");
 }
 #endif

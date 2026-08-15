@@ -185,6 +185,7 @@ static u8 autotest_source_upgrade_loadout(void)
     u8 saved_shield_wait = player_shield_wait;
     u8 saved_source_armor = source_parity_level.player_armor;
     u8 saved_special = source_parity_level.player_special;
+    u8 saved_ship = source_parity_level.player_ship;
     u8 saved_generator_power = player_generator_power;
     u8 saved_player_alive = player_alive;
     u16 saved_player_invulnerable = player_invulnerable;
@@ -196,6 +197,7 @@ static u8 autotest_source_upgrade_loadout(void)
     u8 special_frames;
     u8 special_effect_power;
     u8 special_payment_pass = 1;
+    u8 twiddle_hotdog_pass = 1;
     u8 expected_shots;
     u8 xega_first_phase = 0;
     u8 xega_second_phase = 0;
@@ -407,6 +409,59 @@ static u8 autotest_source_upgrade_loadout(void)
         source_special_effect_power_without_payment(104) == 4;
 
     /*
+     * Integrated SuperCarrot path: JE_SFCodes retains SFExecuted while the
+     * Special bay is busy, then JE_doSpecialShot pays one Armor and emits
+     * Special 25 / Weapon 711 as soon as the bay becomes available.
+     */
+    clear_entities();
+    source_parity_level.player_ship = 2;
+    source_parity_level.player_special = 0;
+    player_armor = 10;
+    source_parity_level.player_armor = 10;
+    source_front_weapon_init();
+    pad_now = KEY_UP;
+    if (source_twiddle_update() != 0) twiddle_hotdog_pass = 0;
+    pad_now = KEY_DOWN | KEY_A;
+    if (
+        source_twiddle_update() != 25 ||
+        source_twiddle_executed != 25
+    ) {
+        twiddle_hotdog_pass = 0;
+    }
+    source_special_wait = 2;
+    source_special_execute_twiddle();
+    if (
+        source_twiddle_executed != 25 ||
+        player_armor != 10
+    ) {
+        twiddle_hotdog_pass = 0;
+    }
+    source_special_wait = 0;
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 2;
+    source_special_execute_twiddle();
+    if (
+        source_twiddle_executed != 25 ||
+        player_armor != 10
+    ) {
+        twiddle_hotdog_pass = 0;
+    }
+    source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_special_execute_twiddle();
+    active = 0;
+    for (index = 0; index < MAX_PLAYER_SHOTS; index++) {
+        if (player_shots[index].active) active++;
+    }
+    if (
+        source_twiddle_executed != 0 ||
+        player_armor != 9 ||
+        source_parity_level.player_armor != 9 ||
+        active == 0
+    ) {
+        twiddle_hotdog_pass = 0;
+    }
+    pass = pass && twiddle_hotdog_pass;
+
+    /*
      * Equipped Special parity: JE_doSpecialShot() does not enter its
      * SFExecuted payment/reset block.  Xega Ball also proves that the exact
      * OPTION_SHAPES dependency is selected and that weapon position carries
@@ -486,6 +541,7 @@ restore:
     source_parity_level.player_sidekick[0] = saved_sidekick[0];
     source_parity_level.player_sidekick[1] = saved_sidekick[1];
     source_parity_level.player_special = saved_special;
+    source_parity_level.player_ship = saved_ship;
     memset(
         source_parity_level.frame_sound_queue,
         0,

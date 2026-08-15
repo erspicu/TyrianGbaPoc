@@ -1,5 +1,7 @@
 /* Legacy player/enemy combat runtime retained until source-parity replacement. */
 
+#include "combat_twiddle.inc"
+
 static u8 source_weapon_is_valid(const OtWeaponDefinition *weapon)
 {
     return
@@ -313,6 +315,7 @@ static void source_front_weapon_init(void)
     source_special_flare_duration = 0;
     source_special_weapon_id = 0;
     source_special_weapon_filter = -99;
+    source_twiddle_reset();
     source_last_spawned_shot_index = MAX_PLAYER_SHOTS;
 #if TYRIAN_GBA_AUTOTEST_FRONT_WEAPON_POWER
     /*
@@ -1092,6 +1095,8 @@ static u8 source_gameplay_mapping_selftest(void)
         source_parity_level.player_super_arcade_mode;
     u8 pass = 1;
 
+    pass = pass && source_twiddle_selftest();
+
     frontend_demo_active = 0;
     source_parity_level.player_super_arcade_mode = 0;
 
@@ -1419,7 +1424,7 @@ static u8 source_special_sync(void)
  * pwr==98 consumes the remaining shield even when fewer than four points
  * make the activation fail; that surprising ordering is intentional parity.
  */
-static __attribute__((unused)) u8 source_special_try_pay_cost(
+static u8 source_special_try_pay_cost(
     u8 encoded_power,
     u8 *effect_power
 )
@@ -1714,6 +1719,59 @@ static void source_special_complete(u8 effect_power)
     }
 }
 
+/*
+ * Direct JE_doSpecialShot() SFExecuted branch.  A Twiddle command selects
+ * its own Special definition, pays the encoded Shield/Armor cost and resets
+ * both Special shot phases.  Restore the equipped-item definition after
+ * dispatch so the independent L-button path keeps its original binding.
+ */
+static void source_special_execute_twiddle(void)
+{
+    OtSpecialDefinition definition;
+    u8 special_id = source_twiddle_executed;
+    u8 effect_power;
+    u8 saved_valid;
+    u8 saved_power;
+    u8 saved_type;
+    u16 saved_weapon;
+
+    if (
+        special_id == 0 ||
+        source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL] != 0 ||
+        source_special_wait != 0 ||
+        source_special_flare_duration != 0
+    ) {
+        return;
+    }
+    if (!ot_data_hdt_special_read(special_id, &definition)) {
+        source_twiddle_executed = 0;
+        return;
+    }
+    if (!source_special_try_pay_cost(definition.power, &effect_power)) {
+        source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+        source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+        source_twiddle_executed = 0;
+        return;
+    }
+
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL] = 0;
+    source_shot_multi_pos[SOURCE_WEAPON_BAY_SPECIAL2] = 0;
+    saved_valid = source_special_valid;
+    saved_power = source_special_power;
+    saved_type = source_special_type;
+    saved_weapon = source_special_definition_weapon;
+    source_special_valid = definition.type != 0;
+    source_special_power = definition.power;
+    source_special_type = definition.type;
+    source_special_definition_weapon = definition.weapon;
+    source_special_complete(effect_power);
+    source_special_valid = saved_valid;
+    source_special_power = saved_power;
+    source_special_type = saved_type;
+    source_special_definition_weapon = saved_weapon;
+    source_twiddle_executed = 0;
+}
+
 static u8 source_special_zinglon_half_width_for_duration(u8 duration)
 {
     u8 distance;
@@ -1881,6 +1939,7 @@ static void source_special_update(void)
 {
     u8 special_fire;
 
+    (void)source_twiddle_update();
     (void)source_special_sync();
     /* PC draws graphic 93/94 before decrementing these counters. */
     source_special_ready_indicator = (
@@ -1894,6 +1953,9 @@ static void source_special_update(void)
         source_shot_repeat[SOURCE_WEAPON_BAY_SPECIAL]--;
     }
     if (source_special_wait > 0) source_special_wait--;
+    if (!source_parity_level.galaga_mode) {
+        source_special_execute_twiddle();
+    }
     special_fire = source_gameplay_special_fire_held();
     if (
         frontend_demo_active &&

@@ -48,6 +48,14 @@
     {
       "pattern": "music.mus",
       "reason": "Runtime authority for all 41 stock songs, including script-selected Halloween Ramble"
+    },
+    {
+      "pattern": "estsc.shp",
+      "reason": "Unique OpenTyrian extra-shape payload retained for full source-parity effects; no complete static replacement exists"
+    },
+    {
+      "pattern": "tyrian.cdt",
+      "reason": "Unique OpenTyrian encrypted credit/detail payload retained for future full front-end parity; no static replacement exists"
     }
   ],
   "probes": [
