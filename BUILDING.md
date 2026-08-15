@@ -210,13 +210,15 @@ volume、signed 8-bit PCM 與 runtime module volume 重新量測。正式管線�
 順序，不再刪除第九聲道。不得引用其他主機的 voice map、mixer gain，亦
 不得加入 per-song maximum normalization。逐曲結果輸出至
 `res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／334 個
-source、RMS 誤差、percussion peak ceiling 與 sample clipping。程序打擊
-取樣使用 15,768 Hz；stock SFX／voice 保留來源原生 11,025 Hz，避免無資訊的
-升頻。Runtime 配置 18 個 Maxmod mixer slots，容納九個音樂聲道、八個邏輯
+source、RMS 誤差、percussion peak ceiling 與 sample clipping。音調音色與
+程序打擊 PCM 均使用 Maxmod 原生輸出率 15,768 Hz；音調 wavetable 以
+241 samples 儲存四個週期，使 C5 音高誤差維持在 1 cent 以內。stock
+SFX／voice 保留來源原生 11,025 Hz，避免無資訊的升頻。Runtime 配置 18 個
+Maxmod mixer slots，容納九個音樂聲道、八個邏輯
 SFX 聲道與一個安全餘額。End of Level、Game Over、Secret Level 各自保留
 loop 與 `_once` order-flow；mmutil 會共用相同 PCM，三個一次性 module 只
 增加約 4 KiB。最新量測見
-`MD/Tyrian-GBA-Nine-Channel-Audio-Upgrade-2026-08-16.md`。
+`MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`。
 
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整

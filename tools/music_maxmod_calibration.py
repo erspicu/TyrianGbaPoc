@@ -26,7 +26,8 @@ import numpy as np
 
 PROFILE_NAME = "GbaMaxmod"
 PROFILE_DESCRIPTION = (
-    "GBA Maxmod 15.768 kHz IT adapter; exact TYM event-volume timeline, "
+    "GBA Maxmod 15.768 kHz native-rate tonal/percussion IT adapter; exact "
+    "TYM event-volume timeline, "
     "quantized signed 8-bit synthesized samples, fixed OPL stem RMS target, "
     "mono L+R reference, one catalog-wide +3 dB presentation gain, and no "
     "per-song maximum-gain normalization; all nine original OPL2 source "
@@ -476,6 +477,8 @@ def write_catalog(
         "profile": PROFILE_NAME,
         "description": PROFILE_DESCRIPTION,
         "maxmodOutputRate": MAXMOD_OUTPUT_RATE,
+        "tonalPcmRate": MAXMOD_OUTPUT_RATE,
+        "proceduralPercussionRate": MAXMOD_OUTPUT_RATE,
         "maxmodModuleVolume": MAXMOD_MODULE_VOLUME,
         "maxmodNormalVolume": MAXMOD_NORMAL_VOLUME,
         "playbackReferenceGainDb": PLAYBACK_REFERENCE_GAIN_DB,

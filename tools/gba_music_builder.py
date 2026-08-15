@@ -17,11 +17,22 @@ import numpy as np
 
 TRACKER_TEMPO = 174
 TRACKER_SPEED = 1
-TRACKER_C5_SPEED = 16_744
+MAXMOD_OUTPUT_RATE = 15_768
+TRACKER_C5_SPEED = MAXMOD_OUTPUT_RATE
 MAX_GBA_MUSIC_VOICES = 9
-PROCEDURAL_PERCUSSION_RATE = 15_768
+PROCEDURAL_PERCUSSION_RATE = MAXMOD_OUTPUT_RATE
 PROCEDURAL_PERCUSSION_SOURCE_RATE = 11_025
 TRACKER_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
+
+# IT's C5 speed is both a playback-rate field and the tuning reference for a
+# looping sample.  The former 64-sample single-cycle wavetable therefore used
+# 16,744 Hz (64 * middle-C) even though Maxmod mixed at 15,768 Hz.  Merely
+# replacing that value would detune every tonal voice by almost one semitone.
+# Four cycles in 241 samples preserve middle C to +0.556 cent while allowing
+# the sample metadata and C5 playback path to match the native mixer rate.
+TONAL_WAVETABLE_LOOP_SAMPLES = 241
+TONAL_WAVETABLE_LOOP_CYCLES = 4
+TONAL_WAVETABLE_LEAD_SAMPLES = 60
 
 
 def read_it_templates(workspace: Path) -> tuple[bytearray, bytearray, bytes]:
@@ -383,7 +394,15 @@ def synthesize_tym_sample(
         ).astype(np.int8)
         return pcm.tobytes(), rate, False, 0
 
-    phase = (np.arange(320, dtype=np.float64) % 64) / 64.0
+    tonal_sample_count = (
+        TONAL_WAVETABLE_LEAD_SAMPLES +
+        TONAL_WAVETABLE_LOOP_SAMPLES
+    )
+    phase = (
+        np.arange(tonal_sample_count, dtype=np.float64) *
+        TONAL_WAVETABLE_LOOP_CYCLES /
+        TONAL_WAVETABLE_LOOP_SAMPLES
+    )
     mod_level = 10.0 ** (-(instrument[1] & 0x3F) * 0.75 / 20.0)
     modulation = (
         0.2 +
@@ -401,7 +420,12 @@ def synthesize_tym_sample(
         -128,
         127,
     ).astype(np.int8)
-    return pcm.tobytes(), TRACKER_C5_SPEED, True, 64
+    return (
+        pcm.tobytes(),
+        TRACKER_C5_SPEED,
+        True,
+        TONAL_WAVETABLE_LEAD_SAMPLES,
+    )
 
 def pack_it_pattern(
     rows: int,

@@ -82,9 +82,16 @@ presentation 壓力；音訊 wall-clock frame loss 仍為 0，正式普通裝備
 
 - source count 不是 334；
 - catalog profile 不是完整九聲道 profile；
-- 程序打擊不是 15,768 Hz；
+- 音調音色或程序打擊不是 15,768 Hz；
 - 原始 SFX 被誤標成非來源原生 11,025 Hz；
 - clipping、gain、peak ceiling、有限提示曲或曲目數量不符合規格。
 
 因此未來重建資產時，不會在不知情下退回八聲道或用無效升頻取代來源
 音效。
+
+## 後續更新
+
+九聲道 v89 之後，音調 wavetable 的 PCM／C5 playback metadata 也已對齊
+Maxmod 原生 15,768 Hz。此變更使用多週期循環維持原音高，並非直接改舊
+16,744 C5 值而造成降調。設計、誤差與新量測見
+`MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`。

@@ -269,10 +269,10 @@ if (
     $romfsAudit.omitted_duplicate_files.Count -ne
         $romfsAudit.omitted_duplicate_count -or
     $romfsAudit.omitted_duplicate_bytes -ne 5420450 -or
-    $romfsAudit.retained_source_count -ne 1 -or
+    $romfsAudit.retained_source_count -ne 3 -or
     $romfsAudit.retained_source_files.Count -ne
         $romfsAudit.retained_source_count -or
-    $romfsAudit.retained_source_bytes -ne 153482 -or
+    $romfsAudit.retained_source_bytes -ne 269945 -or
     $romfsImageBytes -ne $romfsAudit.image_bytes -or
     $romfsAudit.payload_bytes -gt $romfsAudit.image_bytes -or
     $romfsImageSha256 -ne $romfsAudit.image_sha256
@@ -330,6 +330,8 @@ if (
     $musicCalibration.schema -ne "tyrian-gba-maxmod-calibration-v1" -or
     $musicCalibration.profile -ne "GbaMaxmod" -or
     $musicCalibration.maxmodOutputRate -ne 15768 -or
+    $musicCalibration.tonalPcmRate -ne 15768 -or
+    $musicCalibration.proceduralPercussionRate -ne 15768 -or
     $musicCalibration.maxmodModuleVolume -ne 896 -or
     [double]$musicCalibration.playbackReferenceGainDb -ne 3.0 -or
     $musicCalibration.summary.trackCount -ne 41 -or
@@ -369,6 +371,10 @@ if (
     $assetReport.music_calibration_per_song_maximum_normalization -ne "0" -or
     $assetReport.music_calibration_reference_fold_down -ne "mono_L_plus_R" -or
     $assetReport.music_opl_source_channels -ne "9_complete" -or
+    $assetReport.music_tonal_pcm_rate_hz -ne "15768" -or
+    $assetReport.music_tonal_wavetable_loop_samples -ne "241" -or
+    $assetReport.music_tonal_wavetable_loop_cycles -ne "4" -or
+    [double]$assetReport.music_tonal_c5_pitch_error_cents -gt 1.0 -or
     $assetReport.music_procedural_percussion_rate_hz -ne "15768" -or
     $assetReport.audio_source_sfx_rate_hz -ne "11025_source_native" -or
     $assetReport.finite_music_cues -ne "9,10,30" -or
@@ -506,18 +512,18 @@ if (
     $assetReport.frontend_static_help_dimensions -ne "240x11" -or
     $assetReport.frontend_static_help_count -ne "34" -or
     $assetReport.frontend_static_help_bytes -ne "89760" -or
-    $assetReport.frontend_static_help_crc32 -ne "f0b9d8c2" -or
+    $assetReport.frontend_static_help_crc32 -ne "997fb995" -or
     $assetReport.frontend_static_menu_panel_count -ne "17" -or
     $assetReport.frontend_static_menu_panel_dimensions -ne "120x120" -or
     $assetReport.frontend_static_menu_panel_bytes -ne "244800" -or
-    $assetReport.frontend_static_menu_panel_crc32 -ne "1cb39d44" -or
+    $assetReport.frontend_static_menu_panel_crc32 -ne "72ac9b19" -or
     $assetReport.frontend_static_pre_game_frame_count -ne "14" -or
     $assetReport.frontend_static_pre_game_frames_bytes -ne "537600" -or
-    $assetReport.frontend_static_pre_game_frames_crc32 -ne "ccca283f" -or
+    $assetReport.frontend_static_pre_game_frames_crc32 -ne "625bad6e" -or
     $assetReport.frontend_static_save_name_overlay_strategy -ne
         "stock OPTION_SHAPES 35 + HDT labels; live level/name patch" -or
     $assetReport.frontend_static_save_name_overlay_bytes -ne "12652" -or
-    $assetReport.frontend_static_save_name_overlay_crc32 -ne "34402f5a" -or
+    $assetReport.frontend_static_save_name_overlay_crc32 -ne "bc318ead" -or
     $assetReport.frontend_stats_tiles_bytes -ne "6656" -or
     $assetReport.frontend_stats_width_bytes -ne "45" -or
     $assetReport.frontend_stats_tiles_crc32 -ne "0f04dee4" -or
@@ -647,7 +653,7 @@ function Test-GbaMemoryBudget {
         } elseif ($Name -in $instrumentedHarnessNames) {
             2560
         } else {
-            2816
+            2688
         }
     $ewramFreeFloor =
         if ($Name -eq "frontend_transition_stress") {
@@ -673,14 +679,16 @@ function Test-GbaMemoryBudget {
     # IWRAM. Full gameplay measured a conservative 2,028-byte peak and the
     # complete static-menu transition matrix measured 1,288 bytes.  This
     # link floor is a project guard, not a Nintendo/GBA ABI requirement.
-    # Keep 2.75 KiB statically available in retail ROMs.  Instrumented test
+    # Keep 2.625 KiB statically available in retail ROMs.  This remains 660
+    # bytes above the measured 2,028-byte gameplay peak and independently
+    # retains the authoritative 512-byte runtime-canary floor. Instrumented test
     # ROMs now carry 208 bytes of adaptive-dispatch telemetry that does not
     # exist in retail, so give those synthetic binaries a 2.5 KiB floor. The
     # six route harnesses carry still more scripted-driver state and use a
     # 2,176-byte floor. Runtime canaries remain authoritative:
     # gameplay must leave 512 bytes untouched, while the complete static-menu
     # transition matrix must leave 1,504 bytes untouched. This keeps measured
-    # hot code in IWRAM without weakening the 2.75 KiB retail contract.
+    # hot code in IWRAM without weakening the measured stack contract.
     if (
         $ewramFree -lt $ewramFreeFloor -or
         $iwramUserStackBytes -lt $iwramUserStackFloor -or
