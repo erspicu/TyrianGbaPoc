@@ -1868,6 +1868,14 @@ static void commit_vblank_work(void)
         game_state == STATE_PLAY ||
         game_state == STATE_GAME_OVER
     ) {
+        /*
+         * A completed level load releases its black backdrop only from this
+         * VBlank commit.  Palette, tilemap, cache uploads and OAM therefore
+         * become visible as one coherent gameplay frame.
+         */
+        if (frontend_level_entry_blackout_active) {
+            frontend_level_entry_blackout_cancel();
+        }
 #if TYRIAN_GBA_DYNAMIC_FRAME_DROP
 #if !TYRIAN_GBA_FREEZE_BACKGROUND_ON_DEFER
         gameplay_presentation_capture_registers();
@@ -2000,6 +2008,12 @@ static void commit_vblank_work(void)
             source_detail_wave_table_pending
         );
 #endif
+        /*
+         * Install or restore the transactional PAUSED palette only after the
+         * normal detail-palette DMA, so the saved bank is the exact visible
+         * level state and cannot be overwritten again in this VBlank.
+         */
+        gameplay_overlay_pause_palette_commit_vblank();
         /*
          * Count the source software-filter requests independently from the
          * GBA presentation.  This distinguishes a cheap hardware detail
@@ -2414,6 +2428,46 @@ static mm_sfxhand source_sound_effect_start(u8 source_sound)
 static void source_sound_effect(u8 source_sound)
 {
     (void)source_sound_effect_start(source_sound);
+}
+
+static void frontend_level_entry_blackout_apply(void)
+{
+    /*
+     * GBA forced blank is electrically white, so LCDC_OFF is the wrong
+     * transition for a black level-loading mask.  Mode 0 with no BG/OBJ or
+     * windows enabled displays only backdrop colour zero and leaves every
+     * former menu pixel inaccessible to the scanner.  The level loader may
+     * then replace Mode-4 VRAM and both palette memories without ever showing
+     * the menu through the new level palette.
+     */
+    REG_DMA0CNT = 0;
+    REG_BLDCNT = 0;
+    REG_BLDALPHA = 0;
+    REG_BLDY = 0;
+    REG_WIN0H = 0;
+    REG_WIN0V = 0;
+    REG_WININ = 0;
+    REG_WINOUT = 0;
+    BG_PALETTE[0] = 0;
+    REG_DISPCNT = MODE_0;
+}
+
+static void frontend_level_entry_blackout_begin(void)
+{
+    frontend_level_entry_blackout_active = 1;
+    frontend_level_entry_blackout_apply();
+}
+
+static void frontend_level_entry_blackout_cancel(void)
+{
+    frontend_level_entry_blackout_active = 0;
+    REG_BLDCNT = 0;
+    REG_BLDALPHA = 0;
+    REG_BLDY = 0;
+    REG_WIN0H = 0;
+    REG_WIN0V = 0;
+    REG_WININ = 0;
+    REG_WINOUT = 0;
 }
 
 static void toggle_pause(void)

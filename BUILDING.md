@@ -41,7 +41,7 @@ Build-GBA-ROM.bat
 ```
 
 未指定 `-DetailLevel` 時，建置會讀取 `Configure.h` 的
-`TYRIAN_GBA_CONFIG_DETAIL_LEVEL`；正式 release 預設使用專案的 `CUSTOM`。
+`TYRIAN_GBA_CONFIG_DETAIL_LEVEL`；正式 release 預設使用專案的 `LOW`。
 `-DetailLevel low|normal|high|pentium|custom` 可只覆寫該次建置而不修改設定檔。這是
 編譯期選擇，每個 ROM 固定一種等級，未選取的分支不會增加 runtime
 判斷成本。`pentium` 仍保留給研究／極限壓力測試，不建議作為一般版本。

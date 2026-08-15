@@ -30,7 +30,7 @@
  * 0：使用正常的 OpenTyrian 傷害與死亡流程。
  */
 #ifndef TYRIAN_GBA_DEV_PLAYER_INVINCIBLE
-#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 1
+#define TYRIAN_GBA_DEV_PLAYER_INVINCIBLE 0
 #endif
 
 /*
@@ -191,8 +191,8 @@
 #define TYRIAN_GBA_CONFIG_DETAIL_CUSTOM 4
 
 #ifndef TYRIAN_GBA_CONFIG_DETAIL_LEVEL
-/* Public release default; command-line builds may still override it. */
-#define TYRIAN_GBA_CONFIG_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_CUSTOM
+/* Project release default; command-line builds may still override it. */
+#define TYRIAN_GBA_CONFIG_DETAIL_LEVEL TYRIAN_GBA_CONFIG_DETAIL_LOW
 #endif
 
 #if TYRIAN_GBA_CONFIG_DETAIL_LEVEL != TYRIAN_GBA_CONFIG_DETAIL_LOW && \

@@ -1443,6 +1443,10 @@ static void frontend_commit_mode4_registers(void)
         MODE_4 | BG2_ON |
         (frontend_display_page ? BACKBUFFER : 0);
 
+    if (frontend_level_entry_blackout_active) {
+        frontend_level_entry_blackout_apply();
+        return;
+    }
     if (
         game_state == STATE_SHIP_SPECS &&
         frontend_ship_specs_scale_active
@@ -1504,6 +1508,7 @@ static void frontend_show_immediate(
     const u8 *palette
 )
 {
+    frontend_level_entry_blackout_active = 0;
     REG_DISPCNT = LCDC_OFF;
     REG_BLDCNT = 0;
     REG_BLDALPHA = 0;

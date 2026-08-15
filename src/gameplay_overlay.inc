@@ -187,6 +187,10 @@ static void gameplay_overlay_prepare_palette(void)
     u16 star_source[16];
     u16 event_source[2];
     u16 pause_source[15];
+    const u16 *pause_palette_source =
+        (const u16 *)(const void *)(
+            obj_palette + OBJ_PAL_PAUSE_TEXT * 32u
+        );
     u16 superpixel_source[16];
     u8 index;
 
@@ -205,6 +209,27 @@ static void gameplay_overlay_prepare_palette(void)
     );
     gameplay_overlay_event_nibble[0] = 1;
     gameplay_overlay_event_nibble[1] = 1;
+    gameplay_overlay_pause_fallback_bank = 0;
+    memset(gameplay_overlay_pause_fallback_nibble, 1, 16);
+    gameplay_overlay_pause_fallback_nibble[0] = 0;
+    for (index = 0; index < 16u; index++) {
+        u16 colour = pause_palette_source[index];
+        u8 red = (u8)(colour & 31u);
+        u8 green = (u8)((colour >> 5) & 31u);
+        u8 blue = (u8)((colour >> 10) & 31u);
+
+        /*
+         * Preserve the source hue-15 ramp but tame the three wrapped
+         * 0xfe/0xff shadow accents that previously appeared as isolated red
+         * pixels.  This fixed bank is identical for every level.
+         */
+        if (red > (u8)(green * 2u)) {
+            green = (u8)((red + 1u) >> 1);
+            if (blue > green) blue = green;
+            colour = (u16)(red | (green << 5) | (blue << 10));
+        }
+        gameplay_overlay_pause_fixed_palette[index] = colour;
+    }
     if (!ot_data_palette_view(SOURCE_LEVEL_PALETTE_INDEX, &palette)) {
         return;
     }
@@ -260,11 +285,10 @@ static void gameplay_overlay_prepare_palette(void)
         );
 
     /*
-     * PAUSED used to be a 4bpp OBJ in bank 14.  The large-boss compact cache
-     * legitimately time-shares that bank for its second trained palette, so
-     * restoring the glyph tiles could not restore both palettes at once.
-     * Keep the authored FONT_SHAPES colours, but map them into one existing
-     * BG bank and draw the glyphs through the palette-independent BG3 overlay.
+     * This nearest-map remains the non-destructive fallback when all sixteen
+     * BG banks are visible.  The ordinary pause edge transactionally leases
+     * an unused visible bank and installs gameplay_overlay_pause_fixed_palette
+     * for an exact, level-independent BG3 rendering instead.
      */
     for (index = 1; index < 16; index++) {
         pause_source[index - 1u] =
@@ -287,6 +311,13 @@ static void gameplay_overlay_prepare_palette(void)
                 )
             );
     }
+    gameplay_overlay_pause_fallback_bank =
+        gameplay_overlay_pause_bank;
+    memcpy(
+        gameplay_overlay_pause_fallback_nibble,
+        gameplay_overlay_pause_nibble,
+        sizeof(gameplay_overlay_pause_nibble)
+    );
 
     /*
      * JE_drawSP replaces the destination hue with color's high nibble and
@@ -319,6 +350,214 @@ static void gameplay_overlay_prepare_palette(void)
     }
 }
 
+enum {
+    GAMEPLAY_PAUSE_PALETTE_NONE = 0,
+    GAMEPLAY_PAUSE_PALETTE_INSTALL = 1,
+    GAMEPLAY_PAUSE_PALETTE_RESTORE = 2,
+};
+
+static void gameplay_overlay_mark_visible_world_banks(
+    u16 *mask,
+    u8 screen_block,
+    u16 hofs,
+    u16 vofs
+)
+{
+    u8 rows = (u8)(SCREEN_HEIGHT / 8u + ((vofs & 7u) != 0));
+    u8 columns = (u8)(SCREEN_WIDTH / 8u + ((hofs & 7u) != 0));
+    u8 row;
+
+    for (row = 0; row < rows; row++) {
+        u8 tile_y = (u8)(((vofs >> 3) + row) & 31u);
+        u8 column;
+
+        for (column = 0; column < columns; column++) {
+            u8 tile_x = (u8)(((hofs >> 3) + column) & 63u);
+            const volatile u16 *map =
+                (const volatile u16 *)SCREEN_BASE_BLOCK(
+                    screen_block + (tile_x >> 5)
+                );
+            u16 word = map[(u16)tile_y * 32u + (tile_x & 31u)];
+
+            *mask |= (u16)(1u << (word >> 12));
+        }
+    }
+}
+
+static u16 gameplay_overlay_visible_palette_mask(void)
+{
+    u16 mask = 0;
+    u16 display;
+    u16 hofs[3];
+    u16 vofs[3];
+
+#if TYRIAN_GBA_DYNAMIC_FRAME_DROP
+    display = gameplay_presentation.dispcnt;
+    hofs[0] = gameplay_presentation.hofs[0];
+    hofs[1] = gameplay_presentation.hofs[1];
+    hofs[2] = gameplay_presentation.hofs[2];
+    vofs[0] = gameplay_presentation.vofs[0];
+    vofs[1] = gameplay_presentation.vofs[1];
+    vofs[2] = gameplay_presentation.vofs[2];
+#else
+    display = (u16)(BG0_ON | BG2_ON |
+        (source_background2_present() ? BG1_ON : 0));
+    hofs[0] = source_background_hofs(0);
+    hofs[1] = source_background_hofs(1);
+    hofs[2] = source_background_hofs(2);
+    vofs[0] = source_background_vofs(0);
+    vofs[1] = source_background_vofs(1);
+    vofs[2] = source_background_vofs(2);
+#endif
+    if (display & BG0_ON) {
+        gameplay_overlay_mark_visible_world_banks(
+            &mask, BG0_SCREEN_BLOCK, hofs[0], vofs[0]
+        );
+    }
+    if (display & BG1_ON) {
+        gameplay_overlay_mark_visible_world_banks(
+            &mask, BG1_SCREEN_BLOCK, hofs[1], vofs[1]
+        );
+    }
+    if (display & BG2_ON) {
+        gameplay_overlay_mark_visible_world_banks(
+            &mask, BG2_SCREEN_BLOCK, hofs[2], vofs[2]
+        );
+    }
+
+    /* Preserve every non-pause BG3 colour that the rebuilt frozen frame uses. */
+    if (
+        source_parity_level.star_active ||
+        source_special_astral_visual_active
+    ) {
+        mask |= (u16)(1u << gameplay_overlay_star_bank);
+    }
+    if (gameplay_overlay_message_ticks != 0) {
+        mask |= (u16)(1u << gameplay_overlay_event_bank);
+    }
+    if (source_parity_level.warning_active) {
+        mask |= (u16)(
+            1u <<
+            (
+                gameplay_overlay_warning_colour[
+                    (u8)source_parity_level.warning_color & 15u
+                ] >> 4
+            )
+        );
+    }
+    if (
+        source_parity_level.level_timer &&
+        source_parity_level.level_timer_countdown != 0
+    ) {
+        mask |= (u16)(
+            1u <<
+            (
+                gameplay_overlay_warning_colour[
+                    (u8)(
+                        (source_parity_level.level_timer_countdown % 20u) /
+                        3u
+                    )
+                ] >> 4
+            )
+        );
+    }
+    /* Superpixels may use any source hue; retain the safe fallback for them. */
+    if (source_active_superpixels != 0) return UINT16_MAX;
+    return mask;
+}
+
+static void gameplay_overlay_pause_palette_request(u8 paused)
+{
+    if (paused) {
+        u16 used = gameplay_overlay_visible_palette_mask();
+        s8 bank;
+
+        gameplay_overlay_pause_palette_leased = 0;
+        gameplay_overlay_pause_palette_pending =
+            GAMEPLAY_PAUSE_PALETTE_NONE;
+        for (bank = 15; bank >= 0; bank--) {
+            if ((used & (u16)(1u << bank)) == 0) {
+                u8 index;
+
+                gameplay_overlay_pause_bank = (u8)bank;
+                gameplay_overlay_pause_palette_bank = (u8)bank;
+                gameplay_overlay_pause_nibble[0] = 0;
+                for (index = 1; index < 16u; index++) {
+                    gameplay_overlay_pause_nibble[index] = index;
+                }
+                gameplay_overlay_pause_palette_leased = 1;
+                gameplay_overlay_pause_palette_pending =
+                    GAMEPLAY_PAUSE_PALETTE_INSTALL;
+                break;
+            }
+        }
+        return;
+    }
+
+    if (gameplay_overlay_pause_palette_active) {
+        gameplay_overlay_pause_palette_pending =
+            GAMEPLAY_PAUSE_PALETTE_RESTORE;
+    } else {
+        /* START was pressed twice before the install VBlank. */
+        gameplay_overlay_pause_palette_pending =
+            GAMEPLAY_PAUSE_PALETTE_NONE;
+        gameplay_overlay_pause_palette_leased = 0;
+    }
+    gameplay_overlay_pause_bank = gameplay_overlay_pause_fallback_bank;
+    memcpy(
+        gameplay_overlay_pause_nibble,
+        gameplay_overlay_pause_fallback_nibble,
+        sizeof(gameplay_overlay_pause_nibble)
+    );
+}
+
+static void gameplay_overlay_pause_palette_commit_vblank(void)
+{
+    volatile u16 *target;
+
+    if (
+        gameplay_overlay_pause_palette_pending ==
+            GAMEPLAY_PAUSE_PALETTE_INSTALL &&
+        gameplay_overlay_pause_palette_leased &&
+        !gameplay_overlay_pause_palette_active
+    ) {
+        target = BG_PALETTE +
+            (u16)gameplay_overlay_pause_palette_bank * 16u;
+        dmaCopy(
+            (const void *)target,
+            gameplay_overlay_pause_saved_palette,
+            sizeof(gameplay_overlay_pause_saved_palette)
+        );
+        dmaCopy(
+            gameplay_overlay_pause_fixed_palette,
+            (void *)target,
+            sizeof(gameplay_overlay_pause_fixed_palette)
+        );
+        gameplay_overlay_pause_palette_active = 1;
+        gameplay_overlay_pause_palette_pending =
+            GAMEPLAY_PAUSE_PALETTE_NONE;
+        return;
+    }
+    if (
+        gameplay_overlay_pause_palette_pending ==
+            GAMEPLAY_PAUSE_PALETTE_RESTORE
+    ) {
+        if (gameplay_overlay_pause_palette_active) {
+            target = BG_PALETTE +
+                (u16)gameplay_overlay_pause_palette_bank * 16u;
+            dmaCopy(
+                gameplay_overlay_pause_saved_palette,
+                (void *)target,
+                sizeof(gameplay_overlay_pause_saved_palette)
+            );
+        }
+        gameplay_overlay_pause_palette_active = 0;
+        gameplay_overlay_pause_palette_leased = 0;
+        gameplay_overlay_pause_palette_pending =
+            GAMEPLAY_PAUSE_PALETTE_NONE;
+    }
+}
+
 static void gameplay_overlay_clear_map(void)
 {
     u16 index;
@@ -338,6 +577,11 @@ static void gameplay_overlay_reset(void)
     gameplay_overlay_message_ticks = 0;
     gameplay_overlay_pickup_message_type = OT_PICKUP_MESSAGE_NONE;
     gameplay_overlay_pickup_message_item_id = 0;
+    gameplay_overlay_pause_palette_pending =
+        GAMEPLAY_PAUSE_PALETTE_NONE;
+    gameplay_overlay_pause_palette_active = 0;
+    gameplay_overlay_pause_palette_leased = 0;
+    gameplay_overlay_pause_palette_bank = 0;
     gameplay_overlay_clear_map();
 }
 

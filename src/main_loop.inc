@@ -1442,6 +1442,7 @@ int main(void)
                 (pad_pressed & KEY_START)
             ) {
                 toggle_pause();
+                gameplay_overlay_pause_palette_request(game_paused);
                 /*
                  * PAUSED is a sparse BG3 overlay.  Rebuild only that tiny
                  * layer at the input edge and keep the already presented

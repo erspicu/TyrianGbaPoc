@@ -1467,6 +1467,12 @@ static __attribute__((
             ) {
                 mmStop();
                 frontend_transition_work_index = 0;
+                /*
+                 * Commit one complete black front-end frame before any
+                 * level palette or VRAM ownership changes.  The following
+                 * transition phase runs on the next VBlank.
+                 */
+                frontend_level_entry_blackout_begin();
                 frontend_transition_phase = 2;
             }
             break;
@@ -1476,6 +1482,7 @@ static __attribute__((
             frontend_transition_job =
                 FRONTEND_TRANSITION_JOB_NONE;
             if (!enter_level(frontend_level_entry_section)) {
+                frontend_level_entry_blackout_cancel();
                 frontend_start_game_menu_transition(
                     FRONTEND_GAME_MENU_JOB_LOAD_SONG
                 );

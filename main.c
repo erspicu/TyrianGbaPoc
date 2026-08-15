@@ -1504,6 +1504,12 @@ static const u8 insert_coin_glyph_advances[
 
 static u8 game_state;
 static u8 game_paused;
+/*
+ * Set while the front end hands ownership of VRAM/palettes to gameplay.
+ * Mode 0 with every layer disabled presents palette entry zero (black), so
+ * the old menu can never be scanned with a partially installed level palette.
+ */
+static u8 frontend_level_entry_blackout_active;
 static u16 pad_now;
 static u16 pad_pressed;
 enum {
@@ -1672,7 +1678,6 @@ static u16 frontend_level_entry_section EWRAM_BSS;
 static FrontendPlayerItems
     frontend_ship_panel_cache_items EWRAM_BSS;
 static u32 frontend_ship_panel_cache_cash EWRAM_BSS;
-static u8 frontend_ship_panel_cache_armor EWRAM_BSS;
 static u8 frontend_ship_panel_cache_valid EWRAM_BSS;
 static u8 frontend_data_cube_count EWRAM_BSS;
 static u8 frontend_data_cube_list[
@@ -2165,6 +2170,16 @@ static u8 gameplay_overlay_event_bank;
 static u8 gameplay_overlay_event_nibble[2];
 static u8 gameplay_overlay_pause_bank;
 static u8 gameplay_overlay_pause_nibble[16];
+static u8 gameplay_overlay_pause_fallback_bank;
+static u8 gameplay_overlay_pause_fallback_nibble[16];
+static u8 gameplay_overlay_pause_palette_pending;
+static u8 gameplay_overlay_pause_palette_active;
+static u8 gameplay_overlay_pause_palette_leased;
+static u8 gameplay_overlay_pause_palette_bank;
+static u16 gameplay_overlay_pause_saved_palette[16]
+    EWRAM_BSS __attribute__((aligned(4)));
+static u16 gameplay_overlay_pause_fixed_palette[16]
+    EWRAM_BSS __attribute__((aligned(4)));
 static u8 gameplay_overlay_tile_count;
 static u8 gameplay_overlay_active;
 static u8 gameplay_overlay_upload_pending;
@@ -2970,6 +2985,11 @@ static void jukebox_render(void);
 static u32 source_sprite2_pending_upload_count(void);
 #endif
 static void source_effect_restore_shared_tiles_if_needed(void);
+static void frontend_level_entry_blackout_apply(void);
+static void frontend_level_entry_blackout_begin(void);
+static void frontend_level_entry_blackout_cancel(void);
+static void gameplay_overlay_pause_palette_request(u8 paused);
+static void gameplay_overlay_pause_palette_commit_vblank(void);
 #include "src/background_runtime.inc"
 #include "src/layer_runtime.inc"
 #include "src/gba_platform.inc"

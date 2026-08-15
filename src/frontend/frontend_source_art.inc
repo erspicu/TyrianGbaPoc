@@ -1786,16 +1786,33 @@ static void frontend_draw_ship_illustration_part(
                 0xfbu
             );
         }
-        frontend_draw_segment_bar_source(
-            frame,
-            42,
-            152,
-            3,
-            14,
-            player_armor,
-            2,
-            13
-        );
+        /*
+         * game_menu.c calls JE_getShipInfo() at the start of every menu
+         * iteration.  That refreshes player[0].armor from the equipped
+         * ship definition before JE_barDrawShadow() renders this capacity
+         * gauge.  Do not feed it the damaged gameplay/save value: doing so
+         * made a 26-armor SuperCarrot with 9 armor remaining appear as only
+         * three cells instead of eight full cells plus the partial ninth.
+         * Keep the GBA save value intact and reproduce only the PC panel's
+         * derived display value here.
+         */
+        if (
+            ot_data_hdt_ship_read(
+                frontend_player_items.ship,
+                &ship
+            )
+        ) {
+            frontend_draw_segment_bar_source(
+                frame,
+                42,
+                152,
+                3,
+                14,
+                ship.damage,
+                2,
+                13
+            );
+        }
         if (
             ot_data_hdt_shield_read(
                 frontend_player_items.shield,
@@ -1831,11 +1848,11 @@ static void frontend_draw_ship_illustration(u8 *frame)
 
 static u8 frontend_ship_panel_cache_matches(void)
 {
+    /* Armor capacity is derived from items.ship, not player_armor. */
     return
         frontend_ship_panel_cache_valid &&
         frontend_player_items_valid &&
         frontend_ship_panel_cache_cash == player_cash &&
-        frontend_ship_panel_cache_armor == player_armor &&
         memcmp(
             &frontend_ship_panel_cache_items,
             &frontend_player_items,
@@ -1882,9 +1899,9 @@ static void frontend_ship_panel_cache_finalize(void)
         frontend_ship_panel_cache_valid = 0;
         return;
     }
+    /* items.ship already keys the derived PC-style Armor capacity gauge. */
     frontend_ship_panel_cache_items = frontend_player_items;
     frontend_ship_panel_cache_cash = player_cash;
-    frontend_ship_panel_cache_armor = player_armor;
     frontend_ship_panel_cache_valid = 1;
 }
 

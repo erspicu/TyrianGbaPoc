@@ -390,6 +390,12 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
         frontend_level_ready = 0;
         return 0;
     }
+    /*
+     * Direct demo/diagnostic entry can bypass the ordinary front-end
+     * transition phases.  Reassert the same black, layer-disabled ownership
+     * handoff before background_bind_selected_level() installs its palette.
+     */
+    frontend_level_entry_blackout_begin();
     frontend_level = *selected_level;
     frontend_level_ready = 1;
     scripted_arcade = (u8)(
@@ -429,12 +435,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     REG_DMA0CNT = 0;
     if (!background_bind_selected_level()) {
         frontend_level_ready = 0;
+        frontend_level_entry_blackout_cancel();
         return 0;
     }
     gameplay_overlay_reset();
     gameplay_overlay_prepare_palette();
 
-    REG_DISPCNT = LCDC_OFF;
+    frontend_level_entry_blackout_apply();
     frontend_mode4_active = 0;
     frontend_frame_pending = 0;
     frontend_pending_kind = 0;
@@ -492,6 +499,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
         )
     ) {
         frontend_level_ready = 0;
+        frontend_level_entry_blackout_cancel();
         return 0;
     }
     background_commit_full_layer(
@@ -693,6 +701,7 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
         1;
     if (!source_player_equipment_apply()) {
         frontend_level_ready = 0;
+        frontend_level_entry_blackout_cancel();
         return 0;
     }
     /*
@@ -991,9 +1000,13 @@ static u8 enter_selected_level(const OtEpisodeLevel *selected_level)
     REG_BG0VOFS = source_background_vofs(0);
     REG_BG1VOFS = source_background_vofs(1);
     REG_BG2VOFS = source_background_vofs(2);
-    dmaCopy(oam_shadow, OAM, sizeof(oam_shadow));
-    REG_DISPCNT = MODE_0 | BG0_ON | BG2_ON | OBJ_ON | OBJ_1D_MAP |
-        (source_background2_present() ? BG1_ON : 0);
+    /*
+     * Keep the black backdrop through the remainder of this LCD frame.
+     * commit_vblank_work() uploads OAM and releases the prepared gameplay
+     * registers together at the next safe VBlank.
+     */
+    oam_dirty = 1;
+    frontend_level_entry_blackout_apply();
     audio_load_level_song_fade_in(frontend_level.source_song);
     /* tyrian2.c start_level_first: soundQueue[3] = V_GOOD_LUCK. */
     source_sound_effect(33);
