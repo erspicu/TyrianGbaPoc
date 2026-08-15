@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 如何以 Drop-frame 與 Adaptive presentation dispatch，在不降低遊戲邏輯及音訊時鐘的前提下穩定處理 GBA 持續超載。">
+  <meta name="theme-color" content="#05070c">
+  <title>Adaptive 呈現派送與 Drop-frame — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/i18n.js" defer></script>
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html"><img class="brand-mark" src="../assets/brand-mark.svg" alt=""><span>Tyrian // GBA<small>source-faithful port</small></span></a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽"><a href="../index.html">首頁</a><a href="index.html" aria-current="page">研究筆記</a><a class="nav-download" href="../download.html">下載</a></nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Adaptive presentation</span></nav>
+        <p class="eyebrow">Research 10 / Adaptive timing</p>
+        <h1>讓過載變成穩定節奏，不讓遊戲世界變慢。</h1>
+        <p class="lede">偶發漏畫與持續超載是兩種不同問題。Drop-frame 保護單一 LCD frame 的提交期限；Adaptive presentation dispatch 則在量測到長期壓力後，主動降低完整場景的建構頻率，同時維持遊戲邏輯、音訊與關卡流程的原始節奏。</p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <div class="metric-grid">
+            <div class="metric"><strong>≈34.8 Hz</strong><span>source logic / Normal</span></div>
+            <div class="metric"><strong>≥17.4 FPS</strong><span>Adaptive presentation floor</span></div>
+            <div class="metric"><strong>0</strong><span>audio frames intentionally skipped</span></div>
+          </div>
+
+          <h2 id="two-layers">兩套互補、不能混為一談的機制</h2>
+          <p>
+            <strong>Dynamic Drop-frame</strong> 是逐 LCD frame 的 deadline scheduler。若估算新場景無法在安全期限前完成，就保留上一張已完整提交的 OAM、VRAM 與背景狀態，避免把半套畫面交給顯示硬體。
+          </p>
+          <p>
+            <strong>Adaptive presentation dispatch</strong> 是建立在 Drop-frame 上的壓力狀態機。它觀察連續 deadline 壓力與真正的 missed VBlank；確認不是一次冷快取尖峰後，才把完整場景建構鎖到較低且規律的 cadence，避免不穩定地連續超時。
+          </p>
+          <div class="callout warning">
+            這裡降低的是 presentation FPS，不是內部遊戲邏輯 FPS。兩者若被混稱為「降內部 FPS」，很容易誤以為敵人、碰撞或音樂也被放慢。
+          </div>
+
+          <h2 id="authoritative">哪些工作永遠不能被省略</h2>
+          <p>Adaptive 只捨棄已被較新狀態取代、尚未送出的中間畫面。下列 authoritative state 仍按原順序執行：</p>
+          <ul>
+            <li>玩家輸入、移動、武器 cooldown 與能量；</li>
+            <li>敵人事件、Boss 流程、碰撞、傷害與掉落；</li>
+            <li>關卡位置、script 分支與 RNG 呼叫順序；</li>
+            <li>每個實體 VBlank 的 Maxmod 音樂與音效服務。</li>
+          </ul>
+          <p>因此畫面在壓力下可能維持上一個完整 frame，但下一張出現時會直接反映正確時間點，不會因少畫一張而讓關卡慢動作或改變戰鬥結果。</p>
+
+          <h2 id="tiers">三段壓力狀態與 17.4 FPS 下限</h2>
+          <div class="metric-grid">
+            <div class="metric"><strong>Light</strong><span>預設；安全預算足夠就呈現</span></div>
+            <div class="metric"><strong>Medium</strong><span>每兩個 source tick 一張</span></div>
+            <div class="metric"><strong>Severe</strong><span>同為兩 tick；只保留高壓分類</span></div>
+          </div>
+          <p>
+            Tyrian 的 Normal speed 約為 34.8 logic tick/s。正式設定將一張刻意輸出的場景限制為最多代表兩個 source ticks，因此 Medium／Severe 的目標下限約為 17.4 FPS。早期 Severe 曾允許三 tick、約 11.6 FPS；實機觀感過於不連續，現行程式已從型別與編譯檢查上禁止回到該設定。
+          </p>
+
+          <h2 id="pressure">只對持續壓力反應，不因單一尖峰抖動</h2>
+          <p>
+            一般 gameplay 必須累積至少 4 點 deadline 壓力及 2 次 missed VBlank 才進入 Adaptive；壓力達 8 或 missed VBlank 達 4 時標記為 Severe。lava／water 場景因波紋還占用顯示時序，在確認 2 點壓力及 1 次 missed VBlank 後可提早進入 Severe，但仍受相同 17.4 FPS 下限約束。
+          </p>
+          <ul>
+            <li>連續 16 張完整 render 都低於 150,000 cycles 才退出，避免 cadence 來回跳動；</li>
+            <li>最多保留兩個 pending logic ticks，超過就強制產生新場景；</li>
+            <li>背景 ring row、關卡狀態轉換及 freshness 條件永遠可以強制 render；</li>
+            <li>一般 Boss、爆炸與複雜武器使用同一套全域量測，不靠 per-level 特例。</li>
+          </ul>
+
+          <h2 id="evidence">歷史 A/B：一般非 wave 關卡也能受益</h2>
+          <p>
+            Episode 2 Section 1 的 600-VBlank 壓力測試，在遊戲邏輯更新、RNG、玩家子彈數與音訊結果完全相同時，加入 Adaptive 後 missed VBlank 由 165 降至 93，減少 43.64%；平均 loop work 由 224,781.42 降至 186,695.33 cycles，減少 16.94%，兩版 audio frame loss 都是 0。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>165 → 93</strong><span>missed VBlank</span></div>
+            <div class="metric"><strong>-16.94%</strong><span>average loop work</span></div>
+            <div class="metric"><strong>0 / 0</strong><span>audio frame loss</span></div>
+          </div>
+          <div class="callout">
+            這組數據來自能降至三 tick 的歷史基準，用來證明 Adaptive 不只對 lava／water 特例有效。現行 v89 Release 已將流暢度優先權提高，Medium 與 Severe 都封頂為兩 tick，因此不應把歷史 complete-render 數量直接當成目前版本預期值。
+          </div>
+
+          <h2 id="limits">安全網不是免除最佳化的魔法</h2>
+          <p>
+            GBA 每個 LCD frame 約有 280,896 CPU cycles。若單一不可切割的 render、解碼或 cache miss 本身已超過這個預算，Drop-frame 與 Adaptive 只能避免它再和其他昂貴 phase 疊在一起，不能縮短該工作本身。這類瓶頸仍要以 build-time 預處理、DMA、cache、IWRAM／ARM leaf kernel 或演算法改善解決。
+          </p>
+          <p>
+            正式版因此同時開啟 Dynamic Drop-frame、全域 Adaptive presentation dispatch 與 wave 快速進入策略。關閉 Adaptive 只用於受控 A/B；它不是一般 Release 選項，也不套用到靜態前端選單。
+          </p>
+
+          <h2 id="principle">最終原則</h2>
+          <p>
+            過載時可以少交付一張已過時的畫面，但不能少算一次會改變遊戲結果的工作。把 authoritative simulation 與可被取代的 presentation 分開，才讓 GBA 在極端火力下維持音樂與正確流程，同時把視覺退化限制為穩定、可量測且有最低下限的呈現頻率。
+          </p>
+        </article>
+        <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#two-layers">Two mechanisms</a></li><li><a href="#authoritative">Authoritative state</a></li><li><a href="#tiers">Pressure tiers</a></li><li><a href="#pressure">Entry and recovery</a></li><li><a href="#evidence">Measured evidence</a></li><li><a href="#limits">Limits</a></li><li><a href="#principle">Final principle</a></li></ul></aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="shell footer-grid"><div>TyrianGbaPoc 技術研究 · <span data-year></span></div><nav class="footer-links"><a href="oam-resource-scheduling.html">上一篇：OAM scheduling</a><a href="timing.html">固定時序基礎</a><a href="index.html">全部研究</a></nav></div></footer>
+</body>
+</html>

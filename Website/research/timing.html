@@ -91,6 +91,10 @@
             為 2%，較密集的 Episode 2 stock route 為 2.5%，而 frontend、stats、
             game-over 與 transition deterministic misses 仍必須為 0。
           </p>
+          <div class="callout">
+            Drop-frame 處理單一 frame 的截止期限；持續超載則交給
+            <a href="adaptive-presentation.html">Adaptive 呈現派送</a>，將完整場景鎖到穩定且有下限的 cadence。
+          </div>
         </article>
         <aside class="toc" aria-label="本頁目錄"><strong>On this page</strong><ul><li><a href="#budget">Frame budget</a></li><li><a href="#fixed">Fixed timestep</a></li><li><a href="#defer">Presentation defer</a></li><li><a href="#hotpath">Hot paths</a></li><li><a href="#telemetry">Telemetry</a></li></ul></aside>
       </div>
