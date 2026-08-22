@@ -223,6 +223,14 @@ presentation 再依 `Configure.h` 將音樂設為其 90%（806/1024），全部 
 `MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`；runtime 混音規則見
 `MD/Tyrian-GBA-Runtime-Mix-Balance-2026-08-22.md`。
 
+背景音樂的 tonal／percussion source rate 以 15,768 Hz 為最低建置規格，
+不得為節省 ROM 降回 11,025 Hz。實際 Maxmod GBA mixer 已由組語確認採
+nearest-sample phase stepping；11,025 → 15,768 不會降低 runtime 混音成本，
+反而會增加非整數 phase step 的重複取樣失真。未來音色豐富度升級應使用 ROM
+增加 adaptive key zones、attack、LFO loop 與真實 OPL rhythm percussion；
+容量不足時先縮減低收益 zone／loop。研究與容量估算見
+`MD/Tyrian-GBA-Fixed-Rate-Music-Fidelity-Gemini-Study-2026-08-22.md`。
+
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整
 runtime 功能已由另一份嵌入資源承接時，才可從 ROMFS image 排除原始

@@ -169,3 +169,36 @@ Gemini 第二輪所寫「盲測無法分辨新版與舊版」不是正確成功�
 
 這套方案把成本放在 build time 與 ROM，note-on 仍只選一份 sample，因此不
 增加 Maxmod 同時 voice 數，最符合目前 GBA 關卡 runtime 已接近負荷上限的條件。
+
+## 追加定案：背景音樂 source rate 不低於 15,768 Hz
+
+第二輪取樣率研究曾評估把部分音色降至 11,025 Hz，以節省約 30% 的個別 PCM
+容量；但反組譯本專案實際使用的 Maxmod 1.10.1 `libmm.a` 後，已確認 GBA
+mixer 的核心是：
+
+```asm
+ldrb sample, [source, phase, lsr #12]
+add  phase, phase, step
+```
+
+它沒有讀取相鄰 sample，也沒有 fractional-phase interpolation。11,025 Hz
+source 混到 15,768 Hz output 時，root step 約為 0.699，仍需不均勻地重複
+sample；15,768 Hz zone root 則可接近 step 1.0 的逐 sample 對應。降低 source
+rate 不會減少 mixer 每個 output sample 的迴圈成本，只能省 ROM，卻會增加
+nearest-sample phase stepping 的 imaging／jitter 並失去 5.5～7.9 kHz 頻帶。
+
+因此正式規則定案如下：
+
+- **所有背景音樂 tonal 與 percussion source PCM 最低均為 15,768 Hz。**
+- OPL 可在 build time 以原生約 49.7 kHz 或更高精度渲染，再用 band-limited
+  resampler 降至 15,768 Hz；這不改變 GBA 最終 mixer rate。
+- ROM 空間用於 adaptive 3～5 key zones、真實 attack、LFO loop 與 OPL
+  rhythm percussion，不以降低背景音樂 source rate 換容量。
+- 若未來 ROM 空間不足，先把非關鍵音色由 5 zones 降為 3 zones、縮短經驗證
+  可縮的 sustain loop，或減少低收益資料；背景音樂不降至 11,025 Hz。
+- stock SFX／voice 原始資料仍維持來源原生 11,025 Hz，再由 Maxmod 混入
+  15,768 Hz output；它們不屬於這條背景音樂規則。
+
+歷史上也不是整套背景音樂都使用 11,025 Hz：舊 tonal wavetable 的 C5 speed
+是 16,744 Hz；只有程序 percussion 曾使用 11,025 Hz，stock SFX／voice 也一直
+是 11,025 Hz。現在 tonal 與 percussion 統一為 15,768 Hz 才是正式音樂路徑。
