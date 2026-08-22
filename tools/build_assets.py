@@ -6186,11 +6186,6 @@ def build_gameplay_status_text(
                 "unexpected Tyrian FONT_SHAPES status glyph canvas: "
                 f"{character}/{source_id} is {source.size}"
             )
-        advances.append(
-            source.width + 1
-            if native_size
-            else ((source.width + 1) * 3 + 2) // 4
-        )
         rgba = np.asarray(source, dtype=np.uint8)
         transformed = np.zeros_like(rgba)
         for y, x in np.argwhere(rgba[:, :, 3] >= 80):
@@ -6225,6 +6220,11 @@ def build_gameplay_status_text(
                 ),
                 Image.Resampling.NEAREST,
             )
+        # Advance by the glyph that will actually be rendered.  Wide PC
+        # FONT_SHAPES letters such as M are reduced to an 8-pixel GBA OBJ;
+        # retaining their pre-clamp scaled width left a conspicuous false
+        # space in labels such as "GAM E OVER".
+        advances.append(foreground.width + 1)
         shadow = Image.new("RGBA", (8, 16), (0, 0, 0, 0))
         shadow_mask = foreground.getchannel("A")
         shadow_shape = Image.new("RGBA", foreground.size, (8, 8, 8, 255))
