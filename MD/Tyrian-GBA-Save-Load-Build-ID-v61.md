@@ -4,7 +4,8 @@
 
 ## 完成範圍
 
-- 首頁左下角顯示 `AprTyrianGba-<7 位 Git short hash>`。
+- 首頁左下角顯示
+  `AprTyrianGba-<7 位 Git short hash>-<YYYYMMDD 建置日期>`。
 - `Start New Game` 下新增停用狀態的 `Load Game`，並保留 Demo、
   JukeBox。
 - Game Menu 的 Options 已啟用，內容為 Load、Save、Done。
@@ -78,8 +79,9 @@ ROM 具有 `SRAM_V121` 掃描標記，使用標準 32 KiB SRAM。上半部配置
 `tools/write_build_version.py` 在每次 Make 執行時產生被 Git 忽略的
 `res/build_version.h`：
 
-- clean commit：`AprTyrianGba-155a7b0`
-- 有 tracked 修改的開發版：`AprTyrianGba-155a7b0+`
+- 範例：`AprTyrianGba-155a7b0-20260823`
+- 日期採建置電腦的本機日期，固定為八碼 `YYYYMMDD`。
+- 工作樹是否有 tracked 修改不再加上 `+`；實際來源狀態由 Git 管理。
 
 首頁先直接顯示 build-time 靜態畫面，下一個 VBlank 僅更新底部版本列；
 不再為一行字從 Game Pak 複製完整 38.4 KiB Mode-4 frame。

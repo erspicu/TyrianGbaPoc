@@ -25,8 +25,9 @@ Build-GBA-ROM.bat
    `TyrianGBA.gba`。
 
 首頁左下角會由建置工具自動寫入
-`AprTyrianGba-<7 位 Git short hash>`。顯示內容固定採用目前 commit，
-不再因工作樹含未提交修改而附加容易誤解的 `+`。此文字由
+`AprTyrianGba-<7 位 Git short hash>-<YYYYMMDD 建置日期>`，例如
+`AprTyrianGba-07fae87-20260823`。顯示內容固定採用目前 commit 與本機
+建置日，不再因工作樹含未提交修改而附加容易誤解的 `+`。此文字由
 `tools/write_build_version.py` 產生，不應手動修改 `res/build_version.h`。
 
 可選參數範例：
