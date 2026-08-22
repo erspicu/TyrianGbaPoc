@@ -18,6 +18,13 @@ property of their respective rights holders. Upstream data location:
 version 2; see `vendor/opentyrian/COPYING`. The recorded upstream revision is
 in `vendor/opentyrian/REVISION`.
 
+The host-only `tools/opl_renderer/tyrian_opl_bridge.dll` incorporates the
+vendored DOSBox OPL2/OPL3 emulation files `src/opl.c` and `src/opl.h`, which
+are licensed under GNU LGPL version 2.1 or later as stated in those files.
+The DLL is loaded only by the offline asset builder; its corresponding bridge
+source and reproducible build command are provided beside it. The GBA ROM
+contains the resulting PCM samples, not the host renderer executable code.
+
 ## libgba and devkitPro-compatible GBA runtime files
 
 The required GBA headers, libraries and CRT/spec files are under

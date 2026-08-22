@@ -1,7 +1,11 @@
 # Tyrian GBA 固定 15,768 Hz 音樂真實度改善研究
 
 日期：2026-08-22  
-狀態：Gemini 3.1 Pro 兩輪諮詢與本地管線校驗完成；本文件只做技術定案，尚未改寫音樂轉換器。
+狀態：Gemini 3.1 Pro 兩輪諮詢、本地校驗、轉換器實作與完整 ROM 建置均已完成。
+
+> 最終實作採容量受控的一至三個 adaptive roots，而不是研究初稿的三至五個
+> 固定 zones。完整結果與限制見
+> `Tyrian-GBA-Adaptive-OPL2-Music-Implementation-2026-08-22.md`。
 
 ## 目標與固定條件
 

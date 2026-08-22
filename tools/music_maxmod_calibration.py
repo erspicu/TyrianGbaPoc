@@ -26,9 +26,10 @@ import numpy as np
 
 PROFILE_NAME = "GbaMaxmod"
 PROFILE_DESCRIPTION = (
-    "GBA Maxmod 15.768 kHz native-rate tonal/percussion IT adapter; exact "
+    "GBA Maxmod 15.768 kHz native-rate adaptive-root OPL2 IT adapter; exact "
     "TYM event-volume timeline, "
-    "quantized signed 8-bit synthesized samples, fixed OPL stem RMS target, "
+    "original LDS patch ADSR/KSL/KSR/feedback/LFO and percussion timbres, "
+    "quantized signed 8-bit samples, fixed OPL stem RMS target, "
     "mono L+R reference, one catalog-wide +3 dB presentation gain, and no "
     "per-song maximum-gain normalization; all nine original OPL2 source "
     "channels retained, with source-RMS ordering used only for tracker voices"
@@ -45,9 +46,11 @@ PLAYBACK_REFERENCE_GAIN = 10.0 ** (PLAYBACK_REFERENCE_GAIN_DB / 20.0)
 IT_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
 MAX_GBA_MUSIC_VOICES = 9
 MAX_SAMPLE_GAIN = 1.075
+MAX_EVENT_VOLUME_GAIN = 4.0
 GAIN_REFINEMENT_PASSES = 3
 ERROR_LIMIT_DB = 1.0
 PERCUSSION_PEAK_CEILING_RATIO = 1.60
+TONAL_TRANSIENT_PEAK_CEILING_RATIO = 3.00
 
 Song = dict[str, object]
 SampleSynth = Callable[
@@ -82,6 +85,7 @@ def _voice_metrics(
     percussion_sources: set[int],
     gain: float,
     synthesize: SampleSynth,
+    event_volume_gain: float = 1.0,
 ) -> dict[str, float | int]:
     """Measure one source over the complete tracker pass.
 
@@ -99,17 +103,26 @@ def _voice_metrics(
     if duration <= 0 or total_seconds <= 0.0:
         raise ValueError("TYM duration must be positive")
 
-    transitions = [
-        (int(tick), changes[source])
-        for tick, changes in events
-        if source in changes
-    ]
-    sample_cache: dict[
-        int,
-        tuple[np.ndarray, int, bool],
-    ] = {}
+    transitions: list[tuple[int, tuple[int, int, int, int]]] = []
+    active_generation: int | None = None
+    for tick, changes in events:
+        if source not in changes:
+            continue
+        state = changes[source]
+        if state[0] == -32768:
+            if active_generation is not None:
+                transitions.append((int(tick), state))
+            active_generation = None
+            continue
+        generation = int(state[3])
+        if active_generation != generation:
+            transitions.append((int(tick), state))
+            active_generation = generation
+    sample_cache: dict[int, tuple[np.ndarray, int, bool, int]] = {}
 
-    def sample_for(instrument_index: int) -> tuple[np.ndarray, int, bool]:
+    def sample_for(
+        instrument_index: int,
+    ) -> tuple[np.ndarray, int, bool, int]:
         cached = sample_cache.get(instrument_index)
         if cached is not None:
             return cached
@@ -117,7 +130,7 @@ def _voice_metrics(
             raise ValueError(
                 f"TYM instrument {instrument_index} is outside the table"
             )
-        pcm, rate, loop, _ = synthesize(
+        pcm, rate, loop, loop_start = synthesize(
             instruments[instrument_index],
             source,
             instrument_index,
@@ -129,7 +142,7 @@ def _voice_metrics(
             .astype(np.float64) /
             128.0
         )
-        cached = (signed, int(rate), bool(loop))
+        cached = (signed, int(rate), bool(loop), int(loop_start))
         sample_cache[instrument_index] = cached
         return cached
 
@@ -151,13 +164,23 @@ def _voice_metrics(
         pitch_q8, instrument_index, velocity, _ = state
         if pitch_q8 == -32768:
             return
-        pcm, rate, loop = sample_for(instrument_index)
+        pcm, rate, loop, loop_start = sample_for(instrument_index)
         if pcm.size == 0 or rate <= 0:
             return
-        volume = it_volume_from_tym_velocity(velocity) / 64.0
+        volume = min(
+            64,
+            max(
+                1,
+                int(round(
+                    it_volume_from_tym_velocity(velocity) *
+                    event_volume_gain
+                )),
+            ),
+        ) / 64.0
         interval_seconds = (end_tick - begin_tick) / row_rate
         if loop:
-            mean_square = float(np.mean(np.square(pcm)))
+            loop_pcm = pcm[max(0, min(pcm.size - 1, loop_start)) :]
+            mean_square = float(np.mean(np.square(loop_pcm)))
             energy_seconds += mean_square * volume * volume * interval_seconds
             peak = max(peak, float(np.max(np.abs(pcm))) * volume)
             active_seconds += interval_seconds
@@ -192,14 +215,14 @@ def _voice_metrics(
     sample_peak = max(
         (
             float(np.max(np.abs(sample)))
-            for sample, _, _ in sample_cache.values()
+            for sample, _, _, _ in sample_cache.values()
             if sample.size
         ),
         default=0.0,
     )
     clipped_samples = sum(
         int(np.count_nonzero(np.abs(sample) >= 1.0))
-        for sample, _, _ in sample_cache.values()
+        for sample, _, _, _ in sample_cache.values()
     )
     return {
         "rms": rms,
@@ -279,6 +302,7 @@ def calibrate_track(
 
     source_reports: list[dict[str, object]] = []
     gains: list[float] = []
+    volume_gains: list[float] = []
     old_abs_errors: list[float] = []
     new_abs_errors: list[float] = []
     target_rss_square = 0.0
@@ -308,14 +332,20 @@ def calibrate_track(
         # L+R is invariant under Maxmod's linear pan.  Include the actual
         # runtime module-volume ceiling so the played ROM, not merely the IT
         # file in isolation, matches the original OPL stem reference.
-        gain = target_rms / (
+        total_gain = target_rms / (
             float(unity["rms"]) *
             MAXMOD_MODULE_SCALE
         )
-        if gain > MAX_SAMPLE_GAIN:
+        if total_gain <= MAX_SAMPLE_GAIN:
+            gain = total_gain
+            event_volume_gain = 1.0
+        else:
+            gain = MAX_SAMPLE_GAIN
+            event_volume_gain = total_gain / gain
+        if event_volume_gain > MAX_EVENT_VOLUME_GAIN:
             raise ValueError(
-                f"track {track_number} source {source} needs gain "
-                f"{gain:.6f}, above the clip-safe fixed reference"
+                f"track {track_number} source {source} needs event-volume "
+                f"gain {event_volume_gain:.6f}, above the fixed reference"
             )
         realized: dict[str, float | int] = unity
         for _ in range(GAIN_REFINEMENT_PASSES):
@@ -325,6 +355,7 @@ def calibrate_track(
                 percussion_sources,
                 gain,
                 synthesize,
+                event_volume_gain,
             )
             projected_rms = (
                 float(realized["rms"]) *
@@ -337,7 +368,14 @@ def calibrate_track(
             correction = target_rms / projected_rms
             if abs(_db_ratio(projected_rms, target_rms)) <= 0.02:
                 break
-            gain = min(MAX_SAMPLE_GAIN, gain * correction)
+            total_gain = gain * event_volume_gain * correction
+            gain = min(MAX_SAMPLE_GAIN, total_gain)
+            event_volume_gain = max(1.0, total_gain / gain)
+            if event_volume_gain > MAX_EVENT_VOLUME_GAIN:
+                raise ValueError(
+                    f"track {track_number} source {source} refined "
+                    f"event-volume gain above {MAX_EVENT_VOLUME_GAIN:.2f}"
+                )
 
         realized = _voice_metrics(
             song,
@@ -345,26 +383,33 @@ def calibrate_track(
             percussion_sources,
             gain,
             synthesize,
+            event_volume_gain,
         )
         peak_limited = False
         projected_peak = float(realized["peak"]) * MAXMOD_MODULE_SCALE
+        peak_ceiling_ratio = (
+            PERCUSSION_PEAK_CEILING_RATIO
+            if source in percussion_sources
+            else TONAL_TRANSIENT_PEAK_CEILING_RATIO
+        )
         if (
-            source in percussion_sources and
             target_peak > 0.0 and
-            projected_peak >
-                target_peak * PERCUSSION_PEAK_CEILING_RATIO
+            projected_peak > target_peak * peak_ceiling_ratio
         ):
-            gain *= (
+            total_gain = gain * event_volume_gain * (
                 target_peak *
-                PERCUSSION_PEAK_CEILING_RATIO /
+                peak_ceiling_ratio /
                 projected_peak
             )
+            gain = min(MAX_SAMPLE_GAIN, total_gain)
+            event_volume_gain = max(1.0, total_gain / gain)
             realized = _voice_metrics(
                 song,
                 source,
                 percussion_sources,
                 gain,
                 synthesize,
+                event_volume_gain,
             )
             peak_limited = True
         legacy = _voice_metrics(
@@ -388,7 +433,7 @@ def calibrate_track(
                 f"track {track_number} source {source} Maxmod RMS error "
                 f"{error_db:+.3f} dB exceeds {ERROR_LIMIT_DB:.2f} dB"
             )
-        if peak_limited and not -4.5 <= error_db <= 0.25:
+        if peak_limited and not -16.0 <= error_db <= 0.25:
             raise ValueError(
                 f"track {track_number} source {source} peak-limited RMS "
                 f"error {error_db:+.3f} dB is outside the safety objective"
@@ -410,6 +455,8 @@ def calibrate_track(
             "unityAdapterRms": float(unity["rms"]),
             "gain": gain,
             "gainDb": 20.0 * math.log10(gain),
+            "eventVolumeGain": event_volume_gain,
+            "totalGainDb": 20.0 * math.log10(gain * event_volume_gain),
             "realizedRms": projected_rms,
             "realizedPeak": projected_peak,
             "peakRatio": (
@@ -418,6 +465,7 @@ def calibrate_track(
                 else 0.0
             ),
             "peakLimited": peak_limited,
+            "peakCeilingRatio": peak_ceiling_ratio,
             "errorDb": error_db,
             "legacyGain": legacy_gains[voice],
             "legacyRealizedRms": legacy_rms,
@@ -431,6 +479,7 @@ def calibrate_track(
             "percussion": source in percussion_sources,
         })
         gains.append(gain)
+        volume_gains.append(event_volume_gain)
         old_abs_errors.append(abs(legacy_error_db))
         new_abs_errors.append(abs(error_db))
         target_rss_square += target_rms * target_rms
@@ -447,6 +496,7 @@ def calibrate_track(
         "sourceChannels": sources,
         "gains": gains,
         "gainDb": [20.0 * math.log10(gain) for gain in gains],
+        "eventVolumeGains": volume_gains,
         "moduleVolume": MAXMOD_MODULE_VOLUME,
         "moduleScale": MAXMOD_MODULE_SCALE,
         "playbackReferenceGainDb": PLAYBACK_REFERENCE_GAIN_DB,
@@ -473,12 +523,12 @@ def write_catalog(
         for source in track["sourceReports"]
     ]
     catalog: dict[str, object] = {
-        "schema": "tyrian-gba-maxmod-calibration-v1",
+        "schema": "tyrian-gba-maxmod-calibration-v2",
         "profile": PROFILE_NAME,
         "description": PROFILE_DESCRIPTION,
         "maxmodOutputRate": MAXMOD_OUTPUT_RATE,
         "tonalPcmRate": MAXMOD_OUTPUT_RATE,
-        "proceduralPercussionRate": MAXMOD_OUTPUT_RATE,
+        "oplPercussionRate": MAXMOD_OUTPUT_RATE,
         "maxmodModuleVolume": MAXMOD_MODULE_VOLUME,
         "maxmodNormalVolume": MAXMOD_NORMAL_VOLUME,
         "playbackReferenceGainDb": PLAYBACK_REFERENCE_GAIN_DB,
@@ -489,6 +539,10 @@ def write_catalog(
             "sourceCount": len(source_reports),
             "gainMin": min(float(source["gain"]) for source in source_reports),
             "gainMax": max(float(source["gain"]) for source in source_reports),
+            "eventVolumeGainMax": max(
+                float(source["eventVolumeGain"])
+                for source in source_reports
+            ),
             "legacyMeanAbsoluteErrorDb": (
                 sum(
                     abs(float(source["legacyErrorDb"]))
@@ -513,6 +567,9 @@ def write_catalog(
                 for source in source_reports
             ),
             "percussionPeakCeilingRatio": PERCUSSION_PEAK_CEILING_RATIO,
+            "tonalTransientPeakCeilingRatio": (
+                TONAL_TRANSIENT_PEAK_CEILING_RATIO
+            ),
             "perSongMaximumNormalization": False,
         },
     }

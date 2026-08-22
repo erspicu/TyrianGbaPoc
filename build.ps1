@@ -327,23 +327,25 @@ if (-not (Test-Path -LiteralPath $musicCalibrationPath -PathType Leaf)) {
 $musicCalibration = Get-Content -LiteralPath $musicCalibrationPath -Raw |
     ConvertFrom-Json
 if (
-    $musicCalibration.schema -ne "tyrian-gba-maxmod-calibration-v1" -or
+    $musicCalibration.schema -ne "tyrian-gba-maxmod-calibration-v2" -or
     $musicCalibration.profile -ne "GbaMaxmod" -or
     $musicCalibration.maxmodOutputRate -ne 15768 -or
     $musicCalibration.tonalPcmRate -ne 15768 -or
-    $musicCalibration.proceduralPercussionRate -ne 15768 -or
+    $musicCalibration.oplPercussionRate -ne 15768 -or
     $musicCalibration.maxmodModuleVolume -ne 896 -or
     [double]$musicCalibration.playbackReferenceGainDb -ne 3.0 -or
     $musicCalibration.summary.trackCount -ne 41 -or
     $musicCalibration.summary.sourceCount -ne 334 -or
     [double]$musicCalibration.summary.gainMin -le 0.0 -or
     [double]$musicCalibration.summary.gainMax -gt 1.075 -or
+    [double]$musicCalibration.summary.eventVolumeGainMax -gt 4.0 -or
     [double]$musicCalibration.summary.legacyMeanAbsoluteErrorDb -lt 5.0 -or
     [double]$musicCalibration.summary.calibratedMeanAbsoluteErrorDb -gt 0.2 -or
     $musicCalibration.summary.sampleClipCount -ne 0 -or
-    $musicCalibration.summary.peakLimitedSourceCount -ne 22 -or
-    [double]$musicCalibration.summary.maximumPeakRatio -gt 1.65 -or
+    $musicCalibration.summary.peakLimitedSourceCount -ne 19 -or
+    [double]$musicCalibration.summary.maximumPeakRatio -gt 3.1 -or
     [double]$musicCalibration.summary.percussionPeakCeilingRatio -ne 1.6 -or
+    [double]$musicCalibration.summary.tonalTransientPeakCeilingRatio -ne 3.0 -or
     $musicCalibration.summary.perSongMaximumNormalization -ne $false
 ) {
     throw "GBA Maxmod fixed-reference calibration audit failed"
@@ -357,25 +359,28 @@ foreach ($line in Get-Content -LiteralPath $assetReportPath) {
 }
 if (
     $assetReport.music_catalog_profile -ne
-        "GbaMaxmod nine-channel fixed-reference tracker adapter" -or
+        "GbaMaxmod nine-channel adaptive-root original OPL2 patch adapter" -or
     $assetReport.music_calibration_source_count -ne "334" -or
     [double]$assetReport.music_calibration_gain_min -le 0.0 -or
     [double]$assetReport.music_calibration_gain_max -gt 1.075 -or
+    [double]$assetReport.music_calibration_event_volume_gain_max -gt 4.0 -or
     [double]$assetReport.music_calibration_legacy_mean_abs_error_db -lt 5.0 -or
     [double]$assetReport.music_calibration_mean_abs_error_db -gt 0.2 -or
     $assetReport.music_calibration_sample_clip_count -ne "0" -or
-    $assetReport.music_calibration_peak_limited_sources -ne "22" -or
-    [double]$assetReport.music_calibration_maximum_peak_ratio -gt 1.65 -or
+    $assetReport.music_calibration_peak_limited_sources -ne "19" -or
+    [double]$assetReport.music_calibration_maximum_peak_ratio -gt 3.1 -or
     $assetReport.music_calibration_percussion_peak_ceiling_ratio -ne "1.600" -or
+    $assetReport.music_calibration_tonal_peak_ceiling_ratio -ne "3.000" -or
     $assetReport.music_calibration_reference_gain_db -ne "3.000" -or
     $assetReport.music_calibration_per_song_maximum_normalization -ne "0" -or
     $assetReport.music_calibration_reference_fold_down -ne "mono_L_plus_R" -or
     $assetReport.music_opl_source_channels -ne "9_complete" -or
+    $assetReport.music_opl_renderer -ne "vendored_OpenTyrian_DOSBox_core" -or
+    $assetReport.music_opl_native_render_rate_hz -ne "49716" -or
     $assetReport.music_tonal_pcm_rate_hz -ne "15768" -or
-    $assetReport.music_tonal_wavetable_loop_samples -ne "241" -or
-    $assetReport.music_tonal_wavetable_loop_cycles -ne "4" -or
-    [double]$assetReport.music_tonal_c5_pitch_error_cents -gt 1.0 -or
-    $assetReport.music_procedural_percussion_rate_hz -ne "15768" -or
+    $assetReport.music_opl_percussion_rate_hz -ne "15768" -or
+    [int64]$assetReport.music_opl_tonal_zones -le 0 -or
+    [int64]$assetReport.music_opl_percussion_zones -le 0 -or
     $assetReport.audio_source_sfx_rate_hz -ne "11025_source_native" -or
     $assetReport.finite_music_cues -ne "9,10,30" -or
     $assetReport.finite_music_09_disabled_position_jumps -ne "1" -or

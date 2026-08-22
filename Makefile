@@ -527,6 +527,9 @@ ASSET_INPUTS := \
 	tools/build_assets.py \
 	tools/gba_asset_support.py \
 	tools/gba_music_builder.py \
+	tools/opl_sample_renderer.py \
+	tools/opl_renderer/tyrian_opl_bridge.c \
+	tools/opl_renderer/tyrian_opl_bridge.dll \
 	tools/templates/gba_maxmod_base.it \
 	tools/background_palette_training.py \
 	tools/music_maxmod_calibration.py \
@@ -564,6 +567,8 @@ ASSET_INPUTS := \
 	vendor/opentyrian/src/jukebox.c \
 	vendor/opentyrian/src/starlib.c \
 	vendor/opentyrian/src/musmast.c \
+	vendor/opentyrian/src/opl.c \
+	vendor/opentyrian/src/opl.h \
 	vendor/audio/Music/gba-opl-reference.json \
 	$(wildcard vendor/audio/Music/*.tym)
 

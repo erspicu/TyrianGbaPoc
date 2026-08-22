@@ -47,8 +47,10 @@ profile, normal damage, and normal campaign equipment.
   source coordinates and the GBA performs only the final 240x160 crop.
 - All 128 GBA OAM entries, palette-aware Sprite2 caching and build-time
   lossless expansion of the stock shape banks.
-- All 41 music tracks with all nine authored OPL2 source channels retained,
-  plus stock sound effects and voices through an 18-slot Maxmod mixer.
+- All 41 music tracks with all nine authored OPL2 source channels retained.
+  Their original OPL2 patches are rendered offline at 49,716 Hz into
+  adaptive-root, attack/LFO-aware 15,768 Hz samples; stock sound effects and
+  voices share the unchanged 18-slot Maxmod runtime mixer.
 - Fixed-timestep gameplay with controlled frame dropping under unusually heavy
   scenes, without slowing the game clock.
 - Automated mGBA regressions for gameplay, episodes, menus, Demo, JukeBox,

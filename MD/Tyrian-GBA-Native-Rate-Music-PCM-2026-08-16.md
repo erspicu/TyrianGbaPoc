@@ -3,6 +3,11 @@
 日期：2026-08-16  
 正式設定：LOW Detail／Normal Game Speed／Maxmod 15,768 Hz
 
+> 歷史註記：本文件記錄 v89 的短 wavetable／程序 percussion 路徑。
+> 2026-08-22 已由 adaptive-root 原始 OPL2 patch 離線渲染取代；固定
+> 15,768 Hz 的取樣率結論仍有效。現行資料見
+> `Tyrian-GBA-Adaptive-OPL2-Music-Implementation-2026-08-22.md`。
+
 ## 結論
 
 背景音樂的音調音色與程序打擊 PCM 已全部改用 15,768 Hz，與 GBA 版

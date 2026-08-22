@@ -10,29 +10,33 @@ from __future__ import annotations
 import json
 import struct
 import zlib
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 import numpy as np
+
+import opl_sample_renderer
 
 TRACKER_TEMPO = 174
 TRACKER_SPEED = 1
 MAXMOD_OUTPUT_RATE = 15_768
 TRACKER_C5_SPEED = MAXMOD_OUTPUT_RATE
 MAX_GBA_MUSIC_VOICES = 9
-PROCEDURAL_PERCUSSION_RATE = MAXMOD_OUTPUT_RATE
-PROCEDURAL_PERCUSSION_SOURCE_RATE = 11_025
+OPL_SAMPLE_RATE = MAXMOD_OUTPUT_RATE
 TRACKER_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
 
-# IT's C5 speed is both a playback-rate field and the tuning reference for a
-# looping sample.  The former 64-sample single-cycle wavetable therefore used
-# 16,744 Hz (64 * middle-C) even though Maxmod mixed at 15,768 Hz.  Merely
-# replacing that value would detune every tonal voice by almost one semitone.
-# Four cycles in 241 samples preserve middle C to +0.556 cent while allowing
-# the sample metadata and C5 playback path to match the native mixer rate.
-TONAL_WAVETABLE_LOOP_SAMPLES = 241
-TONAL_WAVETABLE_LOOP_CYCLES = 4
-TONAL_WAVETABLE_LEAD_SAMPLES = 60
+
+@dataclass(frozen=True)
+class ItInstrumentMap:
+    name: str
+    note_map: tuple[int, ...]
+    sample_map: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.note_map) != 120 or len(self.sample_map) != 120:
+            raise ValueError("IT instrument maps must contain 120 notes")
 
 
 def read_it_templates(workspace: Path) -> tuple[bytearray, bytearray, bytes]:
@@ -58,6 +62,7 @@ def build_it_module(
     speed: int = 6,
     tempo: int = 125,
     channel_pans: list[int] | None = None,
+    instrument_maps: list[ItInstrumentMap] | None = None,
 ) -> bytes:
     header, instrument_template, sample_template = read_it_templates(workspace)
     active_channel_count = (
@@ -69,9 +74,25 @@ def build_it_module(
         raise ValueError(
             f"IT active channel count out of range: {active_channel_count}"
         )
-    count = len(samples)
-    if not count or count > 255:
-        raise ValueError(f"IT sample count out of range: {count}")
+    sample_count = len(samples)
+    if not sample_count or sample_count > 255:
+        raise ValueError(f"IT sample count out of range: {sample_count}")
+    if instrument_maps is None:
+        instrument_maps = []
+        for sample_number, (sample_name, _, _, _, _) in enumerate(
+            samples,
+            start=1,
+        ):
+            instrument_maps.append(ItInstrumentMap(
+                sample_name,
+                tuple(range(120)),
+                (sample_number,) * 120,
+            ))
+    instrument_count = len(instrument_maps)
+    if not instrument_count or instrument_count > 255:
+        raise ValueError(
+            f"IT instrument count out of range: {instrument_count}"
+        )
     if not patterns or len(patterns) > 200:
         raise ValueError(f"IT pattern count out of range: {len(patterns)}")
     if not orders or len(orders) > 200:
@@ -82,8 +103,8 @@ def build_it_module(
         header,
         32,
         len(orders),
-        count,
-        count,
+        instrument_count,
+        sample_count,
         len(patterns),
     )
     struct.pack_into("<H", header, 46, 0)
@@ -104,19 +125,30 @@ def build_it_module(
 
     table_size = (
         len(orders) +
-        count * 4 +
-        count * 4 +
+        instrument_count * 4 +
+        sample_count * 4 +
         len(patterns) * 4
     )
     cursor = 192 + table_size
     instruments: list[bytes] = []
     instrument_offsets: list[int] = []
-    for sample_number, (sample_name, _, _, _, _) in enumerate(samples, start=1):
+    for instrument_map in instrument_maps:
         instrument = bytearray(instrument_template)
-        instrument[32:58] = sample_name.encode("ascii", "replace")[:26].ljust(26, b"\0")
+        instrument[32:58] = (
+            instrument_map.name.encode("ascii", "replace")[:26]
+            .ljust(26, b"\0")
+        )
         instrument[30] = 1
         for note in range(120):
-            instrument[64 + note * 2] = note
+            mapped_note = int(instrument_map.note_map[note])
+            sample_number = int(instrument_map.sample_map[note])
+            if not 0 <= mapped_note < 120:
+                raise ValueError(f"IT mapped note out of range: {mapped_note}")
+            if not 1 <= sample_number <= sample_count:
+                raise ValueError(
+                    f"IT mapped sample out of range: {sample_number}"
+                )
+            instrument[64 + note * 2] = mapped_note
             instrument[64 + note * 2 + 1] = sample_number
         instrument_offsets.append(cursor)
         instruments.append(bytes(instrument))
@@ -257,21 +289,120 @@ def parse_tym(path: Path) -> dict[str, object]:
         "loop_start": loop_start,
     }
 
-def opl_wave(phase: np.ndarray, waveform: int) -> np.ndarray:
-    phase = phase - np.floor(phase)
-    sine = np.sin(phase * 2.0 * np.pi)
-    mode = waveform & 3
-    if mode == 1:
-        return np.where(sine > 0, sine, 0.0)
-    if mode == 2:
-        return np.abs(sine) * 2.0 - 1.0
-    if mode == 3:
-        return np.where(
-            phase < 0.25,
-            np.sin(phase * 2.0 * np.pi),
-            0.0,
+def is_percussion_patch(
+    instrument: bytes,
+    source: int,
+    percussion_sources: set[int],
+) -> bool:
+    return instrument[40] >= 128 or source in percussion_sources
+
+
+def choose_adaptive_roots(
+    note_counts: Counter[int],
+    percussion: bool,
+) -> tuple[int, ...]:
+    """Choose one to three span-bounded roots without song-specific guesses."""
+    del percussion
+    if not note_counts:
+        return (60,)
+    notes = sorted(note_counts)
+    span = notes[-1] - notes[0]
+    if span <= 10:
+        count = 1
+    elif span <= 24:
+        count = 2
+    else:
+        count = 3
+    count = min(count, len(notes))
+    if count == 1:
+        midpoint = (notes[0] + notes[-1]) / 2.0
+        roots = [min(
+            notes,
+            key=lambda candidate: (
+                max(abs(note - candidate) for note in notes),
+                sum(
+                    abs(note - candidate) * note_counts[note]
+                    for note in notes
+                ),
+                abs(candidate - midpoint),
+                candidate,
+            ),
+        )]
+    else:
+        targets = [
+            notes[0] + span * index / (count - 1)
+            for index in range(count)
+        ]
+        roots = []
+        for target in targets:
+            root = min(
+                (note for note in notes if note not in roots),
+                key=lambda note: (abs(note - target), -note_counts[note], note),
+            )
+            roots.append(root)
+        roots.sort()
+    return tuple(roots)
+
+
+def collect_pair_note_counts(
+    song: dict[str, object],
+    sources: set[int] | None = None,
+) -> dict[tuple[int, int], Counter[int]]:
+    events = song["events"]
+    if not isinstance(events, list):
+        raise TypeError("invalid TYM event collection")
+    result: dict[tuple[int, int], Counter[int]] = {}
+    active_generation: dict[int, int | None] = {}
+    for _, changes in events:
+        for source, state in changes.items():
+            if sources is not None and source not in sources:
+                continue
+            if state[0] == -32768:
+                active_generation[source] = None
+                continue
+            generation = int(state[3])
+            if active_generation.get(source) == generation:
+                continue
+            active_generation[source] = generation
+            note = max(0, min(119, int(round(state[0] / 256.0))))
+            result.setdefault((source, state[1]), Counter())[note] += 1
+    return result
+
+
+def _render_pair_zones(
+    instrument: bytes,
+    roots: tuple[int, ...],
+    percussion: bool,
+) -> tuple[opl_sample_renderer.OplRenderedSample, ...]:
+    return tuple(
+        opl_sample_renderer.render_opl_patch(
+            instrument,
+            root * 256,
+            percussion,
         )
-    return sine
+        for root in roots
+    )
+
+
+def _quantize_opl_sample(
+    rendered: opl_sample_renderer.OplRenderedSample,
+    shared_peak: float,
+    gain_scale: float,
+) -> tuple[bytes, int, bool, int]:
+    if shared_peak <= 0.0:
+        raise ValueError("OPL patch rendered silence")
+    pcm = np.clip(
+        np.rint(rendered.signal / shared_peak * 118.0 * gain_scale),
+        -128,
+        127,
+    ).astype(np.int8)
+    return (
+        pcm.tobytes(),
+        OPL_SAMPLE_RATE,
+        rendered.loop,
+        rendered.loop_start,
+    )
+
 
 def synthesize_tym_sample(
     instrument: bytes,
@@ -280,152 +411,86 @@ def synthesize_tym_sample(
     percussion_sources: set[int],
     gain_scale: float,
 ) -> tuple[bytes, int, bool, int]:
-    midi_instrument = instrument[40]
-    percussion = midi_instrument >= 128 or source in percussion_sources
-    if percussion:
-        def percussion_length(source_length: int) -> int:
-            return int(round(
-                source_length *
-                PROCEDURAL_PERCUSSION_RATE /
-                PROCEDURAL_PERCUSSION_SOURCE_RATE
-            ))
+    """Compatibility callback using a deterministic middle-C OPL root."""
+    del instrument_index
+    percussion = is_percussion_patch(
+        instrument,
+        source,
+        percussion_sources,
+    )
+    rendered = opl_sample_renderer.render_opl_patch(
+        instrument,
+        60 * 256,
+        percussion,
+    )
+    return _quantize_opl_sample(
+        rendered,
+        rendered.peak_before_quantize,
+        gain_scale,
+    )
 
-        drum_note = (
-            midi_instrument - 128
-            if midi_instrument >= 128
-            else 35 + (instrument_index % 3) * 3
-        )
-        if drum_note in (35, 36):
-            length = percussion_length(1024)
-            rate = PROCEDURAL_PERCUSSION_RATE
-            time = np.arange(length, dtype=np.float64) / rate
-            phase = 2.0 * np.pi * (
-                115.0 * time -
-                52.0 * time * time
-            )
-            rng = np.random.default_rng(
-                0x54594D + source * 257 + instrument_index
-            )
-            signal = (
-                np.sin(phase) * np.exp(-time * 25.0) +
-                rng.uniform(-1.0, 1.0, length) *
-                np.exp(-time * 60.0) *
-                0.16
-            )
-        elif drum_note in (38, 40):
-            length = percussion_length(1536)
-            rate = PROCEDURAL_PERCUSSION_RATE
-            time = np.arange(length, dtype=np.float64) / rate
-            rng = np.random.default_rng(
-                0x534E52 + source * 257 + instrument_index
-            )
-            signal = (
-                rng.uniform(-1.0, 1.0, length) *
-                np.exp(-time * 22.0) *
-                0.82 +
-                np.sin(2.0 * np.pi * 185.0 * time) *
-                np.exp(-time * 32.0) *
-                0.28
-            )
-        else:
-            rate = PROCEDURAL_PERCUSSION_RATE
-            if drum_note in (42, 44):
-                length = percussion_length(768)
-                decay = 48.0
-                difference = 0.78
-            elif drum_note == 46:
-                length = percussion_length(2048)
-                decay = 16.0
-                difference = 0.70
-            else:
-                # Open/crash/ride cymbals in the stock catalog are sparse,
-                # long events.  Treating every one as a 46 ms closed hat
-                # forced RMS calibration to amplify its transient by several
-                # times (most visibly source 7 in track 41).
-                length = percussion_length(4096)
-                decay = 8.5
-                difference = 0.62
-            time = np.arange(length, dtype=np.float64) / rate
-            rng = np.random.default_rng(
-                0x484154 + source * 257 + instrument_index
-            )
-            noise = rng.uniform(-1.0, 1.0, length)
-            signal = np.empty(length, dtype=np.float64)
-            signal[0] = noise[0]
-            signal[1:] = noise[1:] - noise[:-1] * difference
-            signal *= np.exp(-time * decay)
-        # The procedural one-shots are a fixed-reference PCM adapter, not a
-        # new per-song master.  Remove residual DC and make both boundaries
-        # meet silence so Maxmod retriggers/stops cannot create a click.
-        dc_blocked = np.empty_like(signal)
-        dc_blocked[0] = 0.0
-        previous_input = float(signal[0])
-        previous_output = 0.0
-        for sample_index in range(1, length):
-            current_input = float(signal[sample_index])
-            current_output = (
-                current_input -
-                previous_input +
-                0.995 * previous_output
-            )
-            dc_blocked[sample_index] = current_output
-            previous_input = current_input
-            previous_output = current_output
-        signal = dc_blocked
-        attack = min(length // 4, max(2, int(round(rate * 0.0015))))
-        attack_phase = np.linspace(0.0, 1.0, attack, endpoint=True)
-        signal[:attack] *= (
-            attack_phase *
-            attack_phase *
-            (3.0 - 2.0 * attack_phase)
-        )
-        release = min(length // 4, max(2, int(round(rate * 0.005))))
-        release_phase = np.linspace(1.0, 0.0, release, endpoint=True)
-        signal[-release:] *= (
-            release_phase *
-            release_phase *
-            (3.0 - 2.0 * release_phase)
-        )
-        peak = max(1e-9, float(np.max(np.abs(signal))))
-        pcm = np.clip(
-            np.rint(signal / peak * 118.0 * gain_scale),
-            -128,
-            127,
-        ).astype(np.int8)
-        return pcm.tobytes(), rate, False, 0
 
-    tonal_sample_count = (
-        TONAL_WAVETABLE_LEAD_SAMPLES +
-        TONAL_WAVETABLE_LOOP_SAMPLES
-    )
-    phase = (
-        np.arange(tonal_sample_count, dtype=np.float64) *
-        TONAL_WAVETABLE_LOOP_CYCLES /
-        TONAL_WAVETABLE_LOOP_SAMPLES
-    )
-    mod_level = 10.0 ** (-(instrument[1] & 0x3F) * 0.75 / 20.0)
-    modulation = (
-        0.2 +
-        mod_level * (1.0 + (instrument[10] & 7) * 0.45)
-    )
-    modulator = opl_wave(phase, instrument[4])
-    signal = opl_wave(
-        phase + modulator * modulation / (2.0 * np.pi),
-        instrument[9],
-    )
-    signal -= float(np.mean(signal))
-    peak = max(1e-9, float(np.max(np.abs(signal))))
-    pcm = np.clip(
-        np.rint(signal / peak * 118.0 * gain_scale),
-        -128,
-        127,
-    ).astype(np.int8)
-    return (
-        pcm.tobytes(),
-        TRACKER_C5_SPEED,
-        True,
-        TONAL_WAVETABLE_LEAD_SAMPLES,
-    )
+def make_track_sample_synthesizer(
+    song: dict[str, object],
+) -> Callable[[bytes, int, int, set[int], float], tuple[bytes, int, bool, int]]:
+    """Return the calibration view of the same adaptive OPL sample model."""
+    instruments = song["instruments"]
+    if not isinstance(instruments, list):
+        raise TypeError("invalid TYM instrument collection")
+    pair_notes = collect_pair_note_counts(song)
+    rendered_cache: dict[
+        tuple[int, int],
+        tuple[
+            tuple[int, ...],
+            tuple[opl_sample_renderer.OplRenderedSample, ...],
+            float,
+        ],
+    ] = {}
+
+    def synthesize(
+        instrument: bytes,
+        source: int,
+        instrument_index: int,
+        percussion_sources: set[int],
+        gain_scale: float,
+    ) -> tuple[bytes, int, bool, int]:
+        key = (source, instrument_index)
+        cached = rendered_cache.get(key)
+        if cached is None:
+            counts = pair_notes.get(key, Counter({60: 1}))
+            percussion = is_percussion_patch(
+                instrument,
+                source,
+                percussion_sources,
+            )
+            roots = choose_adaptive_roots(counts, percussion)
+            zones = _render_pair_zones(instrument, roots, percussion)
+            shared_peak = max(
+                zone.peak_before_quantize for zone in zones
+            )
+            cached = (roots, zones, shared_peak)
+            rendered_cache[key] = cached
+        roots, zones, shared_peak = cached
+        counts = pair_notes.get(key, Counter({roots[0]: 1}))
+        representative = max(
+            range(len(roots)),
+            key=lambda index: (
+                sum(
+                    count
+                    for note, count in counts.items()
+                    if min(roots, key=lambda root: (abs(note - root), root)) ==
+                        roots[index]
+                ),
+                -index,
+            ),
+        )
+        return _quantize_opl_sample(
+            zones[representative],
+            shared_peak,
+            gain_scale,
+        )
+
+    return synthesize
 
 def pack_it_pattern(
     rows: int,
@@ -462,10 +527,14 @@ def build_tym_tracker_it(
     sources: list[int],
     voice_gains: list[float],
     module_builder: Callable[..., bytes] | None = None,
+    voice_volume_gains: list[float] | None = None,
 ) -> tuple[bytes, dict[str, object]]:
+    if voice_volume_gains is None:
+        voice_volume_gains = [1.0] * len(sources)
     if (
         not 1 <= len(sources) <= MAX_GBA_MUSIC_VOICES
         or len(sources) != len(voice_gains)
+        or len(sources) != len(voice_volume_gains)
         or len(set(sources)) != len(sources)
     ):
         raise ValueError(
@@ -486,14 +555,17 @@ def build_tym_tracker_it(
         for source in metadata["arrangement"]["percussionSources"]
     }
 
-    used_pairs: set[tuple[int, int]] = set()
     source_to_voice = {
         source: voice for voice, source in enumerate(sources)
     }
-    for _, changes in events:
-        for source, state in changes.items():
-            if source in source_to_voice and state[0] != -32768:
-                used_pairs.add((source_to_voice[source], state[1]))
+    pair_note_counts = collect_pair_note_counts(
+        song,
+        set(source_to_voice),
+    )
+    used_pairs = {
+        (source_to_voice[source], instrument_index)
+        for source, instrument_index in pair_note_counts
+    }
     ordered_pairs = sorted(used_pairs)
     if len(ordered_pairs) > 255:
         raise ValueError("TYM tracker needs more than 255 voice/instrument pairs")
@@ -501,26 +573,73 @@ def build_tym_tracker_it(
         pair: index + 1 for index, pair in enumerate(ordered_pairs)
     }
 
-    maximum_gain = max(1.0, max(voice_gains))
     samples: list[tuple[str, bytes, int, bool, int]] = []
+    instrument_maps: list[ItInstrumentMap] = []
+    tonal_zone_count = 0
+    percussion_zone_count = 0
+    hardware_lfo_zone_count = 0
+    software_lfo_zone_count = 0
+    maximum_loop_boundary_error = 0.0
     for voice, instrument_index in ordered_pairs:
         source = sources[voice]
-        pcm, rate, loop, loop_start = synthesize_tym_sample(
-            instruments[instrument_index],
+        instrument = instruments[instrument_index]
+        percussion = is_percussion_patch(
+            instrument,
             source,
-            instrument_index,
             percussion_sources,
-            voice_gains[voice] / maximum_gain,
         )
-        samples.append((
+        roots = choose_adaptive_roots(
+            pair_note_counts[(source, instrument_index)],
+            percussion,
+        )
+        zones = _render_pair_zones(instrument, roots, percussion)
+        shared_peak = max(zone.peak_before_quantize for zone in zones)
+        sample_numbers: list[int] = []
+        for root, zone in zip(roots, zones, strict=True):
+            pcm, rate, loop, loop_start = _quantize_opl_sample(
+                zone,
+                shared_peak,
+                voice_gains[voice],
+            )
+            samples.append((
+                f"v{voice}i{instrument_index:02d}r{root:03d}",
+                pcm,
+                rate,
+                loop,
+                loop_start,
+            ))
+            sample_numbers.append(len(samples))
+            if percussion:
+                percussion_zone_count += 1
+            else:
+                tonal_zone_count += 1
+            hardware_lfo_zone_count += int(zone.hardware_lfo)
+            software_lfo_zone_count += int(zone.software_lfo)
+            maximum_loop_boundary_error = max(
+                maximum_loop_boundary_error,
+                zone.loop_boundary_error,
+            )
+        note_map: list[int] = []
+        sample_map: list[int] = []
+        for note in range(120):
+            zone_index = min(
+                range(len(roots)),
+                key=lambda index: (abs(note - roots[index]), roots[index]),
+            )
+            note_map.append(max(
+                0,
+                min(119, 60 + note - roots[zone_index]),
+            ))
+            sample_map.append(sample_numbers[zone_index])
+        instrument_maps.append(ItInstrumentMap(
             f"v{voice}i{instrument_index:02d}",
-            pcm,
-            rate,
-            loop,
-            loop_start,
+            tuple(note_map),
+            tuple(sample_map),
         ))
 
     absolute_cells: dict[int, dict[int, dict[str, int]]] = {}
+    active_generations: dict[int, int | None] = {}
+    active_velocities: dict[int, int] = {}
     for tick, changes in events:
         for source, state in changes.items():
             voice = source_to_voice.get(source)
@@ -529,27 +648,17 @@ def build_tym_tracker_it(
             pitch_q8, instrument_index, velocity, _ = state
             cell: dict[str, int] = {}
             if pitch_q8 == -32768:
-                cell["note"] = 255
+                if active_generations.get(source) is not None:
+                    cell["note"] = 255
+                active_generations[source] = None
+                active_velocities.pop(source, None)
             else:
-                percussion = (
-                    instruments[instrument_index][40] >= 128 or
-                    source in percussion_sources
-                )
-                cell["note"] = (
-                    61
-                    if percussion
-                    else max(
-                        1,
-                        min(120, int(round(pitch_q8 / 256.0)) + 1),
-                    )
-                )
-                cell["instrument"] = pair_to_instrument[
-                    (voice, instrument_index)
-                ]
+                generation = int(state[3])
+                retrigger = active_generations.get(source) != generation
                 attenuation_db = (
                     63 - max(0, min(63, velocity))
                 ) * 0.75
-                cell["volume"] = max(
+                base_volume = max(
                     1,
                     min(
                         64,
@@ -559,7 +668,29 @@ def build_tym_tracker_it(
                         )),
                     ),
                 )
-            absolute_cells.setdefault(tick, {})[voice] = cell
+                mapped_volume = max(
+                    1,
+                    min(
+                        64,
+                        int(round(
+                            base_volume * voice_volume_gains[voice]
+                        )),
+                    ),
+                )
+                if retrigger:
+                    cell["note"] = max(
+                        1,
+                        min(120, int(round(pitch_q8 / 256.0)) + 1),
+                    )
+                    cell["instrument"] = pair_to_instrument[
+                        (voice, instrument_index)
+                    ]
+                if retrigger or active_velocities.get(source) != velocity:
+                    cell["volume"] = mapped_volume
+                active_generations[source] = generation
+                active_velocities[source] = velocity
+            if cell:
+                absolute_cells.setdefault(tick, {})[voice] = cell
 
     duration = int(song["duration"])
     loop_start = int(song["loop_start"])
@@ -604,6 +735,7 @@ def build_tym_tracker_it(
         TRACKER_SPEED,
         TRACKER_TEMPO,
         pans,
+        instrument_maps,
     )
     source_rate = float(song["numerator"]) / float(song["denominator"])
     tracker_rate = TRACKER_TEMPO / (2.5 * TRACKER_SPEED)
@@ -624,6 +756,14 @@ def build_tym_tracker_it(
             (duration - loop_start) * unrolled_loops
         ) / tracker_rate,
         "samples": len(samples),
+        "instruments": len(instrument_maps),
+        "tonal_zones": tonal_zone_count,
+        "percussion_zones": percussion_zone_count,
+        "sample_pcm_bytes": sum(len(sample[1]) for sample in samples),
+        "hardware_lfo_zones": hardware_lfo_zone_count,
+        "software_lfo_zones": software_lfo_zone_count,
+        "maximum_loop_boundary_error": maximum_loop_boundary_error,
+        "maximum_event_volume_gain": max(voice_volume_gains),
         "source_channels": ",".join(str(source) for source in sources),
         "it_bytes": len(module),
     }

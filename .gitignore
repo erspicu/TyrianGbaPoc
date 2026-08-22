@@ -9,6 +9,7 @@
 *.log
 *.stdout.txt
 *.stderr.txt
+/tools/opl_renderer/*.lib
 
 # Local AI consultation transcripts are source material, not release docs.
 /suggest/

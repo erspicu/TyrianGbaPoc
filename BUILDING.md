@@ -148,6 +148,7 @@ CRC32 與最後 commit byte，只在進入 `]s`／`]b` 特殊關及最終死亡�
 | `vendor/gba-sdk/` | libgba、Maxmod、GBA CRT 與資源工具 | 提交 |
 | `vendor/mgba/` | headless/perf 回歸測試 runtime | 提交 |
 | `tools/gba_*` | GBA 原生圖形、音樂與資源轉換程式 | 提交 |
+| `tools/opl_renderer/` | 固定版 OpenTyrian/DOSBox OPL 離線渲染橋接器與重建腳本 | 提交 |
 | `tools/templates/` | GBA Maxmod 建置所需的本專案 template | 提交 |
 | `tools/portable-msys2/` | 建置所需的最小 Bash/Make runtime | 提交 |
 | `.toolchain/` | 官方 Arm 編譯器與下載快取 | 不提交 |
@@ -210,25 +211,34 @@ volume、signed 8-bit PCM 與 runtime module volume 重新量測。正式管線�
 順序，不再刪除第九聲道。不得引用其他主機的 voice map、mixer gain，亦
 不得加入 per-song maximum normalization。逐曲結果輸出至
 `res/music_maxmod_calibration.json`，完整 build 會檢查 41 首／334 個
-source、RMS 誤差、percussion peak ceiling 與 sample clipping。音調音色與
-程序打擊 PCM 均使用 Maxmod 原生輸出率 15,768 Hz；音調 wavetable 以
-241 samples 儲存四個週期，使 C5 音高誤差維持在 1 cent 以內。stock
-SFX／voice 保留來源原生 11,025 Hz，避免無資訊的升頻。Runtime 配置 18 個
-Maxmod mixer slots，容納九個音樂聲道、八個邏輯
-SFX 聲道與一個安全餘額。End of Level、Game Over、Secret Level 各自保留
-loop 與 `_once` order-flow；mmutil 會共用相同 PCM，三個一次性 module 只
-增加約 4 KiB。離線音樂校準仍以 896/1024 為 reference；最終 runtime
-presentation 再依 `Configure.h` 將音樂設為其 90%（806/1024），全部 SFX
-設為其 70%（627/1024），避免重新校準抵銷使用者要求的音量衰減。最新量測見
-`MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`；runtime 混音規則見
-`MD/Tyrian-GBA-Runtime-Mix-Balance-2026-08-22.md`。
+source、RMS 誤差、transient peak ceiling 與 sample clipping。
+
+音樂音色不再由短小的近似 wavetable 或通用程序鼓生成。
+`tools/opl_renderer/tyrian_opl_bridge.dll` 會在 build time 使用 vendored
+OpenTyrian/DOSBox OPL core，依原始 46-byte LDS patch 的 ADSR、KSL/KSR、
+operator multiplier、feedback、waveform 與硬體／LDS LFO，在 49,716 Hz
+離線渲染；`tools/opl_sample_renderer.py` 再以 127-tap Blackman-windowed
+sinc 低通降至 15,768 Hz。每個實際 `(source, patch)` 依使用音域配置一至
+三個 root sample，保留 attack，並為可持續音色搜尋 loop；原始 percussion
+patch 則以原音高輸出 one-shot。一般建置直接使用已提交的 DLL，不需要 LLVM；
+只有修改橋接器時才執行 `tools/opl_renderer/rebuild.ps1` 重新編譯。
+
+stock SFX／voice 保留來源原生 11,025 Hz，避免無資訊的升頻。Runtime 配置
+18 個 Maxmod mixer slots，容納九個音樂聲道、八個邏輯 SFX 聲道與一個安全
+餘額。End of Level、Game Over、Secret Level 各自保留 loop 與 `_once`
+order-flow；mmutil 會共用相同 PCM。離線音樂校準仍以 896/1024 為 reference；
+最終 runtime presentation 再依 `Configure.h` 將音樂設為其 90%
+（806/1024），全部 SFX 設為其 70%（627/1024），避免重新校準抵銷使用者
+要求的音量衰減。實作與容量稽核見
+`MD/Tyrian-GBA-Adaptive-OPL2-Music-Implementation-2026-08-22.md`；runtime
+混音規則見 `MD/Tyrian-GBA-Runtime-Mix-Balance-2026-08-22.md`。
 
 背景音樂的 tonal／percussion source rate 以 15,768 Hz 為最低建置規格，
 不得為節省 ROM 降回 11,025 Hz。實際 Maxmod GBA mixer 已由組語確認採
 nearest-sample phase stepping；11,025 → 15,768 不會降低 runtime 混音成本，
 反而會增加非整數 phase step 的重複取樣失真。未來音色豐富度升級應使用 ROM
-增加 adaptive key zones、attack、LFO loop 與真實 OPL rhythm percussion；
-容量不足時先縮減低收益 zone／loop。研究與容量估算見
+增加 adaptive key zones、attack、LFO loop 與原始 OPL percussion；
+容量不足時先縮減低收益 zone／loop。研究與已完成的實作結果見
 `MD/Tyrian-GBA-Fixed-Rate-Music-Fidelity-Gemini-Study-2026-08-22.md`。
 
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一

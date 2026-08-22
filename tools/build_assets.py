@@ -7032,6 +7032,7 @@ def build_it_module_with_segmented_patterns(
     speed: int = 6,
     tempo: int = 125,
     channel_pans: list[int] | None = None,
+    instrument_maps: list[object] | None = None,
 ) -> bytes:
     """Adapt the shared GBA writer when a TYM intro exceeds 200 rows.
 
@@ -7094,6 +7095,7 @@ def build_it_module_with_segmented_patterns(
         speed,
         tempo,
         channel_pans,
+        instrument_maps,
     )
 
 
@@ -7115,9 +7117,13 @@ def build_sparse_tym_tracker_it(
     disabled_position_jumps = 0
     sources = [int(source) for source in calibration["sourceChannels"]]
     gains = [float(gain) for gain in calibration["gains"]]
+    volume_gains = [
+        float(gain) for gain in calibration["eventVolumeGains"]
+    ]
     if (
         not 1 <= len(sources) <= music.MAX_GBA_MUSIC_VOICES
         or len(sources) != len(gains)
+        or len(sources) != len(volume_gains)
         or len(set(sources)) != len(sources)
     ):
         raise ValueError(
@@ -7127,6 +7133,7 @@ def build_sparse_tym_tracker_it(
     while len(sources) < music.MAX_GBA_MUSIC_VOICES:
         sources.append(sentinel)
         gains.append(1.0)
+        volume_gains.append(1.0)
         sentinel += 1
 
     def build_segmented_it(
@@ -7138,6 +7145,7 @@ def build_sparse_tym_tracker_it(
         speed: int = 6,
         tempo: int = 125,
         channel_pans: list[int] | None = None,
+        instrument_maps: list[object] | None = None,
     ) -> bytes:
         nonlocal disabled_position_jumps
 
@@ -7158,6 +7166,7 @@ def build_sparse_tym_tracker_it(
             speed,
             tempo,
             channel_pans,
+            instrument_maps,
         )
 
     module, report = music.build_tym_tracker_it(
@@ -7166,6 +7175,7 @@ def build_sparse_tym_tracker_it(
         sources,
         gains,
         module_builder=build_segmented_it,
+        voice_volume_gains=volume_gains,
     )
     report = dict(report)
     report["finite"] = finite
@@ -7727,7 +7737,7 @@ def main() -> None:
         calibration = maxmod_calibrator.calibrate_track(
             parsed_song,
             source_calibration_path,
-            gba_music.synthesize_tym_sample,
+            gba_music.make_track_sample_synthesizer(parsed_song),
         )
         if int(calibration["trackNumber"]) != expected_number:
             raise ValueError(
@@ -7966,7 +7976,14 @@ def main() -> None:
         f"player_shot_animation_frames={player_shot_report['animation_frames']}",
         f"music_catalog_modules={len(music_modules)}",
         f"music_catalog_it_bytes={sum(map(len, music_modules))}",
-        "music_catalog_profile=GbaMaxmod nine-channel fixed-reference tracker adapter",
+        (
+            "music_catalog_pcm_bytes="
+            f"{sum(int(report['sample_pcm_bytes']) for report in music_reports)}"
+        ),
+        (
+            "music_catalog_profile=GbaMaxmod nine-channel adaptive-root "
+            "original OPL2 patch adapter"
+        ),
         (
             "music_calibration_source_count="
             f"{maxmod_catalog['summary']['sourceCount']}"
@@ -7978,6 +7995,10 @@ def main() -> None:
         (
             "music_calibration_gain_max="
             f"{maxmod_catalog['summary']['gainMax']:.9f}"
+        ),
+        (
+            "music_calibration_event_volume_gain_max="
+            f"{maxmod_catalog['summary']['eventVolumeGainMax']:.9f}"
         ),
         (
             "music_calibration_legacy_mean_abs_error_db="
@@ -8004,18 +8025,40 @@ def main() -> None:
             f"{maxmod_catalog['summary']['percussionPeakCeilingRatio']:.3f}"
         ),
         (
+            "music_calibration_tonal_peak_ceiling_ratio="
+            f"{maxmod_catalog['summary']['tonalTransientPeakCeilingRatio']:.3f}"
+        ),
+        (
             "music_calibration_reference_gain_db="
             f"{maxmod_catalog['playbackReferenceGainDb']:.3f}"
         ),
         "music_calibration_per_song_maximum_normalization=0",
         "music_calibration_reference_fold_down=mono_L_plus_R",
-        "music_percussion_boundary=1.5ms_attack_5ms_release_DC_blocked",
+        "music_opl_renderer=vendored_OpenTyrian_DOSBox_core",
+        "music_opl_native_render_rate_hz=49716",
+        "music_opl_downsample=127tap_Blackman_sinc_to_15768Hz",
+        "music_opl_patch_features=ADSR_KSL_KSR_feedback_waveform_HW_and_LDS_LFO",
+        "music_opl_note_model=generation_aware_attack_plus_adaptive_root_zones",
+        "music_opl_percussion=original_patch_original_pitch_one_shot",
+        (
+            "music_opl_tonal_zones="
+            f"{sum(int(report['tonal_zones']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_percussion_zones="
+            f"{sum(int(report['percussion_zones']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_hardware_lfo_zones="
+            f"{sum(int(report['hardware_lfo_zones']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_software_lfo_zones="
+            f"{sum(int(report['software_lfo_zones']) for report in music_reports)}"
+        ),
         "music_opl_source_channels=9_complete",
         "music_tonal_pcm_rate_hz=15768",
-        "music_tonal_wavetable_loop_samples=241",
-        "music_tonal_wavetable_loop_cycles=4",
-        "music_tonal_c5_pitch_error_cents=0.555614",
-        "music_procedural_percussion_rate_hz=15768",
+        "music_opl_percussion_rate_hz=15768",
         "audio_source_sfx_rate_hz=11025_source_native",
         f"title_music_it_bytes={len(title_music)}",
         f"title_music_seconds={title_report['tracker_duration_seconds']:.6f}",
