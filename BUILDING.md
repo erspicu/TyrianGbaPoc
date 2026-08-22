@@ -223,6 +223,14 @@ sinc 低通降至 15,768 Hz。每個實際 `(source, patch)` 依使用音域配�
 patch 則以原音高輸出 one-shot。一般建置直接使用已提交的 DLL，不需要 LLVM；
 只有修改橋接器時才執行 `tools/opl_renderer/rebuild.ps1` 重新編譯。
 
+OPL sample 的生命週期必須依 operator envelope 判定，不得只用 carrier EGT
+bit 猜測，也不得重新加入固定 420 ms 的 tonal one-shot 上限。Sustain patch
+使用緊湊 loop；finite tonal patch 依 TYM note generation 的實際 hold、root
+轉調播放速率與 -58 dB silence floor 渲染／裁尾。長尾 finite patch 可為節省
+ROM 將一至三個 root zones 減為一至兩個，但曲目實際音符到最近 root 的距離
+不得超過 15 semitones。相關全 catalog regression 在
+`tools/test_opl_sample_renderer.py`。
+
 stock SFX／voice 保留來源原生 11,025 Hz，避免無資訊的升頻。Runtime 配置
 18 個 Maxmod mixer slots，容納九個音樂聲道、八個邏輯 SFX 聲道與一個安全
 餘額。End of Level、Game Over、Secret Level 各自保留 loop 與 `_once`

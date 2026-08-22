@@ -8049,6 +8049,33 @@ def main() -> None:
             f"{sum(int(report['percussion_zones']) for report in music_reports)}"
         ),
         (
+            "music_opl_sustain_loop_zones="
+            f"{sum(int(report['sustain_loop_zones']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_finite_tonal_zones="
+            f"{sum(int(report['finite_tonal_zones']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_finite_root_collapsed_pairs="
+            f"{sum(int(report['finite_root_collapsed_pairs']) for report in music_reports)}"
+        ),
+        (
+            "music_opl_maximum_required_hold_seconds="
+            f"{max(float(report['maximum_required_hold_seconds']) for report in music_reports):.6f}"
+        ),
+        (
+            "music_opl_maximum_rendered_sample_seconds="
+            f"{max(float(report['maximum_rendered_sample_seconds']) for report in music_reports):.6f}"
+        ),
+        "music_opl_one_shot_trim=measured_-58dB_plus_authored_hold_guard",
+        "music_opl_finite_multi_root_hold_limit_seconds=0.250",
+        "music_opl_finite_max_root_distance_semitones=15",
+        (
+            "music_opl_maximum_root_distance_semitones="
+            f"{max(int(report['maximum_root_distance_semitones']) for report in music_reports)}"
+        ),
+        (
             "music_opl_hardware_lfo_zones="
             f"{sum(int(report['hardware_lfo_zones']) for report in music_reports)}"
         ),

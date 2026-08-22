@@ -22,6 +22,12 @@ OPL_NATIVE_RATE = 49_716
 MAXMOD_SOURCE_RATE = 15_768
 BRIDGE_ABI_VERSION = 2
 INSTRUMENT_BYTES = 46
+SILENCE_FLOOR_DB = -58.0
+MINIMUM_ONE_SHOT_SECONDS = 0.045
+ONE_SHOT_TAIL_GUARD_SECONDS = 0.012
+TONAL_HOLD_GUARD_SECONDS = 0.022
+MINIMUM_LOOP_ANALYSIS_SECONDS = 1.50
+MAXIMUM_LOOP_ANALYSIS_SECONDS = 3.00
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,9 @@ class OplRenderedSample:
     loop_boundary_error: float
     software_lfo: bool
     hardware_lfo: bool
+    lifecycle: str
+    required_hold_seconds: float
+    rendered_seconds: float
 
 
 def _bridge_path() -> Path:
@@ -178,6 +187,26 @@ def _fade_in(signal: np.ndarray, milliseconds: float) -> None:
     signal[:count] *= phase * phase * (3.0 - 2.0 * phase)
 
 
+def _crossfade_loop_seam(signal: np.ndarray, loop_start: int) -> float:
+    """Morph the loop tail into the samples immediately before loop_start."""
+    loop_length = signal.size - loop_start
+    count = min(256, loop_start, loop_length // 3)
+    if count < 8:
+        return 0.0
+    preceding = signal[loop_start - count : loop_start].copy()
+    tail = signal[-count:].copy()
+    phase = np.linspace(0.0, 1.0, count, endpoint=True)
+    curve = phase * phase * (3.0 - 2.0 * phase)
+    signal[-count:] = tail * (1.0 - curve) + preceding * curve
+
+    window = min(64, count)
+    reference = signal[loop_start - window : loop_start]
+    boundary = signal[-window:]
+    reference_energy = float(np.mean(np.square(reference))) + 1e-12
+    mismatch = float(np.mean(np.square(boundary - reference)))
+    return math.sqrt(max(0.0, mismatch / reference_energy))
+
+
 def _find_sustain_loop(
     signal: np.ndarray,
     lfo: bool,
@@ -195,8 +224,10 @@ def _find_sustain_loop(
         minimum_start = max(window, signal.size // 4)
         maximum_start = min(signal.size // 2, minimum_start + window + 1)
 
-    # Pick the earliest locally stable 32 ms RMS window; slow OPL attacks get
-    # up to 260 ms before the loop begins.
+    # Keep the attack, then take the earliest locally stable RMS window.  The
+    # loop itself must stay compact because every track embeds its own sample
+    # set in the Maxmod bank; the longer analysis render below is only used to
+    # validate the envelope and is not copied wholesale into the ROM.
     rms_window = max(window, int(round(MAXMOD_SOURCE_RATE * 0.018)))
     start = minimum_start
     for candidate in range(minimum_start, maximum_start, 32):
@@ -239,24 +270,59 @@ def _find_sustain_loop(
     if best_end <= start:
         raise RuntimeError("could not find a positive OPL sustain loop")
     output = signal[:best_end].copy()
-    boundary_error = math.sqrt(max(0.0, best_score))
+    boundary_error = _crossfade_loop_seam(output, start)
     return output, start, boundary_error
 
 
 def _trim_one_shot(signal: np.ndarray) -> np.ndarray:
     peak = max(1e-12, float(np.max(np.abs(signal))))
-    threshold = peak * 10.0 ** (-58.0 / 20.0)
+    threshold = peak * 10.0 ** (SILENCE_FLOOR_DB / 20.0)
     active = np.flatnonzero(np.abs(signal) >= threshold)
-    minimum = int(round(MAXMOD_SOURCE_RATE * 0.045))
-    maximum = int(round(MAXMOD_SOURCE_RATE * 0.420))
+    minimum = int(round(MAXMOD_SOURCE_RATE * MINIMUM_ONE_SHOT_SECONDS))
     if active.size:
-        end = int(active[-1]) + int(round(MAXMOD_SOURCE_RATE * 0.010))
+        end = int(active[-1]) + int(round(
+            MAXMOD_SOURCE_RATE * ONE_SHOT_TAIL_GUARD_SECONDS
+        ))
     else:
         end = minimum
-    end = max(minimum, min(signal.size, maximum, end))
+    end = max(minimum, min(signal.size, end))
     output = signal[:end].copy()
     _smooth_boundary(output, 2.0)
     return output
+
+
+def _operator_is_indefinite(
+    misc: int,
+    attack_decay: int,
+    sustain_release: int,
+) -> bool:
+    """Mirror the OPL envelope states that cannot reach silence with key-on."""
+    if misc & 0x20:
+        return True
+    decay_rate = attack_decay & 0x0f
+    sustain_level = sustain_release >> 4
+    release_rate = sustain_release & 0x0f
+    # A zero decay rate never reaches the sustain/release state.  A zero
+    # release rate at a non-zero sustain level also remains audible forever.
+    return decay_rate == 0 or (release_rate == 0 and sustain_level < 15)
+
+
+def tonal_patch_is_indefinite(instrument: bytes) -> bool:
+    carrier = _operator_is_indefinite(
+        instrument[5],
+        instrument[7],
+        instrument[8],
+    )
+    if carrier:
+        return True
+    # In additive mode the modulator is an independently audible operator;
+    # in FM mode its lifetime is still bounded by the carrier envelope.
+    additive = bool(instrument[10] & 0x01)
+    return additive and _operator_is_indefinite(
+        instrument[0],
+        instrument[2],
+        instrument[3],
+    )
 
 
 @functools.lru_cache(maxsize=4096)
@@ -264,13 +330,15 @@ def render_opl_patch(
     instrument: bytes,
     root_pitch_q8: int,
     percussion: bool,
+    required_hold_seconds: float = 0.0,
 ) -> OplRenderedSample:
     hardware_lfo = bool((instrument[0] | instrument[5]) & 0xc0)
     software_lfo = bool(instrument[15] or instrument[17] or instrument[18])
-    # OPL EGT=0 carrier patches decay naturally even while the key remains
-    # on.  Looping their silent tail turns authored plucks into quiet drones;
-    # retain them as finite one-shots just like the chip does.
-    one_shot = percussion or not bool(instrument[5] & 0x20)
+    required_hold_seconds = max(0.0, float(required_hold_seconds))
+    indefinite_tonal = not percussion and tonal_patch_is_indefinite(
+        instrument
+    )
+    one_shot = percussion or not indefinite_tonal
     if one_shot:
         keyoff_ticks = int(instrument[11])
         if percussion:
@@ -280,9 +348,17 @@ def render_opl_patch(
                 else 0.115
             )
             release_seconds = 0.62
+            lifecycle = "percussion_one_shot"
         else:
-            sustain_seconds = 0.42
+            # Render through the longest authored hold assigned to this root.
+            # The old fixed 420 ms cap cut still-audible OPL envelopes and
+            # produced silence until the next note-on in sparse arrangements.
+            sustain_seconds = max(
+                MINIMUM_ONE_SHOT_SECONDS,
+                required_hold_seconds + TONAL_HOLD_GUARD_SECONDS,
+            )
             release_seconds = 0.0
+            lifecycle = "finite_tonal_one_shot"
         native = _render_native(
             instrument,
             root_pitch_q8,
@@ -295,7 +371,19 @@ def render_opl_patch(
         loop_start = 0
         boundary_error = 0.0
     else:
-        native = _render_native(instrument, root_pitch_q8, 0.55, 0.0)
+        analysis_seconds = min(
+            MAXIMUM_LOOP_ANALYSIS_SECONDS,
+            max(
+                MINIMUM_LOOP_ANALYSIS_SECONDS,
+                required_hold_seconds + TONAL_HOLD_GUARD_SECONDS,
+            ),
+        )
+        native = _render_native(
+            instrument,
+            root_pitch_q8,
+            analysis_seconds,
+            0.0,
+        )
         converted = _dc_block(_resample_to_maxmod(native))
         output, loop_start, boundary_error = _find_sustain_loop(
             converted,
@@ -303,7 +391,25 @@ def render_opl_patch(
         )
         _fade_in(output, 1.5)
         loop = True
+        lifecycle = "sustain_loop"
     peak = max(1e-12, float(np.max(np.abs(output))))
+    rendered_seconds = output.size / MAXMOD_SOURCE_RATE
+    if (
+        lifecycle == "finite_tonal_one_shot" and
+        rendered_seconds + TONAL_HOLD_GUARD_SECONDS < required_hold_seconds
+    ):
+        # Ending early is legal only after the original OPL envelope has
+        # naturally crossed the declared silence floor.
+        converted_peak = max(1e-12, float(np.max(np.abs(converted))))
+        threshold = converted_peak * 10.0 ** (SILENCE_FLOOR_DB / 20.0)
+        required_samples = min(
+            converted.size,
+            int(math.ceil(required_hold_seconds * MAXMOD_SOURCE_RATE)),
+        )
+        if np.any(np.abs(converted[output.size : required_samples]) >= threshold):
+            raise RuntimeError(
+                "audible OPL one-shot was trimmed before its authored hold"
+            )
     output.setflags(write=False)
     return OplRenderedSample(
         signal=output,
@@ -315,4 +421,7 @@ def render_opl_patch(
         loop_boundary_error=boundary_error,
         software_lfo=software_lfo,
         hardware_lfo=hardware_lfo,
+        lifecycle=lifecycle,
+        required_hold_seconds=required_hold_seconds,
+        rendered_seconds=rendered_seconds,
     )

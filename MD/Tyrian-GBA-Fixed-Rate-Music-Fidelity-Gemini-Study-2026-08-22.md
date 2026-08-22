@@ -18,11 +18,12 @@ PC 原曲。
 - 最終 PCM／Maxmod 輸出率保持 15,768 Hz；不以假升頻增加檔案大小。
 - 保留 9 個原始 OPL2 音樂聲道，不增加同時 mixer voice 數。
 - 不在 ARM7TDMI runtime 執行完整 OPL emulator 或高成本 DSP。
-- 目前 ROM 為 27,090,348 bytes；距 32 MiB 上限尚有 6,464,084 bytes，
+- 研究起始基準 ROM 為 27,090,348 bytes；距 32 MiB 上限尚有 6,464,084 bytes，
   約 6.16 MiB。
-- 現有 `soundbank.bin` 為 1,848,584 bytes。
+- 研究起始基準 `soundbank.bin` 為 1,848,584 bytes。正式實作後的最新容量與
+  lifecycle 修正請以本文開頭連結的實作報告為準。
 
-## 現況量測
+## 研究起始基準量測
 
 目前 44 個 IT（41 首正式曲目與 3 個 once cue）包含：
 

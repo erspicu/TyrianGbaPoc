@@ -26,6 +26,8 @@ TRACKER_C5_SPEED = MAXMOD_OUTPUT_RATE
 MAX_GBA_MUSIC_VOICES = 9
 OPL_SAMPLE_RATE = MAXMOD_OUTPUT_RATE
 TRACKER_CHANNEL_PANS = (23, 41, 28, 36, 26, 38, 32, 32, 32)
+FINITE_MULTI_ROOT_HOLD_LIMIT_SECONDS = 0.250
+FINITE_MAX_ROOT_DISTANCE_SEMITONES = 15
 
 
 @dataclass(frozen=True)
@@ -300,9 +302,12 @@ def is_percussion_patch(
 def choose_adaptive_roots(
     note_counts: Counter[int],
     percussion: bool,
+    maximum_roots: int = 3,
 ) -> tuple[int, ...]:
     """Choose one to three span-bounded roots without song-specific guesses."""
     del percussion
+    if maximum_roots < 1 or maximum_roots > 3:
+        raise ValueError("adaptive OPL maximum root count must be 1..3")
     if not note_counts:
         return (60,)
     notes = sorted(note_counts)
@@ -313,7 +318,7 @@ def choose_adaptive_roots(
         count = 2
     else:
         count = 3
-    count = min(count, len(notes))
+    count = min(count, len(notes), maximum_roots)
     if count == 1:
         midpoint = (notes[0] + notes[-1]) / 2.0
         roots = [min(
@@ -369,18 +374,139 @@ def collect_pair_note_counts(
     return result
 
 
+def collect_pair_note_holds(
+    song: dict[str, object],
+    sources: set[int] | None = None,
+) -> dict[tuple[int, int], dict[int, float]]:
+    """Return each pair/note's longest authored generation in IT seconds."""
+    events = song["events"]
+    if not isinstance(events, list):
+        raise TypeError("invalid TYM event collection")
+    tracker_rate = TRACKER_TEMPO / (2.5 * TRACKER_SPEED)
+    duration = int(song["duration"])
+    result: dict[tuple[int, int], dict[int, float]] = {}
+    # generation, instrument, initial note, start tick
+    active: dict[int, tuple[int, int, int, int]] = {}
+
+    def finish(source: int, end_tick: int) -> None:
+        current = active.pop(source, None)
+        if current is None:
+            return
+        _, instrument_index, note, start_tick = current
+        seconds = max(0, end_tick - start_tick) / tracker_rate
+        pair = result.setdefault((source, instrument_index), {})
+        pair[note] = max(pair.get(note, 0.0), seconds)
+
+    for tick, changes in events:
+        event_tick = max(0, min(duration, int(tick)))
+        for source, state in changes.items():
+            if sources is not None and source not in sources:
+                continue
+            pitch_q8, instrument_index, _, generation = state
+            current = active.get(source)
+            if pitch_q8 == -32768:
+                finish(source, event_tick)
+                continue
+            generation = int(generation)
+            if current is not None and current[0] == generation:
+                # Pitch/volume/LFO state inside one LDS generation does not
+                # retrigger the IT sample and therefore does not end its hold.
+                continue
+            finish(source, event_tick)
+            note = max(0, min(119, int(round(pitch_q8 / 256.0))))
+            active[source] = (
+                generation,
+                int(instrument_index),
+                note,
+                event_tick,
+            )
+    for source in tuple(active):
+        finish(source, duration)
+    return result
+
+
+def required_root_hold_seconds(
+    roots: tuple[int, ...],
+    note_holds: dict[int, float],
+) -> tuple[float, ...]:
+    """Convert wall-clock holds to root-sample playback durations.
+
+    IT transposes a root sample at playback.  A note one octave above its
+    root consumes sample data twice as quickly, so it needs twice as much
+    source PCM to remain audible for the same wall-clock hold.
+    """
+    requirements: list[float] = []
+    for root in roots:
+        assigned = [
+            note
+            for note in note_holds
+            if min(roots, key=lambda value: (abs(note - value), value)) == root
+        ]
+        requirements.append(max(
+            (
+                note_holds[note] * 2.0 ** ((note - root) / 12.0)
+                for note in assigned
+            ),
+            default=0.0,
+        ))
+    return tuple(requirements)
+
+
+def choose_render_roots(
+    instrument: bytes,
+    note_counts: Counter[int],
+    note_holds: dict[int, float],
+    percussion: bool,
+) -> tuple[tuple[int, ...], tuple[float, ...], bool]:
+    """Choose fidelity zones while bounding long one-shot ROM duplication."""
+    roots = choose_adaptive_roots(note_counts, percussion)
+    requirements = required_root_hold_seconds(roots, note_holds)
+    collapsed = False
+    if (
+        not percussion and
+        not opl_sample_renderer.tonal_patch_is_indefinite(instrument) and
+        len(roots) > 1 and
+        max(requirements, default=0.0) >
+            FINITE_MULTI_ROOT_HOLD_LIMIT_SECONDS
+    ):
+        # Long finite envelopes cost seconds of PCM per root.  Reduce their
+        # zone count, but reject a reduction that would transpose any authored
+        # note by more than 15 semitones.  Short transients retain all adaptive
+        # zones because their pitch-dependent attack benefits most and costs
+        # little ROM.
+        maximum_roots = 1 if max(note_counts) - min(note_counts) <= 24 else 2
+        reduced_roots = choose_adaptive_roots(
+            note_counts,
+            percussion,
+            maximum_roots=maximum_roots,
+        )
+        maximum_distance = max(
+            min(abs(note - root) for root in reduced_roots)
+            for note in note_counts
+        )
+        if maximum_distance <= FINITE_MAX_ROOT_DISTANCE_SEMITONES:
+            roots = reduced_roots
+            requirements = required_root_hold_seconds(roots, note_holds)
+            collapsed = True
+    return roots, requirements, collapsed
+
+
 def _render_pair_zones(
     instrument: bytes,
     roots: tuple[int, ...],
     percussion: bool,
+    required_holds: tuple[float, ...],
 ) -> tuple[opl_sample_renderer.OplRenderedSample, ...]:
+    if len(roots) != len(required_holds):
+        raise ValueError("OPL roots and hold requirements differ")
     return tuple(
         opl_sample_renderer.render_opl_patch(
             instrument,
             root * 256,
             percussion,
+            required_hold,
         )
-        for root in roots
+        for root, required_hold in zip(roots, required_holds, strict=True)
     )
 
 
@@ -422,6 +548,7 @@ def synthesize_tym_sample(
         instrument,
         60 * 256,
         percussion,
+        0.5,
     )
     return _quantize_opl_sample(
         rendered,
@@ -438,6 +565,7 @@ def make_track_sample_synthesizer(
     if not isinstance(instruments, list):
         raise TypeError("invalid TYM instrument collection")
     pair_notes = collect_pair_note_counts(song)
+    pair_holds = collect_pair_note_holds(song)
     rendered_cache: dict[
         tuple[int, int],
         tuple[
@@ -463,8 +591,18 @@ def make_track_sample_synthesizer(
                 source,
                 percussion_sources,
             )
-            roots = choose_adaptive_roots(counts, percussion)
-            zones = _render_pair_zones(instrument, roots, percussion)
+            roots, required_holds, _ = choose_render_roots(
+                instrument,
+                counts,
+                pair_holds.get(key, {}),
+                percussion,
+            )
+            zones = _render_pair_zones(
+                instrument,
+                roots,
+                percussion,
+                required_holds,
+            )
             shared_peak = max(
                 zone.peak_before_quantize for zone in zones
             )
@@ -562,6 +700,10 @@ def build_tym_tracker_it(
         song,
         set(source_to_voice),
     )
+    pair_note_holds = collect_pair_note_holds(
+        song,
+        set(source_to_voice),
+    )
     used_pairs = {
         (source_to_voice[source], instrument_index)
         for source, instrument_index in pair_note_counts
@@ -580,6 +722,12 @@ def build_tym_tracker_it(
     hardware_lfo_zone_count = 0
     software_lfo_zone_count = 0
     maximum_loop_boundary_error = 0.0
+    sustain_loop_zone_count = 0
+    finite_tonal_zone_count = 0
+    maximum_required_hold_seconds = 0.0
+    maximum_rendered_sample_seconds = 0.0
+    finite_root_collapsed_pair_count = 0
+    maximum_root_distance_semitones = 0
     for voice, instrument_index in ordered_pairs:
         source = sources[voice]
         instrument = instruments[instrument_index]
@@ -588,11 +736,26 @@ def build_tym_tracker_it(
             source,
             percussion_sources,
         )
-        roots = choose_adaptive_roots(
+        roots, required_holds, collapsed = choose_render_roots(
+            instrument,
             pair_note_counts[(source, instrument_index)],
+            pair_note_holds.get((source, instrument_index), {}),
             percussion,
         )
-        zones = _render_pair_zones(instrument, roots, percussion)
+        finite_root_collapsed_pair_count += int(collapsed)
+        maximum_root_distance_semitones = max(
+            maximum_root_distance_semitones,
+            max(
+                min(abs(note - root) for root in roots)
+                for note in pair_note_counts[(source, instrument_index)]
+            ),
+        )
+        zones = _render_pair_zones(
+            instrument,
+            roots,
+            percussion,
+            required_holds,
+        )
         shared_peak = max(zone.peak_before_quantize for zone in zones)
         sample_numbers: list[int] = []
         for root, zone in zip(roots, zones, strict=True):
@@ -615,6 +778,18 @@ def build_tym_tracker_it(
                 tonal_zone_count += 1
             hardware_lfo_zone_count += int(zone.hardware_lfo)
             software_lfo_zone_count += int(zone.software_lfo)
+            sustain_loop_zone_count += int(zone.lifecycle == "sustain_loop")
+            finite_tonal_zone_count += int(
+                zone.lifecycle == "finite_tonal_one_shot"
+            )
+            maximum_required_hold_seconds = max(
+                maximum_required_hold_seconds,
+                zone.required_hold_seconds,
+            )
+            maximum_rendered_sample_seconds = max(
+                maximum_rendered_sample_seconds,
+                zone.rendered_seconds,
+            )
             maximum_loop_boundary_error = max(
                 maximum_loop_boundary_error,
                 zone.loop_boundary_error,
@@ -762,6 +937,12 @@ def build_tym_tracker_it(
         "sample_pcm_bytes": sum(len(sample[1]) for sample in samples),
         "hardware_lfo_zones": hardware_lfo_zone_count,
         "software_lfo_zones": software_lfo_zone_count,
+        "sustain_loop_zones": sustain_loop_zone_count,
+        "finite_tonal_zones": finite_tonal_zone_count,
+        "maximum_required_hold_seconds": maximum_required_hold_seconds,
+        "maximum_rendered_sample_seconds": maximum_rendered_sample_seconds,
+        "finite_root_collapsed_pairs": finite_root_collapsed_pair_count,
+        "maximum_root_distance_semitones": maximum_root_distance_semitones,
         "maximum_loop_boundary_error": maximum_loop_boundary_error,
         "maximum_event_volume_gain": max(voice_volume_gains),
         "source_channels": ",".join(str(source) for source in sources),

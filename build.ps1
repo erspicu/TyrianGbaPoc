@@ -342,7 +342,7 @@ if (
     [double]$musicCalibration.summary.legacyMeanAbsoluteErrorDb -lt 5.0 -or
     [double]$musicCalibration.summary.calibratedMeanAbsoluteErrorDb -gt 0.2 -or
     $musicCalibration.summary.sampleClipCount -ne 0 -or
-    $musicCalibration.summary.peakLimitedSourceCount -ne 19 -or
+    $musicCalibration.summary.peakLimitedSourceCount -ne 7 -or
     [double]$musicCalibration.summary.maximumPeakRatio -gt 3.1 -or
     [double]$musicCalibration.summary.percussionPeakCeilingRatio -ne 1.6 -or
     [double]$musicCalibration.summary.tonalTransientPeakCeilingRatio -ne 3.0 -or
@@ -367,7 +367,7 @@ if (
     [double]$assetReport.music_calibration_legacy_mean_abs_error_db -lt 5.0 -or
     [double]$assetReport.music_calibration_mean_abs_error_db -gt 0.2 -or
     $assetReport.music_calibration_sample_clip_count -ne "0" -or
-    $assetReport.music_calibration_peak_limited_sources -ne "19" -or
+    $assetReport.music_calibration_peak_limited_sources -ne "7" -or
     [double]$assetReport.music_calibration_maximum_peak_ratio -gt 3.1 -or
     $assetReport.music_calibration_percussion_peak_ceiling_ratio -ne "1.600" -or
     $assetReport.music_calibration_tonal_peak_ceiling_ratio -ne "3.000" -or
@@ -381,6 +381,20 @@ if (
     $assetReport.music_opl_percussion_rate_hz -ne "15768" -or
     [int64]$assetReport.music_opl_tonal_zones -le 0 -or
     [int64]$assetReport.music_opl_percussion_zones -le 0 -or
+    [int64]$assetReport.music_opl_sustain_loop_zones -le 0 -or
+    [int64]$assetReport.music_opl_finite_tonal_zones -le 0 -or
+    (
+        [int64]$assetReport.music_opl_sustain_loop_zones +
+        [int64]$assetReport.music_opl_finite_tonal_zones
+    ) -ne [int64]$assetReport.music_opl_tonal_zones -or
+    [int64]$assetReport.music_opl_finite_root_collapsed_pairs -le 0 -or
+    [double]$assetReport.music_opl_maximum_required_hold_seconds -lt 60.0 -or
+    [double]$assetReport.music_opl_maximum_rendered_sample_seconds -lt 9.0 -or
+    $assetReport.music_opl_one_shot_trim -ne
+        "measured_-58dB_plus_authored_hold_guard" -or
+    $assetReport.music_opl_finite_multi_root_hold_limit_seconds -ne "0.250" -or
+    $assetReport.music_opl_finite_max_root_distance_semitones -ne "15" -or
+    [int64]$assetReport.music_opl_maximum_root_distance_semitones -gt 15 -or
     $assetReport.audio_source_sfx_rate_hz -ne "11025_source_native" -or
     $assetReport.finite_music_cues -ne "9,10,30" -or
     $assetReport.finite_music_09_disabled_position_jumps -ne "1" -or
