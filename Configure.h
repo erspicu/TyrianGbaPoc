@@ -56,6 +56,42 @@
 #error TYRIAN_GBA_STRESS_LOADOUT must be 0 or 1
 #endif
 
+/* ------------------------------------------------------------------------- */
+/* Runtime audio mix / 執行時音訊混音比例                                    */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * Linear gain relative to the established calibrated 896/1024 Maxmod mix.
+ * These controls deliberately sit after the offline per-source music
+ * calibration, so lowering music here really lowers the played result rather
+ * than causing the asset builder to compensate by making samples louder.
+ * Pause continues to use one half of the configured music presentation gain.
+ * All Maxmod effects (weapons, explosions, pickups, UI cues and voices) share
+ * the effects percentage. The diagnostic PSG fallback follows it as well.
+ *
+ * 相對既有 Maxmod 896/1024 校準混音的線性增益。這兩個設定刻意放在
+ * 離線逐聲道音樂校準之後，因此降低音樂比例會真正降低最終播放音量，
+ * 不會被資產產生器反向放大抵銷。暫停時仍採設定後音樂音量的一半。
+ * 武器、爆炸、掉落物、介面提示及語音等 Maxmod 音效共用音效比例；
+ * 診斷用 PSG fallback 也沿用相同比例。
+ */
+#ifndef TYRIAN_GBA_MUSIC_VOLUME_PERCENT
+#define TYRIAN_GBA_MUSIC_VOLUME_PERCENT 90
+#endif
+
+#ifndef TYRIAN_GBA_EFFECTS_VOLUME_PERCENT
+#define TYRIAN_GBA_EFFECTS_VOLUME_PERCENT 70
+#endif
+
+#if TYRIAN_GBA_MUSIC_VOLUME_PERCENT < 0 || \
+    TYRIAN_GBA_MUSIC_VOLUME_PERCENT > 100
+#error TYRIAN_GBA_MUSIC_VOLUME_PERCENT must be between 0 and 100
+#endif
+#if TYRIAN_GBA_EFFECTS_VOLUME_PERCENT < 0 || \
+    TYRIAN_GBA_EFFECTS_VOLUME_PERCENT > 100
+#error TYRIAN_GBA_EFFECTS_VOLUME_PERCENT must be between 0 and 100
+#endif
+
 /*
  * 1: protect the stable Sprite2 working set from one-tick hit/iced palette
  *    variants.  A filtered frame keeps full fidelity when its exact variant

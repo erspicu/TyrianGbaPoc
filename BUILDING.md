@@ -217,8 +217,11 @@ SFX／voice 保留來源原生 11,025 Hz，避免無資訊的升頻。Runtime �
 Maxmod mixer slots，容納九個音樂聲道、八個邏輯
 SFX 聲道與一個安全餘額。End of Level、Game Over、Secret Level 各自保留
 loop 與 `_once` order-flow；mmutil 會共用相同 PCM，三個一次性 module 只
-增加約 4 KiB。最新量測見
-`MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`。
+增加約 4 KiB。離線音樂校準仍以 896/1024 為 reference；最終 runtime
+presentation 再依 `Configure.h` 將音樂設為其 90%（806/1024），全部 SFX
+設為其 70%（627/1024），避免重新校準抵銷使用者要求的音量衰減。最新量測見
+`MD/Tyrian-GBA-Native-Rate-Music-PCM-2026-08-16.md`；runtime 混音規則見
+`MD/Tyrian-GBA-Runtime-Mix-Balance-2026-08-22.md`。
 
 ROM 容量精簡採「可證明的功能重複」原則。未來完整移植可能需要的唯一
 stock 資料，即使目前尚未接上 runtime，也保留在 ROMFS；只有當完整

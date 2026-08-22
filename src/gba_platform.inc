@@ -2174,7 +2174,35 @@ static void commit_vblank_work(void)
     }
 }
 
-#define AUDIO_SOURCE_MUSIC_VOLUME_MAX 896u
+#define AUDIO_MAXMOD_CALIBRATED_VOLUME 896u
+#define AUDIO_PERCENT_DENOMINATOR 100u
+#define AUDIO_PERCENT_ROUNDING 50u
+#define AUDIO_SOURCE_MUSIC_VOLUME_MAX \
+    ((AUDIO_MAXMOD_CALIBRATED_VOLUME * \
+        TYRIAN_GBA_MUSIC_VOLUME_PERCENT + AUDIO_PERCENT_ROUNDING) / \
+        AUDIO_PERCENT_DENOMINATOR)
+#define AUDIO_SOURCE_EFFECTS_VOLUME_MAX \
+    ((AUDIO_MAXMOD_CALIBRATED_VOLUME * \
+        TYRIAN_GBA_EFFECTS_VOLUME_PERCENT + AUDIO_PERCENT_ROUNDING) / \
+        AUDIO_PERCENT_DENOMINATOR)
+#define AUDIO_STRESS_PSG_BASE_ENVELOPE 8u
+#define AUDIO_STRESS_PSG_ENVELOPE \
+    ((AUDIO_STRESS_PSG_BASE_ENVELOPE * \
+        TYRIAN_GBA_EFFECTS_VOLUME_PERCENT + AUDIO_PERCENT_ROUNDING) / \
+        AUDIO_PERCENT_DENOMINATOR)
+
+_Static_assert(
+    AUDIO_SOURCE_MUSIC_VOLUME_MAX <= AUDIO_MAXMOD_CALIBRATED_VOLUME,
+    "music presentation gain exceeds calibrated Maxmod ceiling"
+);
+_Static_assert(
+    AUDIO_SOURCE_EFFECTS_VOLUME_MAX <= AUDIO_MAXMOD_CALIBRATED_VOLUME,
+    "effects presentation gain exceeds calibrated Maxmod ceiling"
+);
+_Static_assert(
+    AUDIO_STRESS_PSG_ENVELOPE <= 15u,
+    "PSG diagnostic envelope exceeds GBA hardware range"
+);
 
 static void audio_load_source_song_internal(
     u8 source_song,
@@ -2227,15 +2255,15 @@ static void audio_load_source_song_internal(
         initial_volume = AUDIO_SOURCE_MUSIC_VOLUME_MAX;
     }
     mmSetModuleVolume(initial_volume);
-    mmSetEffectsVolume(AUDIO_SOURCE_MUSIC_VOLUME_MAX);
+    mmSetEffectsVolume(AUDIO_SOURCE_EFFECTS_VOLUME_MAX);
 }
 
 static void audio_set_source_music_volume(u8 source_volume)
 {
     /*
      * OpenTyrian's tyrMusicVolume/tempVolume range is 0..255.  Preserve the
-     * established calibrated Maxmod ceiling (896) while translating the
-     * source's one-unit-per-tick death fade.
+     * established calibrated Maxmod ceiling and configured presentation gain
+     * while translating the source's one-unit-per-tick death fade.
      */
     mmSetModuleVolume(
         (u16)(
@@ -2349,8 +2377,11 @@ static mm_sfxhand audio_effect_start(u16 effect)
     REG_SOUNDCNT_L |= 0x1177;
     REG_SOUNDCNT_H = (u16)((REG_SOUNDCNT_H & 0xfffcu) | 0x0002u);
     REG_SOUND1CNT_L = 0;
-    REG_SOUND1CNT_H =
-        (u16)((2u << 6) | (2u << 8) | (8u << 12));
+    REG_SOUND1CNT_H = (u16)(
+        (2u << 6) |
+        (2u << 8) |
+        (AUDIO_STRESS_PSG_ENVELOPE << 12)
+    );
     REG_SOUND1CNT_X =
         (u16)(frequency | (1u << 14) | (1u << 15));
     telemetry_stress_psg_triggers++;
@@ -2477,6 +2508,10 @@ static void toggle_pause(void)
      * OpenTyrian JE_pauseGame() freezes the game world while leaving the
      * module running at half music volume. Effects retain their normal mix.
      */
-    mmSetModuleVolume(game_paused ? 448 : 896);
+    mmSetModuleVolume(
+        game_paused ?
+            AUDIO_SOURCE_MUSIC_VOLUME_MAX / 2u :
+            AUDIO_SOURCE_MUSIC_VOLUME_MAX
+    );
     telemetry_pause_toggles++;
 }
