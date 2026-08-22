@@ -28,7 +28,8 @@ Build-GBA-ROM.bat
 `AprTyrianGba-<7 位 Git short hash>-<YYYYMMDD 建置日期>`，例如
 `AprTyrianGba-07fae87-20260823`。顯示內容固定採用目前 commit 與本機
 建置日，不再因工作樹含未提交修改而附加容易誤解的 `+`。此文字由
-`tools/write_build_version.py` 產生，不應手動修改 `res/build_version.h`。
+`tools/write_build_version.py` 產生，並使用 title palette 的獨立亮藍色槽，
+不會改變選單文字或背景素材；不應手動修改 `res/build_version.h`。
 
 可選參數範例：
 

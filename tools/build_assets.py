@@ -197,6 +197,11 @@ FRONTEND_MENU_FONT_WIDTH = 7
 FRONTEND_MENU_FONT_SPACE = 3
 FRONTEND_SMALL_MIXED_FONT_WIDTH = 4
 FRONTEND_SMALL_MIXED_FONT_SPACE = 2
+# Palette index 0xff is unused by the four title canvases.  Reserve it only
+# in the title palette for the runtime build identifier so changing its hue
+# cannot recolour Start New Game or any source artwork.
+FRONTEND_TITLE_BUILD_COLOUR = 0xFF
+FRONTEND_TITLE_BUILD_RGB5 = (8, 18, 31)
 BACKGROUND_PALETTE_BANK_COUNT = 16
 BACKGROUND_PALETTE_COLOURS_PER_BANK = 16
 BACKGROUND_PALETTE_SOURCE_COLOURS = 256
@@ -3054,6 +3059,10 @@ def build_frontend_static_menu_panels(
                     layout["TYRIAN_GBA_LAYOUT_TITLE_MENU_ROW_STEP"],
                 colour,
             )
+        if np.any(frame == FRONTEND_TITLE_BUILD_COLOUR):
+            raise ValueError(
+                "static title frame unexpectedly uses reserved build colour"
+            )
         add_pre_game(f"title_{selection}", frame, 8)
 
     for selection in range(2):
@@ -3910,6 +3919,7 @@ def build_frontend_mode4_assets(
     names: list[str] = []
     metadata: dict[str, int] = {
         "FRONTEND_FRAME_BYTES": FRONTEND_FRAME_BYTES,
+        "FRONTEND_TITLE_BUILD_COLOUR": FRONTEND_TITLE_BUILD_COLOUR,
     }
     frontend_preview = preview / "frontend_mode4"
     frontend_preview.mkdir(parents=True, exist_ok=True)
@@ -3926,7 +3936,20 @@ def build_frontend_mode4_assets(
         frames.append(frame.copy())
         if palette_index is None:
             palette_index = FRONTEND_PCX_PALETTES[picture_number - 1]
-        palettes.append(source.palette_gba_index(palette_index))
+        palette = bytearray(source.palette_gba_index(palette_index))
+        if name == "title_chrome" or name.startswith("title_"):
+            if np.any(frame == FRONTEND_TITLE_BUILD_COLOUR):
+                raise ValueError(
+                    "title source unexpectedly uses reserved build colour"
+                )
+            red, green, blue = FRONTEND_TITLE_BUILD_RGB5
+            struct.pack_into(
+                "<H",
+                palette,
+                FRONTEND_TITLE_BUILD_COLOUR * 2,
+                red | (green << 5) | (blue << 10),
+            )
+        palettes.append(bytes(palette))
         names.append(name)
         metadata[f"FRONTEND_FRAME_{name.upper()}"] = index
         rgb = np.minimum(
@@ -4304,6 +4327,20 @@ def build_frontend_mode4_assets(
         )
     if len(runtime_frame_indices) != 6 or len(runtime_palettes) != 6:
         raise AssertionError("front-end runtime compaction contract changed")
+    title_palette = runtime_palettes[
+        palette_slots[metadata["FRONTEND_FRAME_TITLE_CHROME"]]
+    ]
+    expected_title_build_colour = (
+        FRONTEND_TITLE_BUILD_RGB5[0] |
+        (FRONTEND_TITLE_BUILD_RGB5[1] << 5) |
+        (FRONTEND_TITLE_BUILD_RGB5[2] << 10)
+    )
+    if struct.unpack_from(
+        "<H",
+        title_palette,
+        FRONTEND_TITLE_BUILD_COLOUR * 2,
+    )[0] != expected_title_build_colour:
+        raise AssertionError("title build colour palette slot changed")
 
     unique_counts: list[int] = []
     tile_mode_bytes: list[int] = []
@@ -4425,6 +4462,14 @@ def build_frontend_mode4_assets(
             f"{FRONTEND_MENU_SOURCE_WIDTH},200"
         ),
         "frontend_next_level_palette_index=17",
+        (
+            "frontend_title_build_colour_index="
+            f"0x{FRONTEND_TITLE_BUILD_COLOUR:02x}"
+        ),
+        (
+            "frontend_title_build_colour_rgb5="
+            f"{','.join(str(value) for value in FRONTEND_TITLE_BUILD_RGB5)}"
+        ),
         f"frontend_full_state_transfer_bytes={FRONTEND_FRAME_BYTES + 512}",
         (
             "frontend_zlib_reference_bytes="

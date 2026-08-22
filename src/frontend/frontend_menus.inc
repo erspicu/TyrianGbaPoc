@@ -708,7 +708,7 @@ static void frontend_render_pre_game_menu(void)
                 TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
                 TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
                 SCREEN_WIDTH,
-                0xfeu
+                FRONTEND_TITLE_BUILD_COLOUR
             );
             frontend_present(
                 static_frame,
@@ -752,7 +752,7 @@ static void frontend_render_pre_game_menu(void)
             TYRIAN_GBA_LAYOUT_TITLE_BUILD_X,
             TYRIAN_GBA_LAYOUT_TITLE_BUILD_Y,
             SCREEN_WIDTH,
-            0xfeu
+            FRONTEND_TITLE_BUILD_COLOUR
         );
         frontend_title_brand_pending = 0;
     }
