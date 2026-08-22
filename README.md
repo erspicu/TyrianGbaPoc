@@ -1,7 +1,7 @@
 # TyrianGbaPoc
 
 [Official website](https://erspicu.github.io/TyrianGbaPoc/) ·
-[Latest release (v89)](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v89) ·
+[Latest release (v90)](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v90) ·
 [Build guide](BUILDING.md)
 
 TyrianGbaPoc is an in-progress Game Boy Advance port of Tyrian, driven by the
@@ -23,7 +23,7 @@ equipment combinations continue to receive source-parity QA.
 ## Current LOW-detail build
 
 All images below are unmodified 240x160 captures from the current GBA ROM in
-mGBA. The public v89 build uses the production **LOW Detail / Normal Speed**
+mGBA. The public v90 build uses the production **LOW Detail / Normal Speed**
 profile, normal damage, and normal campaign equipment.
 
 | Live combat | Multi-part boss stress |
@@ -126,13 +126,13 @@ the highlighted title item. The same load browser remains available through
 ## Downloads
 
 The current formal release is
-[v89 — Full 9-Channel Audio Release](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v89).
+[v90 — Adaptive OPL2 Fidelity Release](https://github.com/erspicu/TyrianGbaPoc/releases/tag/v90).
 Its LOW-detail ROM is published as a GitHub Release asset rather than committed
 to the source tree:
 
-- [Download `TyrianGBA-v89-low.gba`](https://github.com/erspicu/TyrianGbaPoc/releases/download/v89/TyrianGBA-v89-low.gba)
-- Size: 27,090,252 bytes (25.835 MiB)
-- SHA-256: `e2440d9b393723b31735c58e343f4465863e4c5188348156990db7a4bf08f7b0`
+- [Download `TyrianGBA-v90-low.gba`](https://github.com/erspicu/TyrianGbaPoc/releases/download/v90/TyrianGBA-v90-low.gba)
+- Size: 33,472,076 bytes (31.921 MiB)
+- SHA-256: `d4857b32f18bf41cc5b164f01c076dca782b09ff338ea57fc385c88847a34fe1`
 
 Use legally obtained Tyrian data and an emulator or hardware environment
 appropriate for your jurisdiction.
