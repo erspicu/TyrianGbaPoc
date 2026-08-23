@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tyrian 移植到 GBA：不只是遊戲移植，而是一場完整的效能工程</title>
+  <style>
+:root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #222;
+      background: #f6f6f3;
+      font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+      line-height: 1.72;
+    }
+    main {
+      width: min(100% - 2rem, 900px);
+      margin: 0 auto;
+      padding: 3rem 0 5rem;
+    }
+    h1, h2, h3 { color: #111; line-height: 1.25; }
+    h1 { margin: 0 0 2rem; font-size: clamp(2rem, 5vw, 3.25rem); }
+    h2 { margin: 3rem 0 1rem; font-size: clamp(1.45rem, 3vw, 2rem); }
+    h3 { margin: 2rem 0 0.75rem; font-size: 1.2rem; }
+    p, ul, ol, blockquote, pre, table { margin: 1rem 0; }
+    ul, ol { padding-left: 1.6rem; }
+    li + li { margin-top: 0.35rem; }
+    blockquote {
+      border-left: 4px solid #6685a3;
+      margin-left: 0;
+      padding: 0.1rem 0 0.1rem 1rem;
+      color: #4b5965;
+    }
+    code {
+      border-radius: 4px;
+      padding: 0.12em 0.32em;
+      background: #e8e9e7;
+      font-family: "Cascadia Mono", Consolas, monospace;
+    }
+    pre {
+      overflow-x: auto;
+      border: 1px solid #d7d8d5;
+      border-radius: 6px;
+      padding: 1rem;
+      background: #eeeeeb;
+    }
+    pre code { padding: 0; background: transparent; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #cfd1ce; padding: 0.55rem 0.7rem; text-align: left; }
+    th { background: #e8e9e7; }
+    a { color: #245f91; overflow-wrap: anywhere; }
+    hr { border: 0; border-top: 1px solid #cfd1ce; margin: 2.5rem 0; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #deded8; background: #111315; }
+      h1, h2, h3 { color: #f5f2e8; }
+      blockquote { color: #b8c5cf; border-left-color: #7da7c9; }
+      code, th { background: #25292c; }
+      pre { border-color: #3a3e41; background: #1b1e20; }
+      th, td { border-color: #3a3e41; }
+      a { color: #83bce8; }
+      hr { border-top-color: #3a3e41; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+<p>可以，而且我會把它整理成一個更像「技術社群讀者一看就知道這個移植到底厲害在哪裡」的版本，而不是單純把功能列出來。</p>
+<h1>Tyrian 移植到 GBA：不只是遊戲移植，而是一場完整的效能工程</h1>
+<p><code>TyrianGbaPoc</code> 一開始其實是在回答一個很直接的問題：</p>
+<blockquote>
+<p><strong>能不能把 DOS 時代的 Tyrian 搬到 Game Boy Advance，而且盡量保留原始遊戲邏輯、資料與行為？</strong></p>
+</blockquote>
+<p>但如果你一路看下來，會發現它後來已經完全超出一般人對「移植」的想像。</p>
+<p>它不是把 API 換掉、畫面縮小、聲音重接而已，而是把 Tyrian 2.1 的原始資料和 OpenTyrian 的 gameplay behavior 當成規格，然後在 GBA 極度有限的 CPU、VRAM、OAM、palette 與 timing budget 下，重新思考：</p>
+<blockquote>
+<p><strong>怎樣讓原本比 GBA 資源需求大很多的遊戲，仍然維持正確行為並穩定運行？</strong></p>
+</blockquote>
+<p>因此整個專案最後自然牽涉到：</p>
+<p><strong>演算法、資料結構、記憶體配置、快取策略、資源排程、即時系統、工作量裁剪、色彩量化，以及 ARM 等低階最佳化。</strong></p>
+<p>換句話說，表面上這是一個 GBA 遊戲移植，實際上更像是一個完整的 performance engineering 案例。</p>
+<hr>
+<h1>核心觀念：先不要做，再想怎麼做快</h1>
+<p>如果要先抓一個最值得其他專案借鏡的原則，我會選這句：</p>
+<blockquote>
+<p><strong>不要一開始就問「怎麼讓這段程式更快」，先問「這段工作到底需不需要做」。</strong></p>
+</blockquote>
+<p>這個專案的最佳化大致遵循這樣的順序：</p>
+<pre><code class="language-text">消除不必要的工作
+        ↓
+縮小 working set
+        ↓
+選擇更適合的資料結構
+        ↓
+改善 locality / cache
+        ↓
+排程有限資源
+        ↓
+batch / loop fusion
+        ↓
+最佳化真正的 hot kernel
+        ↓
+最後才考慮 ARM / IWRAM
+</code></pre>
+<p>這個順序很重要。</p>
+<p>因為在硬體很受限的平台上，真正的大幅提升通常不是：</p>
+<blockquote>
+<p>把 100 次操作各快 10%。</p>
+</blockquote>
+<p>而是：</p>
+<blockquote>
+<p>直接讓其中 80 次根本不要發生。</p>
+</blockquote>
+<hr>
+<h1>1. Active Directory / Pool：不要每個 Tick 都掃全部物件</h1>
+<p>OpenTyrian 的 enemy pool，可以簡化理解成：</p>
+<pre><code class="language-text">4 個 pool × 每個 25 slots
+= 100 enemy slots
+</code></pre>
+<p>最直覺的程式會是：</p>
+<pre><code class="language-text">每個 tick
+for 0..99
+    if active
+        update
+</code></pre>
+<p>這在 PC 上可能根本不用在意。</p>
+<p>但在 GBA 上，即使某個 slot 是空的，你仍然要付出：</p>
+<ul>
+<li>memory access</li>
+<li>branch</li>
+<li>loop overhead</li>
+<li>cache / ROM access cost</li>
+</ul>
+<p>所以 GBA 版本額外維護 compact active directory，例如 32-bit bitmask，用來直接知道哪些 enemy slot 是 active 或 collidable。</p>
+<p>不過這裡有一個很重要的設計細節：</p>
+<blockquote>
+<p>bitmask 只是「加速用索引」，不是 authoritative state。</p>
+</blockquote>
+<p>也就是原始 enemy pool 還是遊戲真正狀態來源。</p>
+<p>因此：</p>
+<ul>
+<li>enemy slot order</li>
+<li>spawn slot selection</li>
+<li>RNG order</li>
+<li>gameplay semantics</li>
+</ul>
+<p>都不需要因為最佳化而改變。</p>
+<p>這其實是一個非常實用的結構：</p>
+<pre><code class="language-text">authoritative structure
++
+auxiliary acceleration structure
+</code></pre>
+<p>你可以把它想成：</p>
+<blockquote>
+<p>原本資料結構負責「正確」，額外 directory 負責「快」。</p>
+</blockquote>
+<hr>
+<h1>2. 不是所有 Pool 都該用 Bitmask</h1>
+<p>這裡有一個很值得注意的地方：作者沒有看到 bitmask 有效，就把所有 pool 全部改成 bit-scan。</p>
+<p>Effect pool 大約有 200 slots。</p>
+<p>它也曾經嘗試：</p>
+<pre><code class="language-text">active mask
+→ 只 bit-scan active effects
+</code></pre>
+<p>但如果 heavy scene 裡有 100 多個 effect 都 active，資料已經很 dense。</p>
+<p>這時：</p>
+<pre><code class="language-text">bit scan
++ index extraction
++ mask handling
+</code></pre>
+<p>反而可能比單純：</p>
+<pre><code class="language-text">for 0..199
+    if inactive continue
+</code></pre>
+<p>更慢。</p>
+<p>所以最後的作法是：</p>
+<ul>
+<li>找空 slot → 用 free directory</li>
+<li>update/render → 保留 linear scan</li>
+</ul>
+<p>這裡其實藏了一個很重要的演算法觀念：</p>
+<blockquote>
+<p><strong>Sparse representation 不是天然比較快，真正關鍵是資料密度。</strong></p>
+</blockquote>
+<p>也就是所謂的：</p>
+<blockquote>
+<p><strong>density crossover</strong></p>
+</blockquote>
+<p>Player shot 更直接採用 hybrid：</p>
+<pre><code class="language-text">active count 小
+→ bitmask traversal
+
+active count 大
+→ linear scan
+</code></pre>
+<p>這比「bitmask 一定高級」更成熟，因為真正的答案是：</p>
+<blockquote>
+<p>哪一個方法在目前 density 下成本最低？</p>
+</blockquote>
+<hr>
+<h1>3. Cache Hint：用很便宜的預測，加速正確的 Cache</h1>
+<p>Projectile sprite cache 本身 hit rate 已經很高。</p>
+<p>但即使 hit，仍可能需要掃描多個 cache entry 才找到對應 slot。</p>
+<p>所以作者沒有把整個 cache 改掉，而是在前面放一層非常小的：</p>
+<pre><code class="language-text">direct-mapped hint table
+</code></pre>
+<p>流程大概是：</p>
+<pre><code class="language-text">key
+ ↓
+hash
+ ↓
+hint slot
+ ↓
+驗證完整 key
+ ↓
+吻合 → 直接使用
+
+不吻合
+ ↓
+fallback 原本完整 cache lookup
+</code></pre>
+<p>這個設計最漂亮的地方是：</p>
+<blockquote>
+<p>hint 不負責 correctness。</p>
+</blockquote>
+<p>它不管理：</p>
+<ul>
+<li>eviction</li>
+<li>lifetime</li>
+<li>ownership</li>
+</ul>
+<p>所以即使發生：</p>
+<pre><code class="language-text">hash collision
+stale hint
+</code></pre>
+<p>最壞也只是：</p>
+<pre><code class="language-text">hint miss
+→ fallback
+</code></pre>
+<p>不會產生錯誤 cache hit。</p>
+<p>這個概念其實很值得拿去別的系統用：</p>
+<blockquote>
+<p><strong>cheap predictor + validation + authoritative fallback</strong></p>
+</blockquote>
+<p>也就是先猜，但一定驗證。</p>
+<p>猜錯只會慢，不會錯。</p>
+<hr>
+<h1>4. Boss Sprite 問題最後不是排程，而是資料表示法</h1>
+<p>Boss 場景曾經出現零件消失。</p>
+<p>第一個直覺很容易是：</p>
+<blockquote>
+<p>GBA 只有 128 OAM，是不是 OAM 不夠？</p>
+</blockquote>
+<p>但 telemetry 顯示 OAM 還沒滿。</p>
+<p>真正爆掉的是 OBJ VRAM。</p>
+<p>32×32 的 8bpp sprite 需要：</p>
+<pre><code class="language-text">32 × 32 × 1 byte
+= 1024 bytes
+</code></pre>
+<p>如果 Boss 同時使用大量不同 frame，cache 很快就被塞滿。</p>
+<p>這時你再怎麼研究 LRU 或 replacement policy，都還是改變不了：</p>
+<blockquote>
+<p>物理容量就是不夠。</p>
+</blockquote>
+<p>所以解法不是「更聰明地淘汰」，而是直接改資料 representation：</p>
+<pre><code class="language-text">32×32 8bpp
+= 1024 bytes
+
+       ↓
+
+32×32 4bpp
+= 512 bytes
+</code></pre>
+<p>同樣一塊 VRAM，可以放接近兩倍的 sprite。</p>
+<p>這是非常典型的系統最佳化思路：</p>
+<blockquote>
+<p><strong>當 cache capacity 是根本問題時，先問資料本身能不能變小。</strong></p>
+</blockquote>
+<p>而不是只在 eviction policy 上打轉。</p>
+<hr>
+<h1>5. 4bpp 進一步引出 Palette Training</h1>
+<p>一旦轉成 4bpp，問題馬上又變成另一類：</p>
+<p>一個 palette bank 只有 16 個 entries，而且通常 index 0 還要留給透明。</p>
+<p>也就是實際只有大約：</p>
+<blockquote>
+<p><strong>15 個顏色可以使用</strong></p>
+</blockquote>
+<p>但 Tyrian 原本 artwork 是 256 色 indexed graphics。</p>
+<p>所以你現在必須解決：</p>
+<blockquote>
+<p>怎麼把原始 256 色中的資訊壓到 15 色，而且畫面不能爛掉？</p>
+</blockquote>
+<p>這時專案就加入了 palette training / color quantization。</p>
+<p>基本思想是把：</p>
+<pre><code class="language-text">color frequency
++
+distance from already-selected colors
+</code></pre>
+<p>一起考慮。</p>
+<p>概念上類似：</p>
+<pre><code class="language-text">score =
+nearest color distance
+×
+frequency weight
+</code></pre>
+<p>這樣的好處是：</p>
+<ul>
+<li>常用顏色會優先保留</li>
+<li>但少量、卻非常特殊的 accent color 也不容易被吃掉</li>
+</ul>
+<p>例如 Boss 可能是：</p>
+<pre><code class="language-text">大量灰色金屬
++
+少量紅色眼睛
++
+少量藍色雷射
+</code></pre>
+<p>如果只看 histogram，很可能最後 15 色裡一堆都是相近灰色。</p>
+<p>但加入 color distance 後，紅色與藍色這種「離現有 palette 很遠」的顏色，就比較容易被留下來。</p>
+<p>這對 pixel art 特別合理。</p>
+<hr>
+<h1>6. Palette 訓練完後，再做 Lookup Table</h1>
+<p>訓練完 palette 還不夠。</p>
+<p>如果每個 pixel 都要重新算：</p>
+<blockquote>
+<p>這個原始顏色最接近哪一個 15 色 palette entry？</p>
+</blockquote>
+<p>那 runtime 還是很貴。</p>
+<p>所以它會先建立：</p>
+<pre><code class="language-text">palette_map[256]
+palette_error[256]
+</code></pre>
+<p>等於先把每個 source color 對應到：</p>
+<ul>
+<li>哪個 4bpp palette index</li>
+<li>誤差多少</li>
+</ul>
+<p>真正轉 sprite 時就變成：</p>
+<pre><code class="language-text">src color index
+↓
+table lookup
+↓
+4-bit palette index
+</code></pre>
+<p>這個方法很典型：</p>
+<blockquote>
+<p><strong>把 expensive calculation 移到 precompute，讓 hotpath 只查表。</strong></p>
+</blockquote>
+<hr>
+<h1>7. Palette Pretraining：不要在 Boss 出場瞬間才訓練</h1>
+<p>後來又遇到另一個很實際的問題。</p>
+<p>Boss 零件可能不是同一時間全部出現。</p>
+<p>例如：</p>
+<pre><code class="language-text">一開始只出現暗色零件
+↓
+先訓練出偏黑灰 palette
+</code></pre>
+<p>後面才出現：</p>
+<pre><code class="language-text">綠色零件
+紅色零件
+亮色攻擊效果
+</code></pre>
+<p>此時原本 palette 已經不理想。</p>
+<p>你當然可以 combat 中 retrain，但那又會把 CPU 壓力拉高。</p>
+<p>最後比較漂亮的解法是：</p>
+<pre><code class="language-text">讀取 level data
+ ↓
+知道 Boss cohort
+ ↓
+找到 Boss 相關 enemy definitions
+ ↓
+decode animation frames
+ ↓
+統計完整 histogram
+ ↓
+提前 train palette
+</code></pre>
+<p>也就是 Boss 還沒真正出場前，palette 已經準備好了。</p>
+<p>這個觀念非常值得其他移植專案記住：</p>
+<blockquote>
+<p><strong>能預測的昂貴工作，就不要留在 latency-sensitive gameplay 階段。</strong></p>
+</blockquote>
+<p>能搬去：</p>
+<ul>
+<li>loading</li>
+<li>blank screen</li>
+<li>preprocessing</li>
+<li>idle period</li>
+</ul>
+<p>就盡量搬。</p>
+<hr>
+<h1>8. OAM 不夠時，問題其實變成 Scheduler</h1>
+<p>GBA OAM 固定只有：</p>
+<pre><code class="language-text">128 entries
+</code></pre>
+<p>但某些 Tyrian heavy scene 的 sprite demand 可以明顯超過 128。</p>
+<p>這時你已經不能再問：</p>
+<blockquote>
+<p>Renderer 能不能再快一點？</p>
+</blockquote>
+<p>因為問題不是速度。</p>
+<p>而是：</p>
+<blockquote>
+<p><strong>硬體就只有 128 個 slot。</strong></p>
+</blockquote>
+<p>所以這時應該把問題看成：</p>
+<blockquote>
+<p>Resource Scheduling</p>
+</blockquote>
+<p>系統必須決定：</p>
+<pre><code class="language-text">誰一定要顯示？
+誰可以延後？
+誰優先？
+誰可以犧牲？
+誰要輪流取得資源？
+</code></pre>
+<p>可以概念化成：</p>
+<pre><code class="language-text">高優先
+player
+boss
+important enemies
+
+中優先
+projectiles
+
+低優先
+explosions
+shadows
+cosmetic effects
+</code></pre>
+<p>如果高優先物件沒把 OAM 用滿：</p>
+<pre><code class="language-text">剩餘 OAM
+→ 給 cosmetic
+</code></pre>
+<p>如果高優先本身已經爆量：</p>
+<pre><code class="language-text">cosmetic
+→ 可以被裁掉
+</code></pre>
+<p>這其實已經不是繪圖技巧，而是標準的有限資源排程問題。</p>
+<hr>
+<h1>9. Priority 不夠，還要 Fairness</h1>
+<p>如果永遠都固定順序分配：</p>
+<pre><code class="language-text">前面的 effect 永遠顯示
+後面的永遠消失
+</code></pre>
+<p>視覺結果會很糟。</p>
+<p>所以系統還需要 round-robin 或 rotating cursor，讓低優先項目仍然有機會輪流被顯示。</p>
+<p>這就形成：</p>
+<pre><code class="language-text">priority
++
+fairness
++
+work-conserving allocation
+</code></pre>
+<p>這個觀念不只適用 GBA OAM。</p>
+<p>如果你做的是：</p>
+<ul>
+<li>GPU resource</li>
+<li>DMA channel</li>
+<li>worker pool</li>
+<li>network queue</li>
+<li>descriptor heap</li>
+<li>embedded hardware unit</li>
+</ul>
+<p>其實都是同一類問題。</p>
+<p>核心原則就是：</p>
+<blockquote>
+<p><strong>當需求可能超過硬體容量時，你需要 scheduler，不只是 allocator。</strong></p>
+</blockquote>
+<hr>
+<h1>10. Candidate Snapshot：同一群資料不要反覆掃</h1>
+<p>OAM scheduler 還有一些很實際的最佳化。</p>
+<p>原本可能：</p>
+<pre><code class="language-text">掃一次算 demand
+掃一次做 cache admission
+掃一次 render
+</code></pre>
+<p>後來改成：</p>
+<pre><code class="language-text">collect candidates once
+
+每個 candidate 先算好：
+screen position
+visibility
+OAM cost
+draw stage
+priority
+</code></pre>
+<p>後面的 scheduler、cache admission、render 都共享這份資料。</p>
+<p>這就是：</p>
+<blockquote>
+<p><strong>materialize hot working set once</strong></p>
+</blockquote>
+<hr>
+<h1>11. Loop Fusion：能一次走完，就不要走兩次</h1>
+<p>另一個同類型技巧是 loop fusion。</p>
+<p>原本：</p>
+<pre><code class="language-text">select enemy
+↓
+存 selection
+↓
+再掃一次 cache prime
+↓
+render
+</code></pre>
+<p>可以改成：</p>
+<pre><code class="language-text">select
++
+cache admission
++
+cache acquire
++
+record tile
+</code></pre>
+<p>同一趟 traversal 直接做完。</p>
+<p>這種最佳化本身看起來沒有 ASM 那麼華麗，但實際上對 constrained hardware 非常有用。</p>
+<p>因為你同時減少：</p>
+<ul>
+<li>loop overhead</li>
+<li>memory traversal</li>
+<li>repeated address calculation</li>
+<li>working-set reload</li>
+</ul>
+<hr>
+<h1>12. Adaptive Work Shedding：Simulation 跟 Presentation 要分開</h1>
+<p>這是整個移植裡我認為最重要的架構概念之一。</p>
+<p>遊戲的：</p>
+<pre><code class="language-text">logic
+enemy movement
+collision
+event
+RNG
+boss progression
+audio timing
+</code></pre>
+<p>屬於 authoritative simulation。</p>
+<p>這些不能因為畫面忙不過來就亂 skip。</p>
+<p>但：</p>
+<pre><code class="language-text">sprite construction
+OAM update
+tile upload
+VRAM presentation
+background rendering
+</code></pre>
+<p>只是 presentation。</p>
+<p>所以當系統真的 overloaded 時，不應該：</p>
+<pre><code class="language-text">跳 gameplay tick
+</code></pre>
+<p>而應該：</p>
+<pre><code class="language-text">gameplay tick 照跑
+
+但某個 presentation frame 不建立
+</code></pre>
+<p>例如：</p>
+<pre><code class="language-text">Simulation:
+N
+N+1
+N+2
+N+3
+
+Presentation:
+N
+N+2
+N+3
+</code></pre>
+<p>玩家少看到一個中間畫面，但：</p>
+<ul>
+<li>enemy movement 沒亂掉</li>
+<li>collision 沒少算</li>
+<li>RNG sequence 沒變</li>
+<li>gameplay speed 沒變</li>
+</ul>
+<p>這其實就是：</p>
+<blockquote>
+<p><strong>fixed timestep simulation + adaptive presentation cadence</strong></p>
+</blockquote>
+<p>這已經非常接近 real-time system 的設計思維。</p>
+<hr>
+<h1>13. Drop Frame 不代表「畫一半」</h1>
+<p>另一個很重要的細節是：</p>
+<p>如果預估新 scene 來不及完整完成：</p>
+<pre><code class="language-text">不要 commit 一半
+</code></pre>
+<p>而是：</p>
+<pre><code class="language-text">保留上一張完整 scene
+</code></pre>
+<p>因為最糟的不是少一張畫面。</p>
+<p>最糟的是產生：</p>
+<pre><code class="language-text">一半新的 OAM
++
+一半舊 VRAM
++
+部分 cache update
+</code></pre>
+<p>這種 inconsistent state。</p>
+<p>所以這個策略比較像：</p>
+<blockquote>
+<p><strong>完整 commit，或完全不 commit。</strong></p>
+</blockquote>
+<p>這跟 transaction / double buffering 的思考方式其實非常接近。</p>
+<hr>
+<h1>14. Collision：真正難的不是碰撞公式，而是 Pool 會 Mutation</h1>
+<p>Collision 表面上看很簡單：</p>
+<pre><code class="language-text">for every player shot
+    for every enemy
+        collision test
+</code></pre>
+<p>但如果是：</p>
+<pre><code class="language-text">81 shots × 100 enemies
+</code></pre>
+<p>candidate 數量很快就上去。</p>
+<p>Active directory 可以先砍掉 inactive enemy。</p>
+<p>但這裡真正困難的其實是：</p>
+<blockquote>
+<p>collision 本身會改變 enemy pool。</p>
+</blockquote>
+<p>例如：</p>
+<pre><code class="language-text">shot hits enemy
+ ↓
+enemy dies
+ ↓
+spawn new enemy
+ ↓
+slot 被重新使用
+</code></pre>
+<p>所以不能簡單：</p>
+<pre><code class="language-text">tick 開始時 snapshot active mask
+↓
+整個 collision 都用這份 snapshot
+</code></pre>
+<p>因為後面資料可能已經變了。</p>
+<p>因此最佳化不能只考慮速度，還得維持：</p>
+<ul>
+<li>原始 slot traversal order</li>
+<li>penetrating shot semantics</li>
+<li>spawn/reuse 行為</li>
+<li>gameplay mutation correctness</li>
+</ul>
+<p>這類問題其實比單純 SIMD 或 bitmask 更難。</p>
+<hr>
+<h1>15. Packed Collision：Miss Path 要快，Hit Path 要保守</h1>
+<p>後來 ARM collision kernel 有一個很漂亮的做法。</p>
+<p>對同一個 active mask：</p>
+<pre><code class="language-text">remaining_bits
+</code></pre>
+<p>保留在 register。</p>
+<p>如果一路都 miss：</p>
+<pre><code class="language-text">candidate A miss
+candidate B miss
+candidate C miss
+</code></pre>
+<p>就不要一直重新讀 authoritative mask。</p>
+<p>但如果真的 hit：</p>
+<pre><code class="language-text">hit
+→ gameplay helper
+→ 可能修改 enemy pool
+</code></pre>
+<p>那就把 cached mask 丟掉，重新 reload authoritative state。</p>
+<p>所以它實際上是：</p>
+<pre><code class="language-text">common miss path
+→ aggressively cached
+
+rare mutation path
+→ conservative reload
+</code></pre>
+<p>這是一種非常漂亮的效能策略：</p>
+<blockquote>
+<p><strong>Optimistic fast path + correctness recovery point</strong></p>
+</blockquote>
+<p>常見路徑要快。</p>
+<p>真正可能改狀態的地方再回到保守模式。</p>
+<hr>
+<h1>16. ARM Assembly 是最後一刀，不是第一刀</h1>
+<p>專案裡確實有 ARM / IWRAM 最佳化。</p>
+<p>但更值得注意的是它並沒有把：</p>
+<blockquote>
+<p>「改成 ARM」</p>
+</blockquote>
+<p>視為第一反應。</p>
+<p>像 starfield，一開始真正的問題不是語言。</p>
+<p>原本流程可能反覆：</p>
+<pre><code class="language-text">position / 320
+position % 320
+
+pixel 1 → tile lookup
+pixel 2 → tile lookup
+pixel 3 → tile lookup
+...
+</code></pre>
+<p>後來先改成：</p>
+<pre><code class="language-text">一次 divmod
+一次 tile allocation
+同一 tile 裡 batch 多個 pixels
+</code></pre>
+<p>這一步已經把演算法變合理。</p>
+<p>最後才把真正留下的 hot kernel 改成 ARM。</p>
+<p>所以真正的提升來源其實是：</p>
+<blockquote>
+<p><strong>algorithmic batching + eliminate repeated work</strong></p>
+</blockquote>
+<p>ARM 只是再往下榨。</p>
+<hr>
+<h1>17. 甚至有 ARM 比 C 慢的情況</h1>
+<p>這點其實很有教育價值。</p>
+<p>不是所有：</p>
+<ul>
+<li>branchless</li>
+<li>bit-scan</li>
+<li>hand-written ASM</li>
+</ul>
+<p>都一定比較快。</p>
+<p>有些很小的 helper 改成 ARM 後，可能因為：</p>
+<ul>
+<li>call overhead</li>
+<li>ARM / Thumb transition</li>
+<li>compiler 原本 codegen 已經很好</li>
+<li>kernel 本身太小</li>
+</ul>
+<p>反而輸給 C。</p>
+<p>甚至有些看起來有 branch 的 C code，compiler 本來就能用 conditional execution 優化掉。</p>
+<p>所以真正應該做的是：</p>
+<blockquote>
+<p><strong>看 machine code、看 profiling、看 benchmark。</strong></p>
+</blockquote>
+<p>而不是只看 source syntax。</p>
+<hr>
+<h1>整個移植到底用了哪些「技術牛肉」</h1>
+<p>如果你要讓其他工程師最快看懂，可以濃縮成這張表：</p>
+<table>
+<thead>
+<tr>
+<th>問題</th>
+<th>採用技術</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pool 大量空 slot</td>
+<td>Active / Free Bit Directory</td>
+</tr>
+<tr>
+<td>Sparse / Dense workload</td>
+<td>Density-dependent traversal</td>
+</tr>
+<tr>
+<td>Cache hit 很多但 lookup 仍貴</td>
+<td>Validated Direct-Mapped Hint</td>
+</tr>
+<tr>
+<td>Sprite cache 容量不足</td>
+<td>8bpp → 4bpp representation change</td>
+</tr>
+<tr>
+<td>4bpp 色彩不足</td>
+<td>Palette Training / Quantization</td>
+</tr>
+<tr>
+<td>Gameplay 中 train 太貴</td>
+<td>Boss cohort preload / pretraining</td>
+</tr>
+<tr>
+<td>OAM 需求超過 128</td>
+<td>Priority + Fairness Scheduler</td>
+</tr>
+<tr>
+<td>重複掃相同 candidates</td>
+<td>Candidate Snapshot</td>
+</tr>
+<tr>
+<td>多個 traversal 做類似工作</td>
+<td>Loop Fusion</td>
+</tr>
+<tr>
+<td>偶發 frame overload</td>
+<td>Deadline-aware frame dropping</td>
+</tr>
+<tr>
+<td>長時間 overload</td>
+<td>Adaptive Work Shedding</td>
+</tr>
+<tr>
+<td>不能跳 Gameplay tick</td>
+<td>Fixed-timestep Simulation</td>
+</tr>
+<tr>
+<td>Collision pool 會 mutation</td>
+<td>Mutation-safe Active Directory</td>
+</tr>
+<tr>
+<td>Hot path 重複地址計算</td>
+<td>Batching</td>
+</tr>
+<tr>
+<td>剩下真正 CPU bottleneck</td>
+<td>Selective ARM / IWRAM</td>
+</tr>
+<tr>
+<td>最佳化可能破壞原邏輯</td>
+<td>Differential / Regression Testing</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1>對其他移植專案最值得帶走的思考方式</h1>
+<p>如果你是做其他平台移植，我覺得下面幾個問題比任何單一技巧都更值得記住。</p>
+<h3>不要先問：</h3>
+<blockquote>
+<p>怎麼讓這個 loop 更快？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>為什麼這些物件需要被 visit？</p>
+</blockquote>
+<hr>
+<h3>不要先問：</h3>
+<blockquote>
+<p>Cache policy 還能怎麼調？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>Data representation 能不能直接變小？</p>
+</blockquote>
+<hr>
+<h3>不要先問：</h3>
+<blockquote>
+<p>怎麼讓所有 sprite 都顯示？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>當硬體容量不夠時，誰必須優先？</p>
+</blockquote>
+<hr>
+<h3>不要先問：</h3>
+<blockquote>
+<p>Gameplay 裡怎麼把這個昂貴操作做快？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>能不能在 loading 或 preprocessing 就先算好？</p>
+</blockquote>
+<hr>
+<h3>不要先問：</h3>
+<blockquote>
+<p>能不能改 branchless？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>Compiler 現在到底產生什麼 code？</p>
+</blockquote>
+<hr>
+<h3>不要先問：</h3>
+<blockquote>
+<p>這裡是不是該寫 ASM？</p>
+</blockquote>
+<p>先問：</p>
+<blockquote>
+<p>Profiling 證明它值得嗎？</p>
+</blockquote>
+<hr>
+<h1>最後其實可以濃縮成一句話</h1>
+<p>如果要用一句話概括 <code>TyrianGbaPoc</code> 的工程價值，我會寫：</p>
+<blockquote>
+<p><strong>先最佳化架構，再最佳化指令。</strong></p>
+</blockquote>
+<p>這個專案真正有意思的，不只是：</p>
+<blockquote>
+<p>「Tyrian 居然可以跑在 GBA。」</p>
+</blockquote>
+<p>而是它示範了，當你要把一個原本針對更寬裕平台設計的系統塞進資源極度有限的硬體時，可以如何把：</p>
+<p><strong>演算法、資料結構、Sparse Traversal、Cache、Palette Quantization、Memory Representation、Resource Scheduling、Real-Time Work Shedding、Profiling、Regression Testing 與 ARM Hotpath</strong></p>
+<p>全部組合起來。</p>
+<p>所以更精確地說，它不是只有「遊戲移植」這件事。</p>
+<p>它其實是一個很完整的案例：</p>
+<blockquote>
+<p><strong>如何透過系統化的效能工程，把一個較大型的既有軟體系統，縮進一個 CPU、記憶體、圖形資源與 timing budget 都非常有限的平台，同時盡量保留原始行為。</strong></p>
+</blockquote>
+<p>這也是為什麼這些技術不只對 GBA 有參考價值。</p>
+<p>只要你面對的是：</p>
+<ul>
+<li>CPU 不夠</li>
+<li>記憶體不夠</li>
+<li>GPU / VRAM 不夠</li>
+<li>硬體資源數量固定</li>
+<li>頻寬有限</li>
+<li>frame deadline 嚴格</li>
+<li>embedded / retro hardware port</li>
+</ul>
+<p>這裡面大量思路都可以直接帶到其他專案裡。</p>
+  </main>
+</body>
+</html>

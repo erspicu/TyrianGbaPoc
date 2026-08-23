@@ -134,6 +134,8 @@
     "底圖、文字、動態 OBJ 與分幀轉場如何各自使用適合的硬體路徑。": "How backgrounds, text, dynamic OBJs, and staged transitions each use the right hardware path.",
     "音樂與音效的生成、校準及轉場": "Generating, calibrating, and transitioning music and SFX",
     "從 TYM、SND 到 Maxmod soundbank，保留聲道比例、抑制刺耳瞬態並避免切歌爆音。": "From TYM and SND to a Maxmod soundbank: preserve channel balance, control harsh transients, and avoid transition clicks.",
+    "完整技術總結（English）": "Complete technical retrospective (English)",
+    "完整技術總結（繁體中文）": "Complete technical retrospective (Traditional Chinese)",
     "查看全部技術文章": "View all research articles",
     "在模擬器或真實硬體上試玩。": "Play it in an emulator or on real hardware.",
     "ROM 以 GitHub Release 資產提供，不存進原始碼 Git。專案仍在開發， 請先閱讀版本說明與已知限制；也可以直接從獨立建置環境自行產生 ROM。": "ROMs are published as GitHub Release assets and are not stored in source Git. The project is still in development; read the release notes and known limitations, or build the ROM yourself from the self-contained environment.",

@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Porting Tyrian to the GBA: Not Just a Game Port, but a Complete Performance-Engineering Effort</title>
+  <style>
+:root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #222;
+      background: #f6f6f3;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.72;
+    }
+    main {
+      width: min(100% - 2rem, 900px);
+      margin: 0 auto;
+      padding: 3rem 0 5rem;
+    }
+    h1, h2, h3 { color: #111; line-height: 1.25; }
+    h1 { margin: 0 0 2rem; font-size: clamp(2rem, 5vw, 3.25rem); }
+    h2 { margin: 3rem 0 1rem; font-size: clamp(1.45rem, 3vw, 2rem); }
+    h3 { margin: 2rem 0 0.75rem; font-size: 1.2rem; }
+    p, ul, ol, blockquote, pre, table { margin: 1rem 0; }
+    ul, ol { padding-left: 1.6rem; }
+    li + li { margin-top: 0.35rem; }
+    blockquote {
+      border-left: 4px solid #6685a3;
+      margin-left: 0;
+      padding: 0.1rem 0 0.1rem 1rem;
+      color: #4b5965;
+    }
+    code {
+      border-radius: 4px;
+      padding: 0.12em 0.32em;
+      background: #e8e9e7;
+      font-family: "Cascadia Mono", Consolas, monospace;
+    }
+    pre {
+      overflow-x: auto;
+      border: 1px solid #d7d8d5;
+      border-radius: 6px;
+      padding: 1rem;
+      background: #eeeeeb;
+    }
+    pre code { padding: 0; background: transparent; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border: 1px solid #cfd1ce; padding: 0.55rem 0.7rem; text-align: left; }
+    th { background: #e8e9e7; }
+    a { color: #245f91; overflow-wrap: anywhere; }
+    hr { border: 0; border-top: 1px solid #cfd1ce; margin: 2.5rem 0; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #deded8; background: #111315; }
+      h1, h2, h3 { color: #f5f2e8; }
+      blockquote { color: #b8c5cf; border-left-color: #7da7c9; }
+      code, th { background: #25292c; }
+      pre { border-color: #3a3e41; background: #1b1e20; }
+      th, td { border-color: #3a3e41; }
+      a { color: #83bce8; }
+      hr { border-top-color: #3a3e41; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+<p>Yes—and I would organize it into something that lets technical-community readers immediately understand what makes this port impressive, rather than merely listing its features.</p>
+<h1>Porting Tyrian to the GBA: Not Just a Game Port, but a Complete Performance-Engineering Effort</h1>
+<p><code>TyrianGbaPoc</code> originally set out to answer a very direct question:</p>
+<blockquote>
+<p><strong>Can the DOS-era Tyrian be brought to the Game Boy Advance while preserving as much of the original game logic, data, and behavior as possible?</strong></p>
+</blockquote>
+<p>But if you follow the project all the way through, you will find that it eventually went far beyond what most people imagine when they hear the word “port.”</p>
+<p>It was not merely a matter of replacing APIs, shrinking the display, and reconnecting the audio. Instead, the project treated the original Tyrian 2.1 data and OpenTyrian's gameplay behavior as the specification, then reconsidered the following question under the GBA's extremely limited CPU, VRAM, OAM, palette, and timing budgets:</p>
+<blockquote>
+<p><strong>How can a game whose original resource requirements greatly exceed the GBA's capabilities still preserve correct behavior and run reliably?</strong></p>
+</blockquote>
+<p>As a result, the project naturally came to involve:</p>
+<p><strong>Algorithms, data structures, memory layout, caching strategies, resource scheduling, real-time systems, workload shedding, color quantization, and low-level ARM optimization.</strong></p>
+<p>In other words, this may look like a GBA game port on the surface, but in practice it is closer to a complete performance-engineering case study.</p>
+<hr>
+<h1>Core Principle: First Avoid the Work, Then Make the Remaining Work Fast</h1>
+<p>If I had to choose the single most transferable principle for other projects, it would be this:</p>
+<blockquote>
+<p><strong>Do not begin by asking, “How can this code run faster?” First ask, “Does this work need to happen at all?”</strong></p>
+</blockquote>
+<p>The project's optimization process broadly followed this order:</p>
+<pre><code class="language-text">Eliminate unnecessary work
+        ↓
+Reduce the working set
+        ↓
+Choose a more appropriate data structure
+        ↓
+Improve locality and caching
+        ↓
+Schedule scarce resources
+        ↓
+Batch work and fuse loops
+        ↓
+Optimize the real hot kernels
+        ↓
+Only then consider ARM and IWRAM
+</code></pre>
+<p>This order matters.</p>
+<p>On severely constrained hardware, the biggest gains usually do not come from:</p>
+<blockquote>
+<p>Making each of 100 operations 10% faster.</p>
+</blockquote>
+<p>They come from:</p>
+<blockquote>
+<p>Preventing 80 of those operations from happening at all.</p>
+</blockquote>
+<hr>
+<h1>1. Active Directories and Pools: Do Not Scan Every Object on Every Tick</h1>
+<p>OpenTyrian's enemy pool can be understood in simplified form as:</p>
+<pre><code class="language-text">4 pools × 25 slots per pool
+= 100 enemy slots
+</code></pre>
+<p>The most straightforward implementation would be:</p>
+<pre><code class="language-text">Every tick:
+for 0..99
+    if active
+        update
+</code></pre>
+<p>On a PC, this might not matter at all.</p>
+<p>On the GBA, however, even an empty slot still incurs:</p>
+<ul>
+<li>memory access</li>
+<li>a branch</li>
+<li>loop overhead</li>
+<li>cache or ROM-access cost</li>
+</ul>
+<p>The GBA version therefore maintains additional compact active directories, such as 32-bit bitmasks, that identify which enemy slots are active or collidable.</p>
+<p>There is one crucial design detail:</p>
+<blockquote>
+<p>The bitmask is only an acceleration index; it is not the authoritative state.</p>
+</blockquote>
+<p>The original enemy pool remains the true source of game state.</p>
+<p>Consequently, optimization does not need to change:</p>
+<ul>
+<li>enemy slot order</li>
+<li>spawn-slot selection</li>
+<li>RNG order</li>
+<li>gameplay semantics</li>
+</ul>
+<p>None of these need to change merely because of the optimization.</p>
+<p>This is an extremely practical structural pattern:</p>
+<pre><code class="language-text">authoritative structure
++
+auxiliary acceleration structure
+</code></pre>
+<p>You can think of it this way:</p>
+<blockquote>
+<p>The original data structure is responsible for correctness; the additional directory is responsible for speed.</p>
+</blockquote>
+<hr>
+<h1>2. Not Every Pool Should Use a Bitmask</h1>
+<p>An important point here is that the project did not blindly convert every pool to bit scanning merely because bitmasks were effective in one place.</p>
+<p>The effect pool contains roughly 200 slots.</p>
+<p>It was also tested with:</p>
+<pre><code class="language-text">active mask
+→ bit-scan active effects only
+</code></pre>
+<p>But in a heavy scene, more than 100 effects may be active, making the data quite dense.</p>
+<p>At that point:</p>
+<pre><code class="language-text">bit scanning
++ index extraction
++ mask handling
+</code></pre>
+<p>may actually be slower than simply:</p>
+<pre><code class="language-text">for 0..199
+    if inactive continue
+</code></pre>
+<p>using the straightforward linear scan.</p>
+<p>The final approach was therefore:</p>
+<ul>
+<li>Use a free directory when locating an unused slot.</li>
+<li>Retain linear traversal for update and rendering.</li>
+</ul>
+<p>This contains an important algorithmic lesson:</p>
+<blockquote>
+<p><strong>A sparse representation is not inherently faster. What really matters is data density.</strong></p>
+</blockquote>
+<p>This is the so-called:</p>
+<blockquote>
+<p><strong>density crossover</strong></p>
+</blockquote>
+<p>Player shots use an even more direct hybrid approach:</p>
+<pre><code class="language-text">Low active count
+→ bitmask traversal
+
+High active count
+→ linear scan
+</code></pre>
+<p>This is more mature than assuming that “bitmasks are always superior,” because the real question is:</p>
+<blockquote>
+<p>Which method has the lowest cost at the current density?</p>
+</blockquote>
+<hr>
+<h1>3. Cache Hints: Use a Very Cheap Prediction to Accelerate a Correct Cache</h1>
+<p>The projectile sprite cache already had a high hit rate.</p>
+<p>Even on a hit, however, it could still be necessary to scan several cache entries before finding the correct slot.</p>
+<p>Rather than replacing the entire cache, the project placed a very small layer in front of it:</p>
+<pre><code class="language-text">direct-mapped hint table
+</code></pre>
+<p>The flow is approximately:</p>
+<pre><code class="language-text">key
+ ↓
+hash
+ ↓
+hint slot
+ ↓
+validate the complete key
+ ↓
+match → use it directly
+
+no match
+ ↓
+fall back to the original complete cache lookup
+</code></pre>
+<p>The most elegant aspect of this design is:</p>
+<blockquote>
+<p>The hint is not responsible for correctness.</p>
+</blockquote>
+<p>It does not manage:</p>
+<ul>
+<li>eviction</li>
+<li>lifetime</li>
+<li>ownership</li>
+</ul>
+<p>Therefore, even when there is a:</p>
+<pre><code class="language-text">hash collision
+stale hint
+</code></pre>
+<p>the worst possible result is:</p>
+<pre><code class="language-text">hint miss
+→ fallback
+</code></pre>
+<p>It cannot produce a false cache hit.</p>
+<p>This concept is useful far beyond this particular system:</p>
+<blockquote>
+<p><strong>cheap predictor + validation + authoritative fallback</strong></p>
+</blockquote>
+<p>In other words, predict first, but always validate.</p>
+<p>A wrong prediction makes the operation slower, not incorrect.</p>
+<hr>
+<h1>4. The Boss Sprite Problem Ultimately Was Not Scheduling, but Data Representation</h1>
+<p>Boss scenes once suffered from disappearing components.</p>
+<p>The obvious first suspicion was:</p>
+<blockquote>
+<p>The GBA has only 128 OAM entries. Are we running out of OAM?</p>
+</blockquote>
+<p>Telemetry showed that OAM had not yet been exhausted.</p>
+<p>The resource actually being exhausted was OBJ VRAM.</p>
+<p>A 32×32 8bpp sprite requires:</p>
+<pre><code class="language-text">32 × 32 × 1 byte
+= 1024 bytes
+</code></pre>
+<p>If a boss uses many distinct frames simultaneously, the cache fills very quickly.</p>
+<p>No amount of work on LRU or replacement policy can change the fact that:</p>
+<blockquote>
+<p>The physical capacity is insufficient.</p>
+</blockquote>
+<p>The solution was therefore not “evict more intelligently,” but to change the representation itself:</p>
+<pre><code class="language-text">32×32 8bpp
+= 1024 bytes
+
+       ↓
+
+32×32 4bpp
+= 512 bytes
+</code></pre>
+<p>The same amount of VRAM can hold nearly twice as many sprites.</p>
+<p>This is a classic systems-optimization principle:</p>
+<blockquote>
+<p><strong>When cache capacity is the fundamental problem, first ask whether the data itself can be made smaller.</strong></p>
+</blockquote>
+<p>Do not keep circling around eviction policy alone.</p>
+<hr>
+<h1>5. Moving to 4bpp Leads Directly to Palette Training</h1>
+<p>Once the representation changes to 4bpp, another class of problem immediately appears:</p>
+<p>A palette bank has only 16 entries, and index 0 usually has to be reserved for transparency.</p>
+<p>In practice, this leaves only about:</p>
+<blockquote>
+<p><strong>15 usable colors</strong></p>
+</blockquote>
+<p>Tyrian's original artwork, however, uses 256-color indexed graphics.</p>
+<p>The new problem is therefore:</p>
+<blockquote>
+<p>How can the information in the original 256 colors be compressed into 15 colors without destroying the image?</p>
+</blockquote>
+<p>This led the project to introduce palette training and color quantization.</p>
+<p>The basic idea is to take:</p>
+<pre><code class="language-text">color frequency
++
+distance from already-selected colors
+</code></pre>
+<p>into account together.</p>
+<p>Conceptually, the score resembles:</p>
+<pre><code class="language-text">score =
+nearest color distance
+×
+frequency weight
+</code></pre>
+<p>This provides two benefits:</p>
+<ul>
+<li>Frequently used colors are retained first.</li>
+<li>Rare but visually distinctive accent colors are less likely to be swallowed.</li>
+</ul>
+<p>For example, a boss might contain:</p>
+<pre><code class="language-text">a large amount of gray metal
++
+a small number of red eyes
++
+a small number of blue lasers
+</code></pre>
+<p>If the system considers only the histogram, the final 15 colors may contain many similar grays.</p>
+<p>With color distance included, colors such as red and blue that are far from the current palette have a better chance of being preserved.</p>
+<p>This is particularly appropriate for pixel art.</p>
+<hr>
+<h1>6. After Training the Palette, Build Lookup Tables</h1>
+<p>Training the palette is not enough by itself.</p>
+<p>If every pixel must repeatedly calculate:</p>
+<blockquote>
+<p>Which entry in the 15-color palette is closest to this original color?</p>
+</blockquote>
+<p>the runtime cost remains high.</p>
+<p>The system therefore first builds:</p>
+<pre><code class="language-text">palette_map[256]
+palette_error[256]
+</code></pre>
+<p>For every source color, these tables identify:</p>
+<ul>
+<li>the corresponding 4bpp palette index</li>
+<li>the mapping error</li>
+</ul>
+<p>The actual sprite conversion then becomes:</p>
+<pre><code class="language-text">source color index
+↓
+table lookup
+↓
+4-bit palette index
+</code></pre>
+<p>This is a classic technique:</p>
+<blockquote>
+<p><strong>Move expensive calculations into precomputation so the hot path only performs table lookups.</strong></p>
+</blockquote>
+<hr>
+<h1>7. Palette Pretraining: Do Not Wait Until the Boss Appears</h1>
+<p>Another practical problem appeared later.</p>
+<p>Not all boss components necessarily appear at the same time.</p>
+<p>For example:</p>
+<pre><code class="language-text">Only dark components appear at first
+↓
+The first trained palette is biased toward black and gray
+</code></pre>
+<p>Only later do the following appear:</p>
+<pre><code class="language-text">green components
+red components
+bright attack effects
+</code></pre>
+<p>At that point, the original palette is no longer ideal.</p>
+<p>The system could retrain during combat, but that would sharply increase CPU pressure.</p>
+<p>The more elegant final solution was:</p>
+<pre><code class="language-text">Read the level data
+ ↓
+Identify the boss cohort
+ ↓
+Locate the related enemy definitions
+ ↓
+Decode their animation frames
+ ↓
+Collect the complete histogram
+ ↓
+Train the palette in advance
+</code></pre>
+<p>The palette is ready before the boss actually appears.</p>
+<p>This principle is worth remembering in other porting projects:</p>
+<blockquote>
+<p><strong>Do not leave predictable expensive work in a latency-sensitive gameplay phase.</strong></p>
+</blockquote>
+<p>Move it into:</p>
+<ul>
+<li>loading</li>
+<li>a blank screen</li>
+<li>preprocessing</li>
+<li>an idle period</li>
+</ul>
+<p>whenever possible.</p>
+<hr>
+<h1>8. When OAM Is Insufficient, the Problem Becomes Scheduling</h1>
+<p>The GBA provides exactly:</p>
+<pre><code class="language-text">128 OAM entries
+</code></pre>
+<p>Some heavy Tyrian scenes can demand substantially more than 128 sprites.</p>
+<p>At that point, it no longer makes sense to ask:</p>
+<blockquote>
+<p>Can the renderer be made a little faster?</p>
+</blockquote>
+<p>The problem is not speed.</p>
+<p>The problem is:</p>
+<blockquote>
+<p><strong>The hardware has only 128 slots.</strong></p>
+</blockquote>
+<p>The correct way to view the problem is therefore:</p>
+<blockquote>
+<p>Resource scheduling</p>
+</blockquote>
+<p>The system must decide:</p>
+<pre><code class="language-text">Who must be displayed?
+Who can be deferred?
+Who has priority?
+Who can be sacrificed?
+Who should take turns receiving the resource?
+</code></pre>
+<p>A conceptual priority order might be:</p>
+<pre><code class="language-text">High priority
+player
+bosses
+important enemies
+
+Medium priority
+projectiles
+
+Low priority
+explosions
+shadows
+cosmetic effects
+</code></pre>
+<p>If high-priority objects do not consume all OAM:</p>
+<pre><code class="language-text">remaining OAM
+→ cosmetic effects
+</code></pre>
+<p>If high-priority demand alone already exceeds capacity:</p>
+<pre><code class="language-text">cosmetic effects
+→ may be dropped
+</code></pre>
+<p>This is no longer simply a rendering technique. It is a standard finite-resource scheduling problem.</p>
+<hr>
+<h1>9. Priority Is Not Enough; Fairness Also Matters</h1>
+<p>If resources are always assigned in a fixed order:</p>
+<pre><code class="language-text">early effects are always displayed
+later effects always disappear
+</code></pre>
+<p>the visual result is poor.</p>
+<p>The system therefore also needs round-robin scheduling or rotating cursors, so low-priority objects still have opportunities to be displayed in turn.</p>
+<p>This produces a combination of:</p>
+<pre><code class="language-text">priority
++
+fairness
++
+work-conserving allocation
+</code></pre>
+<p>This concept is not limited to GBA OAM.</p>
+<p>The same principle applies when working with:</p>
+<ul>
+<li>GPU resources</li>
+<li>DMA channels</li>
+<li>worker pools</li>
+<li>network queues</li>
+<li>descriptor heaps</li>
+<li>embedded hardware units</li>
+</ul>
+<p>All of these are the same class of problem.</p>
+<p>The core principle is:</p>
+<blockquote>
+<p><strong>When demand can exceed hardware capacity, you need a scheduler, not merely an allocator.</strong></p>
+</blockquote>
+<hr>
+<h1>10. Candidate Snapshots: Do Not Repeatedly Scan the Same Data</h1>
+<p>The OAM scheduler also contains several practical optimizations.</p>
+<p>The original process might have been:</p>
+<pre><code class="language-text">scan once to calculate demand
+scan once for cache admission
+scan once to render
+</code></pre>
+<p>It was changed to:</p>
+<pre><code class="language-text">collect candidates once
+
+Precompute for each candidate:
+screen position
+visibility
+OAM cost
+draw stage
+priority
+</code></pre>
+<p>The scheduler, cache admission, and renderer then share this same materialized data.</p>
+<p>This is:</p>
+<blockquote>
+<p><strong>materialize the hot working set once</strong></p>
+</blockquote>
+<hr>
+<h1>11. Loop Fusion: If One Pass Is Enough, Do Not Make Two</h1>
+<p>Loop fusion is another technique in the same family.</p>
+<p>The original flow might be:</p>
+<pre><code class="language-text">select an enemy
+↓
+store the selection
+↓
+scan again to prime the cache
+↓
+render
+</code></pre>
+<p>It can instead become:</p>
+<pre><code class="language-text">selection
++
+cache admission
++
+cache acquisition
++
+tile recording
+</code></pre>
+<p>Everything is completed in the same traversal.</p>
+<p>This optimization may not look as glamorous as assembly language, but it is extremely useful on constrained hardware.</p>
+<p>It simultaneously reduces:</p>
+<ul>
+<li>loop overhead</li>
+<li>memory traversal</li>
+<li>repeated address calculations</li>
+<li>working-set reloads</li>
+</ul>
+<hr>
+<h1>12. Adaptive Work Shedding: Separate Simulation from Presentation</h1>
+<p>This is one of the most important architectural ideas in the entire port.</p>
+<p>The game's:</p>
+<pre><code class="language-text">logic
+enemy movement
+collision
+events
+RNG
+boss progression
+audio timing
+</code></pre>
+<p>belong to the authoritative simulation.</p>
+<p>These cannot be skipped arbitrarily simply because the renderer is overloaded.</p>
+<p>By contrast:</p>
+<pre><code class="language-text">sprite construction
+OAM updates
+tile uploads
+VRAM presentation
+background rendering
+</code></pre>
+<p>are presentation work.</p>
+<p>When the system is genuinely overloaded, it therefore should not:</p>
+<pre><code class="language-text">skip a gameplay tick
+</code></pre>
+<p>It should instead:</p>
+<pre><code class="language-text">continue running gameplay ticks
+
+but omit construction of one presentation frame
+</code></pre>
+<p>For example:</p>
+<pre><code class="language-text">Simulation:
+N
+N+1
+N+2
+N+3
+
+Presentation:
+N
+N+2
+N+3
+</code></pre>
+<p>The player sees one fewer intermediate image, but:</p>
+<ul>
+<li>enemy movement remains correct</li>
+<li>collision checks are not omitted</li>
+<li>the RNG sequence does not change</li>
+<li>gameplay speed does not change</li>
+</ul>
+<p>This is essentially:</p>
+<blockquote>
+<p><strong>fixed-timestep simulation + adaptive presentation cadence</strong></p>
+</blockquote>
+<p>It is already very close to real-time systems design.</p>
+<hr>
+<h1>13. Dropping a Frame Does Not Mean Drawing Half a Frame</h1>
+<p>There is another crucial detail:</p>
+<p>If the next scene is not expected to finish in time:</p>
+<pre><code class="language-text">do not commit half of it
+</code></pre>
+<p>Instead:</p>
+<pre><code class="language-text">retain the previous complete scene
+</code></pre>
+<p>The worst outcome is not displaying one fewer image.</p>
+<p>The worst outcome is producing:</p>
+<pre><code class="language-text">half of the new OAM state
++
+half of the old VRAM state
++
+partially updated caches
+</code></pre>
+<p>an inconsistent state of this kind.</p>
+<p>The strategy is therefore closer to:</p>
+<blockquote>
+<p><strong>Commit the complete state, or do not commit at all.</strong></p>
+</blockquote>
+<p>This is very similar to the reasoning behind transactions and double buffering.</p>
+<hr>
+<h1>14. Collision: The Hard Part Is Not the Formula, but Pool Mutation</h1>
+<p>Collision detection looks simple on the surface:</p>
+<pre><code class="language-text">for every player shot
+    for every enemy
+        collision test
+</code></pre>
+<p>But with:</p>
+<pre><code class="language-text">81 shots × 100 enemies
+</code></pre>
+<p>the candidate count grows quickly.</p>
+<p>An active directory can first eliminate inactive enemies.</p>
+<p>The real difficulty, however, is:</p>
+<blockquote>
+<p>Collision itself can mutate the enemy pool.</p>
+</blockquote>
+<p>For example:</p>
+<pre><code class="language-text">a shot hits an enemy
+ ↓
+the enemy dies
+ ↓
+a new enemy is spawned
+ ↓
+the slot is reused
+</code></pre>
+<p>It is therefore unsafe to simply:</p>
+<pre><code class="language-text">snapshot the active mask at the start of the tick
+↓
+use that snapshot for all collision processing
+</code></pre>
+<p>The underlying data may already have changed later in the traversal.</p>
+<p>Optimization must therefore preserve:</p>
+<ul>
+<li>the original slot-traversal order</li>
+<li>penetrating-shot semantics</li>
+<li>spawn and reuse behavior</li>
+<li>gameplay-mutation correctness</li>
+</ul>
+<p>This class of problem is actually harder than simply applying SIMD or bitmasks.</p>
+<hr>
+<h1>15. Packed Collision: Make the Miss Path Fast and the Hit Path Conservative</h1>
+<p>The later ARM collision kernel uses an elegant technique.</p>
+<p>For a given active mask, it keeps:</p>
+<pre><code class="language-text">remaining_bits
+</code></pre>
+<p>in a register.</p>
+<p>If every candidate continues to miss:</p>
+<pre><code class="language-text">candidate A misses
+candidate B misses
+candidate C misses
+</code></pre>
+<p>there is no need to reload the authoritative mask repeatedly.</p>
+<p>But when a real hit occurs:</p>
+<pre><code class="language-text">hit
+→ gameplay helper
+→ may mutate the enemy pool
+</code></pre>
+<p>the cached mask is discarded and the authoritative state is reloaded.</p>
+<p>In practice, this means:</p>
+<pre><code class="language-text">common miss path
+→ aggressively cached
+
+rare mutation path
+→ conservative reload
+</code></pre>
+<p>This is an elegant performance strategy:</p>
+<blockquote>
+<p><strong>Optimistic fast path + correctness recovery point</strong></p>
+</blockquote>
+<p>The common path stays fast.</p>
+<p>The implementation returns to a conservative mode only where state may truly change.</p>
+<hr>
+<h1>16. ARM Assembly Is the Final Cut, Not the First</h1>
+<p>The project does contain ARM and IWRAM optimizations.</p>
+<p>What is more important, however, is that it did not treat:</p>
+<blockquote>
+<p>“Rewrite it in ARM”</p>
+</blockquote>
+<p>as the first reaction.</p>
+<p>For the starfield, the real initial problem was not the programming language.</p>
+<p>The original flow might repeatedly perform:</p>
+<pre><code class="language-text">position / 320
+position % 320
+
+pixel 1 → tile lookup
+pixel 2 → tile lookup
+pixel 3 → tile lookup
+...
+</code></pre>
+<p>It was first changed to:</p>
+<pre><code class="language-text">one divmod operation
+one tile allocation
+batch several pixels within the same tile
+</code></pre>
+<p>This step made the algorithm reasonable before any assembly was introduced.</p>
+<p>Only then was the remaining hot kernel rewritten in ARM.</p>
+<p>The real source of the improvement was therefore:</p>
+<blockquote>
+<p><strong>algorithmic batching + elimination of repeated work</strong></p>
+</blockquote>
+<p>ARM simply extracted the remaining performance.</p>
+<hr>
+<h1>17. Sometimes ARM Is Even Slower Than C</h1>
+<p>This is particularly educational.</p>
+<p>Not every instance of:</p>
+<ul>
+<li>branchless code</li>
+<li>bit scanning</li>
+<li>hand-written assembly</li>
+</ul>
+<p>is guaranteed to be faster.</p>
+<p>Some very small helpers rewritten in ARM may incur:</p>
+<ul>
+<li>call overhead</li>
+<li>ARM/Thumb transition costs</li>
+<li>the compiler's existing code generation already being very good</li>
+<li>the kernel itself being too small</li>
+</ul>
+<p>and consequently lose to C.</p>
+<p>Even C code that appears to contain branches may already be optimized by the compiler using conditional execution.</p>
+<p>The correct approach is therefore:</p>
+<blockquote>
+<p><strong>Inspect the machine code, inspect the profile, and inspect the benchmark.</strong></p>
+</blockquote>
+<p>Do not judge from source syntax alone.</p>
+<hr>
+<h1>What Technical Substance Does the Entire Port Contain?</h1>
+<p>For engineers who want the quickest overview, it can be condensed into this table:</p>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Technique</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Large numbers of empty pool slots</td>
+<td>Active / Free Bit Directory</td>
+</tr>
+<tr>
+<td>Sparse / dense workloads</td>
+<td>Density-dependent traversal</td>
+</tr>
+<tr>
+<td>Many cache hits, but lookup remains expensive</td>
+<td>Validated Direct-Mapped Hint</td>
+</tr>
+<tr>
+<td>Insufficient sprite-cache capacity</td>
+<td>8bpp → 4bpp representation change</td>
+</tr>
+<tr>
+<td>Insufficient color capacity in 4bpp</td>
+<td>Palette Training / Quantization</td>
+</tr>
+<tr>
+<td>Training during gameplay is too expensive</td>
+<td>Boss cohort preload / pretraining</td>
+</tr>
+<tr>
+<td>OAM demand exceeds 128</td>
+<td>Priority + Fairness Scheduler</td>
+</tr>
+<tr>
+<td>The same candidates are repeatedly scanned</td>
+<td>Candidate Snapshot</td>
+</tr>
+<tr>
+<td>Multiple traversals perform similar work</td>
+<td>Loop Fusion</td>
+</tr>
+<tr>
+<td>Occasional frame overload</td>
+<td>Deadline-aware frame dropping</td>
+</tr>
+<tr>
+<td>Sustained overload</td>
+<td>Adaptive Work Shedding</td>
+</tr>
+<tr>
+<td>Gameplay ticks cannot be skipped</td>
+<td>Fixed-timestep Simulation</td>
+</tr>
+<tr>
+<td>The collision pool can mutate</td>
+<td>Mutation-safe Active Directory</td>
+</tr>
+<tr>
+<td>Repeated address calculations on the hot path</td>
+<td>Batching</td>
+</tr>
+<tr>
+<td>The remaining true CPU bottlenecks</td>
+<td>Selective ARM / IWRAM</td>
+</tr>
+<tr>
+<td>Optimization can break original behavior</td>
+<td>Differential / Regression Testing</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<h1>The Most Transferable Ways of Thinking for Other Porting Projects</h1>
+<p>If you are porting software to another platform, the following questions are more valuable than any single technique.</p>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>How can this loop be made faster?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>Why do these objects need to be visited?</p>
+</blockquote>
+<hr>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>How else can the cache policy be tuned?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>Can the data representation itself be made smaller?</p>
+</blockquote>
+<hr>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>How can every sprite be displayed?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>When hardware capacity is insufficient, which objects must have priority?</p>
+</blockquote>
+<hr>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>How can this expensive operation be made faster during gameplay?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>Can it be calculated during loading or preprocessing instead?</p>
+</blockquote>
+<hr>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>Can this be made branchless?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>What code is the compiler actually generating now?</p>
+</blockquote>
+<hr>
+<h3>Do not begin by asking:</h3>
+<blockquote>
+<p>Should this be written in assembly?</p>
+</blockquote>
+<p>First ask:</p>
+<blockquote>
+<p>Does profiling prove that it is worthwhile?</p>
+</blockquote>
+<hr>
+<h1>In the End, It Can Be Reduced to One Sentence</h1>
+<p>If the engineering value of <code>TyrianGbaPoc</code> had to be summarized in one sentence, it would be:</p>
+<blockquote>
+<p><strong>Optimize the architecture before optimizing the instructions.</strong></p>
+</blockquote>
+<p>What makes this project interesting is not merely:</p>
+<blockquote>
+<p>“Tyrian can actually run on the GBA.”</p>
+</blockquote>
+<p>It demonstrates how, when a system originally designed for a more generous platform must be fitted into severely constrained hardware, you can bring together:</p>
+<p><strong>Algorithms, data structures, sparse traversal, caches, palette quantization, memory representation, resource scheduling, real-time work shedding, profiling, regression testing, and ARM hot paths.</strong></p>
+<p>and combine them into one system.</p>
+<p>It is therefore more precise to say that this is not merely a game-porting project.</p>
+<p>It is a complete case study in:</p>
+<blockquote>
+<p><strong>How systematic performance engineering can fit a relatively large existing software system into a platform with extremely limited CPU time, memory, graphics resources, and timing budget, while preserving as much of the original behavior as possible.</strong></p>
+</blockquote>
+<p>This is also why these techniques are useful beyond the GBA.</p>
+<p>Whenever you face:</p>
+<ul>
+<li>insufficient CPU performance</li>
+<li>insufficient memory</li>
+<li>insufficient GPU or VRAM capacity</li>
+<li>a fixed number of hardware resources</li>
+<li>limited bandwidth</li>
+<li>strict frame deadlines</li>
+<li>an embedded or retro-hardware port</li>
+</ul>
+<p>many of the ideas in this project can be carried directly into other work.</p>
+  </main>
+</body>
+</html>
