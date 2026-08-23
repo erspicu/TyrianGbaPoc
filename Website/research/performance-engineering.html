@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TyrianGbaPoc 如何以演算法、資料結構、快取、資源排程、固定時序與 ARM hotpath，把 Tyrian 的原始語意帶進 GBA。">
+  <meta name="theme-color" content="#05070c">
+  <title>從架構到指令：效能工程全盤總結 — TyrianGbaPoc 技術研究</title>
+  <link rel="icon" href="../assets/brand-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="../assets/css/site.css">
+  <script src="../assets/js/i18n.js" defer></script>
+  <script src="../assets/js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳至主要內容</a>
+  <header class="site-header">
+    <div class="nav-shell">
+      <a class="brand" href="../index.html" aria-label="TyrianGbaPoc 首頁">
+        <img class="brand-mark" src="../assets/brand-mark.svg" alt="">
+        <span>Tyrian // GBA<small>source-faithful port</small></span>
+      </a>
+      <button class="nav-toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="site-nav">選單</button>
+      <nav class="site-nav" id="site-nav" data-nav data-open="false" aria-label="主要導覽">
+        <a href="../index.html">首頁</a>
+        <a href="index.html" aria-current="page">研究筆記</a>
+        <a class="nav-download" href="../download.html">下載</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="page-hero">
+      <div class="shell">
+        <nav class="breadcrumb" aria-label="麵包屑"><a href="../index.html">首頁</a><span>/</span><a href="index.html">技術研究</a><span>/</span><span>Performance engineering</span></nav>
+        <p class="eyebrow">Research 00 / Engineering overview</p>
+        <h1>先最佳化架構，再最佳化指令。</h1>
+        <p class="lede">
+          TyrianGbaPoc 不只是把 PC API 換成 GBA API。它把 Tyrian 2.1 資料與
+          OpenTyrian 行為當成規格，再以演算法、資料結構、記憶體表示、快取、
+          資源排程與即時系統，把較大的原始工作負載壓進掌機的固定預算。
+        </p>
+      </div>
+    </section>
+
+    <section class="section section-rule">
+      <div class="shell article-layout">
+        <article class="article">
+          <h2 id="origin">一個可行性問題，變成完整效能工程</h2>
+          <p>
+            專案起點很單純：能不能把 DOS 時代的 Tyrian 搬到 Game Boy Advance，
+            同時盡量保留原始遊戲邏輯、資料與行為？當目標從第一關技術展示擴展到
+            四個 Episode，問題便不再只是縮小畫面或重接聲音，而是如何在每一幀都
+            遵守 CPU、記憶體、VRAM、OAM、色盤與傳輸時限。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>16.78 MHz</strong><span>ARM7TDMI</span></div>
+            <div class="metric"><strong>128</strong><span>hardware OAM entries</span></div>
+            <div class="metric"><strong>62</strong><span>playable sections under regression</span></div>
+          </div>
+          <figure class="gallery-item">
+            <div class="screenshot-card">
+              <img src="../assets/images/gallery/boss-stress-current.png" alt="v90 LOW 正式版在多部件 Boss 與密集彈幕下的實際 240×160 畫面" width="240" height="160" loading="lazy">
+            </div>
+            <figcaption><span>v90 · LOW Detail</span><span>source behavior under a fixed hardware budget</span></figcaption>
+          </figure>
+
+          <h2 id="order">最佳化順序：先讓工作消失</h2>
+          <p>
+            受限平台最有效的改善，通常不是讓一百次操作各快一點，而是證明其中
+            八十次根本不必發生。專案採用的順序刻意從系統層一路走向指令層：
+          </p>
+          <ol class="process-list">
+            <li><strong>消除不必要的工作。</strong> 不掃空 slot，不重建沒有變化的頁面，不在 gameplay 重做 build 已能完成的解碼。</li>
+            <li><strong>縮小 working set。</strong> 只保留目前可見、即將使用或能影響玩法的資料。</li>
+            <li><strong>選對資料結構與表示法。</strong> 讓密度、生命週期與硬體格式直接反映在布局中。</li>
+            <li><strong>改善 locality 與 cache。</strong> 預測可以加速，但 canonical key 與 generation 仍負責正確性。</li>
+            <li><strong>排程有限資源。</strong> OAM、OBJ VRAM、DMA 與 frame deadline 都必須明確分配。</li>
+            <li><strong>合併與批次處理。</strong> 同一批 candidate 只建立一次，讓多個決策共享結果。</li>
+            <li><strong>最後才最佳化 hot kernel。</strong> 先量測 machine code 與 cycles，再決定 ARM、IWRAM 或保留 C。</li>
+          </ol>
+          <div class="callout">
+            核心問題不是「怎麼讓每一段程式更快」，而是「哪些工作必須做、何時做，
+            以及誰應該先取得有限硬體」。
+          </div>
+
+          <h2 id="pools">資料結構必須反映實際密度</h2>
+          <p>
+            Tyrian 的 enemy、shot 與 effect pool 大多有固定容量，但每個 tick 的有效
+            物件常遠少於上限。Active／Free Bit Directory 讓稀疏 pool 直接跳到有效
+            slot；密集時則切回連續掃描，避免 bit iteration 本身反而成為成本。這不是
+            「所有 pool 都套 bitmask」，而是依真實密度選 traversal。
+          </p>
+          <p>
+            Cache 也採相同原則。Validated direct-mapped hint 先猜最可能命中的格，
+            但命中後仍驗證完整 key、layout 與 ownership generation；hint 失效只會
+            回到 canonical lookup，不會把錯誤 tile 當成正確答案。
+          </p>
+
+          <h2 id="representation">Boss 問題最後是資料表示問題</h2>
+          <p>
+            多部件 Boss 一度同時壓迫 Sprite2 解碼時間與 OBJ VRAM。只加快 lookup
+            無法改變容量，因此 compact cache 把 32×32 影格由 1 KiB 8bpp 改成
+            512-byte 4bpp；build-time 先完成不可變 RLE 與 tile 重排，runtime 再依
+            關卡 palette 上色。色盤訓練與 Boss cohort 預熱則把昂貴工作移離登場尖峰。
+          </p>
+          <p>
+            這個轉折很重要：瓶頸有時不是程式跑得不夠快，而是資料表示法讓硬體
+            永遠裝不下。改變 representation 後，速度、容量與可預測性才一起改善。
+          </p>
+          <p><a href="sprite-cache.html">深入閱讀：Sprite2 預解壓與二級快取</a> · <a href="palette-training.html">4bpp 受限色盤訓練</a></p>
+
+          <h2 id="scheduler">OAM 不夠，就把問題當成排程</h2>
+          <p>
+            128 個 OAM 不可能容納所有極端畫面，但「誰先消失」可以由軟體決定。
+            owning pool 與全關卡 Boss manifest 先建立確定身分；玩家、Boss、敵人與
+            玩法子彈取得保障，爆炸與裝飾效果公平輪替使用餘額。Candidate snapshot
+            又讓 demand、cache prime、OAM admission 與 render 共享同一份分類。
+          </p>
+          <div class="metric-grid">
+            <div class="metric"><strong>223</strong><span>worst measured requests</span></div>
+            <div class="metric"><strong>128</strong><span>hardware commits</span></div>
+            <div class="metric"><strong>0</strong><span>enemy culls in that stress run</span></div>
+          </div>
+          <p>
+            超載因此退化成可預期的低優先效果閃爍，而不是透明敵人、Boss 缺件，
+            或過期 DMA 覆寫新資源。Priority 解決重要性，fairness 解決長期飢餓，
+            ownership generation 則阻止 cache 污染。
+          </p>
+          <p><a href="oam-resource-scheduling.html">深入閱讀：OAM 與圖形快取的可靠資源排程</a></p>
+
+          <h2 id="time">Simulation 和 Presentation 必須分開</h2>
+          <p>
+            Drop-frame 不是把半張畫面交給 LCD。若新場景無法安全完成，就保留上一張
+            已完整提交的 OAM、VRAM 與背景狀態；遊戲輸入、敵人、碰撞、Boss 流程、
+            RNG 與音訊仍按固定時間步進。持續超載再由 Adaptive presentation
+            dispatch 將完整場景鎖到規律 cadence，而不是讓整個遊戲變慢。
+          </p>
+          <p>
+            正式設定最多讓一張 presentation 代表兩個 source ticks，目標下限約
+            17.4 FPS；Maxmod 服務仍跟著每個實體 VBlank。被捨棄的只有已被新狀態
+            取代、尚未送出的中間畫面，不是任何會改變遊戲結果的計算。
+          </p>
+          <p><a href="timing.html">深入閱讀：固定時序、VBlank 與 Frame Drop</a> · <a href="adaptive-presentation.html">Adaptive 呈現派送</a></p>
+
+          <h2 id="correctness">正確性約束先於碰撞最佳化</h2>
+          <p>
+            碰撞公式本身不一定最難；真正危險的是命中後可能立即殺死 link group、
+            釋放 slot 或生成新物件。最佳化 traversal 仍必須保存原始 pool 順序與
+            mutation semantics。Active mask 縮小候選集，packed collision 讓常見
+            miss path 更短，但 hit path 保留保守控制流，並以 C reference 做差分測試。
+          </p>
+          <div class="callout warning">
+            快速但改變 RNG、擊殺順序、穿透傷害或掉落結果的碰撞程式，不是最佳化，
+            而是另一套遊戲規則。
+          </div>
+
+          <h2 id="assembly">ARM 組語是最後一刀，不是第一刀</h2>
+          <p>
+            ARM7TDMI 沒有現代 SIMD，也沒有硬體除法器；小型色距、packed collision、
+            starfield divmod 等 leaf kernel 在 profiling 證明值得後，才適合放入 IWRAM
+            或改寫 ARM。分支多、資料依賴高的 scheduler 則可能由最佳化 C 做得更好，
+            實測也曾出現 ARM bit-scan 慢於 C 的結果。
+          </p>
+          <p>
+            判斷依據不是 source 看起來是否 branchless，而是 compiler 產生的 machine
+            code、IWRAM 成本、A/B benchmark 與 differential test。組語是精準工具，
+            不是專案成熟度的裝飾。
+          </p>
+
+          <h2 id="loop">從資產到回歸，形成同一個工程閉環</h2>
+          <p>
+            系統層最佳化必須有可重現的資料邊界。ROMFS 保留原始 MUS、SHP、PIC、
+            HDT 與 LVL 的索引語意；build-time 只搬走不可變且可驗證的解碼、訓練與
+            預烘培，runtime 留下會受關卡狀態影響的選擇。Telemetry 再量測 cache、
+            OAM、VBlank、route 與音訊，讓每次改善都能同時驗證速度與 source parity。
+          </p>
+          <p>
+            這也是少量補充於兩篇原始總結之外的關鍵：架構、工具鏈與回歸不是三件
+            分離工作。沒有 build 的可重現性和 runtime 的證據，最佳化就很容易變成
+            只對單一截圖有效的 per-level patch。
+          </p>
+          <p><a href="romfs.html">深入閱讀：ROMFS 與可擴充資料層</a> · <a href="verification.html">Telemetry 與自動回歸</a></p>
+
+          <h2 id="lesson">給下一個受限平台移植的原則</h2>
+          <ol class="process-list">
+            <li><strong>不要先問如何加快完整掃描。</strong> 先問能否只走有效物件。</li>
+            <li><strong>不要先問如何顯示所有 Sprite。</strong> 先定義誰必須被保障、誰可以公平退化。</li>
+            <li><strong>不要先問 gameplay 如何即時完成昂貴工作。</strong> 先找出能否移到 build、loading 或 warm-up。</li>
+            <li><strong>不要先問能否改成 branchless 或 ASM。</strong> 先看 machine code、profiling 與完整 A/B。</li>
+            <li><strong>不要用速度交換規格。</strong> Authoritative simulation、資料索引與原始控制流必須有回歸保護。</li>
+          </ol>
+          <div class="callout">
+            <strong>先最佳化架構，再最佳化指令。</strong> 真正可移植的成果，不是一段
+            特別快的 code，而是一套知道何時少做、如何縮小、怎樣排程，並能證明
+            遊戲結果沒有被改變的方法。
+          </div>
+        </article>
+
+        <aside class="toc" aria-label="本頁目錄">
+          <strong>On this page</strong>
+          <ul>
+            <li><a href="#origin">工程起點</a></li>
+            <li><a href="#order">最佳化順序</a></li>
+            <li><a href="#pools">Pools and cache hints</a></li>
+            <li><a href="#representation">資料表示法</a></li>
+            <li><a href="#scheduler">OAM scheduling</a></li>
+            <li><a href="#time">Simulation / presentation</a></li>
+            <li><a href="#correctness">碰撞正確性</a></li>
+            <li><a href="#assembly">ARM 的位置</a></li>
+            <li><a href="#loop">工程閉環</a></li>
+            <li><a href="#lesson">可帶走的原則</a></li>
+          </ul>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="shell footer-grid">
+      <div>TyrianGbaPoc 技術研究 · <span data-year></span></div>
+      <nav class="footer-links" aria-label="頁尾導覽">
+        <a href="rendering.html">下一篇：多圖層與裁切</a>
+        <a href="index.html">全部研究</a>
+        <a href="https://github.com/erspicu/TyrianGbaPoc">GitHub</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>
