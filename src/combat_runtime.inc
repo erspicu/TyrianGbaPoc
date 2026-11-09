@@ -2038,7 +2038,11 @@ static void source_sidekick_fire_update(u8 side)
     if (!source_sidekick_sync(side) || !runtime->weapon_valid) {
         return;
     }
-    if (source_shot_repeat[bay] != 0) return;
+    /* mainint.c: count down, or (only when already zero) refill/fire. */
+    if (source_shot_repeat[bay] != 0) {
+        source_shot_repeat[bay]--;
+        return;
+    }
 
     if (runtime->ammo_max > 0) {
         if (runtime->ammo_refill_ticks > 0) {
@@ -2116,56 +2120,42 @@ static void source_player_weapons_update(void)
     }
     source_rear_mode_update();
     source_special_update();
-    if (source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] > 0) {
-        source_shot_repeat[SOURCE_WEAPON_BAY_FRONT]--;
-    }
-    if (source_shot_repeat[SOURCE_WEAPON_BAY_REAR] > 0) {
-        source_shot_repeat[SOURCE_WEAPON_BAY_REAR]--;
-    }
-    if (
-        source_shot_repeat[SOURCE_WEAPON_BAY_LEFT_SIDEKICK] > 0
-    ) {
-        source_shot_repeat[SOURCE_WEAPON_BAY_LEFT_SIDEKICK]--;
-    }
-    if (
-        source_shot_repeat[SOURCE_WEAPON_BAY_RIGHT_SIDEKICK] > 0
-    ) {
-        source_shot_repeat[SOURCE_WEAPON_BAY_RIGHT_SIDEKICK]--;
-    }
-    if (source_gameplay_main_fire_held()) {
-        if (
-            source_front_weapon_valid &&
-            source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] == 0
+    /*
+     * mainint.c JE_playerMovement(): a bay either spends this tick counting
+     * down its shotRepeat or, when it is already zero, may fire.  Counting
+     * down and firing on the same tick would shorten every cadence by one
+     * tick (shotrepeat 1 would fire every tick instead of every other),
+     * draining the shared generator pool so fast that the Rear bay, which
+     * is served after the Front bay, starves while fire is held.
+     */
+    if (source_front_weapon_valid) {
+        if (source_shot_repeat[SOURCE_WEAPON_BAY_FRONT] > 0) {
+            source_shot_repeat[SOURCE_WEAPON_BAY_FRONT]--;
+        } else if (
+            source_gameplay_main_fire_held() &&
+            source_weapon_energy_consume(source_front_weapon_poweruse)
         ) {
-            if (
-                source_weapon_energy_consume(
-                    source_front_weapon_poweruse
-                )
-            ) {
-                source_spawn_weapon(
-                    &source_front_weapon,
-                    SOURCE_WEAPON_BAY_FRONT,
-                    player_source_x,
-                    player_source_y
-                );
-            }
+            source_spawn_weapon(
+                &source_front_weapon,
+                SOURCE_WEAPON_BAY_FRONT,
+                player_source_x,
+                player_source_y
+            );
         }
-        if (
-            source_rear_weapon_valid &&
-            source_shot_repeat[SOURCE_WEAPON_BAY_REAR] == 0
+    }
+    if (source_rear_weapon_valid) {
+        if (source_shot_repeat[SOURCE_WEAPON_BAY_REAR] > 0) {
+            source_shot_repeat[SOURCE_WEAPON_BAY_REAR]--;
+        } else if (
+            source_gameplay_main_fire_held() &&
+            source_weapon_energy_consume(source_rear_weapon_poweruse)
         ) {
-            if (
-                source_weapon_energy_consume(
-                    source_rear_weapon_poweruse
-                )
-            ) {
-                source_spawn_weapon(
-                    &source_rear_weapon,
-                    SOURCE_WEAPON_BAY_REAR,
-                    player_source_x,
-                    player_source_y
-                );
-            }
+            source_spawn_weapon(
+                &source_rear_weapon,
+                SOURCE_WEAPON_BAY_REAR,
+                player_source_x,
+                player_source_y
+            );
         }
     }
     source_superbomb_update();
