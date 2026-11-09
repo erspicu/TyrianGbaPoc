@@ -3,6 +3,9 @@
 *.gba
 *.elf
 *.o
+# Prebuilt devkitPro GBA startup object required by gba.specs (MPL-2.0;
+# source alongside it, from github.com/devkitPro/devkitarm-crtls).
+!/vendor/gba-sdk/devkitARM/arm-none-eabi/lib/gba_crt0.o
 *.d
 *.map
 *.sav
